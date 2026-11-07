@@ -15,16 +15,23 @@ fn cell_position(id: vec3u) -> vec3f {
     return (vec3f(id) + 0.5) * params.h;
 }
 
-// How much of the cell lies in the emitter: 1 inside, 0 outside, a cell-wide edge. A sphere of
-// `emit_radius`, or a box of `emit_half` on either side of its centre.
-fn emitter(id: vec3u) -> f32 {
+// Emitters: `params.emitters` of them in `pn_data`, four vectors each. The first holds the
+// centre in metres from the box's lower corner and the shape (1 a box, 0 a sphere); the second
+// half the box's size and the sphere's radius; the third the velocity and the share of the way
+// a cell goes towards the emitter in one step; the fourth smoke, temperature and fuel.
+
+// How much of the cell lies in emitter `i`: 1 inside, 0 outside, a cell-wide edge. A sphere of
+// its radius, or a box of its half size on either side of its centre.
+fn emitter(i: i32, id: vec3u) -> f32 {
+    let at = pn_data[i * 4];
+    let shape = pn_data[i * 4 + 1];
     let h = max(params.h, 1e-6);
-    let d = cell_position(id) - params.emit_at;
-    if (params.emit_shape == 1) {
-        let inside = clamp((params.emit_half - abs(d)) / h + 0.5, vec3f(0.0), vec3f(1.0));
+    let d = cell_position(id) - at.xyz;
+    if (at.w >= 0.5) {
+        let inside = clamp((shape.xyz - abs(d)) / h + 0.5, vec3f(0.0), vec3f(1.0));
         return inside.x * inside.y * inside.z;
     }
-    return clamp((params.emit_radius - length(d)) / h + 0.5, 0.0, 1.0);
+    return clamp((shape.w - length(d)) / h + 0.5, 0.0, 1.0);
 }
 
 // Damping and fade together: each component loses `1 - keep` of itself or `fade`, whichever is
@@ -93,8 +100,8 @@ fn confinement(c: vec3i, strength: f32) -> vec3f {
     return cross(grad / len, w) * (strength * params.h);
 }
 
-// Forces: buoyancy by temperature, vorticity confinement, damping and fade, the emitter's
-// velocity. vol0 velocity, vol1 fields, vol2 curl (when `vort` > 0).
+// Forces: buoyancy by temperature, vorticity confinement, damping and fade, the emitters'
+// velocities in order. vol0 velocity, vol1 fields, vol2 curl (when `vort` > 0).
 @compute @workgroup_size(4, 4, 4)
 fn forces(@builtin(global_invocation_id) id: vec3u) {
     if (any(id >= pn.size)) {
@@ -112,7 +119,10 @@ fn forces(@builtin(global_invocation_id) id: vec3u) {
         v += confinement(vec3i(id), params.vort * mask) * params.dt;
     }
     v = damped(vec4f(v, 0.0), params.vel_keep, params.vel_fade).xyz;
-    v = mix(v, params.emit_velocity, clamp(emitter(id) * params.emit_rate, 0.0, 1.0));
+    for (var i = 0; i < params.emitters; i++) {
+        let blow = pn_data[i * 4 + 2];
+        v = mix(v, blow.xyz, clamp(emitter(i, id) * blow.w, 0.0, 1.0));
+    }
     textureStore(vol_out, id, clean(vec4f(limited(v), 0.0)));
 }
 
@@ -281,7 +291,8 @@ fn project(@builtin(global_invocation_id) id: vec3u) {
 }
 
 // Smoke, temperature and fuel carried by the new velocity; then what is hot enough burns: fuel
-// turns into heat and smoke. Then cooled, faded and emitted. vol0 fields, vol1 velocity; with
+// turns into heat and smoke. Then cooled and faded, and each emitter in order on what the one
+// before left. vol0 fields, vol1 velocity; with
 // `sharp` 1, vol2 and vol3 the fields one step forward and back from that.
 @compute @workgroup_size(4, 4, 4)
 fn advect_fields(@builtin(global_invocation_id) id: vec3u) {
@@ -314,13 +325,13 @@ fn advect_fields(@builtin(global_invocation_id) id: vec3u) {
     smoke = damped(vec4f(smoke), params.smoke_keep, params.smoke_fade).x;
     // Temperatures run from -1 to 1: the heat of burning saturates instead of running away.
     temperature = clamp(temperature * params.temp_keep, -1.0, 1.0);
-    let w = clamp(emitter(id) * params.emit_rate, 0.0, 1.0);
+    for (var i = 0; i < params.emitters; i++) {
+        let w = clamp(emitter(i, id) * pn_data[i * 4 + 2].w, 0.0, 1.0);
+        let made = pn_data[i * 4 + 3];
+        smoke = mix(smoke, made.x, w);
+        temperature = clamp(mix(temperature, made.y, w), -1.0, 1.0);
+        fuel = mix(fuel, made.z, w);
+    }
     let rate = select(0.0, burnt / params.dt, params.dt > 0.0);
-    let out = vec4f(
-        mix(smoke, params.emit_smoke, w),
-        clamp(mix(temperature, params.emit_temp, w), -1.0, 1.0),
-        mix(fuel, params.emit_fuel, w),
-        rate,
-    );
-    textureStore(vol_out, id, clean(out));
+    textureStore(vol_out, id, clean(vec4f(smoke, temperature, fuel, rate)));
 }

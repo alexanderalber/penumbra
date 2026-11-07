@@ -127,9 +127,13 @@ The families:
   holds; in mode `manual` it writes only on `table_out.write`. `overwrite` on replaces the file
   in place, for a program that keeps reading it; off, every write gets a new name with `_2`,
   `_3`, ...
-- **`vol`**: volumes, such as smoke. `vol.smoke` simulates smoke in a box: an emitter blows hot
-  smoke in, the smoke rises against `gravity`, swirls and fades. Fuel in the smoke burns once it
-  is hot enough: it heats, makes more smoke and swells, so a jet of it widens like a flame.
+- **`vol`**: volumes, such as smoke. `vol.smoke` simulates smoke in a box: emitters blow hot
+  smoke in, the smoke rises against `gravity`, swirls and fades. `vol.emitter` is one emitter;
+  wire several into the `emitter` inputs of `vol.smoke`, 64 at most, later ones acting on what
+  earlier ones left. Any table with columns x and y (see `vol.emitter`'s output) gives one
+  emitter per row, so a computed table can move or multiply them. With no emitter the box stays
+  empty. Fuel in the smoke burns once it is hot enough: it heats, makes more smoke and swells,
+  so a jet of it widens like a flame.
   `tex.raymarch` draws a volume as a picture, seen from the front through the whole box. Hot
   smoke glows with `glow`, in the colours of a palette picture on its `palette` input. Its
   `density` output shows how much smoke covers each pixel, as grey, for `tex.lookup`. Burning

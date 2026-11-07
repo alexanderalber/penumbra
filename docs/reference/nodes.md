@@ -2386,7 +2386,29 @@ Outputs: `out` (view).
 
 ## vol
 
-[vol.null](#volnull), [vol.smoke](#volsmoke)
+[vol.emitter](#volemitter), [vol.null](#volnull), [vol.smoke](#volsmoke)
+
+### vol.emitter
+
+An emitter for vol.smoke: a place in the box that blows smoke, heat and fuel in
+
+Inputs: none.
+
+Outputs:
+
+- `out` (table): One row under a row of column names: x, y, z, type, size_x, size_y, size_z, radius, vx, vy, vz, smoke, temp, fuel, correction_rate
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `position` | vec3 | `[-1.5, 0, 0]` | m | Centre of the emitter in space, in the same metres as the box of vol.smoke |
+| `type` | sphere \| box | `"sphere"` |  | Shape of the emitter; sphere: a ball of `radius`; box: a box of `size` |
+| `size` | vec3 | `[0.5, 0.5, 0.5]` | 0 to 10000 m | Size of the box emitter along x, y and z |
+| `radius` | float | `0.3` | 0.01 to 1 m (soft) | Radius of the sphere emitter; 0: off |
+| `linear_velocity` | vec3 | `[0, 0.8, 0]` | -1000 to 1000 | Speed the emitter blows at, in metres per second along x, y and z |
+| `smoke` | float | `0.5` | 0 to 2 (soft) | Density of the smoke the emitter makes |
+| `temp` | float | `2` | 0 to 5 (soft) | Temperature the emitter heats towards: hotter rises faster (`buoyancy` of vol.smoke). The smoke itself stays between -1 and 1, so above 1 it only heats up faster |
+| `fuel` | float | `1` | 0 to 5 (soft) | Fuel the emitter blows in with the smoke. Fuel hotter than `ignition_temp` of vol.smoke burns: it heats, makes smoke and swells. 0: smoke without fire |
+| `correction_rate` | float | `0.5` | 0 to 10 (soft) | How fast the emitter takes the cells inside it to its own velocity, smoke, temperature and fuel, as a share per second: 0.5 goes half of the way in a second. 60 or more sets them every frame |
 
 ### vol.null
 
@@ -2400,11 +2422,13 @@ Outputs: `out` (vol).
 
 ### vol.smoke
 
-Smoke in a box in space: an emitter blows hot smoke in, it rises, swirls and fades. tex.raymarch draws it
+Smoke in a box in space: emitters blow hot smoke in, it rises, swirls and fades. tex.raymarch draws it
 
 Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
-Inputs: none.
+Inputs:
+
+- `emitter0 .. emitter63` (table): Where the smoke comes from: vol.emitter, or any table whose first row names columns x, y and more (see vol.emitter's output). With nothing wired the box stays empty. Any number, up to 64: each one wired adds a free slot below it
 
 Outputs:
 
@@ -2415,15 +2439,6 @@ Outputs:
 | `center` | vec3 | `[0, 0, 0]` | m | Centre of the box the smoke lives in |
 | `size` | vec3 | `[4, 1.5, 1.5]` | 0.001 to 10000 m | Size of the box along x, y and z. Smoke that leaves it is gone |
 | `resolution` | int | `128` | 32 to 256 (soft) | Cells along the box's longest side; the other sides get as many as cubic cells need. Doubling it costs about eight times as much. A change starts the smoke over |
-| `emitter_position` *(Emitter)* | vec3 | `[-1.5, 0, 0]` | m | Centre of the emitter, the place that blows smoke in |
-| `emitter_type` *(Emitter)* | sphere \| box | `"sphere"` |  | Shape of the emitter; sphere: a ball of `emitter_radius`; box: a box of `emitter_size` |
-| `emitter_size` *(Emitter)* | vec3 | `[0.5, 0.5, 0.5]` | 0 to 10000 m | Size of the box emitter along x, y and z |
-| `emitter_radius` *(Emitter)* | float | `0.3` | 0.01 to 1 m (soft) | Radius of the sphere emitter; 0: off |
-| `linear_velocity` *(Emitter)* | vec3 | `[0, 0.8, 0]` | -1000 to 1000 | Speed the emitter blows at, in metres per second along x, y and z |
-| `smoke` *(Emitter)* | float | `0.5` | 0 to 2 (soft) | Density of the smoke the emitter makes |
-| `temp` *(Emitter)* | float | `2` | 0 to 5 (soft) | Temperature the emitter heats towards: hotter rises faster (`buoyancy`). The smoke itself stays between -1 and 1, so above 1 it only heats up faster |
-| `fuel` *(Emitter)* | float | `1` | 0 to 5 (soft) | Fuel the emitter blows in with the smoke. Fuel hotter than `ignition_temp` burns: it heats, makes smoke and swells. 0: smoke without fire |
-| `correction_rate` *(Emitter)* | float | `0.5` | 0 to 10 (soft) | How fast the emitter takes the cells inside it to its own velocity, smoke, temperature and fuel, as a share per second: 0.5 goes half of the way in a second. 60 or more sets them every frame |
 | `gravity` | vec3 | `[0, -1, 0]` | -1000 to 1000 | Which way is down and how strongly: hot smoke rises against it, times `buoyancy` |
 | `buoyancy` | float | `4` | 0 to 10 (soft) | How strongly temperature lifts the smoke against `gravity`, per degree |
 | `cooling_rate` | float | `1.5` | 0 to 5 (soft) | How fast the smoke cools, per second: at 1, to about a third in a second |

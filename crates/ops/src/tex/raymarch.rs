@@ -217,6 +217,7 @@ impl Operator for Raymarch {
         let input = Dispatch {
             volumes: &[Some(&medium.volume)],
             pictures: &[palette],
+            data: None,
             seconds: 0.0,
             frame: 0,
             param: &param,
@@ -224,8 +225,14 @@ impl Operator for Raymarch {
         program.run(gpu, "march", Out::Picture(&out), &input)?;
         let density = if cx.output_wanted(1) {
             let d = self.density_ring.next_storage(gpu, width, height, KIND)?;
-            let input =
-                Dispatch { volumes: &[], pictures: &[Some(&out)], seconds: 0.0, frame: 0, param: &param };
+            let input = Dispatch {
+                volumes: &[],
+                pictures: &[Some(&out)],
+                data: None,
+                seconds: 0.0,
+                frame: 0,
+                param: &param,
+            };
             program.run(gpu, "opacity", Out::Picture(&d), &input)?;
             Data::new(DataKind::Tex, d)
         } else {

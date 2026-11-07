@@ -18,6 +18,7 @@
 //! var pn_clamp: sampler;                        // linear filtering, clamped at the edges
 //! var vol_out: texture_storage_3d<rgba16float, write>;   // the target, for a volume entry point
 //! var pic_out: texture_storage_2d<rgba16float, write>;   // the target, for a picture entry point
+//! var pn_data: array<vec4f>;                    // read-only numbers ([`DataBlock`]), one zero vec4f when unbound
 //! fn pn_hash, pn_noise, pn_value_noise, pn_unpremultiply, pn_luma   // as in passes
 //! ```
 //!
@@ -62,6 +63,7 @@ struct PnTime { seconds: f32, frame: f32, _pn0: f32, _pn1: f32 }
 @group(1) @binding(6) var pn_clamp: sampler;
 @group(1) @binding(7) var vol_out: texture_storage_3d<rgba16float, write>;
 @group(1) @binding(8) var pic_out: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(9) var<storage, read> pn_data: array<vec4f>;
 "#;
 
 struct VolumeInner {
@@ -172,6 +174,75 @@ impl VolumeKey {
     }
 }
 
+/// Most `vec4f`s of a [`DataBlock`].
+pub const MAX_DATA: usize = 1 << 16;
+
+struct DataInner {
+    buffer: wgpu::Buffer,
+    capacity: usize,
+}
+
+/// Exact 32-bit numbers for a compute program, read in the shader as `pn_data`, an array of
+/// `vec4f`. Half-float pictures round a position to about a thousandth of its size, which is
+/// visible when something moves slowly against small cells. Cheap to clone; clones share the
+/// buffer.
+#[derive(Clone)]
+pub struct DataBlock(Arc<DataInner>);
+
+impl DataBlock {
+    /// A block of `capacity` `vec4f`s (at least one), all zero. `Err` above [`MAX_DATA`].
+    pub fn new(gpu: &Gpu, capacity: usize, label: &str) -> Result<Self, Error> {
+        if capacity > MAX_DATA {
+            return Err(Error::new(format!("a data block holds at most {MAX_DATA} vectors, not {capacity}")));
+        }
+        let capacity = capacity.max(1);
+        let (buffer, error) = gpu.scoped(|| {
+            gpu.device().create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: capacity as u64 * 16,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
+        if let Some(e) = error {
+            return Err(Error::new(format!("cannot create a data block of {capacity} vectors: {e}")));
+        }
+        Ok(Self(Arc::new(DataInner { buffer, capacity })))
+    }
+
+    /// Replaces the first `values.len()` vectors, for the dispatches recorded after this. `Err`
+    /// when they do not fit.
+    pub fn write(&self, gpu: &Gpu, values: &[[f32; 4]]) -> Result<(), Error> {
+        if values.len() > self.0.capacity {
+            return Err(Error::new(format!(
+                "{} vectors do not fit a data block of {}",
+                values.len(),
+                self.0.capacity
+            )));
+        }
+        let bytes: Vec<u8> = values.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
+        gpu.queue().write_buffer(&self.0.buffer, 0, &bytes);
+        Ok(())
+    }
+
+    /// Bytes on the GPU.
+    pub fn bytes(&self) -> u64 {
+        self.0.capacity as u64 * 16
+    }
+
+    fn key(&self) -> DataKey {
+        DataKey(Arc::downgrade(&self.0))
+    }
+}
+
+struct DataKey(Weak<DataInner>);
+
+impl DataKey {
+    fn is(&self, d: &DataBlock) -> bool {
+        std::ptr::eq(self.0.as_ptr(), Arc::as_ptr(&d.0))
+    }
+}
+
 /// Volumes of one size reused from step to step, as [`crate::TexRing`] does for pictures.
 #[derive(Default)]
 pub struct VolumeRing {
@@ -259,6 +330,7 @@ impl Out<'_> {
 pub struct Dispatch<'a> {
     pub volumes: &'a [Option<&'a Volume>],
     pub pictures: &'a [Option<&'a Tex>],
+    pub data: Option<&'a DataBlock>,
     pub seconds: f64,
     pub frame: i64,
     pub param: &'a dyn Fn(&str) -> Option<Value>,
@@ -460,6 +532,7 @@ pub(crate) struct Layouts {
     empty_picture: wgpu::TextureView,
     spare_volume: wgpu::TextureView,
     spare_picture: wgpu::TextureView,
+    empty_data: wgpu::Buffer,
     /// The last bind groups made, with what they bind, for reuse while all of it lives.
     groups: std::sync::Mutex<Vec<Group>>,
 }
@@ -467,6 +540,7 @@ pub(crate) struct Layouts {
 struct Group {
     volumes: [Option<VolumeKey>; VOLUME_INPUTS],
     pictures: [Option<crate::tex::TexKey>; PICTURE_INPUTS],
+    data: Option<DataKey>,
     out: OutKey,
     group: wgpu::BindGroup,
 }
@@ -494,12 +568,17 @@ impl Group {
                 _ => false,
             }
         });
+        let data = match (&self.data, input.data) {
+            (None, None) => true,
+            (Some(k), Some(d)) => k.is(d),
+            _ => false,
+        };
         let out = match (&self.out, out) {
             (OutKey::Volume(k), Out::Volume(v)) => k.is(v),
             (OutKey::Picture(k), Out::Picture(t)) => k.is(t),
             _ => false,
         };
-        volumes && pictures && out
+        volumes && pictures && data && out
     }
 
     fn alive(&self) -> bool {
@@ -508,6 +587,7 @@ impl Group {
             OutKey::Picture(k) => k.alive(),
         };
         out && self.volumes.iter().flatten().all(|k| k.0.strong_count() > 0)
+            && self.data.iter().all(|k| k.0.strong_count() > 0)
             && self.pictures.iter().flatten().all(crate::tex::TexKey::alive)
     }
 }
@@ -551,6 +631,16 @@ impl Layouts {
             },
             storage(7, d3),
             storage(8, d2),
+            wgpu::BindGroupLayoutEntry {
+                binding: 9,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
         ];
         let group1 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("compute inputs"),
@@ -595,6 +685,12 @@ impl Layouts {
             empty_picture: one("unbound picture", t2, FORMAT, sample),
             spare_volume: one("unused volume target", t3, VOLUME_FORMAT, write),
             spare_picture: one("unused picture target", t2, FORMAT, write),
+            empty_data: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("unbound data"),
+                size: 16,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            }),
             groups: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -636,11 +732,16 @@ impl Layouts {
                 wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&self.sampler) },
                 view(7, vol_out),
                 view(8, pic_out),
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: input.data.map_or(&self.empty_data, |d| &d.0.buffer).as_entire_binding(),
+                },
             ],
         });
         kept.push(Group {
             volumes: std::array::from_fn(|i| input.volumes.get(i).copied().flatten().map(Volume::key)),
             pictures: std::array::from_fn(|i| input.pictures.get(i).copied().flatten().map(Tex::key)),
+            data: input.data.map(DataBlock::key),
             out: match out {
                 Out::Volume(v) => OutKey::Volume(v.key()),
                 Out::Picture(t) => OutKey::Picture(t.key()),
@@ -746,8 +847,14 @@ impl Gpu {
         let program = self.cached_compute("volume atlas", ATLAS, &atlas_params())?;
         let cols = i64::from(atlas_columns(volume.size()));
         let param = |n: &str| (n == "cols").then_some(Value::Int(cols));
-        let input =
-            Dispatch { volumes: &[Some(volume)], pictures: &[], seconds: 0.0, frame: 0, param: &param };
+        let input = Dispatch {
+            volumes: &[Some(volume)],
+            pictures: &[],
+            data: None,
+            seconds: 0.0,
+            frame: 0,
+            param: &param,
+        };
         program.run(self, "pack", Out::Picture(atlas), &input)
     }
 
@@ -764,8 +871,14 @@ impl Gpu {
         let program = self.cached_compute("volume atlas", ATLAS, &atlas_params())?;
         let cols = i64::from(atlas_columns(size));
         let param = |n: &str| (n == "cols").then_some(Value::Int(cols));
-        let input =
-            Dispatch { volumes: &[], pictures: &[Some(atlas)], seconds: 0.0, frame: 0, param: &param };
+        let input = Dispatch {
+            volumes: &[],
+            pictures: &[Some(atlas)],
+            data: None,
+            seconds: 0.0,
+            frame: 0,
+            param: &param,
+        };
         program.run(self, "unpack", Out::Volume(&volume), &input)?;
         Ok(volume)
     }
@@ -820,9 +933,17 @@ fn slice(@builtin(global_invocation_id) id: vec3u) {
         let a = Volume::new(&gpu, size, "a").unwrap();
         let b = Volume::new(&gpu, size, "b").unwrap();
         let param = |n: &str| (n == "gain").then_some(Value::Float(0.25));
-        let none = Dispatch { volumes: &[], pictures: &[], seconds: 0.0, frame: 0, param: &param };
+        let none =
+            Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
         program.run(&gpu, "fill", Out::Volume(&a), &none).unwrap();
-        let from_a = Dispatch { volumes: &[Some(&a)], pictures: &[], seconds: 0.0, frame: 0, param: &param };
+        let from_a = Dispatch {
+            volumes: &[Some(&a)],
+            pictures: &[],
+            data: None,
+            seconds: 0.0,
+            frame: 0,
+            param: &param,
+        };
         program.run(&gpu, "double", Out::Volume(&b), &from_a).unwrap();
 
         let atlas = gpu.volume_to_atlas(&b).unwrap();
@@ -854,7 +975,14 @@ fn slice(@builtin(global_invocation_id) id: vec3u) {
         let program = Compute::compile(&gpu, "pattern", PATTERN, &params()).unwrap();
         let v = Volume::new(&gpu, [4, 4, 4], "v").unwrap();
         let param = |_: &str| None;
-        let reads_v = Dispatch { volumes: &[Some(&v)], pictures: &[], seconds: 0.0, frame: 0, param: &param };
+        let reads_v = Dispatch {
+            volumes: &[Some(&v)],
+            pictures: &[],
+            data: None,
+            seconds: 0.0,
+            frame: 0,
+            param: &param,
+        };
         // Reading and writing one volume at once.
         assert!(program.run(&gpu, "double", Out::Volume(&v), &reads_v).is_err());
         // An entry point that writes the other kind of target, or none at all.

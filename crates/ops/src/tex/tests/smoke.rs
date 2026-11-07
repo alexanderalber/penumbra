@@ -1,6 +1,7 @@
 //! `vol.smoke` drawn by `tex.raymarch` on WARP: hot smoke rises against gravity, a jet blows
 //! along its velocity, projection keeps the volume's flow free of divergence, reset, a still
-//! show, a restored state, the density output, burning, vorticity, the box emitter and the glow.
+//! show, a restored state, the density output, burning, vorticity, the box emitter, the glow and
+//! emitters from tables.
 
 use penumbra_core::Value;
 use penumbra_gpu::Pixels;
@@ -8,9 +9,23 @@ use penumbra_graph::Op;
 
 use super::{Rig, connect, create, gpu, set};
 
-/// A small box, 2 x 1 x 1 metres on a 24 x 12 x 12 grid, drawn 48 x 24.
+/// The params of `vol.emitter`, as the rig below names them, and their names on the node.
+const EMITTER_PARAMS: [(&str, &str); 9] = [
+    ("emitter_position", "position"),
+    ("emitter_type", "type"),
+    ("emitter_size", "size"),
+    ("emitter_radius", "radius"),
+    ("linear_velocity", "linear_velocity"),
+    ("smoke", "smoke"),
+    ("temp", "temp"),
+    ("fuel", "fuel"),
+    ("correction_rate", "correction_rate"),
+];
+
+/// A small box, 2 x 1 x 1 metres on a 24 x 12 x 12 grid, drawn 48 x 24. One `vol.emitter`,
+/// fed by the params `EMITTER_PARAMS` names; the rest go to `vol.smoke`.
 fn smoke_rig(params: &[(&str, Value)]) -> Rig {
-    let mut smoke: Vec<(&str, Value)> = vec![
+    let mut all: Vec<(&str, Value)> = vec![
         ("size", Value::Vec3([2.0, 1.0, 1.0])),
         ("resolution", Value::Int(24)),
         ("emitter_position", Value::Vec3([0.0, -0.3, 0.0])),
@@ -22,12 +37,44 @@ fn smoke_rig(params: &[(&str, Value)]) -> Rig {
         ("correction_rate", Value::Float(30.0)),
         ("fuel", Value::Float(0.0)),
     ];
-    smoke.extend(params.iter().cloned());
+    all.extend(params.iter().cloned());
+    let mut smoke: Vec<(&str, Value)> = Vec::new();
+    let mut emit: Vec<(&str, Value)> = Vec::new();
+    for (name, value) in all {
+        match EMITTER_PARAMS.iter().find(|(n, _)| *n == name) {
+            Some((_, on_node)) => emit.push((on_node, value)),
+            None => smoke.push((name, value)),
+        }
+    }
     let ops = [
+        create("/emit", "vol.emitter", &emit),
+        create("/smoke", "vol.smoke", &smoke),
+        create("/march", "tex.raymarch", &[("width", Value::Int(48)), ("height", Value::Int(24))]),
+        connect("/emit", "/smoke", 0),
+        connect("/smoke", "/march", 0),
+    ];
+    Rig::new(gpu().unwrap(), None, &ops)
+}
+
+/// The same box and picture with its emitters from tables (one input per table).
+fn table_rig(tables: &[String], params: &[(&str, Value)]) -> Rig {
+    let mut smoke: Vec<(&str, Value)> = vec![
+        ("size", Value::Vec3([2.0, 1.0, 1.0])),
+        ("resolution", Value::Int(24)),
+        ("iterations", Value::Int(10)),
+        ("buoyancy", Value::Float(0.0)),
+    ];
+    smoke.extend(params.iter().cloned());
+    let mut ops = vec![
         create("/smoke", "vol.smoke", &smoke),
         create("/march", "tex.raymarch", &[("width", Value::Int(48)), ("height", Value::Int(24))]),
         connect("/smoke", "/march", 0),
     ];
+    for (i, text) in tables.iter().enumerate() {
+        let path = format!("/t{i}");
+        ops.push(create(&path, "table.text", &[("text", text.as_str().into()), ("format", "csv".into())]));
+        ops.push(connect(&path, "/smoke", i as u32));
+    }
     Rig::new(gpu().unwrap(), None, &ops)
 }
 
@@ -141,7 +188,7 @@ fn reset_clears_and_a_still_show_holds_the_smoke() {
     // The show stands still: nothing new.
     rig.cook("/march");
     assert_eq!(rig.version("/smoke"), version);
-    rig.edit(&[set("/smoke.reset", true.into()), set("/smoke.smoke", Value::Float(0.0))]);
+    rig.edit(&[set("/smoke.reset", true.into()), set("/emit.smoke", Value::Float(0.0))]);
     let (sum, _) = cover(&frame(&mut rig));
     assert!(sum < 1e-3, "{sum}");
 }
@@ -350,4 +397,171 @@ fn burning_smoke_out_through_an_open_edge_keeps_going() {
     assert!(finite(&px));
     let (sum, _) = cover(&px);
     assert!(sum > 1.0, "{sum}");
+}
+
+/// Cover of the columns from `from` to `to` (0..1 of the width).
+fn band(px: &Pixels, from: f64, to: f64) -> f64 {
+    let (first, last) = ((from * f64::from(px.width)) as u32, (to * f64::from(px.width)) as u32);
+    let mut sum = 0.0;
+    for y in 0..px.height {
+        for x in first..last.min(px.width) {
+            sum += f64::from(px.get(x, y).unwrap()[3]);
+        }
+    }
+    sum
+}
+
+const HEADER: &str = "x,y,z,radius,vx,vy,vz,smoke,fuel,correction_rate";
+
+#[test]
+fn two_emitters_put_smoke_in_two_places() {
+    if gpu().is_none() {
+        return;
+    }
+    let table = format!("{HEADER}\n-0.6,-0.2,0,0.15,0,0,0,1,0,60\n0.6,-0.2,0,0.15,0,0,0,1,0,60\n");
+    let mut rig = table_rig(&[table], &[]);
+    let mut px = frame(&mut rig);
+    for _ in 0..10 {
+        px = frame(&mut rig);
+    }
+    assert!(finite(&px));
+    let (left, middle, right) = (band(&px, 0.0, 1.0 / 3.0), band(&px, 0.4, 0.6), band(&px, 2.0 / 3.0, 1.0));
+    assert!(left > 1.0 && right > 1.0, "left {left}, right {right}");
+    assert!(middle < left / 10.0, "middle {middle}, left {left}");
+    let s = rig.cooker.status(rig.id("/smoke")).unwrap();
+    assert!(s.error.is_none() && s.warning.is_none(), "{s:?}");
+}
+
+#[test]
+fn emitters_on_two_inputs_add_up() {
+    if gpu().is_none() {
+        return;
+    }
+    let one = format!("{HEADER}\n-0.6,-0.2,0,0.15,0,0,0,1,0,60\n");
+    let two = format!("{HEADER}\n0.6,-0.2,0,0.15,0,0,0,1,0,60\n");
+    let mut rig = table_rig(&[one, two], &[]);
+    let mut px = frame(&mut rig);
+    for _ in 0..10 {
+        px = frame(&mut rig);
+    }
+    let (left, right) = (band(&px, 0.0, 1.0 / 3.0), band(&px, 2.0 / 3.0, 1.0));
+    assert!(left > 1.0 && right > 1.0, "left {left}, right {right}");
+}
+
+#[test]
+fn the_later_of_two_overlapping_emitters_wins() {
+    if gpu().is_none() {
+        return;
+    }
+    let dense = "0,0,0,0.4,0,0,0,1,0,60";
+    let clear = "0,0,0,0.4,0,0,0,0,0,60";
+    let run = |rows: &str| {
+        let mut rig = table_rig(&[format!("{HEADER}\n{rows}\n")], &[]);
+        let mut px = frame(&mut rig);
+        for _ in 0..4 {
+            px = frame(&mut rig);
+        }
+        cover(&px).0
+    };
+    let cleared = run(&format!("{dense}\n{clear}"));
+    let filled = run(&format!("{clear}\n{dense}"));
+    // Inside, the later emitter sets the cells; only the soft rim of the first one shows.
+    assert!(filled > 1.0, "{filled}");
+    assert!(cleared < filled / 2.0, "{cleared} against {filled}");
+}
+
+#[test]
+fn no_emitter_stays_empty_without_complaint() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut rig = table_rig(&[], &[]);
+    for _ in 0..5 {
+        let px = frame(&mut rig);
+        assert!(finite(&px));
+        assert!(cover(&px).0 < 1e-3);
+    }
+    let s = rig.cooker.status(rig.id("/smoke")).unwrap();
+    assert!(s.error.is_none() && s.warning.is_none(), "{s:?}");
+}
+
+#[test]
+fn bad_rows_and_bad_values_are_left_out_of_the_smoke() {
+    if gpu().is_none() {
+        return;
+    }
+    let rows = [
+        "-0.6,-0.2,0,0.15,0,0,0,1,0,60",
+        "nan,0,0,0.15,0,0,0,1,0,60",
+        "0.6,inf,0,0.15,0,0,0,1,0,60",
+        "0.6,-0.2,0,not a number,0,0,0,1,0,60",
+        "0.6,0,0",
+        // Absurd but finite: far outside the box, and a huge size that may not blow anything up.
+        "1e300,-1e300,0,1e300,1e300,1e300,1e300,1e300,1e300,1e300",
+    ];
+    let mut rig = table_rig(&[format!("{HEADER}\n{}\n", rows.join("\n"))], &[]);
+    let mut px = frame(&mut rig);
+    for _ in 0..10 {
+        px = frame(&mut rig);
+        assert!(finite(&px));
+    }
+    // Only the first row stays in the picture: smoke on the left, none on the right.
+    let (left, right) = (band(&px, 0.0, 1.0 / 3.0), band(&px, 2.0 / 3.0, 1.0));
+    assert!(left > 1.0, "{left}");
+    assert!(right < left / 10.0, "right {right}, left {left}");
+}
+
+#[test]
+fn a_table_without_x_and_y_warns_and_the_smoke_goes_on() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut rig = table_rig(&["a,b\n1,2\n".to_string()], &[]);
+    let px = frame(&mut rig);
+    assert!(cover(&px).0 < 1e-3);
+    let s = rig.cooker.status(rig.id("/smoke")).unwrap();
+    assert!(s.error.is_none(), "{s:?}");
+    let warning = s.warning.clone().unwrap_or_default();
+    assert!(warning.contains("columns x and y"), "{warning}");
+}
+
+#[test]
+fn more_than_the_limit_of_emitters_are_dropped_with_a_warning() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut text = format!("{HEADER}\n");
+    for k in 0..70 {
+        text.push_str(&format!("{},0,0,0.02,0,0,0,1,0,60\n", -0.9 + f64::from(k) * 0.02));
+    }
+    let mut rig = table_rig(&[text], &[]);
+    let px = frame(&mut rig);
+    assert!(finite(&px));
+    let s = rig.cooker.status(rig.id("/smoke")).unwrap();
+    assert!(s.error.is_none(), "{s:?}");
+    let warning = s.warning.clone().unwrap_or_default();
+    assert!(warning.contains("more than 64 emitters"), "{warning}");
+}
+
+#[test]
+fn a_table_row_and_a_vol_emitter_make_the_same_smoke() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut from_node = smoke_rig(&[
+        ("emitter_position", Value::Vec3([0.2, -0.2, 0.1])),
+        ("linear_velocity", Value::Vec3([0.5, 0.25, 0.0])),
+    ]);
+    let mut from_table = table_rig(
+        &["x,y,z,radius,vx,vy,vz,smoke,fuel,correction_rate\n0.2,-0.2,0.1,0.15,0.5,0.25,0,1,0,30\n"
+            .to_string()],
+        &[("buoyancy", Value::Float(4.0))],
+    );
+    let mut a = frame(&mut from_node);
+    let mut b = frame(&mut from_table);
+    for _ in 0..10 {
+        a = frame(&mut from_node);
+        b = frame(&mut from_table);
+    }
+    assert_eq!(a.data, b.data);
 }

@@ -1,9 +1,12 @@
 //! `vol.smoke`: smoke in three dimensions, Stam's Stable Fluids on a grid of cubic cells in a
 //! box (`smoke.wgsl`). Every show frame: forces (buoyancy by temperature against `gravity`,
-//! vorticity confinement, damping, the emitter's velocity), the velocity carried along by
+//! vorticity confinement, damping, the emitters' velocities), the velocity carried along by
 //! itself, Jacobi steps on the pressure that make it free of divergence except where fuel burns
 //! (`expansion`), and smoke, temperature and fuel carried by the result, burnt, cooled, faded and
 //! emitted.
+//!
+//! The emitters come as tables on the `emitter` inputs (see [`super::emitter`]). Their numbers
+//! reach the shader exactly, in a [`DataBlock`].
 //!
 //! The parameter names follow NVIDIA Flow's where they mean the same, so a TouchDesigner setup
 //! carries over by name. Time steps follow the show clock as `tex.fluid`'s do. A new grid size
@@ -15,11 +18,14 @@ use std::sync::Arc;
 
 use penumbra_core::{Curve, Error, ParamSpec, Tick, Unit, Value};
 use penumbra_gpu::compute::{atlas_size, check_size, unique_volume_bytes};
-use penumbra_gpu::{Batch, Compute, Dispatch, Gpu, Medium, Out, Step, Tex, TexRing, Volume, VolumeRing};
+use penumbra_gpu::{
+    Batch, Compute, DataBlock, Dispatch, Gpu, Medium, Out, Step, Tex, TexRing, Volume, VolumeRing,
+};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator, StateItem,
 };
 
+use super::emitter::{self, Emitter, MAX_EMITTERS};
 use crate::on_gpu;
 use crate::tex::fluid::step;
 
@@ -40,9 +46,16 @@ const EXPANSION_SCALE: f64 = 0.075;
 const MAX_CELLS_PER_STEP: f64 = 6.0;
 
 fn desc() -> NodeDesc {
-    NodeDesc::new(KIND, "Smoke in a box in space: an emitter blows hot smoke in, it rises, swirls and fades. tex.raymarch draws it")
+    NodeDesc::new(KIND, "Smoke in a box in space: emitters blow hot smoke in, it rises, swirls and fades. tex.raymarch draws it")
         .stateful()
         .time_dependent()
+        .input_run(
+            "emitter",
+            DataKind::Table,
+            1,
+            "Where the smoke comes from: vol.emitter, or any table whose first row names columns x, y \
+             and more (see vol.emitter's output). With nothing wired the box stays empty",
+        )
         .param(ParamSpec::vec3("center", [0.0, 0.0, 0.0]).unit(Unit::Metres).doc("Centre of the box the smoke lives in"))
         .param(
             ParamSpec::vec3("size", [4.0, 1.5, 1.5])
@@ -58,79 +71,6 @@ fn desc() -> NodeDesc {
                 .doc(
                     "Cells along the box's longest side; the other sides get as many as cubic cells need. \
                      Doubling it costs about eight times as much. A change starts the smoke over",
-                ),
-        )
-        .param(
-            ParamSpec::vec3("emitter_position", [-1.5, 0.0, 0.0])
-                .unit(Unit::Metres)
-                .group("Emitter")
-                .doc("Centre of the emitter, the place that blows smoke in"),
-        )
-        .param(
-            ParamSpec::choice("emitter_type", &["sphere", "box"])
-                .group("Emitter")
-                .doc("Shape of the emitter")
-                .choice_doc("sphere", "a ball of `emitter_radius`")
-                .choice_doc("box", "a box of `emitter_size`"),
-        )
-        .param(
-            ParamSpec::vec3("emitter_size", [0.5, 0.5, 0.5])
-                .clamp(0.0, 1e4)
-                .unit(Unit::Metres)
-                .group("Emitter")
-                .doc("Size of the box emitter along x, y and z"),
-        )
-        .param(
-            ParamSpec::float("emitter_radius", 0.3)
-                .clamp(0.0, 1e4)
-                .range(0.01, 1.0)
-                .curve(Curve::Log)
-                .unit(Unit::Metres)
-                .group("Emitter")
-                .doc("Radius of the sphere emitter; 0: off"),
-        )
-        .param(
-            ParamSpec::vec3("linear_velocity", [0.0, 0.8, 0.0])
-                .clamp(-1000.0, 1000.0)
-                .group("Emitter")
-                .doc("Speed the emitter blows at, in metres per second along x, y and z"),
-        )
-        .param(
-            ParamSpec::float("smoke", 0.5)
-                .clamp(0.0, 1000.0)
-                .range(0.0, 2.0)
-                .group("Emitter")
-                .doc("Density of the smoke the emitter makes"),
-        )
-        .param(
-            ParamSpec::float("temp", 2.0)
-                .clamp(-1000.0, 1000.0)
-                .range(0.0, 5.0)
-                .group("Emitter")
-                .doc(
-                    "Temperature the emitter heats towards: hotter rises faster (`buoyancy`). The smoke \
-                     itself stays between -1 and 1, so above 1 it only heats up faster",
-                ),
-        )
-        .param(
-            ParamSpec::float("fuel", 1.0)
-                .clamp(0.0, 1000.0)
-                .range(0.0, 5.0)
-                .group("Emitter")
-                .doc(
-                    "Fuel the emitter blows in with the smoke. Fuel hotter than `ignition_temp` burns: it \
-                     heats, makes smoke and swells. 0: smoke without fire",
-                ),
-        )
-        .param(
-            ParamSpec::float("correction_rate", 0.5)
-                .clamp(0.0, 1000.0)
-                .range(0.0, 10.0)
-                .group("Emitter")
-                .doc(
-                    "How fast the emitter takes the cells inside it to its own velocity, smoke, \
-                     temperature and fuel, as a share per second: 0.5 goes half of the way in a second. \
-                     60 or more sets them every frame",
                 ),
         )
         .param(
@@ -305,17 +245,12 @@ fn program_params() -> Vec<ParamSpec> {
     let mut params: Vec<ParamSpec> = [
         "dt",
         "h",
-        "emit_radius",
-        "emit_smoke",
-        "emit_temp",
-        "emit_rate",
         "vel_keep",
         "vel_fade",
         "smoke_keep",
         "smoke_fade",
         "temp_keep",
         "warm",
-        "emit_fuel",
         "vort",
         "vort_constant",
         "vort_velocity",
@@ -334,11 +269,11 @@ fn program_params() -> Vec<ParamSpec> {
     .iter()
     .map(|n| ParamSpec::float(n, 0.0))
     .collect();
-    for n in ["box", "emit_at", "emit_velocity", "lift", "emit_half"] {
+    for n in ["box", "lift"] {
         params.push(ParamSpec::vec3(n, [0.0; 3]));
     }
     params.push(ParamSpec::int("edges", 0));
-    params.push(ParamSpec::int("emit_shape", 0));
+    params.push(ParamSpec::int("emitters", 0));
     params.push(ParamSpec::int("inflow", 0));
     params.push(ParamSpec::int("sharp", 0));
     params
@@ -388,6 +323,22 @@ fn keep_share(share: f64, dt: f64) -> f64 {
     }
 }
 
+/// The vectors of `smoke.wgsl`'s emitters, at most [`MAX_EMITTERS`], for a box with its lower
+/// corner at `corner` and a step of `dt`.
+fn emitter_vectors(emitters: &[Emitter], corner: [f64; 3], dt: f64) -> Vec<[f32; 4]> {
+    let mut out = Vec::with_capacity(emitters.len().min(MAX_EMITTERS) * 4);
+    for e in emitters.iter().take(MAX_EMITTERS) {
+        let at = [e.position[0] - corner[0], e.position[1] - corner[1], e.position[2] - corner[2]];
+        let rate = (e.correction_rate * dt).min(1.0);
+        let half = e.size.map(|s| s * 0.5);
+        out.push([at[0] as f32, at[1] as f32, at[2] as f32, if e.is_box { 1.0 } else { 0.0 }]);
+        out.push([half[0] as f32, half[1] as f32, half[2] as f32, e.radius as f32]);
+        out.push([e.velocity[0] as f32, e.velocity[1] as f32, e.velocity[2] as f32, rate as f32]);
+        out.push([e.smoke as f32, e.temp as f32, e.fuel as f32, 0.0]);
+    }
+    out
+}
+
 /// A [`Value::Vec3`] param as numbers; zeros when it is something else.
 fn vec3(cx: &CookContext<'_>, name: &str) -> [f64; 3] {
     match cx.param(name) {
@@ -415,6 +366,10 @@ struct Smoke {
     fields_atlases: TexRing,
     last: Option<Tick>,
     persist: bool,
+    /// The emitters for the shader, four vectors each.
+    emitters: Option<DataBlock>,
+    /// What `emitters` holds, to write only what changed.
+    written: Vec<[f32; 4]>,
 }
 
 impl Smoke {
@@ -440,7 +395,9 @@ impl Operator for Smoke {
         let kept = [&self.velocity, &self.fields, &self.pressure].into_iter().flatten();
         let atlases = self.atlases.iter().chain(self.restored.iter()).flat_map(|(_, a, b)| [a, b]);
         let atlases = atlases.chain(self.velocity_atlases.iter()).chain(self.fields_atlases.iter());
-        unique_volume_bytes(volumes.chain(kept)) + penumbra_gpu::unique_bytes(atlases)
+        unique_volume_bytes(volumes.chain(kept))
+            + penumbra_gpu::unique_bytes(atlases)
+            + self.emitters.as_ref().map_or(0, DataBlock::bytes)
     }
 
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
@@ -458,7 +415,10 @@ impl Operator for Smoke {
         let (cells, h) = grid(box_size, cx.int("resolution")?);
         check_size(gpu, cells)?;
         let dt = step(now, self.last, period) * cx.float("speed")?.max(0.0);
+        // Before the early return, so a bad table warns on a still show too.
+        let sources = emitter::from_inputs(cx);
         let kept = self.velocity.as_ref().is_some_and(|v| v.size() == cells);
+        // A table that changed does not count here: with no time passing, emitters do nothing.
         if dt == 0.0 && kept && self.restored.is_none() && !reset && !cx.params_changed() && !cx.first_cook()
         {
             return Ok(Cooked::Unchanged);
@@ -495,28 +455,32 @@ impl Operator for Smoke {
             let b = cx.float("buoyancy")?;
             if len.is_finite() && b.is_finite() { g.map(|x| -x * b) } else { [0.0; 3] }
         };
-        let emitter = vec3(cx, "emitter_position");
         // Positions in the shader count from the box's lower corner.
         let corner =
             [center[0] - box_size[0] * 0.5, center[1] - box_size[1] * 0.5, center[2] - box_size[2] * 0.5];
-        let emit_at = [emitter[0] - corner[0], emitter[1] - corner[1], emitter[2] - corner[2]];
-        let emit_rate = (cx.float("correction_rate")?.max(0.0) * dt).min(1.0);
+        let emit_data = emitter_vectors(&sources, corner, dt);
+        let block = match &self.emitters {
+            Some(b) => b.clone(),
+            None => {
+                let b = DataBlock::new(gpu, MAX_EMITTERS * 4, KIND)?;
+                self.emitters = Some(b.clone());
+                self.written.clear();
+                b
+            }
+        };
+        if emit_data != self.written {
+            block.write(gpu, &emit_data)?;
+            self.written = emit_data;
+        }
         let previous_pressure = self.pressure.take().filter(|p| p.size() == cells);
         let edges = i64::from(cx.text("edges")? == "walls");
-        let shape = i64::from(cx.text("emitter_type")? == "box");
-        let emit_half = vec3(cx, "emitter_size").map(|s| if s.is_finite() { s.max(0.0) * 0.5 } else { 0.0 });
         let vort = cx.float("vorticity_strength")?.max(0.0);
         let sharp = cx.text("advection")? == "sharp";
         let values: Vec<(&str, Value)> = vec![
             ("dt", Value::Float(dt)),
             ("h", Value::Float(h)),
             ("box", Value::Vec3(box_size)),
-            ("emit_at", Value::Vec3(emit_at)),
-            ("emit_radius", Value::Float(cx.float("emitter_radius")?.max(0.0))),
-            ("emit_velocity", Value::Vec3(vec3(cx, "linear_velocity"))),
-            ("emit_smoke", Value::Float(cx.float("smoke")?)),
-            ("emit_temp", Value::Float(cx.float("temp")?)),
-            ("emit_rate", Value::Float(emit_rate)),
+            ("emitters", Value::Int(sources.len().min(MAX_EMITTERS) as i64)),
             ("lift", Value::Vec3(lift)),
             ("vel_keep", Value::Float(keep_share(cx.float("velocity_damping")?, dt))),
             ("vel_fade", Value::Float(cx.float("velocity_fade")?.max(0.0) * dt)),
@@ -524,9 +488,6 @@ impl Operator for Smoke {
             ("smoke_fade", Value::Float(cx.float("smoke_fade")?.max(0.0) * dt)),
             ("temp_keep", Value::Float(keep(cx.float("cooling_rate")?, dt))),
             ("edges", Value::Int(edges)),
-            ("emit_shape", Value::Int(shape)),
-            ("emit_half", Value::Vec3(emit_half)),
-            ("emit_fuel", Value::Float(cx.float("fuel")?.max(0.0))),
             ("vort", Value::Float(vort)),
             ("vort_constant", Value::Float(cx.float("vorticity_constant")?)),
             ("vort_velocity", Value::Float(cx.float("vorticity_from_velocity")?)),
@@ -583,9 +544,10 @@ impl Operator for Smoke {
         let fields_final = with(vec![("inflow", Value::Int(1))]);
         fn dispatch<'a>(
             volumes: &'a [Option<&'a Volume>],
+            data: &'a DataBlock,
             param: &'a dyn Fn(&str) -> Option<Value>,
         ) -> Dispatch<'a> {
-            Dispatch { volumes, pictures: &[], seconds: 0.0, frame: 0, param }
+            Dispatch { volumes, pictures: &[], data: Some(data), seconds: 0.0, frame: 0, param }
         }
         let [first, second] = &pressures;
         // An even number of steps ends in the first pressure volume, an odd one in the second.
@@ -603,15 +565,16 @@ impl Operator for Smoke {
         let inputs_fields_ahead = [Some(&fields), Some(&projected)];
         let inputs_fields_back = [ahead, Some(&projected)];
         let inputs_fields = [Some(&fields), Some(&projected), ahead, behind];
-        let curling = dispatch(&inputs_curl, &plain);
-        let forces = dispatch(&inputs_forces, &plain);
-        let carry_ahead = dispatch(&inputs_ahead, &plain);
-        let divergence = dispatch(&inputs_divergence, &warmed);
-        let jacobi = [dispatch(&inputs_jacobi[0], &plain), dispatch(&inputs_jacobi[1], &plain)];
-        let project = dispatch(&inputs_project, &plain);
-        let fields_carry_ahead = dispatch(&inputs_fields_ahead, &fields_ahead);
-        let fields_carry_back = dispatch(&inputs_fields_back, &fields_back);
-        let carry = dispatch(&inputs_fields, &fields_final);
+        let curling = dispatch(&inputs_curl, &block, &plain);
+        let forces = dispatch(&inputs_forces, &block, &plain);
+        let carry_ahead = dispatch(&inputs_ahead, &block, &plain);
+        let divergence = dispatch(&inputs_divergence, &block, &warmed);
+        let jacobi =
+            [dispatch(&inputs_jacobi[0], &block, &plain), dispatch(&inputs_jacobi[1], &block, &plain)];
+        let project = dispatch(&inputs_project, &block, &plain);
+        let fields_carry_ahead = dispatch(&inputs_fields_ahead, &block, &fields_ahead);
+        let fields_carry_back = dispatch(&inputs_fields_back, &block, &fields_back);
+        let carry = dispatch(&inputs_fields, &block, &fields_final);
         let step = |entry, out, input| Step { entry, out: Out::Volume(out), input };
         let mut steps = Vec::with_capacity(iterations as usize + 10);
         if let Some(c) = &curl {

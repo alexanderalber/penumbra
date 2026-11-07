@@ -43,7 +43,9 @@ use std::time::{Duration, Instant};
 use penumbra_core::{Error, lock};
 
 pub use canvas::{Canvas, Paint};
-pub use compute::{Compute, Dispatch, Medium, Out, Step, Target, VOLUME_FORMAT, Volume, VolumeRing};
+pub use compute::{
+    Compute, DataBlock, Dispatch, Medium, Out, Step, Target, VOLUME_FORMAT, Volume, VolumeRing,
+};
 pub use deferred::{Deferral, Done};
 pub use geo::{Geo, Mat};
 pub use pass::{Batch, Pass, PassInput};
