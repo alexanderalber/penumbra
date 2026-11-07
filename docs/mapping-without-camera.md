@@ -105,6 +105,31 @@ Shape coordinates are shares of the picture, 0 to 1 from the top left. A `tex.bl
 softens its edge. `tex.shape_content` fills, pulses, chases or ripples each shape on its own
 (the shapes' `id` output into its `id` input).
 
+## A 3D model of the object: Model mapping
+
+With a 3D model of the object, you can fit the projector to the model by pointing at corners. A
+`tex.render` through the fitted camera then lays content on the object.
+
+1. Add `mapped_camera` from the add dialog's `library` tab (shelf `cameras`). Wire the model into
+   its `geo` input and its `guide` output into the `out.projector`. Set `width` and `height` to
+   the projector's resolution.
+2. Press **Open mapping** in its params.
+3. **Choose a corner** on the model with a click. Drag turns the model, right drag moves it, the
+   wheel zooms.
+4. **Move the crosshair onto the real corner**: drag or click in the projector picture. The arrow
+   keys move it by one pixel, with Shift by ten. Enter sets the point.
+5. Repeat. From six points on, the fit runs after every point. The next crosshair starts where
+   the fit expects the corner.
+6. **Check** with **Lines**: the model's lines appear on the real object. The window shows the
+   error in pixels and marks points that do not fit in red. **Move** and **Remove** in the point
+   list correct them.
+7. Wire `mapped_camera`'s `out` into your `tex.render`, and the render into the `out.projector`
+   in place of `guide`.
+
+**Discard fit** in the params starts over. Corners are the places where faces of three or more
+directions meet: a model made of plates has many, an organic mesh few or none. The `calib.points` commands do the
+same over the control channel.
+
 ## From the control channel
 
 The handles only set params, so the same works with `node.set`:

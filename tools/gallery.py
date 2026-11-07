@@ -3,12 +3,8 @@
 - assets/screenshot.png: the window with the curl-noise example, a node selected;
 - assets/arrange.png: the curl-noise example as first placed and after one arrange;
 - assets/gallery/*.jpg: the output pictures of the showcase projects, 1280 pixels wide;
-- assets/gallery/audio-meters.png: the audio analysis' meters after four seconds, fed by a
-  Python script node that plays a 124 BPM pattern (a late frame of the run, so the kick, onset
-  and beat strips are full);
 - assets/gallery/relief.jpg: the projection-onto-objects example's camera photo of the relief
-  beside the picture penumbra lights it with;
-- assets/gallery/palettes.png: the built-in palettes and colormaps.
+  beside the picture penumbra lights it with.
 
 The photos in assets/photos/ come from a real setup, not from this script.
 
@@ -48,8 +44,14 @@ SHOWCASE = [
     # 25 s: after the first drop, with the blocks, the sun and the display on.
     ("music-synthwave", EXAMPLES / "music-synthwave", "/out", 25),
     ("fluid", EXAMPLES / "fluid", "/view", 25),
-    ("feedback", EXAMPLES / "feedback", "/show", 20),
+    ("smoke", EXAMPLES / "smoke", "/out", 25),
+    # 20 s: the beat tracker has locked on and the picture is moving with it.
+    ("raymarch", EXAMPLES / "raymarch", "/out", 20),
 ]
+
+# Params set before the wait, per showcase picture: picture name, then (node, params). 2 on the
+# raymarch example's slider is its fractal look.
+SHOWCASE_SETS = {"raymarch": ("/look", {"value": 2.0})}
 
 # The window shot: project, window size in points, node in the viewer, node selected (its params
 # fill the panel), seconds of show time.
@@ -63,63 +65,6 @@ ARRANGE_LABELS = ("before: as the nodes were first placed", "after: one press of
 # The relief picture: the example, the node shot, seconds of show time, and the part of the
 # camera photo that holds the relief (left, top, right, bottom in the photo's pixels).
 RELIEF = (EXAMPLES / "projection-onto-objects", "/view", 20, (500, 0, 920, 480))
-
-# The meters animation: size, frames, frames per second, seconds before the first frame (for
-# the tempo to lock on).
-METERS_SIZE = (640, 360)
-METERS_FRAMES = 60
-METERS_FPS = 15
-METERS_WAIT = 9
-
-# A Python script node playing a 124 BPM pattern (kick on every beat, louder on the bar's first,
-# a snare on two and four, hats between, a bass note per bar), so the audio meters have a
-# steady beat to lock on without a microphone.
-AUDIO_SYNTH = r'''
-import math, random
-BPM = 124.0
-RATE = 48000
-last = None
-def cook(cx):
-    global last
-    t = cx.time
-    if t is None:
-        return
-    if last is None or t < last or t - last > 0.5:
-        last = t - 1.0 / 60.0
-    n = int((t - last) * RATE)
-    start = last
-    last = start + n / RATE
-    out = []
-    beat_len = 60.0 / BPM
-    chords = [110.0, 123.47, 98.0, 87.31]
-    for k in range(n):
-        s = start + k / RATE
-        b = s / beat_len
-        beat = int(b)
-        ph = (b - beat) * beat_len
-        bar = beat // 4
-        in_bar = beat % 4
-        v = 0.0
-        # kick on every beat, louder on the bar's first
-        amp = 0.9 if in_bar == 0 else 0.6
-        v += amp * math.exp(-ph * 18.0) * math.sin(2 * math.pi * (50.0 + 90.0 * math.exp(-ph * 30.0)) * ph)
-        # snare-ish noise on 2 and 4
-        if in_bar in (1, 3):
-            v += 0.35 * math.exp(-ph * 25.0) * (random.random() * 2 - 1)
-        # hat on the off-beat
-        ph2 = ph - beat_len / 2
-        if ph2 >= 0:
-            v += 0.12 * math.exp(-ph2 * 60.0) * (random.random() * 2 - 1)
-        # a bass tone that changes with each bar
-        f = chords[bar % 4]
-        v += 0.15 * math.sin(2 * math.pi * f * s)
-        out.append(v)
-    if not out:
-        out = [0.0]
-    cx.out_rate = RATE
-    cx.out["ch1"] = out
-'''
-
 
 def call(method: str, **params) -> dict:
     return {"method": method, "params": params}
@@ -165,8 +110,14 @@ def to_jpg(png: Path, jpg: Path) -> None:
 
 def showcase(name: str, project: Path | None, output: str, wait: float, work: Path) -> None:
     picture = work / f"{name}.png"
-    steps = [call("ui.view", path=output), {"wait": wait}, call("node.snapshot", path=output, file=picture.as_posix())]
-    run(steps, work, name, project)
+    setup = []
+    if name in SHOWCASE_SETS:
+        node, params = SHOWCASE_SETS[name]
+        setup = [call("node.set", path=node, params=params)]
+    steps = [*setup, call("ui.view", path=output), {"wait": wait}, call("node.snapshot", path=output, file=picture.as_posix())]
+    replies = run(steps, work, name, project)
+    if setup and '"ok":false' in replies.replace(" ", ""):
+        print(f"{name}: a step failed:\n{replies}")
     to_jpg(picture, OUT / f"{name}.jpg")
     print(f"{name}: assets/gallery/{name}.jpg")
 
@@ -239,29 +190,6 @@ def arrange(work: Path) -> None:
     print("arrange: assets/arrange.png")
 
 
-def meters(work: Path) -> None:
-    frames = work / "frames"
-    frames.mkdir()
-    width, height = METERS_SIZE
-    steps = [
-        call("project.new", dir=(work / "project").as_posix()),
-        call("node.create", path="/synth", kind="script.python", params={"code": AUDIO_SYNTH, "cook": "every frame"}),
-        call("node.create", path="/analysis", kind="chan.audio_analysis", params={"width": width, "height": height}),
-        call("node.connect", **{"from": "/synth", "to": "/analysis"}),
-        call("ui.view", path="/analysis", output="meters"),
-        {"wait": METERS_WAIT},
-    ]
-    for i in range(METERS_FRAMES):
-        steps.append(call("node.snapshot", path="/analysis", output="meters", file=(frames / f"{i:03}.png").as_posix()))
-        steps.append({"wait": 1 / METERS_FPS})
-    run(steps, work, "meters")
-    # The brightest of the last frames: the beat light is on and the strips are full.
-    late = [on_black(frames / f"{i:03}.png").convert("RGB") for i in range(METERS_FRAMES - 16, METERS_FRAMES)]
-    pick = max(late, key=lambda im: sum(im.convert("L").getdata()))
-    pick.save(OUT / "audio-meters.png", optimize=True)
-    print("audio-meters: assets/gallery/audio-meters.png")
-
-
 def label_font(size: int) -> ImageFont.FreeTypeFont:
     try:
         return ImageFont.truetype("segoeui.ttf", size)
@@ -304,34 +232,9 @@ def relief(work: Path) -> None:
     print("relief: assets/gallery/relief.jpg")
 
 
-def palettes(work: Path) -> None:
-    replies = run([call("palette.list")], work, "palettes")
-    line = next(line for line in replies.splitlines() if line.startswith("palette.list:"))
-    entries = json.loads(line.split(":", 1)[1])["result"]["palettes"]
-    font = label_font(22)
-    name_width, band, row, gap, columns = 130, 560, 30, 6, 2
-    rows = -(-len(entries) // columns)
-    sheet = Image.new("RGB", (columns * (name_width + band + 2 * gap) + gap, rows * (row + gap) + gap),
-                      (27, 27, 27))
-    draw = ImageDraw.Draw(sheet)
-    for i, entry in enumerate(entries):
-        x = gap + (i // rows) * (name_width + band + 2 * gap)
-        y = gap + (i % rows) * (row + gap)
-        draw.text((x, y + 2), entry["name"], fill=(200, 200, 200), font=font)
-        colours = [tuple(int(h.lstrip("#")[k:k + 2], 16) for k in (0, 2, 4)) for h in entry["colours"]]
-        strip = Image.new("RGB", (len(colours), 1))
-        strip.putdata(colours)
-        # Palettes as bands, colormaps blended.
-        method = Image.Resampling.NEAREST if entry["kind"] == "palette" else Image.Resampling.BILINEAR
-        sheet.paste(strip.resize((band, row), method), (x + name_width, y))
-    sheet.save(OUT / "palettes.png", optimize=True)
-    print("palettes: assets/gallery/palettes.png")
-
-
 def main() -> int:
     jobs = {entry[0]: (lambda work, entry=entry: showcase(*entry, work)) for entry in SHOWCASE}
-    jobs.update({"window": window, "arrange": arrange, "audio-meters": meters, "relief": relief,
-                 "palettes": palettes})
+    jobs.update({"window": window, "arrange": arrange, "relief": relief})
     wanted = sys.argv[1:] or list(jobs)
     unknown = [name for name in wanted if name not in jobs]
     if unknown:

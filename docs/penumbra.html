@@ -1399,6 +1399,25 @@ water      15
 </li>
 </ul>
 <p>Shape coordinates are shares of the picture, 0 to 1 from the top left. A <a class="ref" href="#tex.blur"><code>tex.blur</code></a> on the mask softens its edge. <a class="ref" href="#tex.shape_content"><code>tex.shape_content</code></a> fills, pulses, chases or ripples each shape on its own (the shapes' <code>id</code> output into its <code>id</code> input).</p>
+<h3 id="mapping-without-camera-a-3d-model-of-the-object-model-mapping">A 3D model of the object: Model mapping</h3>
+<p>With a 3D model of the object, you can fit the projector to the model by pointing at corners. A <a class="ref" href="#tex.render"><code>tex.render</code></a> through the fitted camera then lays content on the object.</p>
+<ol>
+<li>Add <code>mapped_camera</code> from the add dialog's <code>library</code> tab (shelf <code>cameras</code>). Wire the model into its <code>geo</code> input and its <code>guide</code> output into the <a class="ref" href="#out.projector"><code>out.projector</code></a>. Set <code>width</code> and <code>height</code> to the projector's resolution.
+</li>
+<li>Press <strong>Open mapping</strong> in its params.
+</li>
+<li><strong>Choose a corner</strong> on the model with a click. Drag turns the model, right drag moves it, the wheel zooms.
+</li>
+<li><strong>Move the crosshair onto the real corner</strong>: drag or click in the projector picture. The arrow keys move it by one pixel, with Shift by ten. Enter sets the point.
+</li>
+<li>Repeat. From six points on, the fit runs after every point. The next crosshair starts where the fit expects the corner.
+</li>
+<li><strong>Check</strong> with <strong>Lines</strong>: the model's lines appear on the real object. The window shows the error in pixels and marks points that do not fit in red. <strong>Move</strong> and <strong>Remove</strong> in the point list correct them.
+</li>
+<li>Wire <code>mapped_camera</code>'s <code>out</code> into your <a class="ref" href="#tex.render"><code>tex.render</code></a>, and the render into the <a class="ref" href="#out.projector"><code>out.projector</code></a> in place of <code>guide</code>.
+</li>
+</ol>
+<p><strong>Discard fit</strong> in the params starts over. Corners are the places where faces of three or more directions meet: a model made of plates has many, an organic mesh few or none. The <code>calib.points</code> commands do the same over the control channel.</p>
 <h3 id="mapping-without-camera-from-the-control-channel">From the control channel</h3>
 <p>The handles only set params, so the same works with <a class="ref" href="#node.set"><code>node.set</code></a>:</p>
 <p>penumbra-cli ctl node.set '{&quot;path&quot;: &quot;/map_a&quot;, &quot;params&quot;: {&quot;region&quot;: [0, 0, 0.55, 1], &quot;corner_tl&quot;: [0.02, -0.01]}}'</p>
@@ -3134,7 +3153,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>ao_strength</code></td><td>float</td><td><code>1</code></td><td>0 to 3 (soft)</td><td>How much of the hidden ambient light is taken away: 1 as estimated, 0.3 at most 30 %, above 1 darker</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-resolution">The Helpers window › Resolution</a>, <a href="#navigation">Looking around in 3D</a>, <a href="#navigation-the-viewers-modes">Looking around in 3D › The viewer's modes</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-resolution">The Helpers window › Resolution</a>, <a href="#mapping-without-camera-a-3d-model-of-the-object-model-mapping">Mapping without a camera › A 3D model of the object: Model mapping</a>, <a href="#navigation">Looking around in 3D</a>, <a href="#navigation-the-viewers-modes">Looking around in 3D › The viewer's modes</a></p>
 </div></details>
 <details class="entry node" id="tex.resolution"><summary><code class="name">tex.resolution</code><span class="sum">Scales a picture to another size, smaller to save work, say; shrinking stays smooth, without aliasing</span></summary>
 <div class="body">
@@ -5625,7 +5644,7 @@ def cook(cx):
 <tr><td><code>lift</code></td><td>float</td><td><code>1</code></td><td>0 to 4</td><td>Scales the black lift at the <code>black</code> input: 1 as measured, 0 none. Raise it where the camera underrated the black (black outside an overlap still darker than inside). projector.flatfield measures the lift</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-outputs">The Helpers window › Outputs</a>, <a href="#helpers-test-patterns">The Helpers window › Test patterns</a>, <a href="#helpers-matching-projectors">The Helpers window › Matching projectors</a>, <a href="#helpers-even-light-across-a-projector-and-black-in-overlaps">The Helpers window › Even light across a projector, and black in overlaps</a>, <a href="#mapping-without-camera-before-you-start">Mapping without a camera › Before you start</a>, <a href="#mapping-without-camera-two-projectors-side-by-side-the-soft-edge">Mapping without a camera › Two projectors side by side: the soft edge</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-1-scan-scancapture">Scanning › 1. Scan: scan.capture</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-outputs">The Helpers window › Outputs</a>, <a href="#helpers-test-patterns">The Helpers window › Test patterns</a>, <a href="#helpers-matching-projectors">The Helpers window › Matching projectors</a>, <a href="#helpers-even-light-across-a-projector-and-black-in-overlaps">The Helpers window › Even light across a projector, and black in overlaps</a>, <a href="#mapping-without-camera-before-you-start">Mapping without a camera › Before you start</a>, <a href="#mapping-without-camera-two-projectors-side-by-side-the-soft-edge">Mapping without a camera › Two projectors side by side: the soft edge</a>, <a href="#mapping-without-camera-a-3d-model-of-the-object-model-mapping">Mapping without a camera › A 3D model of the object: Model mapping</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-1-scan-scancapture">Scanning › 1. Scan: scan.capture</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="out.spout"><summary><code class="name">out.spout</code><span class="sum">Shares a picture with other programs on this machine through Spout (Windows)</span></summary>
 <div class="body">
