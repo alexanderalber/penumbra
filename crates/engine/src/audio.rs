@@ -1277,6 +1277,7 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
             track_start: sec.track_start,
             seed: sec.seed,
             after_break: false,
+            whole: false,
         })
         .collect();
     let end = s.envelopes.as_ref().map_or(0.0, |env| env.len() as f64 * env.hop_seconds());

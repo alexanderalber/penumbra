@@ -23,11 +23,11 @@ work on that CPU. The picture stands still until then. Later opens find the resu
 |---|---|
 | 0:02 to 0:15 | the song is nearly silent; sky and glider first, then the mountains, then the lamps |
 | 0:15 | first drop: every slot swaps, wireframe blocks shoot out of the floor on the beat, the sun, the HUD and the scanlines come on |
-| 0:30 to 2:22 | a change about every 16 s, each swapping one slot: palms, horse, mountains; sun, aurora, skyline; particles, lasers, glider |
-| 2:22 | the break: no bass for 26 s. The floor breaks off in gaps, the glider flies on over nothing, only the galaxy stays in the sky |
+| 0:30 to 2:22 | a change about every 16 s, each swapping one slot: palms, horse, mountains; sun, aurora, skyline; particles, lasers, glider. At 0:46, 1:18 and 1:50, new sections of the song, every slot swaps |
+| 2:22 | the break: no bass for 26 s. The floor breaks off in gaps, the lasers sweep over nothing, only the galaxy stays in the sky |
 | 2:48 | the drop: the floor rolls up into the tunnel over 4 s, with the fade's middle on the drop |
-| 2:48 to 4:54 | the tunnel: rings of equaliser bars fly past in every row; glider, lasers or particles between them |
-| 4:54 | the outro: a calm camera, lasers and equalisers under the aurora until the end |
+| 2:48 to 5:10 | the tunnel: rings of equaliser bars fly past in every row; glider, lasers or particles between them. At 3:32, 3:50, 4:06 and 4:54, new sections, every slot swaps |
+| 5:10 | the bass falls away: the outro, a calm camera, glider and equalisers under the galaxy until the end |
 
 The world moves one grid cell per beat. The glider's lane turns every two bars, on a downbeat.
 Over the last 8 bars before a new section, nebula and galaxy brighten.
@@ -98,10 +98,10 @@ beats.arrange {path: "/grid_beats", under: "/arrangement",
   dwell: 3, stage_fade: 4.0, find_break: true, split_bars: 8, stage_gap: 120}
 ```
 
-No cell of the table is edited by hand. On this song the call gives 21 rows:
+No cell of the table is edited by hand. On this song the call gives 22 rows:
 
 - `find_break` finds the break from 2:21.82 to 2:48.06.
-- `split_bars: 8` cuts the sections every 8 bars, so a slot swaps about every 16 s.
+- `split_bars: 8` cuts the sections every 8 bars, so a slot swaps about every 16 s. Where a section of the song really ends, every slot swaps.
 - `stage_gap: 120` allows the stage to change at the drop after the break. The stage stays on
   `/tunnel` to the end, since there is no second break.
 - `base: true` keeps the equalisers on in every tunnel row, under the element whose turn it is.

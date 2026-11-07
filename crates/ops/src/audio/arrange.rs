@@ -413,6 +413,7 @@ fn one_break(
         track_start: false,
         seed: begins.seed,
         after_break: false,
+        whole: false,
     });
     out.push(Part {
         start: to,
@@ -424,6 +425,7 @@ fn one_break(
         track_start: false,
         seed: goes_on.seed,
         after_break: true,
+        whole: false,
     });
     out.extend(parts.iter().skip(last + 1).copied());
     out
@@ -432,8 +434,9 @@ fn one_break(
 /// `parts` with each long section cut at every `every`-th of `bars`, counted from its start. A
 /// rest shorter than half of `every` stays with the piece before it. A break stays whole. A piece
 /// after the first keeps the section's role, but a drop's becomes main, since a drop is the moment
-/// a section begins with. Each new boundary has a `change` of [`SPLIT_CHANGE`], and each piece the
-/// mean energy `energy` gives for it. The music's blend into a section begins at the earliest half
+/// a section begins with. Each new boundary has a `change` of [`SPLIT_CHANGE`], and each piece
+/// the mean energy `energy` gives for it. Every boundary between sections is marked
+/// [`Part::whole`], so it shows more than a cut inside a section. The music's blend into a section begins at the earliest half
 /// way through the row before it, so that row still shows.
 pub fn split(parts: &[Part], bars: &[f64], every: usize, energy: &dyn Fn(f64, f64) -> f64) -> Vec<Part> {
     if every == 0 {
@@ -442,7 +445,8 @@ pub fn split(parts: &[Part], bars: &[f64], every: usize, energy: &dyn Fn(f64, f6
     let mut out = Vec::with_capacity(parts.len());
     for part in parts {
         let halfway = out.last().map_or(part.zone.0, |p: &Part| (p.start + p.end) / 2.0);
-        let part = &Part { zone: (part.zone.0.max(halfway), part.zone.1), ..*part };
+        let whole = !out.is_empty();
+        let part = &Part { zone: (part.zone.0.max(halfway), part.zone.1), whole, ..*part };
         let inside: Vec<f64> =
             bars.iter().copied().filter(|b| b.is_finite() && *b > part.start && *b < part.end).collect();
         // The cuts: the bars after `every`, 2 `every`, ... from the start, while enough stay after.
@@ -468,6 +472,7 @@ pub fn split(parts: &[Part], bars: &[f64], every: usize, energy: &dyn Fn(f64, f6
                     change: SPLIT_CHANGE,
                     track_start: false,
                     after_break: false,
+                    whole: false,
                     ..*part
                 }
             };
@@ -574,6 +579,9 @@ pub struct Part {
     pub seed: u32,
     /// It is the drop after a found break ([`with_breaks`]): the stage may change here.
     pub after_break: bool,
+    /// Every slot swaps where it begins, whatever `change` says ([`split`]). The other rules that
+    /// read `change` still go by the measured value, so such a boundary does not empty a row.
+    pub whole: bool,
 }
 
 /// A spatial layer of the stage and its interchangeable elements, in the order they come on.
@@ -1036,7 +1044,7 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
                 (stage, onward) = next_stage(stage, onward, stages);
                 switched = start;
             }
-            if big {
+            if big || part.whole {
                 for &s in &swappable {
                     if let (Some(x), Some(slot)) = (state.get_mut(s), slots.get(s)) {
                         x.swap_all(&|j| slot.takes_turns(j, stage));
@@ -1051,7 +1059,7 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
                 turn += 1;
             }
             // An element on for its dwell gives way, its slot's turn or not.
-            if !big && change >= CHANGE_SMALL && rules.dwell > 0 {
+            if !big && !part.whole && change >= CHANGE_SMALL && rules.dwell > 0 {
                 for (s, (x, slot)) in state.iter_mut().zip(slots).enumerate() {
                     let unswapped = x.on().is_some() && x.on() == before.get(s).copied().flatten();
                     if unswapped && since.get(s).is_some_and(|n| *n >= rules.dwell) {
@@ -1506,6 +1514,7 @@ mod tests {
                     track_start: false,
                     seed: i as u32,
                     after_break: false,
+                    whole: false,
                 }
             })
             .collect()
@@ -2072,6 +2081,7 @@ mod tests {
                 track_start,
                 seed: i as u32,
                 after_break: false,
+                whole: false,
             });
         }
         let r = rows(&p, std::slice::from_ref(&sky), 3);
@@ -2125,6 +2135,7 @@ mod tests {
                 track_start,
                 seed: i as u32,
                 after_break: false,
+                whole: false,
             });
         }
         let sky = Slot::new("sky", &["galaxy", "planet"]);
@@ -2270,6 +2281,7 @@ mod tests {
                 track_start,
                 seed: i as u32,
                 after_break: false,
+                whole: false,
             });
         }
         let sky = Slot::new("sky", &["galaxy", "planet", "bars"]);
@@ -2339,6 +2351,7 @@ mod tests {
                     track_start,
                     seed: i as u32,
                     after_break: false,
+                    whole: false,
                 }
             })
             .collect();
@@ -2476,6 +2489,7 @@ mod tests {
                     track_start,
                     seed: i as u32,
                     after_break: false,
+                    whole: false,
                 }
             })
             .collect();
@@ -2591,6 +2605,7 @@ mod tests {
                 track_start,
                 seed: 7,
                 after_break: false,
+                whole: false,
             });
         }
         (p, slots)
@@ -2750,6 +2765,7 @@ mod tests {
             track_start,
             seed: 1,
             after_break: false,
+            whole: false,
         }
     }
 
@@ -2822,6 +2838,8 @@ mod tests {
             ]
         );
         assert!(out[0].track_start && !out[1].track_start);
+        let whole: Vec<bool> = out.iter().map(|x| x.whole).collect();
+        assert_eq!(whole, vec![false, false, false, true, true, true]);
         assert_eq!(out[1].zone, (14.0, 16.0));
         assert_eq!(out[1].energy, 0.16);
         // A rest under half of `every` stays with the piece before it.
@@ -2856,6 +2874,39 @@ mod tests {
         assert_eq!(on(&r[2]), vec![false, true, false, true]);
         assert!(r.iter().all(|x| x.stage == 0));
         assert!(r[1].walk > r[0].walk && r[1].walk < 0.1);
+    }
+
+    #[test]
+    fn a_weak_boundary_between_sections_swaps_more_than_a_cut_inside_one() {
+        let slots =
+            vec![Slot::new("floor", &["blocks", "mountains"]), Slot::new("sky", &["galaxy", "aurora"])];
+        let p = [at(0.0, 32.0, Role::Main, 0.0, false), at(32.0, 64.0, Role::Main, 0.1, false)];
+        let cut = split(&p, &bars_to(100), 8, &|_, _| 0.8);
+        let r = rows_with(&cut, &slots, 1, Rules { dwell: 0, ..Rules::default() });
+        assert_eq!(r.len(), 4);
+        let on = |row: &Row| row.presence.iter().map(|x| *x > 0.0).collect::<Vec<bool>>();
+        // The cut inside the first section swaps the floor, the boundary after it both slots.
+        assert_eq!(on(&r[1]), vec![false, true, true, false]);
+        assert_eq!(on(&r[2]), vec![true, false, false, true]);
+    }
+
+    #[test]
+    fn a_whole_boundary_never_empties_a_row() {
+        let slots =
+            vec![Slot::new("floor", &["blocks", "mountains"]), Slot::new("sky", &["galaxy", "aurora"])];
+        for seed in 0..64 {
+            let mut p = [
+                at(0.0, 32.0, Role::Main, 0.0, false),
+                at(32.0, 64.0, Role::Main, 0.3, false),
+                at(64.0, 96.0, Role::Main, 0.3, false),
+                at(96.0, 128.0, Role::Main, 0.3, false),
+                at(128.0, 160.0, Role::Main, 0.1, false),
+            ];
+            p[4].seed = seed;
+            p[4].whole = true;
+            let r = rows_with(&p, &slots, 1, Rules::default());
+            assert!(!r[4].empty, "seed {seed}");
+        }
     }
 
     #[test]

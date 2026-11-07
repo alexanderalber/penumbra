@@ -340,3 +340,54 @@ fn the_track_counts_its_bars_and_sections() {
     let next = s.at(list[second].start + 0.01).unwrap();
     assert!(next.track_bars < 0.1 && next.track_section == 0, "{next:?}");
 }
+
+/// 40 loud bars with `dips` set to their level.
+fn lows(dips: &[(usize, f64)]) -> Vec<f64> {
+    let mut low = vec![-12.0; 40];
+    for &(bar, level) in dips {
+        low[bar] = level;
+    }
+    low
+}
+
+#[test]
+fn a_fill_begins_a_section_once_at_its_fall() {
+    let steps = level_steps(&lows(&[(20, -20.0)]), &[0, 40], &[]);
+    assert_eq!(steps, vec![LevelStep { bar: 20, rise: false, db: 8.0 }]);
+}
+
+#[test]
+fn the_bass_coming_back_after_a_break_is_a_rise() {
+    let quiet: Vec<(usize, f64)> = (10..20).map(|b| (b, -35.0)).collect();
+    // The fall into the break has a boundary already: only the return begins a section.
+    let steps = level_steps(&lows(&quiet), &[0, 10, 40], &[]);
+    assert_eq!(steps, vec![LevelStep { bar: 20, rise: true, db: 23.0 }]);
+}
+
+#[test]
+fn steps_inside_a_break_begin_no_section() {
+    let mut quiet: Vec<(usize, f64)> = (10..30).map(|b| (b, -40.0)).collect();
+    quiet.extend((15..20).map(|b| (b, -30.0)));
+    let steps = level_steps(&lows(&quiet), &[0, 10, 30, 40], &[]);
+    assert!(steps.is_empty(), "{steps:?}");
+}
+
+#[test]
+fn a_level_step_near_a_boundary_or_a_blend_or_the_end_begins_no_section() {
+    assert!(level_steps(&lows(&[(22, -20.0)]), &[0, 20, 40], &[]).is_empty());
+    assert!(level_steps(&lows(&[(22, -20.0)]), &[0, 40], &[(30, (24, 30))]).is_empty());
+    let mut low = lows(&[]);
+    low[39] = -50.0;
+    assert!(level_steps(&low, &[0, 40], &[]).is_empty());
+    low[38] = -50.0;
+    assert_eq!(level_steps(&low, &[0, 40], &[]).len(), 1);
+}
+
+#[test]
+fn hostile_levels_give_no_step_and_no_panic() {
+    assert!(level_steps(&[], &[], &[]).is_empty());
+    assert!(level_steps(&[f64::NAN; 8], &[0, 8], &[]).is_empty());
+    assert!(level_steps(&[f64::NEG_INFINITY; 8], &[0, 8], &[]).is_empty());
+    // Hardly any bass in the whole file.
+    assert!(level_steps(&[-90.0, -70.0, -90.0, -70.0, -90.0, -70.0], &[0, 6], &[]).is_empty());
+}

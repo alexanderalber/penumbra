@@ -15,6 +15,11 @@
 //!   [`BLEND_BARS`] long, whose sound moves from the section before it to the one after it is
 //!   the blend of two tracks: its other boundary is dropped too, and the blend becomes the
 //!   transition zone of the track boundary.
+//! - **Level steps:** the novelty compares the sound over many bars, so it misses a bar in which
+//!   the bass falls away or comes back. Where the low band of a bar differs from the bar before
+//!   by [`LEVEL_STEP_DB`] or more, and one of the two is at the file's loud bass level, a section
+//!   begins, unless a boundary lies within [`MERGE_BARS`]. The picture arrives on a rise and
+//!   starts to change on a fall. Steps inside a break lie below the loud level and begin nothing.
 //! - **Labels:** sections are clustered by their mean features (Ward), into [`KINDS`] kinds,
 //!   merging further while two groups are closer than [`SAME_KIND`]. The same label means a
 //!   similar sound anywhere in the file. A second, local letter tells repeats within one track
@@ -73,6 +78,17 @@ pub const ZONE_REACH: usize = 32;
 /// transition zone begins and ends.
 pub const ZONE_LOW: f64 = 0.25;
 pub const ZONE_HIGH: f64 = 0.75;
+/// The least step of a bar's low band against the bar before that begins a section, dB.
+pub const LEVEL_STEP_DB: f64 = 6.0;
+/// How far below the file's loud bass level (the upper quartile of its bars) the louder of the
+/// two bars of a step may lie, dB.
+pub const LEVEL_LOUD_DB: f64 = 3.0;
+/// A file whose loud bass level lies below this has no bass to step in, dBFS.
+pub const LEVEL_PRESENT_DB: f64 = -60.0;
+/// The size of a level step that counts as the sharpest change, dB.
+pub const LEVEL_FULL_DB: f64 = 12.0;
+/// Bars a level step needs from its own on before the file ends.
+pub const LEVEL_TAIL_BARS: usize = 2;
 /// The most bars sections are found for: six hours at 200 beats per minute in 4/4 are 18 000.
 pub const MAX_BARS: usize = 20_000;
 
@@ -108,7 +124,8 @@ pub struct Section {
     /// It begins a track.
     pub track_start: bool,
     /// The novelty at its start, 0 to 1: how sharply the sound changes there (the track novelty
-    /// where a track begins, the section novelty elsewhere).
+    /// where a track begins, elsewhere the section novelty or the size of a level step, the
+    /// larger).
     pub strength: f64,
     /// A number fixed per label (0 to 2^24 - 1, exact in an f32).
     pub seed: u32,
@@ -203,17 +220,25 @@ impl Sections {
         }
         let (starts, end) = bars;
         let features = bar_features(&starts, end, env);
-        Ok(Sections::with_blends(starts, end, &features, blend_bars))
+        let low = bar_lows(&starts, end, env);
+        Ok(Sections::with_blends(starts, end, &features, &low, blend_bars))
     }
 
     /// The sections from per-bar features ([`GROUPS`] columns each, in that order).
     #[cfg(test)]
     fn from_features(bars: Vec<f64>, end: f64, features: &[Vec<f64>]) -> Sections {
-        Sections::with_blends(bars, end, features, BLEND_BARS)
+        Sections::with_blends(bars, end, features, &[], BLEND_BARS)
     }
 
-    /// The sections from per-bar features, blends of at most `blend_bars` bars absorbed.
-    fn with_blends(bars: Vec<f64>, end: f64, features: &[Vec<f64>], blend_bars: usize) -> Sections {
+    /// The sections from per-bar features and the low band of each bar in dBFS, blends of at most
+    /// `blend_bars` bars absorbed.
+    fn with_blends(
+        bars: Vec<f64>,
+        end: f64,
+        features: &[Vec<f64>],
+        low: &[f64],
+        blend_bars: usize,
+    ) -> Sections {
         let n = bars.len();
         let similar = standardise(features, &SIMILARITY_WEIGHTS);
         let kinds = standardise(features, &KIND_WEIGHTS);
@@ -248,6 +273,11 @@ impl Sections {
                 blends.push((c, zone));
             }
         }
+        // After the blends: a step of the level is a boundary of its own, never part of a blend.
+        let steps = level_steps(low, &bounds, &blends);
+        bounds.extend(steps.iter().map(|s| s.bar));
+        bounds.sort_unstable();
+        bounds.dedup();
         let spans: Vec<(usize, usize)> = bounds
             .windows(2)
             .filter_map(|w| Some((*w.first()?, *w.get(1)?)))
@@ -259,9 +289,11 @@ impl Sections {
             .enumerate()
             .map(|(k, &(b, next))| {
                 let Some(&(prev, _)) = k.checked_sub(1).and_then(|j| spans.get(j)) else { return (b, b) };
-                match blends.iter().find(|(c, _)| *c == b) {
-                    Some(&(_, z)) => z,
-                    None => zone(&similar, prev, b, next),
+                match (blends.iter().find(|(c, _)| *c == b), steps.iter().find(|s| s.bar == b)) {
+                    (Some(&(_, z)), _) => z,
+                    (None, Some(s)) if s.rise => (b.saturating_sub(1), b),
+                    (None, Some(_)) => (b, b),
+                    (None, None) => zone(&similar, prev, b, next),
                 }
             })
             .collect();
@@ -325,7 +357,8 @@ impl Sections {
                     } else if tracks.contains(&a) {
                         coarse.get(a).copied().unwrap_or(0.0)
                     } else {
-                        fine.get(a).copied().unwrap_or(0.0)
+                        let step = steps.iter().find(|s| s.bar == a).map_or(0.0, |s| s.db / LEVEL_FULL_DB);
+                        fine.get(a).copied().unwrap_or(0.0).max(step.min(1.0))
                     },
                     seed: seed(label),
                     zone: zones.get(i).map_or((time(a), time(a)), |z| (time(z.0), time(z.1))),
@@ -554,6 +587,55 @@ fn bar_features(bars: &[f64], end: f64, env: &Envelopes) -> Vec<Vec<f64>> {
     let k = known.len().max(1) as f64;
     mean.iter_mut().for_each(|m| *m /= k);
     rows.into_iter().map(|r| r.unwrap_or_else(|| mean.clone())).collect()
+}
+
+/// Per bar, the mean level of the low band in dBFS; minus infinity for a bar without sound.
+fn bar_lows(bars: &[f64], end: f64, env: &Envelopes) -> Vec<f64> {
+    bars.iter()
+        .enumerate()
+        .map(|(i, &a)| {
+            let b = bars.get(i + 1).copied().unwrap_or(end);
+            env.energy_db(a, b).and_then(|x| x.get(1).copied()).unwrap_or(f64::NEG_INFINITY)
+        })
+        .collect()
+}
+
+/// A bar in which the level of the low band steps.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LevelStep {
+    bar: usize,
+    /// The bass comes in; otherwise it falls away.
+    rise: bool,
+    db: f64,
+}
+
+/// The bars of `low` (dBFS per bar) that begin a section by their level, in time order, each more
+/// than [`MERGE_BARS`] from `bounds`, from the blends' zones and from the one before. A fall and
+/// the rise right after it, a fill of a bar or two, give one step: the fall.
+fn level_steps(low: &[f64], bounds: &[usize], blends: &[(usize, (usize, usize))]) -> Vec<LevelStep> {
+    let n = low.len();
+    let mut sorted: Vec<f64> = low.iter().copied().filter(|x| x.is_finite()).collect();
+    sorted.sort_by(f64::total_cmp);
+    let Some(&loud) = sorted.get(sorted.len() * 3 / 4) else { return Vec::new() };
+    if loud < LEVEL_PRESENT_DB {
+        return Vec::new();
+    }
+    let mut taken: Vec<usize> = bounds.iter().copied().filter(|b| *b < n).collect();
+    let mut out = Vec::new();
+    for b in 1..(n + 1).saturating_sub(LEVEL_TAIL_BARS) {
+        let (Some(&before), Some(&after)) = (low.get(b - 1), low.get(b)) else { continue };
+        let step = after - before;
+        if step.is_nan() || step.abs() < LEVEL_STEP_DB || before.max(after) < loud - LEVEL_LOUD_DB {
+            continue;
+        }
+        let near_blend = blends.iter().any(|(_, z)| b + MERGE_BARS >= z.0 && b <= z.1 + MERGE_BARS);
+        if near_blend || taken.iter().any(|t| t.abs_diff(b) <= MERGE_BARS) {
+            continue;
+        }
+        taken.push(b);
+        out.push(LevelStep { bar: b, rise: step > 0.0, db: step.abs() });
+    }
+    out
 }
 
 /// A frame of the coarse spectrum as log10 of power.
