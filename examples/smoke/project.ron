@@ -1,0 +1,18 @@
+// penumbra project. Written by the app about a second after each change; while the app
+// runs, edits to this file are merged into the open project.
+(
+    version: 2,
+    nodes: {
+        "/about_emitters": (kind: "ui.note", params: {"height": 215, "text": "# Three emitters\nEach `vol.emitter` is one place in the box that blows smoke, heat and fuel in.\n- `left`: a ball, blowing to the right\n- `drifting`: a ball that moves, `sway` is bound to its `position` x. It holds little fuel\n- `wide`: a flat box\nEmitters stay at least 1 m from the box's lower edge. Closer, air jets in through that edge and leaves straight streaks", "width": 460}, pos: [-400.0, 370.0]),
+        "/about_try": (kind: "ui.note", params: {"height": 200, "text": "# Try on `smoke` and `march`\n- `resolution` on `smoke` (160): finer smoke, about eight times the cost for double\n- `buoyancy`: how fast it climbs\n- `vorticity_strength`: more curls\n- `fuel` on an emitter: a larger flame. A moving emitter with a lot of fuel leaves thin streaks; a higher `correction_rate` on it helps\n- `glow`, `thickness` and `color` on `march`, the keys of `colors`: the look", "width": 500}, pos: [340.0, 370.0]),
+        "/black": (kind: "tex.constant", params: {"height": 720, "keep_size": true, "width": 1280}, pos: [660.0, 180.0]),
+        "/colors": (kind: "tex.ramp", params: {"height": 1, "keep_size": true, "keys": "0 0 0 0 1\n0.25 0.12 0.03 0.40 1\n0.55 0.9 0.15 0.35 1\n0.8 1 0.6 0.15 1\n1 1 0.9 0.6 1", "width": 256}, pos: [340.0, 180.0]),
+        "/drifting": (kind: "vol.emitter", params: {"correction_rate": 2.0, "fuel": 0.8, "linear_velocity": [0.0, 1.0, 0.0], "position": [0.0, -0.95, 0.0], "smoke": 1.5, "temp": 2.5}, binds: {"position.0": "sway"}, pos: [-340.0, 140.0]),
+        "/left": (kind: "vol.emitter", params: {"fuel": 3.0, "linear_velocity": [0.8, 1.0, 0.0], "position": [-2.0, -1.0, 0.0], "radius": 0.25, "smoke": 1.5, "temp": 2.5}, pos: [-340.0, 0.0]),
+        "/march": (kind: "tex.raymarch", params: {"color": [0.04, 0.05, 0.08, 1.0], "glow": 1.4, "height": 720, "hot": 1.0, "keep_size": true, "pan": [0.0, 0.35], "thickness": 1.0, "view_height": 3.4, "width": 1280}, inputs: {"in": "smoke", "palette": "colors"}, pos: [340.0, 0.0]),
+        "/out": (kind: "tex.composite", inputs: {"in0": "black", "in1": "march"}, pos: [980.0, 60.0]),
+        "/smoke": (kind: "vol.smoke", params: {"resolution": 160, "size": [8.0, 4.5, 3.0]}, inputs: {"emitter0": "left", "emitter1": "drifting", "emitter2": "wide"}, pos: [0.0, 60.0]),
+        "/sway": (kind: "chan.lfo", params: {"amplitude": 0.9, "name": "sway", "rate": 0.05}, pos: [-660.0, 160.0]),
+        "/wide": (kind: "vol.emitter", params: {"fuel": 2.1, "linear_velocity": [-0.3, 0.8, 0.0], "position": [1.9, -1.05, 0.0], "size": [1.0, 0.25, 0.5], "smoke": 1.0, "temp": 2.5, "type": "box"}, pos: [-340.0, 280.0]),
+    },
+)

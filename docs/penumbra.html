@@ -5373,6 +5373,44 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>persist</code></td><td>bool</td><td><code>true</code></td><td></td><td>Keep the smoke in the state snapshots, so a restart carries on from it</td></tr>
 </tbody>
 </table>
+<div class="more">
+<h5 id="vol.smoke-smoke-with-several-emitters">Smoke with several emitters</h5>
+<p>Wire a <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a> into each <code>emitter</code> input, 64 emitters at most over all inputs. Inputs are applied in order, and a later emitter acts on what the earlier ones left where they overlap. The shipped example <code>smoke</code> has three, one of them moving: its <code>position</code> x is bound to a <a class="ref" href="#chan.lfo"><code>chan.lfo</code></a>.</p>
+<p>Keep an emitter at least 1 m from the open box edge behind it. Closer than that, air comes in through the edge as a straight jet and leaves straight streaks. An emitter that moves and holds a lot of <code>fuel</code> leaves thin streaks where it has been. Low <code>fuel</code> with a <code>correction_rate</code> of 2 keeps the rim clean, <code>advection: smooth</code> removes the streaks.</p>
+<h5 id="vol.smoke-emitters-from-a-table">Emitters from a table</h5>
+<p>Any table can be an emitter input, one emitter per row. Its first row names the columns. <code>x</code> and <code>y</code> are required, every other column is optional:</p>
+<table>
+<thead><tr><th>column</th><th>meaning when the column is missing</th></tr></thead>
+<tbody>
+<tr><td><code>x</code>, <code>y</code></td><td>required: the emitter's centre, in the metres of the box</td></tr>
+<tr><td><code>z</code></td><td>0</td></tr>
+<tr><td><code>type</code></td><td><code>sphere</code>; <code>box</code>; also 0 and 1</td></tr>
+<tr><td><code>size_x</code>, <code>size_y</code>, <code>size_z</code></td><td>0.5 m each, for a box</td></tr>
+<tr><td><code>radius</code></td><td>0.3 m, for a sphere</td></tr>
+<tr><td><code>vx</code>, <code>vy</code>, <code>vz</code></td><td>0, 0.8 and 0 m/s</td></tr>
+<tr><td><code>smoke</code>, <code>temp</code>, <code>fuel</code>, <code>correction_rate</code></td><td>0.5, 2, 1, 0.5</td></tr>
+</tbody>
+</table>
+<p>A row with a cell that is not a finite number is left out. A <a class="ref" href="#table.text"><code>table.text</code></a> with commas between its cells needs <code>format</code> set to <code>csv</code>. With its default, <code>lines</code>, every row is one cell.</p>
+<h5 id="vol.smoke-driving-emitters-from-a-tracker">Driving emitters from a tracker</h5>
+<p><a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a> gives <code>x</code> and <code>y</code> as shares of the picture: <code>x</code> 0 is the left edge, <code>y</code> 0 the top. Emitters want metres, so put a <a class="ref" href="#script.python"><code>script.python</code></a> between them: <code>blobs</code> into <code>table0</code>, the node's <code>table</code> output into <code>emitter0</code>, <code>cook</code> set to <code>every frame</code>.</p>
+<pre><code class="lang-python">BOX_CENTER = (0.0, 0.0)
+BOX_SIZE = (8.0, 4.5)
+
+def cook(cx):
+    cx.table.append([&quot;x&quot;, &quot;y&quot;, &quot;radius&quot;, &quot;vy&quot;, &quot;smoke&quot;, &quot;temp&quot;, &quot;fuel&quot;])
+    rows = cx.tables[0] or []
+    if len(rows) &lt; 2:
+        return
+    ix, iy = rows[0].index(&quot;x&quot;), rows[0].index(&quot;y&quot;)
+    for row in rows[1:]:
+        x = BOX_CENTER[0] + (float(row[ix]) - 0.5) * BOX_SIZE[0]
+        y = BOX_CENTER[1] + (0.5 - float(row[iy])) * BOX_SIZE[1]
+        y = max(y, BOX_CENTER[1] - BOX_SIZE[1] / 2 + 1.0)  # 1 m above the lower edge
+        cx.table.append([x, y, 0.25, 1.0, 1.5, 2.5, 2.0])
+</code></pre>
+<p>Set <code>BOX_CENTER</code> and <code>BOX_SIZE</code> to the <code>center</code> and <code>size</code> of <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a>. The formula puts the picture's edges on the box's edges along x and y.</p>
+</div>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 </div>
