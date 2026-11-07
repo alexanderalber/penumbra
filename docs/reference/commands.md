@@ -61,7 +61,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `calib.homography` | Homography from 4 or more point pairs (normalised DLT); {pairs: [[[x,y],[u,v]],...]} |
-| `calib.points.corners` | The sharp corners of a model, per part: the places a point can be set exactly. {geo (a geo.file), degrees? (how far apart in direction its faces must be, 30)}. Replies parts: [{part, corners: [[x,y,z],...]}], in world coordinates |
+| `calib.points.corners` | The sharp corners of a model, per part: the places a point can be set exactly. {geo (any geo node: moved or scaled models count as such), degrees? (how far apart in direction its faces must be, 30), edges? (also its outlines, false)}. Replies parts: [{part, corners: [[x,y,z],...], edges?: [[[x,y,z],[x,y,z]],...]}], in world coordinates |
 | `calib.points.deviation` | Expected pixel deviation of the camera's calibration on each part of the object, with the fit's quality (good, fair, weak, unusable); {path, geo (a geo.file) or groups: {name: [[x,y,z],...]}, noise?} |
 | `calib.points.list` | A view.camera's point list as stored; {path} |
 | `calib.points.predict` | Where the camera's current calibration puts model points, in pixels, and how far that may be off; {path, points: [[x,y,z],...], noise?}. Replies pixels (null behind the camera) and deviation (null without a fit of the list) |

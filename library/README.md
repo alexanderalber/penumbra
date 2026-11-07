@@ -82,6 +82,20 @@ each pixel is than around it, not the photo.
 
 - In: `photo`, `labels`. Out: `fine`, `wide`. Params: `fine_size` (3), `wide_size` (24) in pixels.
 
+## Cameras
+
+### mapped_camera
+
+![mapped_camera](mapped_camera/preview.png)
+
+A camera fitted to a projector, with no scan and no camera. Open it with Open mapping, choose
+corners on the model and move a crosshair onto the real ones. The model may be moved or scaled
+before it comes in.
+
+- In: `geo`. Out: `out` (the camera, for a `tex.render`), `guide` (crosshair, lines or coloured
+  parts, for the projector while you map). Params: those of `view.camera`, grey once there is a
+  fit; `width`, `height` of the guide.
+
 ## Faces and regions
 
 ### edges

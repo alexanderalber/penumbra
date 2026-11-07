@@ -11,13 +11,13 @@ use std::sync::Arc;
 use penumbra_calib::points::{GroupDeviation, PictureKind, Point, PointSet, Quality, Report};
 use penumbra_calib::{Camera, Options, expected_deviation};
 use penumbra_core::{Name, NodePath, ParamPath, Value};
-use penumbra_graph::Op;
-use penumbra_mesh::{Limits, Mesh, Up};
+use penumbra_gpu::geo::{Geo, transform};
+use penumbra_graph::{DataKind, Op};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, FnCommand, Registry, args};
-use crate::commands::{edit, kind_at, outcome, require, to_json};
+use crate::commands::{edit, kind_at, outcome, read_output, require, to_json};
 use crate::engine::Engine;
 
 type Result<T> = std::result::Result<T, CommandError>;
@@ -76,8 +76,9 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "calib.points.corners",
-        "The sharp corners of a model, per part: the places a point can be set exactly. {geo (a geo.file), degrees? (how far \
-         apart in direction its faces must be, 30)}. Replies parts: [{part, corners: [[x,y,z],...]}], in world coordinates",
+        "The sharp corners of a model, per part: the places a point can be set exactly. {geo (any geo node: moved or scaled models count as such), degrees? (how far \
+         apart in direction its faces must be, 30), edges? (also its outlines, false)}. Replies parts: [{part, corners: \
+         [[x,y,z],...], edges?: [[[x,y,z],[x,y,z]],...]}], in world coordinates",
         points_corners,
     );
 }
@@ -282,64 +283,52 @@ fn points_list(e: &Engine, p: &Json) -> Result<Json> {
     to_json(&point_set(e, &a.path)?)
 }
 
-/// The vertices of a `geo.file`'s model in world coordinates, as the node shows them.
-fn model_of(e: &Engine, path: &NodePath) -> Result<Mesh> {
-    let net = e.session().doc().snapshot();
-    let id = require(&net, path)?;
-    let node = net.node(id).ok_or_else(|| CommandError(format!("no node at {path}")))?;
-    if node.kind != "geo.file" {
-        return Err(CommandError(format!("{path} is a {}, not a geo.file", node.kind)));
-    }
-    let desc = kind_at(e, &net, path)?;
-    let text = |name: &str| node.param(desc, name).and_then(Value::as_str).unwrap_or_default().to_string();
-    let file = text("file");
-    if file.trim().is_empty() {
-        return Err(CommandError(format!("{path} has no file")));
-    }
-    let name = std::path::Path::new(file.trim());
-    let full = if name.is_absolute() { name.to_path_buf() } else { e.session().dir().join(name) };
-    let mut loaded = penumbra_mesh::load_file(&full, &Limits::default()).map_err(err)?;
-    let up = match text("up").as_str() {
-        "y" => Up::Y,
-        "z" => Up::Z,
-        _ => Up::of_file(&full.to_string_lossy()),
-    };
-    loaded.mesh.to_z_up(up);
-    Ok(loaded.mesh)
-}
+/// A triangle's three corners in world coordinates.
+type Triangle = [[f32; 3]; 3];
 
-/// Every part's triangles as index triples.
-fn triangles_by_part(mesh: &Mesh) -> Vec<(String, Vec<[u32; 3]>)> {
-    let mut parts: Vec<(String, Vec<[u32; 3]>)> =
-        mesh.parts.iter().map(|name| (name.clone(), Vec::new())).collect();
-    for range in &mesh.ranges {
-        let first = range.first as usize;
-        let last = first.saturating_add(range.count as usize).min(mesh.indices.len());
-        let Some(indices) = mesh.indices.get(first..last) else { continue };
-        let Some((_, tris)) = parts.get_mut(range.part as usize) else { continue };
-        tris.extend(indices.as_chunks::<3>().0.iter().copied());
-    }
-    parts
-}
-
-/// Each part's vertices, thinned to at most [`MAX_GROUP_POINTS`].
-fn groups_of(mesh: &Mesh) -> BTreeMap<String, Vec<[f64; 3]>> {
-    let mut out = BTreeMap::new();
-    for (name, tris) in triangles_by_part(mesh) {
-        let mut used: Vec<u32> = tris.iter().flatten().copied().collect();
-        used.sort_unstable();
-        used.dedup();
-        if used.is_empty() {
-            continue;
+/// Every part's triangles as the geo node delivers them, so a model moved or scaled on its way
+/// here counts as moved or scaled. Instanced copies count once, at the item's own place.
+fn parts_of(e: &Engine, path: &NodePath) -> Result<Vec<(String, Vec<Triangle>)>> {
+    let (data, _) = read_output(e, path, None, DataKind::Geo)?;
+    let geo = data.get::<Geo>().ok_or_else(|| CommandError(format!("{path} delivers no geometry")))?;
+    let mut parts: BTreeMap<u32, (String, Vec<Triangle>)> = BTreeMap::new();
+    for item in &geo.items {
+        let mesh = &item.model.mesh;
+        let place = |i: u32| {
+            let p = mesh.vertices.get(i as usize)?.position.map(f64::from);
+            Some(transform(&item.world, p).map(|v| v as f32))
+        };
+        for range in &mesh.ranges {
+            let first = range.first as usize;
+            let last = first.saturating_add(range.count as usize).min(mesh.indices.len());
+            let Some(indices) = mesh.indices.get(first..last) else { continue };
+            let name = mesh.parts.get(range.part as usize).cloned().unwrap_or_default();
+            let entry = parts.entry(item.part_offset + range.part).or_insert_with(|| (name, Vec::new()));
+            for &[a, b, c] in indices.as_chunks::<3>().0 {
+                if let (Some(a), Some(b), Some(c)) = (place(a), place(b), place(c)) {
+                    entry.1.push([a, b, c]);
+                }
+            }
         }
-        let step = used.len().div_ceil(MAX_GROUP_POINTS).max(1);
-        let points: Vec<[f64; 3]> = used
-            .iter()
-            .step_by(step)
-            .filter_map(|i| mesh.vertices.get(*i as usize))
-            .map(|v| v.position.map(f64::from))
-            .collect();
-        out.insert(name, points);
+    }
+    let parts: Vec<_> = parts.into_values().filter(|(_, t)| !t.is_empty()).collect();
+    if parts.is_empty() {
+        return Err(CommandError(format!("{path} delivers no triangles")));
+    }
+    Ok(parts)
+}
+
+/// Each part's distinct places, thinned to at most [`MAX_GROUP_POINTS`].
+fn groups_of(parts: &[(String, Vec<Triangle>)]) -> BTreeMap<String, Vec<[f64; 3]>> {
+    let mut out = BTreeMap::new();
+    for (name, tris) in parts {
+        let mut places: BTreeMap<[i64; 3], [f32; 3]> = BTreeMap::new();
+        for p in tris.iter().flatten() {
+            places.entry(place_key(*p)).or_insert(*p);
+        }
+        let step = places.len().div_ceil(MAX_GROUP_POINTS).max(1);
+        let points: Vec<[f64; 3]> = places.values().step_by(step).map(|p| p.map(f64::from)).collect();
+        out.insert(name.clone(), points);
     }
     out
 }
@@ -358,8 +347,10 @@ fn points_solve(e: &Engine, p: &Json) -> Result<Json> {
         noise: Option<f64>,
     }
     let a: A = args(p)?;
-    let set = point_set(e, &a.path)?;
-    let report: Report = set.fit().map_err(err)?;
+    let (text, calibration) = camera_texts(e, &a.path)?;
+    let set = parse_set(&text)?;
+    let previous = serde_json::from_str::<Camera>(&calibration).ok();
+    let report: Report = set.fit_from(previous.as_ref()).map_err(err)?;
     let mut reply = to_json(&report)?;
     let camera = report.solution.camera;
     if let Some(map) = reply.as_object_mut() {
@@ -372,13 +363,13 @@ fn points_solve(e: &Engine, p: &Json) -> Result<Json> {
     }
     let mut warnings = report.warnings.clone();
     if let Some(geo) = &a.geo {
-        let groups = groups_of(&model_of(e, geo)?);
+        let groups = groups_of(&parts_of(e, geo)?);
         let (devs, quality) = set.deviation(&camera, &groups, a.noise.or(Some(report.noise))).map_err(err)?;
         if quality >= Quality::Weak {
             let worst = devs.iter().max_by(|x, y| x.rms.total_cmp(&y.rms));
             if let Some(w) = worst {
                 warnings.push(format!(
-                    "The picture may be off by about {:.0} px on {}. More points, spread over the object and its plates, make it steadier.",
+                    "The picture may be off by about {:.0} px on {}. More points, spread over the object and its depth, make it steadier.",
                     w.rms, w.group
                 ));
             }
@@ -448,7 +439,7 @@ fn points_deviation(e: &Engine, p: &Json) -> Result<Json> {
     }
     let a: A = args(p)?;
     let groups = match (a.geo, a.groups) {
-        (Some(geo), None) => groups_of(&model_of(e, &geo)?),
+        (Some(geo), None) => groups_of(&parts_of(e, &geo)?),
         (None, Some(groups)) => groups,
         _ => return Err("give either `geo` or `groups`".into()),
     };
@@ -474,25 +465,71 @@ fn face_direction(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> Option<[f64; 3]> {
     (len > 1e-14).then(|| [n[0] / len, n[1] / len, n[2] / len])
 }
 
+/// Vertices at one place share a key, as files often repeat them per face.
+fn place_key(p: [f32; 3]) -> [i64; 3] {
+    p.map(|v| (f64::from(v) * 1e5).round() as i64)
+}
+
+/// The lines that draw a part: edges with a face on one side only, and edges between faces more
+/// than `degrees` apart in direction. The diagonals of flat faces and the steps of a curve drop out.
+fn edges_of(tris: &[Triangle], degrees: f64) -> Vec<[[f32; 3]; 2]> {
+    let same = degrees.to_radians().cos();
+    type Found = ([[f32; 3]; 2], Vec<[f64; 3]>);
+    let mut found: HashMap<([i64; 3], [i64; 3]), Found> = HashMap::new();
+    for &[a, b, c] in tris {
+        let Some(n) = face_direction(a, b, c) else { continue };
+        for (p, q) in [(a, b), (b, c), (c, a)] {
+            let (kp, kq) = (place_key(p), place_key(q));
+            if kp == kq {
+                continue;
+            }
+            let key = if kp < kq { (kp, kq) } else { (kq, kp) };
+            found.entry(key).or_insert(([p, q], Vec::new())).1.push(n);
+        }
+    }
+    let dot = |a: &[f64; 3], b: &[f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    found
+        .into_values()
+        .filter(|(_, normals)| match normals.as_slice() {
+            [] => false,
+            [_] => true,
+            [first, rest @ ..] => rest.iter().any(|n| dot(first, n) < same),
+        })
+        .map(|(edge, _)| edge)
+        .collect()
+}
+
+/// One part of a model, as a window draws it and picks on it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModelPart {
+    pub name: String,
+    /// The places a point can be set exactly, in world coordinates.
+    pub corners: Vec<[f64; 3]>,
+    /// The lines that draw the part, in world coordinates.
+    pub edges: Vec<[[f32; 3]; 2]>,
+}
+
+/// The parts of a geo node's model with their corners and outlines.
+pub fn model_parts(e: &Engine, geo: &NodePath) -> Result<Vec<ModelPart>> {
+    Ok(parts_of(e, geo)?
+        .iter()
+        .map(|(name, tris)| ModelPart {
+            name: name.clone(),
+            corners: corners_of(tris, CORNER_DEGREES),
+            edges: edges_of(tris, CORNER_DEGREES),
+        })
+        .collect())
+}
+
 /// The places on a part where faces of three or more directions meet: true 3D corners. A curve cut
 /// into short flat steps has only two directions at each place, so it yields none.
-fn corners_of(mesh: &Mesh, tris: &[[u32; 3]], degrees: f64) -> Vec<[f64; 3]> {
+fn corners_of(tris: &[Triangle], degrees: f64) -> Vec<[f64; 3]> {
     let same = degrees.to_radians().cos();
-    // Vertices at one place share a key, as files often repeat them per face.
-    let key = |p: [f32; 3]| p.map(|v| (f64::from(v) * 1e5).round() as i64);
     let mut faces: HashMap<[i64; 3], Place> = HashMap::new();
-    for t in tris {
-        let Some([a, b, c]) = t
-            .iter()
-            .map(|i| mesh.vertices.get(*i as usize).map(|v| v.position))
-            .collect::<Option<Vec<_>>>()
-            .and_then(|v| <[[f32; 3]; 3]>::try_from(v).ok())
-        else {
-            continue;
-        };
+    for &[a, b, c] in tris {
         let Some(n) = face_direction(a, b, c) else { continue };
         for p in [a, b, c] {
-            faces.entry(key(p)).or_insert((p, Vec::new())).1.push(n);
+            faces.entry(place_key(p)).or_insert((p, Vec::new())).1.push(n);
         }
     }
     let mut out: Vec<[f64; 3]> = faces
@@ -519,16 +556,25 @@ fn points_corners(e: &Engine, p: &Json) -> Result<Json> {
     struct A {
         geo: NodePath,
         degrees: Option<f64>,
+        #[serde(default)]
+        edges: bool,
     }
     let a: A = args(p)?;
     let degrees = a.degrees.unwrap_or(CORNER_DEGREES);
     if !(1.0..=120.0).contains(&degrees) {
         return Err("`degrees` is 1 to 120".into());
     }
-    let mesh = model_of(e, &a.geo)?;
-    let parts: Vec<Json> = triangles_by_part(&mesh)
+    let parts: Vec<Json> = parts_of(e, &a.geo)?
         .iter()
-        .map(|(name, tris)| json!({"part": name, "corners": corners_of(&mesh, tris, degrees)}))
+        .map(|(name, tris)| {
+            let mut part = json!({"part": name, "corners": corners_of(tris, degrees)});
+            if a.edges
+                && let Some(map) = part.as_object_mut()
+            {
+                map.insert("edges".into(), json!(edges_of(tris, degrees)));
+            }
+            part
+        })
         .collect();
     Ok(json!({"parts": parts}))
 }
@@ -552,6 +598,9 @@ mod tests {
             let types = Arc::new(penumbra_ops::builtin_types().unwrap());
             let session = Arc::new(Session::open(dir.path(), types, &Content::default()).unwrap());
             let engine = Engine::start(session).unwrap();
+            // Geometry is cooked, and cooking it needs a device.
+            let gpu = penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software).unwrap();
+            engine.attach_gpu(gpu).unwrap();
             let registry = crate::engine_registry(&engine);
             Self { registry, engine, dir }
         }
@@ -601,6 +650,24 @@ mod tests {
         let mut intrinsics = penumbra_calib::Intrinsics::from_throw_ratio([1920, 1080], 1.4);
         intrinsics.principal = [960.0, 1000.0];
         Camera { intrinsics, pose }
+    }
+
+    #[test]
+    fn a_model_moved_on_its_way_has_its_corners_where_it_was_moved() {
+        let f = Fixture::new("moved");
+        f.call(
+            "node.create",
+            json!({"path": "/box", "kind": "geo.primitive", "params": {"size": [2, 2, 2]}}),
+        );
+        f.call(
+            "node.create",
+            json!({"path": "/up", "kind": "geo.transform", "params": {"translate": [0, 0, 5]}}),
+        );
+        f.call("node.connect", json!({"from": "/box", "to": "/up"}));
+        let parts = f.call("calib.points.corners", json!({"geo": "/up"}));
+        let corners = parts["parts"][0]["corners"].as_array().unwrap();
+        assert_eq!(corners.len(), 8, "{parts}");
+        assert!(corners.iter().all(|c| (4.0..=6.0).contains(&c[2].as_f64().unwrap())), "{parts}");
     }
 
     #[test]

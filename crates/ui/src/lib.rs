@@ -25,6 +25,7 @@ pub mod layout;
 mod mapping;
 pub mod memory;
 pub mod meters;
+mod model_map;
 pub mod navigate;
 mod node_controls;
 mod overview;
@@ -61,6 +62,9 @@ pub enum Action {
         label: String,
         group: Option<GroupId>,
     },
+    /// Set param values outside the history: what only shows the state of a tool, which undo must
+    /// neither step through nor bring back.
+    SetLive(Vec<Op>),
     Undo,
     Redo,
     TakeOver,
@@ -73,6 +77,8 @@ pub enum Action {
 
     /// Open the Helpers window.
     OpenHelpers,
+    /// Open the Model mapping window on this mapped camera.
+    OpenModelMap(NodeId),
     /// Show a message in the status bar.
     Message(String),
     /// An `audio.file` jumps to `seconds` into its file (`audio.seek`).

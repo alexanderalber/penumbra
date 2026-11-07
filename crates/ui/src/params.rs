@@ -259,6 +259,9 @@ impl ParamPanel {
         if node.kind == penumbra_ops::tex::scan::SCAN {
             scan_row(ui, input, node, auto, actions);
         }
+        if crate::model_map::is_mapped(input.net, node.id) {
+            crate::model_map::params_row(ui, input.net, input.types, node.id, input.can_edit, auto, actions);
+        }
         if node.kind == penumbra_ops::tex::shapes::SHAPES {
             let from = self.buffers.entry(format!("{path}#trace")).or_default();
             trace_row(ui, input, node, from, auto, actions);
@@ -343,6 +346,14 @@ impl ParamPanel {
                     Some((inner.clone(), spec))
                 });
                 match (found, target) {
+                    (Some((inner, spec)), _)
+                        if crate::model_map::greyed(input.net, input.types, node.id, x.name.as_str()) =>
+                    {
+                        ui.add_enabled(false, egui::Label::new(x.name.to_string()));
+                        let value = input.types.desc(&inner.kind).and_then(|d| inner.param(d, &spec.name));
+                        ui.add_enabled(false, egui::Label::new(crate::model_map::value_text(value)));
+                        ui.end_row();
+                    }
                     (Some((inner, spec)), _) => {
                         self.label = Some(x.name.to_string());
                         self.row(ui, input, &inner, &spec, auto, actions);

@@ -2,7 +2,7 @@
 //! point looks wrong, how far the picture may be off on each part of the object, and how well a
 //! camera's place is known.
 //!
-//! The thresholds come from simulating a thin object of six plates, 535 mm long, with click noise
+//! The thresholds come from simulating a thin object of six layers, 535 mm long, with click noise
 //! of 1 to 3 pixels, a 1080p picture about 1 m wide, and 6 to 40 points.
 //!
 //! - The expected deviation matches the real error to about a factor of 1 while it stays below
@@ -17,7 +17,7 @@ use penumbra_core::Error;
 use serde::{Deserialize, Serialize};
 
 use crate::camera::{Camera, Intrinsics, Pose};
-use crate::solve::{Options, Solution, calibrate, expected_deviation, leave_one_out};
+use crate::solve::{Options, Solution, calibrate, expected_deviation, leave_one_out, on_one_plane};
 
 /// A world point and the picture point it belongs to.
 type Pair = ([f64; 3], [f64; 2]);
@@ -77,6 +77,11 @@ pub struct PointSet {
     #[serde(default)]
     pub points: Vec<Point>,
 }
+
+/// Focal length assumed, in picture widths, when points on one plane seen head on cannot tell it:
+/// a long-throw projector, about 2:1. The fit starts here and stays near it only if the points
+/// leave it no reason to move.
+const FLAT_FOCAL_WIDTHS: f64 = 2.0;
 
 /// Noise of a click the warnings assume at least, per axis in pixels. With few points the
 /// residuals can read far less by luck, and the warning would stay silent.
@@ -195,10 +200,35 @@ impl PointSet {
         self.points.iter().filter(|p| !p.off).map(|p| ((p.world, p.picture), p.id)).unzip()
     }
 
-    fn options_and_initial(&self) -> Result<(Options, Option<Camera>), Error> {
+    /// `previous`: a camera to start from besides the fit's own starts, so a small change of the
+    /// points cannot lose a fit that held.
+    fn options_and_initial(&self, previous: Option<&Camera>) -> Result<(Options, Option<Camera>), Error> {
         let [w, h] = self.size.map(f64::from);
+        // Points on one plane leave the lens shift open: the lens is taken as centred, which
+        // decides nothing on that plane and is a guess only for what lies off it.
+        let flat = on_one_plane(&self.active().0);
+        let base = Options { fix_principal_point: self.options.fix_principal_point || flat, ..self.options };
         match self.focal {
-            None => Ok((self.options, None)),
+            None => {
+                let usable = previous.filter(|c| c.intrinsics.size == self.size).copied().map(|mut c| {
+                    // A fixed principal point keeps the start's: a lens shift found while the
+                    // points had depth is no longer backed by anything.
+                    if flat && !self.options.fix_principal_point {
+                        c.intrinsics.principal = [w / 2.0, h / 2.0];
+                    }
+                    c
+                });
+                let guess = flat.then(|| {
+                    let lens = Intrinsics {
+                        size: self.size,
+                        focal: [w * FLAT_FOCAL_WIDTHS; 2],
+                        principal: [w / 2.0, h / 2.0],
+                        distortion: [0.0; 2],
+                    };
+                    Camera { intrinsics: lens, pose: Pose::default() }
+                });
+                Ok((base, usable.or(guess)))
+            }
             Some(f) if f.is_finite() && f > 0.0 => {
                 let lens = Intrinsics {
                     size: self.size,
@@ -206,7 +236,7 @@ impl PointSet {
                     principal: [w / 2.0, h / 2.0],
                     distortion: [0.0; 2],
                 };
-                let options = Options { fix_focal: true, ..self.options };
+                let options = Options { fix_focal: true, ..base };
                 Ok((options, Some(Camera { intrinsics: lens, pose: Pose::default() })))
             }
             Some(_) => Err(Error::new("a known focal length must be a positive number")),
@@ -215,9 +245,25 @@ impl PointSet {
 
     /// Fits the camera to the points and judges the result.
     pub fn fit(&self) -> Result<Report, Error> {
+        self.fit_from(None)
+    }
+
+    /// As [`PointSet::fit`], also starting from the camera of an earlier fit.
+    pub fn fit_from(&self, previous: Option<&Camera>) -> Result<Report, Error> {
         let (pairs, ids) = self.active();
-        let (options, initial) = self.options_and_initial()?;
-        let solution = calibrate(&pairs, self.size, initial.as_ref(), &options)?;
+        let (mut options, initial) = self.options_and_initial(previous)?;
+        let mut held_focal = false;
+        let solution = match calibrate(&pairs, self.size, initial.as_ref(), &options) {
+            Ok(solution) => solution,
+            // A plane seen head on looks the same from near with a wide lens and from far with a
+            // long one. On the plane either answer draws the same picture, so one is held.
+            Err(_) if initial.is_some() && !options.fix_focal && on_one_plane(&pairs) => {
+                options.fix_focal = true;
+                held_focal = true;
+                calibrate(&pairs, self.size, initial.as_ref(), &options)?
+            }
+            Err(e) => return Err(e),
+        };
         let camera = solution.camera;
         let spread = solution.spread;
         let noise = spread.map_or(MIN_CLICK_NOISE, |s| s.sigma.max(MIN_CLICK_NOISE));
@@ -248,9 +294,20 @@ impl PointSet {
         if !solution.converged {
             warnings.push("The fit stopped at its iteration limit before it settled.".to_string());
         }
+        if held_focal {
+            warnings.push(
+                "The plane is seen almost head on, so its distance cannot be told. The focal length is held."
+                    .to_string(),
+            );
+        }
+        if !self.options.fix_principal_point && on_one_plane(&pairs) {
+            warnings.push(
+                "All points lie on one plane, so the lens is taken as centred. The picture fits this plane. Parts at another depth may be off until points there are added.".to_string(),
+            );
+        }
         if pairs.len() < WEAK_BELOW_POINTS {
             warnings.push(format!(
-                "{} points: the picture can still be far off away from them. 8 or more on at least 2 plates are safer.",
+                "{} points: the picture can still be far off away from them. 8 or more, spread over the depth of the object, are safer.",
                 pairs.len()
             ));
         }
@@ -285,7 +342,14 @@ impl PointSet {
         noise: Option<f64>,
     ) -> Result<(Vec<GroupDeviation>, Quality), Error> {
         let (pairs, _) = self.active();
-        let (options, _) = self.options_and_initial()?;
+        let (mut options, _) = self.options_and_initial(None)?;
+        // A plane seen head on leaves the focal length open, and the fit held it: so does this.
+        if !options.fix_focal
+            && on_one_plane(&pairs)
+            && expected_deviation(&pairs, camera, &options, Some(MIN_CLICK_NOISE), &[]).is_err()
+        {
+            options.fix_focal = true;
+        }
         let noise = match noise {
             Some(n) => n,
             None => {
@@ -346,7 +410,7 @@ fn pose_report(s: &Solution, pairs: &[Pair]) -> PoseReport {
 mod tests {
     use super::*;
 
-    /// A thin object: corners of two plates 30 mm apart, 500 x 300 mm, seen from the side.
+    /// A thin object: corners of two layers 30 mm apart, 500 x 300 mm, seen from the side.
     fn truth(kind: PictureKind) -> Camera {
         let pose = Pose::look_at([0.9, -1.6, 0.1], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]).unwrap();
         let mut intrinsics = Intrinsics::from_throw_ratio([1920, 1080], 1.4);
@@ -384,11 +448,62 @@ mod tests {
                 id: s.next_id(),
                 world: w,
                 picture: [q[0] + d[0], q[1] + d[1]],
-                group: Some(format!("plate{}", i / 6)),
+                group: Some(format!("part{}", i / 6)),
                 off: false,
             });
         }
         s
+    }
+
+    #[test]
+    fn points_on_one_plane_fit_with_a_centred_lens_and_say_so() {
+        let cam = truth(PictureKind::Picture);
+        let mut s = PointSet::new([1920, 1080], PictureKind::Projector);
+        for (x, z) in
+            [(-0.1, -0.2), (0.1, -0.2), (0.1, 0.2), (-0.1, 0.2), (0.0, 0.05), (0.06, -0.1), (-0.05, 0.12)]
+        {
+            let world = [x, 0.0, z];
+            let picture = cam.project(world).unwrap();
+            s.points.push(Point { id: s.next_id(), world, picture, group: None, off: false });
+        }
+        let r = s.fit().unwrap();
+        assert!(r.solution.rms < 1.0, "{}", r.solution.rms);
+        assert!(r.warnings.iter().any(|w| w.contains("one plane")), "{:?}", r.warnings);
+        assert!(!s.options.fix_principal_point, "the list keeps its own options");
+    }
+
+    #[test]
+    fn a_plane_seen_head_on_still_fits() {
+        let mut s = PointSet::new([1920, 1080], PictureKind::Projector);
+        for (x, z) in
+            [(-0.1, -0.2), (0.1, -0.2), (0.1, 0.2), (-0.1, 0.2), (0.0, 0.05), (0.06, -0.1), (-0.05, 0.12)]
+        {
+            let world = [x, 0.0, z];
+            let picture = [960.0 + 1900.0 * x, 540.0 - 1900.0 * z];
+            s.points.push(Point { id: s.next_id(), world, picture, group: None, off: false });
+        }
+        let r = s.fit().unwrap();
+        assert!(r.solution.rms < 1.0, "{}", r.solution.rms);
+        let groups = BTreeMap::from([("part".to_string(), vec![[0.1, 0.0, 0.2], [-0.1, 0.0, -0.2]])]);
+        let (deviation, _) = s.deviation(&r.solution.camera, &groups, Some(r.noise)).unwrap();
+        assert!(deviation[0].max.is_finite() && deviation[0].max > 0.0, "{deviation:?}");
+    }
+
+    #[test]
+    fn points_on_one_plane_drop_the_lens_shift_of_an_earlier_fit() {
+        let cam = truth(PictureKind::Picture);
+        let mut s = PointSet::new([1920, 1080], PictureKind::Projector);
+        for (x, z) in
+            [(-0.1, -0.2), (0.1, -0.2), (0.1, 0.2), (-0.1, 0.2), (0.0, 0.05), (0.06, -0.1), (-0.05, 0.12)]
+        {
+            let world = [x, 0.0, z];
+            let picture = cam.project(world).unwrap();
+            s.points.push(Point { id: s.next_id(), world, picture, group: None, off: false });
+        }
+        let mut earlier = cam;
+        earlier.intrinsics.principal = [800.0, 1040.0];
+        let r = s.fit_from(Some(&earlier)).unwrap();
+        assert_eq!(r.solution.camera.intrinsics.principal, [960.0, 540.0]);
     }
 
     #[test]

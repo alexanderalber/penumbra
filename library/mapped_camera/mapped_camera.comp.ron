@@ -1,0 +1,18 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/mapped_camera": (kind: "comp.base", params: {"about": "A camera fitted to a projector: choose corners on the model and move a crosshair onto the real ones.", "expose": "position = camera.position\ntarget = camera.target\nprojection = camera.projection\nfov = camera.fov\nsize = camera.size\nroll = camera.roll\nshift = camera.shift\nnear = camera.near\nfar = camera.far\nwidth = render.width\nheight = render.height", "shelf": "cameras"}, pos: [0.0, 0.0]),
+        "/mapped_camera/assign": (kind: "geo.assign_material", inputs: {"in": "geo", "mat": "model_wire"}, pos: [0.0, 332.0]),
+        "/mapped_camera/camera": (kind: "view.camera", pos: [0.0, 498.0]),
+        "/mapped_camera/crosshair": (kind: "tex.shapes", params: {"keep_size": true}, pos: [0.0, 996.0]),
+        "/mapped_camera/dim": (kind: "tex.level", inputs: {"in": "render"}, pos: [0.0, 830.0]),
+        "/mapped_camera/geo": (kind: "geo.in", pos: [0.0, 0.0]),
+        "/mapped_camera/guide": (kind: "tex.out", inputs: {"in": "guide_mix"}, pos: [0.0, 1494.0]),
+        "/mapped_camera/guide_mix": (kind: "tex.composite", params: {"op": "add"}, inputs: {"in0": "dim", "in1": "crosshair"}, pos: [0.0, 1162.0]),
+        "/mapped_camera/model_wire": (kind: "mat.wireframe", params: {"color": [1.0, 1.0, 1.0, 0.0]}, pos: [0.0, 166.0]),
+        "/mapped_camera/out": (kind: "view.out", inputs: {"in": "camera"}, pos: [0.0, 1328.0]),
+        "/mapped_camera/render": (kind: "tex.render", params: {"keep_size": true}, inputs: {"camera": "camera", "geo": "assign"}, pos: [0.0, 664.0]),
+    },
+)

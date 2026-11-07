@@ -109,6 +109,13 @@ pub struct Solution {
     pub spread: Option<Spread>,
 }
 
+/// Whether the world points of `pairs` lie on one plane, where a fit cannot find the principal point.
+pub fn on_one_plane(pairs: &[([f64; 3], [f64; 2])]) -> bool {
+    let Ok(frame) = Frame::of(pairs) else { return false };
+    let pts: Vec<(Vector3<f64>, [f64; 2])> = pairs.iter().map(|(w, q)| (frame.to_local(w), *q)).collect();
+    Shape::of(&pts).is_ok_and(|shape| shape.thickness < PLANAR)
+}
+
 /// Calibrates a projector (or camera) whose picture is `size` pixels from pairs of a world
 /// point and the picture point it appears at (pixels, origin at the picture's top left corner).
 ///
@@ -138,7 +145,7 @@ pub fn calibrate(
     let distortion = initial.map_or([0.0; 2], |c| c.intrinsics.distortion);
     if shape.thickness < PLANAR && !options.fix_principal_point {
         return Err(Error::new(
-            "points on one plane cannot tell the principal point: fix the principal point, or add points off the plane",
+            "All points lie on one plane, so the fit cannot find the lens shift. Add points at another depth, as far from this plane as the object allows, or fix the principal point.",
         ));
     }
 

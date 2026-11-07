@@ -123,6 +123,7 @@ pub struct PenumbraApp {
     /// Nudges since the window was last quiet for [`HEAL_WINDOW`], and when the last one began.
     heals: (u32, Option<Instant>),
     helpers: crate::helpers::Helpers,
+    model_map: crate::model_map::ModelMap,
     /// The About window, opened from the project menu.
     about: crate::about::About,
     /// The window's place on the desktop as last told to the outputs.
@@ -236,6 +237,7 @@ impl PenumbraApp {
             resized: None,
             heals: (0, None),
             helpers: crate::helpers::Helpers::default(),
+            model_map: crate::model_map::ModelMap::default(),
             about: crate::about::About::default(),
             editor_rect: None,
             place,
@@ -344,6 +346,7 @@ impl PenumbraApp {
                         Err(e) => Err(e),
                     }
                 }
+                Action::SetLive(ops) => session.edit_live(&ops, now).map(|_| ()),
                 Action::Undo => self.undo(now),
                 Action::Redo => self.redo(now),
                 Action::TakeOver => {
@@ -372,6 +375,10 @@ impl PenumbraApp {
                 }),
                 Action::OpenHelpers => {
                     self.helpers.open();
+                    Ok(())
+                }
+                Action::OpenModelMap(node) => {
+                    self.model_map.open_on(node);
                     Ok(())
                 }
 
@@ -1209,6 +1216,7 @@ impl PenumbraApp {
         if self.library.1.is_none_or(|t| now.saturating_duration_since(t) > Duration::from_secs(3)) {
             self.library = (crate::components::library_names(&self.engine), Some(now));
         }
+        self.model_map.take_tab(ui.ctx());
         let background = theme::editor_bg(tint);
         let (thumbnails, passive) = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -1264,6 +1272,18 @@ impl PenumbraApp {
             can_edit,
         };
         self.helpers.show(&ctx, &helpers, &mut self.auto, &mut actions);
+        {
+            let doc = session.doc();
+            let new_group = || doc.new_group();
+            let input = crate::model_map::Input {
+                net: &net,
+                engine: &self.engine,
+                status: &view.status,
+                can_edit,
+                new_group: &new_group,
+            };
+            self.model_map.show(&ctx, &input, &mut self.auto, &mut actions);
+        }
         self.viewer_window(&ctx, &net, &view, can_edit, picture, &mut actions);
         self.fly(&ctx, &net, &view, can_edit, now, &mut actions);
         // Last of the windows, so a dialog open over it takes Escape first.

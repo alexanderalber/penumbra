@@ -208,6 +208,16 @@ impl History {
         }
     }
 
+    /// Whether `snapshot` is the state before entry `i`. Older snapshots get the live values only
+    /// when stepped to, so a live value set since then is no difference.
+    fn is_state_before(&self, i: usize, snapshot: &Arc<Network>) -> bool {
+        let before = self.before(i);
+        let with = before.with_params(&self.live).map(Arc::new);
+        let from = with.as_ref().unwrap_or(before);
+        let placed = from.with_positions(&self.live_pos).map(Arc::new);
+        Network::same(placed.as_ref().unwrap_or(from), snapshot)
+    }
+
     pub fn record(
         &mut self,
         snapshot: Arc<Network>,
@@ -228,9 +238,10 @@ impl History {
             && on_top
             && self.entries.get(t).is_some_and(|e| e.group == group && e.source == source)
         {
-            if Network::same(self.before(t), &snapshot) {
+            if self.is_state_before(t, &snapshot) {
                 self.entries.truncate(t);
                 self.cursor = t;
+                self.refresh();
                 return Recorded::Collapsed;
             }
             if let Some(e) = self.entries.get_mut(t) {
@@ -438,6 +449,23 @@ mod tests {
 
     fn with_b(net: &Network) -> Arc<Network> {
         Arc::new(net.apply(&test_types(), &[create("/b", "test.const")]).unwrap().network)
+    }
+
+    #[test]
+    fn a_group_that_ends_where_it_began_collapses_though_a_live_value_changed_meanwhile() {
+        let set_b = |net: &Network, v: f64| {
+            let op = Op::Set { param: ParamPath::parse("/b.value").unwrap(), value: Value::Float(v) };
+            Arc::new(net.apply(&test_types(), &[op]).unwrap().network)
+        };
+        let s0 = set_b(&with_b(&start()), 1.0);
+        let mut h = History::new(s0.clone());
+        let moved = set_b(h.current(), 2.0);
+        assert_eq!(rec(&mut h, moved, 1), Recorded::New);
+        live(&mut h, 5.0);
+        let back = set_b(h.current(), 1.0);
+        assert_eq!(rec(&mut h, back, 1), Recorded::Collapsed);
+        assert!(!h.can_undo());
+        assert_eq!(value_of(h.current()), Some(Value::Float(5.0)));
     }
 
     #[test]

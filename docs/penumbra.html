@@ -6136,9 +6136,9 @@ def cook(cx):
 <div class="body">
 <p>Homography from 4 or more point pairs (normalised DLT); {pairs: [[[x,y],[u,v]],...]}</p>
 </div></details>
-<details class="entry command" id="calib.points.corners"><summary><code class="name">calib.points.corners</code><span class="sum">The sharp corners of a model, per part: the places a point can be set exactly. {geo (a geo.file), degrees? (how far apart in direction its faces must be, 30)}. Replies parts: [{part, corners: [[x,y,z],...]}], in world coordinates</span></summary>
+<details class="entry command" id="calib.points.corners"><summary><code class="name">calib.points.corners</code><span class="sum">The sharp corners of a model, per part: the places a point can be set exactly. {geo (any geo node: moved or scaled models count as such), degrees? (how far apart in direction its faces must be, 30), edges? (also its outlines, false)}. Replies parts: [{part, corners: [[x,y,z],...], edges?: [[[x,y,z],[x,y,z]],...]}], in world coordinates</span></summary>
 <div class="body">
-<p>The sharp corners of a model, per part: the places a point can be set exactly. {geo (a geo.file), degrees? (how far apart in direction its faces must be, 30)}. Replies parts: [{part, corners: [[x,y,z],...]}], in world coordinates</p>
+<p>The sharp corners of a model, per part: the places a point can be set exactly. {geo (any geo node: moved or scaled models count as such), degrees? (how far apart in direction its faces must be, 30), edges? (also its outlines, false)}. Replies parts: [{part, corners: [[x,y,z],...], edges?: [[[x,y,z],[x,y,z]],...]}], in world coordinates</p>
 </div></details>
 <details class="entry command" id="calib.points.deviation"><summary><code class="name">calib.points.deviation</code><span class="sum">Expected pixel deviation of the camera's calibration on each part of the object, with the fit's quality (good, fair, weak, unusable)</span></summary>
 <div class="body">

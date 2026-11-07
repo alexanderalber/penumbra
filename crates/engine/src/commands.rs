@@ -1238,7 +1238,7 @@ pub(crate) fn component_output(
 
 /// Cooks the node at `path` and returns output `output` (default the first of kind `kind`). On a
 /// component, the output node behind that output.
-fn read_output(
+pub(crate) fn read_output(
     e: &Engine,
     path: &NodePath,
     output: Option<&Slot>,

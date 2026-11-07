@@ -9,7 +9,7 @@ pub mod audio_file_out;
 pub mod blob_track;
 pub mod buttons;
 pub mod calib;
-mod calib_points;
+pub mod calib_points;
 pub mod clipboard;
 pub mod command;
 pub mod commands;
