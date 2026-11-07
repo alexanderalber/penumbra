@@ -27,6 +27,13 @@ fn emitter(id: vec3u) -> f32 {
     return clamp((params.emit_radius - length(d)) / h + 0.5, 0.0, 1.0);
 }
 
+// Damping and fade together: each component loses `1 - keep` of itself or `fade`, whichever is
+// more, and never more than it has. So damping slows what is strong, fade ends what is weak.
+fn damped(v: vec4f, keep: f32, fade: f32) -> vec4f {
+    let loss = min(abs(v), max(abs(v) * (1.0 - keep), vec4f(fade)));
+    return v - sign(v) * loss;
+}
+
 fn texture_coords(id: vec3u) -> vec3f {
     return (vec3f(id) + 0.5) / vec3f(pn.size);
 }
@@ -87,12 +94,8 @@ fn forces(@builtin(global_invocation_id) id: vec3u) {
             + params.vort_temp * f.g + params.vort_fuel * f.b, 0.0, 1.0);
         v += confinement(vec3i(id), params.vort * mask) * params.dt;
     }
-    v *= params.vel_keep;
-    let speed = length(v);
-    if (speed > 0.0) {
-        v *= max(speed - params.vel_fade, 0.0) / speed;
-    }
-    v = mix(v, params.emit_velocity, emitter(id) * params.emit_rate);
+    v = damped(vec4f(v, 0.0), params.vel_keep, params.vel_fade).xyz;
+    v = mix(v, params.emit_velocity, clamp(emitter(id) * params.emit_rate, 0.0, 1.0));
     textureStore(vol_out, id, clean(vec4f(v, 0.0)));
 }
 
@@ -282,8 +285,8 @@ fn advect_fields(@builtin(global_invocation_id) id: vec3u) {
     var temperature = f.g;
     var fuel = max(f.b, 0.0);
     var burnt = 0.0;
-    if (params.burn_per_temp > 0.0 && fuel > 0.0) {
-        burnt = params.burn_per_temp * max(temperature - params.ignition, 0.0) * params.dt;
+    if (params.burn_per_temp > 0.0 && fuel > 0.0 && temperature >= params.ignition) {
+        burnt = params.burn_per_temp * max(min(temperature, 1.0) - params.ignition, 0.0) * params.dt;
         if (params.fuel_per_burn > 0.0) {
             burnt = min(burnt, fuel / params.fuel_per_burn);
         }
@@ -291,13 +294,14 @@ fn advect_fields(@builtin(global_invocation_id) id: vec3u) {
         temperature += params.temp_per_burn * burnt;
         smoke += params.smoke_per_burn * burnt;
     }
-    smoke = max(smoke * params.smoke_keep - params.smoke_fade, 0.0);
-    temperature *= params.temp_keep;
-    let w = emitter(id) * params.emit_rate;
+    smoke = damped(vec4f(smoke), params.smoke_keep, params.smoke_fade).x;
+    // Temperatures run from -1 to 1: the heat of burning saturates instead of running away.
+    temperature = clamp(temperature * params.temp_keep, -1.0, 1.0);
+    let w = clamp(emitter(id) * params.emit_rate, 0.0, 1.0);
     let rate = select(0.0, burnt / params.dt, params.dt > 0.0);
     let out = vec4f(
         mix(smoke, params.emit_smoke, w),
-        mix(temperature, params.emit_temp, w),
+        clamp(mix(temperature, params.emit_temp, w), -1.0, 1.0),
         mix(fuel, params.emit_fuel, w),
         rate,
     );

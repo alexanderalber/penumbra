@@ -2421,26 +2421,26 @@ Outputs:
 | `emitter_radius` *(Emitter)* | float | `0.3` | 0.01 to 1 m (soft) | Radius of the sphere emitter; 0: off |
 | `linear_velocity` *(Emitter)* | vec3 | `[0, 0.8, 0]` | -1000 to 1000 | Speed the emitter blows at, in metres per second along x, y and z |
 | `smoke` *(Emitter)* | float | `0.5` | 0 to 2 (soft) | Density of the smoke the emitter makes |
-| `temp` *(Emitter)* | float | `2` | 0 to 5 (soft) | Temperature of the smoke the emitter makes: hotter rises faster (`buoyancy`) |
+| `temp` *(Emitter)* | float | `2` | 0 to 5 (soft) | Temperature the emitter heats towards: hotter rises faster (`buoyancy`). The smoke itself stays between -1 and 1, so above 1 it only heats up faster |
 | `fuel` *(Emitter)* | float | `1` | 0 to 5 (soft) | Fuel the emitter blows in with the smoke. Fuel hotter than `ignition_temp` burns: it heats, makes smoke and swells. 0: smoke without fire |
-| `correction_rate` *(Emitter)* | float | `0.5` | 0 to 1 | How much of the way to its own velocity, smoke and temperature the emitter takes the cells inside it each 60th of a second; 1 sets them |
+| `correction_rate` *(Emitter)* | float | `0.5` | 0 to 10 (soft) | How fast the emitter takes the cells inside it to its own velocity, smoke, temperature and fuel, as a share per second: 0.5 goes half of the way in a second. 60 or more sets them every frame |
 | `gravity` | vec3 | `[0, -1, 0]` | -1000 to 1000 | Which way is down and how strongly: hot smoke rises against it, times `buoyancy` |
 | `buoyancy` | float | `4` | 0 to 10 (soft) | How strongly temperature lifts the smoke against `gravity`, per degree |
 | `cooling_rate` | float | `1.5` | 0 to 5 (soft) | How fast the smoke cools, per second: at 1, to about a third in a second |
-| `velocity_damping` | float | `0.1` | 0 to 2 (soft) | Share of its speed the smoke loses per second |
-| `velocity_fade` | float | `0.1` | 0 to 2 (soft) | Speed the smoke loses per second, in metres per second, whatever its speed |
-| `smoke_damping` | float | `0.1` | 0 to 2 (soft) | Share of its density the smoke loses per second |
-| `smoke_fade` | float | `0.4` | 0 to 2 (soft) | Density the smoke loses per second, whatever its density |
+| `velocity_damping` | float | `0.1` | 0 to 2 (soft) | Share of its speed the smoke loses per second. Fast smoke slows by this, slow smoke by `velocity_fade` |
+| `velocity_fade` | float | `0.1` | 0 to 2 (soft) | Speed the smoke loses per second along each axis, in metres per second, where that is more than `velocity_damping` takes |
+| `smoke_damping` | float | `0.1` | 0 to 2 (soft) | Share of its density the smoke loses per second. Dense smoke thins by this, thin smoke by `smoke_fade` |
+| `smoke_fade` | float | `0.4` | 0 to 2 (soft) | Density the smoke loses per second where that is more than `smoke_damping` takes: thin smoke vanishes |
 | `vorticity_strength` *(Vorticity)* | float | `10` | 0 to 40 (soft) | How strongly the smoke's eddies are kept spinning: more curls and billows. The grid smears small eddies out, this puts them back. 0: off, the cheapest |
 | `vorticity_from_velocity` *(Vorticity)* | float | `1` | 0 to 2 (soft) | How much faster smoke spins more: the strength grows with the speed times this |
 | `vorticity_from_smoke` *(Vorticity)* | float | `0` | 0 to 2 (soft) | How much denser smoke spins more |
 | `vorticity_from_temp` *(Vorticity)* | float | `0` | 0 to 2 (soft) | How much hotter smoke spins more |
 | `vorticity_from_fuel` *(Vorticity)* | float | `0` | 0 to 2 (soft) | How much smoke with more fuel spins more |
 | `vorticity_constant` *(Vorticity)* | float | `0` | 0 to 2 (soft) | Strength everywhere, whatever the smoke |
-| `ignition_temp` *(Burning)* | float | `0.1` | 0 to 2 (soft) | Temperature from which fuel burns |
-| `burn_per_temp` *(Burning)* | float | `4` | 0 to 10 (soft) | How fast fuel burns per degree above `ignition_temp`, per second. 0: nothing burns |
+| `ignition_temp` *(Burning)* | float | `0.1` | 0 to 2 (soft) | Temperature from which fuel burns. Temperatures run from -1 to 1 |
+| `burn_per_temp` *(Burning)* | float | `4` | 0 to 10 (soft) | How fast fuel burns per degree above `ignition_temp`, per second, fastest at temperature 1. 0: nothing burns |
 | `smoke_per_burn` *(Burning)* | float | `4` | 0 to 10 (soft) | Smoke that burning makes |
-| `temp_per_burn` *(Burning)* | float | `8` | 0 to 20 (soft) | Heat that burning makes |
+| `temp_per_burn` *(Burning)* | float | `8` | 0 to 20 (soft) | Heat that burning makes. The smoke gets no hotter than 1 |
 | `fuel_per_burn` *(Burning)* | float | `1` | 0 to 4 (soft) | Fuel that burning uses up: less makes the fuel last longer |
 | `expansion` *(Burning)* | float | `4` | 0 to 10 (soft) | How much burning gas swells: the flame pushes out and widens |
 | `speed` | float | `1` | 0 to 4 (soft) | How fast the simulation runs against the show clock; 0 holds it |

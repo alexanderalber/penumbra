@@ -18,6 +18,8 @@ fn smoke_rig(params: &[(&str, Value)]) -> Rig {
         ("linear_velocity", Value::Vec3([0.0; 3])),
         ("smoke", Value::Float(1.0)),
         ("iterations", Value::Int(10)),
+        // Half of the way each 60th of a second, so the few frames of a test fill the emitter.
+        ("correction_rate", Value::Float(30.0)),
         ("fuel", Value::Float(0.0)),
     ];
     smoke.extend(params.iter().cloned());
@@ -85,9 +87,14 @@ fn hot_smoke_rises_against_gravity() {
     };
     let calm = run(&[("buoyancy", Value::Float(0.0)), ("linear_velocity", Value::Vec3([0.0; 3]))]);
     let still = top(&run(&[("buoyancy", Value::Float(0.0))]));
-    let lifted = top(&run(&[]));
+    // Temperatures stop at 1, so a stronger buoyancy than the default makes the rise plain.
+    let lifted = top(&run(&[("buoyancy", Value::Float(10.0))]));
     assert!(lifted + 2 < still, "top at row {lifted} with buoyancy, {still} without");
-    let sunk = run(&[("gravity", Value::Vec3([0.0, 1.0, 0.0])), ("linear_velocity", Value::Vec3([0.0; 3]))]);
+    let sunk = run(&[
+        ("gravity", Value::Vec3([0.0, 1.0, 0.0])),
+        ("buoyancy", Value::Float(10.0)),
+        ("linear_velocity", Value::Vec3([0.0; 3])),
+    ]);
     // Heavier than the calm puff's, it sinks below it.
     let (_, [_, y]) = cover(&sunk);
     let (_, [_, calm]) = cover(&calm);

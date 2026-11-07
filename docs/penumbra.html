@@ -5318,10 +5318,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>gravity</code></td><td>vec3</td><td><code>[0, -1, 0]</code></td><td>-1000 to 1000</td><td>Which way is down and how strongly: hot smoke rises against it, times <code>buoyancy</code></td></tr>
 <tr><td><code>buoyancy</code></td><td>float</td><td><code>4</code></td><td>0 to 10 (soft)</td><td>How strongly temperature lifts the smoke against <code>gravity</code>, per degree</td></tr>
 <tr><td><code>cooling_rate</code></td><td>float</td><td><code>1.5</code></td><td>0 to 5 (soft)</td><td>How fast the smoke cools, per second: at 1, to about a third in a second</td></tr>
-<tr><td><code>velocity_damping</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Share of its speed the smoke loses per second</td></tr>
-<tr><td><code>velocity_fade</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Speed the smoke loses per second, in metres per second, whatever its speed</td></tr>
-<tr><td><code>smoke_damping</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Share of its density the smoke loses per second</td></tr>
-<tr><td><code>smoke_fade</code></td><td>float</td><td><code>0.4</code></td><td>0 to 2 (soft)</td><td>Density the smoke loses per second, whatever its density</td></tr>
+<tr><td><code>velocity_damping</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Share of its speed the smoke loses per second. Fast smoke slows by this, slow smoke by <code>velocity_fade</code></td></tr>
+<tr><td><code>velocity_fade</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Speed the smoke loses per second along each axis, in metres per second, where that is more than <code>velocity_damping</code> takes</td></tr>
+<tr><td><code>smoke_damping</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Share of its density the smoke loses per second. Dense smoke thins by this, thin smoke by <code>smoke_fade</code></td></tr>
+<tr><td><code>smoke_fade</code></td><td>float</td><td><code>0.4</code></td><td>0 to 2 (soft)</td><td>Density the smoke loses per second where that is more than <code>smoke_damping</code> takes: thin smoke vanishes</td></tr>
 <tr><td><code>speed</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft)</td><td>How fast the simulation runs against the show clock; 0 holds it</td></tr>
 <tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>Starts over from still, clear air, every frame while on</td></tr>
 <tr class="section"><th colspan="5">Emitter</th></tr>
@@ -5331,9 +5331,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>emitter_radius</code></td><td>float</td><td><code>0.3</code></td><td>0.01 to 1 m (soft)</td><td>Radius of the sphere emitter; 0: off</td></tr>
 <tr><td><code>linear_velocity</code></td><td>vec3</td><td><code>[0, 0.8, 0]</code></td><td>-1000 to 1000</td><td>Speed the emitter blows at, in metres per second along x, y and z</td></tr>
 <tr><td><code>smoke</code></td><td>float</td><td><code>0.5</code></td><td>0 to 2 (soft)</td><td>Density of the smoke the emitter makes</td></tr>
-<tr><td><code>temp</code></td><td>float</td><td><code>2</code></td><td>0 to 5 (soft)</td><td>Temperature of the smoke the emitter makes: hotter rises faster (<code>buoyancy</code>)</td></tr>
+<tr><td><code>temp</code></td><td>float</td><td><code>2</code></td><td>0 to 5 (soft)</td><td>Temperature the emitter heats towards: hotter rises faster (<code>buoyancy</code>). The smoke itself stays between -1 and 1, so above 1 it only heats up faster</td></tr>
 <tr><td><code>fuel</code></td><td>float</td><td><code>1</code></td><td>0 to 5 (soft)</td><td>Fuel the emitter blows in with the smoke. Fuel hotter than <code>ignition_temp</code> burns: it heats, makes smoke and swells. 0: smoke without fire</td></tr>
-<tr><td><code>correction_rate</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1</td><td>How much of the way to its own velocity, smoke and temperature the emitter takes the cells inside it each 60th of a second; 1 sets them</td></tr>
+<tr><td><code>correction_rate</code></td><td>float</td><td><code>0.5</code></td><td>0 to 10 (soft)</td><td>How fast the emitter takes the cells inside it to its own velocity, smoke, temperature and fuel, as a share per second: 0.5 goes half of the way in a second. 60 or more sets them every frame</td></tr>
 <tr class="section"><th colspan="5">Vorticity</th></tr>
 <tr><td><code>vorticity_strength</code></td><td>float</td><td><code>10</code></td><td>0 to 40 (soft)</td><td>How strongly the smoke's eddies are kept spinning: more curls and billows. The grid smears small eddies out, this puts them back. 0: off, the cheapest</td></tr>
 <tr><td><code>vorticity_from_velocity</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>How much faster smoke spins more: the strength grows with the speed times this</td></tr>
@@ -5342,10 +5342,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>vorticity_from_fuel</code></td><td>float</td><td><code>0</code></td><td>0 to 2 (soft)</td><td>How much smoke with more fuel spins more</td></tr>
 <tr><td><code>vorticity_constant</code></td><td>float</td><td><code>0</code></td><td>0 to 2 (soft)</td><td>Strength everywhere, whatever the smoke</td></tr>
 <tr class="section"><th colspan="5">Burning</th></tr>
-<tr><td><code>ignition_temp</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Temperature from which fuel burns</td></tr>
-<tr><td><code>burn_per_temp</code></td><td>float</td><td><code>4</code></td><td>0 to 10 (soft)</td><td>How fast fuel burns per degree above <code>ignition_temp</code>, per second. 0: nothing burns</td></tr>
+<tr><td><code>ignition_temp</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Temperature from which fuel burns. Temperatures run from -1 to 1</td></tr>
+<tr><td><code>burn_per_temp</code></td><td>float</td><td><code>4</code></td><td>0 to 10 (soft)</td><td>How fast fuel burns per degree above <code>ignition_temp</code>, per second, fastest at temperature 1. 0: nothing burns</td></tr>
 <tr><td><code>smoke_per_burn</code></td><td>float</td><td><code>4</code></td><td>0 to 10 (soft)</td><td>Smoke that burning makes</td></tr>
-<tr><td><code>temp_per_burn</code></td><td>float</td><td><code>8</code></td><td>0 to 20 (soft)</td><td>Heat that burning makes</td></tr>
+<tr><td><code>temp_per_burn</code></td><td>float</td><td><code>8</code></td><td>0 to 20 (soft)</td><td>Heat that burning makes. The smoke gets no hotter than 1</td></tr>
 <tr><td><code>fuel_per_burn</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft)</td><td>Fuel that burning uses up: less makes the fuel last longer</td></tr>
 <tr><td><code>expansion</code></td><td>float</td><td><code>4</code></td><td>0 to 10 (soft)</td><td>How much burning gas swells: the flame pushes out and widens</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>

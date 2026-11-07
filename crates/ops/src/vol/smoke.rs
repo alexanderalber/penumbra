@@ -105,7 +105,10 @@ fn desc() -> NodeDesc {
                 .clamp(-1000.0, 1000.0)
                 .range(0.0, 5.0)
                 .group("Emitter")
-                .doc("Temperature of the smoke the emitter makes: hotter rises faster (`buoyancy`)"),
+                .doc(
+                    "Temperature the emitter heats towards: hotter rises faster (`buoyancy`). The smoke \
+                     itself stays between -1 and 1, so above 1 it only heats up faster",
+                ),
         )
         .param(
             ParamSpec::float("fuel", 1.0)
@@ -119,11 +122,13 @@ fn desc() -> NodeDesc {
         )
         .param(
             ParamSpec::float("correction_rate", 0.5)
-                .clamp(0.0, 1.0)
+                .clamp(0.0, 1000.0)
+                .range(0.0, 10.0)
                 .group("Emitter")
                 .doc(
-                    "How much of the way to its own velocity, smoke and temperature the emitter takes the \
-                     cells inside it each 60th of a second; 1 sets them",
+                    "How fast the emitter takes the cells inside it to its own velocity, smoke, \
+                     temperature and fuel, as a share per second: 0.5 goes half of the way in a second. \
+                     60 or more sets them every frame",
                 ),
         )
         .param(
@@ -147,25 +152,25 @@ fn desc() -> NodeDesc {
             ParamSpec::float("velocity_damping", 0.1)
                 .clamp(0.0, 1000.0)
                 .range(0.0, 2.0)
-                .doc("Share of its speed the smoke loses per second"),
+                .doc("Share of its speed the smoke loses per second. Fast smoke slows by this, slow smoke by `velocity_fade`"),
         )
         .param(
             ParamSpec::float("velocity_fade", 0.1)
                 .clamp(0.0, 1000.0)
                 .range(0.0, 2.0)
-                .doc("Speed the smoke loses per second, in metres per second, whatever its speed"),
+                .doc("Speed the smoke loses per second along each axis, in metres per second, where that is more than `velocity_damping` takes"),
         )
         .param(
             ParamSpec::float("smoke_damping", 0.1)
                 .clamp(0.0, 1000.0)
                 .range(0.0, 2.0)
-                .doc("Share of its density the smoke loses per second"),
+                .doc("Share of its density the smoke loses per second. Dense smoke thins by this, thin smoke by `smoke_fade`"),
         )
         .param(
             ParamSpec::float("smoke_fade", 0.4)
                 .clamp(0.0, 1000.0)
                 .range(0.0, 2.0)
-                .doc("Density the smoke loses per second, whatever its density"),
+                .doc("Density the smoke loses per second where that is more than `smoke_damping` takes: thin smoke vanishes"),
         )
         .param(
             ParamSpec::float("vorticity_strength", 10.0)
@@ -217,14 +222,14 @@ fn desc() -> NodeDesc {
                 .clamp(-1000.0, 1000.0)
                 .range(0.0, 2.0)
                 .group("Burning")
-                .doc("Temperature from which fuel burns"),
+                .doc("Temperature from which fuel burns. Temperatures run from -1 to 1"),
         )
         .param(
             ParamSpec::float("burn_per_temp", 4.0)
                 .clamp(0.0, 1000.0)
                 .range(0.0, 10.0)
                 .group("Burning")
-                .doc("How fast fuel burns per degree above `ignition_temp`, per second. 0: nothing burns"),
+                .doc("How fast fuel burns per degree above `ignition_temp`, per second, fastest at temperature 1. 0: nothing burns"),
         )
         .param(
             ParamSpec::float("smoke_per_burn", 4.0)
@@ -238,7 +243,7 @@ fn desc() -> NodeDesc {
                 .clamp(-1000.0, 1000.0)
                 .range(0.0, 20.0)
                 .group("Burning")
-                .doc("Heat that burning makes"),
+                .doc("Heat that burning makes. The smoke gets no hotter than 1"),
         )
         .param(
             ParamSpec::float("fuel_per_burn", 1.0)
@@ -364,9 +369,20 @@ pub(crate) fn grid(size: [f64; 3], resolution: i64) -> ([u32; 3], f64) {
     }
 }
 
-/// The per-second rate `rate` (share lost per second) as a factor for a step of `dt`.
+/// The per-second rate `rate` (exponential decay) as a factor for a step of `dt`.
 fn keep(rate: f64, dt: f64) -> f64 {
     if !rate.is_finite() || rate <= 0.0 { 1.0 } else { (-rate * dt).exp() }
+}
+
+/// What a step of `dt` keeps when `share` of the value goes per second: 1 or more loses all.
+fn keep_share(share: f64, dt: f64) -> f64 {
+    if !share.is_finite() || share <= 0.0 {
+        1.0
+    } else if share >= 1.0 {
+        0.0
+    } else {
+        (1.0 - share).powf(dt)
+    }
 }
 
 /// A [`Value::Vec3`] param as numbers; zeros when it is something else.
@@ -481,8 +497,7 @@ impl Operator for Smoke {
         let corner =
             [center[0] - box_size[0] * 0.5, center[1] - box_size[1] * 0.5, center[2] - box_size[2] * 0.5];
         let emit_at = [emitter[0] - corner[0], emitter[1] - corner[1], emitter[2] - corner[2]];
-        let rate = cx.float("correction_rate")?.clamp(0.0, 1.0);
-        let emit_rate = if rate >= 1.0 { 1.0 } else { 1.0 - (1.0 - rate).powf(dt * 60.0) };
+        let emit_rate = (cx.float("correction_rate")?.max(0.0) * dt).min(1.0);
         let previous_pressure = self.pressure.take().filter(|p| p.size() == cells);
         let edges = i64::from(cx.text("edges")? == "walls");
         let shape = i64::from(cx.text("emitter_type")? == "box");
@@ -500,9 +515,9 @@ impl Operator for Smoke {
             ("emit_temp", Value::Float(cx.float("temp")?)),
             ("emit_rate", Value::Float(emit_rate)),
             ("lift", Value::Vec3(lift)),
-            ("vel_keep", Value::Float(keep(cx.float("velocity_damping")?, dt))),
+            ("vel_keep", Value::Float(keep_share(cx.float("velocity_damping")?, dt))),
             ("vel_fade", Value::Float(cx.float("velocity_fade")?.max(0.0) * dt)),
-            ("smoke_keep", Value::Float(keep(cx.float("smoke_damping")?, dt))),
+            ("smoke_keep", Value::Float(keep_share(cx.float("smoke_damping")?, dt))),
             ("smoke_fade", Value::Float(cx.float("smoke_fade")?.max(0.0) * dt)),
             ("temp_keep", Value::Float(keep(cx.float("cooling_rate")?, dt))),
             ("edges", Value::Int(edges)),
@@ -701,5 +716,9 @@ mod tests {
         assert!((sixty - (-1.0f64).exp()).abs() < 1e-9);
         assert_eq!(keep(0.0, 0.1), 1.0);
         assert_eq!(keep(f64::NAN, 0.1), 1.0);
+        let second: f64 = (0..60).map(|_| keep_share(0.1, 1.0 / 60.0)).product();
+        assert!((second - 0.9).abs() < 1e-9);
+        assert_eq!(keep_share(1.0, 0.1), 0.0);
+        assert_eq!(keep_share(f64::NAN, 0.1), 1.0);
     }
 }
