@@ -2877,9 +2877,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a></p>
 </div></details>
-<details class="entry node" id="tex.noise"><summary><code class="name">tex.noise</code><span class="sum">Cloudy random patterns, still or slowly changing: textures, masks, organic motion for a displacement</span></summary>
+<details class="entry node" id="tex.noise"><summary><code class="name">tex.noise</code><span class="sum">Cloudy or grainy random patterns, still or changing: textures, masks, organic motion for a displacement</span></summary>
 <div class="body">
-<p>Cloudy random patterns, still or slowly changing: textures, masks, organic motion for a displacement</p>
+<p>Cloudy or grainy random patterns, still or changing: textures, masks, organic motion for a displacement</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -2892,7 +2892,8 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tbody>
 <tr><td><code>width</code></td><td>int</td><td><code>1920</code></td><td>1 to 16384 px</td><td>Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
 <tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>1 to 16384 px</td><td>Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
-<tr><td><code>basis</code></td><td>gradient | value</td><td><code>&quot;gradient&quot;</code></td><td></td><td>The kind of noise each octave is made of<ul><li><code>gradient</code>: smooth, round blobs (Perlin-like)</li><li><code>value</code>: blockier, with a visible grid of cells</li></ul></td></tr>
+<tr><td><code>basis</code></td><td>gradient | value | random</td><td><code>&quot;gradient&quot;</code></td><td></td><td>The kind of noise<ul><li><code>gradient</code>: smooth, round blobs (Perlin-like)</li><li><code>value</code>: blockier, with a visible grid of cells</li><li><code>random</code>: every pixel on its own, like the static of an old TV</li></ul></td></tr>
+<tr><td><code>every_frame</code></td><td>bool</td><td><code>false</code></td><td></td><td>Draws a new picture every frame; off keeps one still picture</td></tr>
 <tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft)</td><td>Picks another noise of the same look; each number gives the same picture every time</td></tr>
 <tr><td><code>frequency</code></td><td>float</td><td><code>4</code></td><td>0.1 to 100 (soft)</td><td>Size of the pattern: noise cells per image height; higher is finer</td></tr>
 <tr><td><code>octaves</code></td><td>int</td><td><code>3</code></td><td>1 to 8</td><td>Layers of ever finer noise added up (fractal detail); 1 is smooth blobs only</td></tr>

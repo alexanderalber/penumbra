@@ -594,7 +594,7 @@ Outputs:
 
 ### tex.noise
 
-Cloudy random patterns, still or slowly changing: textures, masks, organic motion for a displacement
+Cloudy or grainy random patterns, still or changing: textures, masks, organic motion for a displacement
 
 Inputs: none.
 
@@ -605,16 +605,17 @@ Outputs: `out` (tex).
 | `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
-| `basis` | gradient \| value | `"gradient"` |  | The kind of noise each octave is made of; gradient: smooth, round blobs (Perlin-like); value: blockier, with a visible grid of cells |
+| `basis` | gradient \| value \| random | `"gradient"` |  | The kind of noise; gradient: smooth, round blobs (Perlin-like); value: blockier, with a visible grid of cells; random: every pixel on its own, like the static of an old TV |
+| `every_frame` | bool | `false` |  | Draws a new picture every frame; off keeps one still picture. Does something only with basis random. |
 | `seed` | int | `0` | 0 to 100 (soft) | Picks another noise of the same look; each number gives the same picture every time |
-| `frequency` | float | `4` | 0.1 to 100 (soft) | Size of the pattern: noise cells per image height; higher is finer |
-| `octaves` | int | `3` | 1 to 8 | Layers of ever finer noise added up (fractal detail); 1 is smooth blobs only |
-| `roughness` | float | `0.5` | 0 to 1 (soft) | Strength of each octave relative to the one before; higher gives more fine grain |
-| `lacunarity` *(more)* | float | `2` | 1 to 4 (soft) | How much finer each octave is than the one before (2: twice the cells) |
+| `frequency` | float | `4` | 0.1 to 100 (soft) | Size of the pattern: noise cells per image height; higher is finer. Does something only with basis gradient or value. |
+| `octaves` | int | `3` | 1 to 8 | Layers of ever finer noise added up (fractal detail); 1 is smooth blobs only. Does something only with basis gradient or value. |
+| `roughness` | float | `0.5` | 0 to 1 (soft) | Strength of each octave relative to the one before; higher gives more fine grain. Does something only with basis gradient or value. |
+| `lacunarity` *(more)* | float | `2` | 1 to 4 (soft) | How much finer each octave is than the one before (2: twice the cells). Does something only with basis gradient or value. |
 | `amplitude` | float | `0.5` | 0 to 2 (soft) | Contrast: the noise (about -1 to 1) is multiplied by this, then offset is added |
 | `offset` | float | `0.5` | -1 to 1 (soft) | Added after amplitude: the mean grey. With 0.5 and 0.5 the values span about 0 to 1 |
-| `speed` | float | `0` | 0 to 4 (soft) | How fast the pattern morphs, in cells per second; 0 is still. The noise moves through a third dimension, so the picture does not slide |
-| `translate` *(more)* | vec3 | `[0, 0, 0]` |  | Position in the noise, in cells: x and y slide the picture, z morphs it as speed does |
+| `speed` | float | `0` | 0 to 4 (soft) | How fast the pattern morphs, in cells per second; 0 is still. The noise moves through a third dimension, so the picture does not slide. Does something only with basis gradient or value. |
+| `translate` *(more)* | vec3 | `[0, 0, 0]` |  | Position in the noise, in cells: x and y slide the picture, z morphs it as speed does. Does something only with basis gradient or value. |
 | `color` | bool | `false` |  | Three independent channels instead of grey |
 | `alpha` *(more)* | float | `1` | 0 to 1 | Opacity of the whole picture; below 1, what lies under it in a composite shows through |
 

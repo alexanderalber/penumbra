@@ -338,6 +338,17 @@ fn golden_images() {
             ],
         ),
         create(
+            "/noise_random",
+            "tex.noise",
+            &[
+                size()[0].clone(),
+                size()[1].clone(),
+                ("basis", "random".into()),
+                ("color", Value::Bool(true)),
+                ("seed", Value::Int(3)),
+            ],
+        ),
+        create(
             "/transform",
             "tex.transform",
             &[
@@ -551,6 +562,7 @@ lumen"
         "primitive_rectangle",
         "primitive_ellipse",
         "primitive_polygon",
+        "noise_random",
     ];
     for name in names {
         let px = rig.pixels(&format!("/{name}"));
@@ -854,6 +866,54 @@ fn noise_is_deterministic_and_only_animated_when_moving() {
     rig.clock.advance(1);
     rig.cook("/n");
     assert_ne!(rig.version("/n"), v, "a moving noise recooks with time");
+}
+
+/// Correlation of one channel of two equally long pixel lists, around the mean of 0.5.
+fn correlation(a: impl Iterator<Item = f32>, b: impl Iterator<Item = f32>) -> f64 {
+    let (mut product, mut square) = (0.0, 0.0);
+    for (a, b) in a.zip(b) {
+        product += f64::from((a - 0.5) * (b - 0.5));
+        square += f64::from((a - 0.5) * (a - 0.5));
+    }
+    product / square
+}
+
+#[test]
+fn random_noise_draws_each_pixel_alone_and_renews_only_when_asked() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [create(
+        "/n",
+        "tex.noise",
+        &[size()[0].clone(), size()[1].clone(), ("basis", "random".into()), ("color", Value::Bool(true))],
+    )];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let still = rig.pixels("/n");
+    let red = || still.data.iter().map(|p| p[0]);
+
+    let mean = red().map(f64::from).sum::<f64>() / still.data.len() as f64;
+    assert!((mean - 0.5).abs() < 0.05, "uniform around 0.5, got a mean of {mean}");
+    assert!(red().fold(1.0, f32::min) < 0.05 && red().fold(0.0, f32::max) > 0.95, "spans 0 to 1");
+    let right = correlation(red(), red().skip(1));
+    assert!(right.abs() < 0.15, "neighbours are unrelated, got {right}");
+    let green = correlation(red(), still.data.iter().map(|p| p[1]));
+    assert!(green.abs() < 0.15, "channels are unrelated, got {green}");
+
+    let v = rig.version("/n");
+    rig.clock.advance(1);
+    rig.cook("/n");
+    assert_eq!(rig.version("/n"), v, "without every_frame the picture stays");
+    assert!(!rig.cooker.status(rig.id("/n")).unwrap().time_dependent);
+
+    rig.edit(&[set("/n.every_frame", Value::Bool(true))]);
+    rig.cook("/n");
+    assert!(rig.cooker.status(rig.id("/n")).unwrap().time_dependent);
+    let before = rig.pixels("/n");
+    let v = rig.version("/n");
+    rig.clock.advance(1);
+    let tex = rig.cook_until_new("/n", v);
+    let after = rig.gpu.read(&tex).unwrap();
+    let frames = correlation(before.data.iter().map(|p| p[0]), after.data.iter().map(|p| p[0]));
+    assert!(frames.abs() < 0.15, "the next frame is a new draw, got {frames}");
 }
 
 #[test]

@@ -159,13 +159,19 @@ fn core_builtins() -> Vec<Builtin> {
         Builtin {
             desc: sized(NodeDesc::new(
                 "tex.noise",
-                "Cloudy random patterns, still or slowly changing: textures, masks, organic motion for a displacement",
+                "Cloudy or grainy random patterns, still or changing: textures, masks, organic motion for a displacement",
             ))
             .param(
-                ParamSpec::choice("basis", &["gradient", "value"])
-                    .doc("The kind of noise each octave is made of")
+                ParamSpec::choice("basis", &["gradient", "value", "random"])
+                    .doc("The kind of noise")
                     .choice_doc("gradient", "smooth, round blobs (Perlin-like)")
-                    .choice_doc("value", "blockier, with a visible grid of cells"),
+                    .choice_doc("value", "blockier, with a visible grid of cells")
+                    .choice_doc("random", "every pixel on its own, like the static of an old TV"),
+            )
+            .param(
+                ParamSpec::bool("every_frame", false)
+                    .applies_when("basis", &["random"])
+                    .doc("Draws a new picture every frame; off keeps one still picture"),
             )
             .param(
                 ParamSpec::int("seed", 0)
@@ -176,22 +182,26 @@ fn core_builtins() -> Vec<Builtin> {
                 ParamSpec::float("frequency", 4.0)
                     .range(0.1, 100.0)
                     .curve(Curve::Log)
+                    .applies_when("basis", &["gradient", "value"])
                     .doc("Size of the pattern: noise cells per image height; higher is finer"),
             )
             .param(
                 ParamSpec::int("octaves", 3)
                     .clamp(1.0, 8.0)
+                    .applies_when("basis", &["gradient", "value"])
                     .doc("Layers of ever finer noise added up (fractal detail); 1 is smooth blobs only"),
             )
             .param(
                 ParamSpec::float("roughness", 0.5)
                     .range(0.0, 1.0)
+                    .applies_when("basis", &["gradient", "value"])
                     .doc("Strength of each octave relative to the one before; higher gives more fine grain"),
             )
             .param(
                 ParamSpec::float("lacunarity", 2.0)
                     .range(1.0, 4.0)
                     .more()
+                    .applies_when("basis", &["gradient", "value"])
                     .doc("How much finer each octave is than the one before (2: twice the cells)"),
             )
             .param(
@@ -207,11 +217,13 @@ fn core_builtins() -> Vec<Builtin> {
             .param(
                 ParamSpec::float("speed", 0.0)
                     .range(0.0, 4.0)
+                    .applies_when("basis", &["gradient", "value"])
                     .doc("How fast the pattern morphs, in cells per second; 0 is still. The noise moves through a third dimension, so the picture does not slide"),
             )
             .param(
                 ParamSpec::vec3("translate", [0.0; 3])
                     .more()
+                    .applies_when("basis", &["gradient", "value"])
                     .doc("Position in the noise, in cells: x and y slide the picture, z morphs it as speed does"),
             )
             .param(ParamSpec::bool("color", false).doc("Three independent channels instead of grey"))
@@ -223,7 +235,13 @@ fn core_builtins() -> Vec<Builtin> {
             ),
             source: include_str!("noise.wgsl"),
             size: Size::Params,
-            animated: Some(|cx| cx.float("speed").is_ok_and(|s| s != 0.0)),
+            animated: Some(|cx| {
+                if cx.text("basis").is_ok_and(|b| b == "random") {
+                    cx.bool("every_frame").unwrap_or(false)
+                } else {
+                    cx.float("speed").is_ok_and(|s| s != 0.0)
+                }
+            }),
             density: same,
             fold: false,
         },
