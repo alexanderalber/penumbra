@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/mid_swarm": (kind: "comp.base", params: {"expose": "presence = controls.value0\nagents = controls.value1\nat = controls.value2\nhover = controls.value3\nsize = scale.size\nwander = boids.wander\nspeed = boids.speed\nscatter = boids.scatter\ncolor = dart_lines.color\nextent = swarm.extent"}),
+        "/mid_swarm": (kind: "comp.base", params: {"about": "A swarm of up to 256 wireframe darts flying ahead of the glider.", "expose": "presence = controls.value0\nagents = controls.value1\nat = controls.value2\nhover = controls.value3\nsize = scale.size\nwander = boids.wander\nspeed = boids.speed\nscatter = boids.scatter\ncolor = dart_lines.color\nextent = swarm.extent", "shelf": "music stage/mid"}),
         "/mid_swarm/bus": (kind: "chan.in", pos: [-1000.0, 0.0]),
         "/mid_swarm/lane": (kind: "tex.in", pos: [-1000.0, 150.0]),
         "/mid_swarm/controls": (kind: "chan.constant", params: {"name0": "presence", "value0": 1.0, "name1": "agents", "value1": 200.0, "name2": "at", "value2": 6.0, "name3": "hover", "value3": 2.2, "rows": 4}, pos: [-1000.0, 300.0]),

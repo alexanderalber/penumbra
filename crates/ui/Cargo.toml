@@ -27,6 +27,7 @@ serde.workspace = true
 serde_json.workspace = true
 ron.workspace = true
 log.workspace = true
+image = { workspace = true, features = ["png"] }
 egui.workspace = true
 eframe = { workspace = true, features = ["wgpu", "accesskit", "default_fonts"] }
 egui-wgpu.workspace = true

@@ -103,6 +103,8 @@ pub struct Editor {
     add_menu: Option<AddDialog>,
     /// The family the add dialog showed last.
     add_family: String,
+    /// The library shelf the add dialog showed last.
+    add_shelf: crate::add_dialog::ShelfChoice,
     /// Nodes whose thumbnail the user paused: never cooked for, shown only while current.
     pub paused: BTreeSet<NodeId>,
     frame_request: bool,
@@ -310,6 +312,7 @@ impl Default for Editor {
             drag: Drag::None,
             add_menu: None,
             add_family: "tex".into(),
+            add_shelf: Default::default(),
             paused: BTreeSet::new(),
             frame_request: true,
             canvas: Rect::NOTHING,
@@ -1376,7 +1379,9 @@ impl Editor {
                 .unwrap_or_else(|| self.add_family.clone()),
             _ => self.add_family.clone(),
         };
-        self.add_menu = Some(AddDialog::new(screen, at, &family));
+        let mut dialog = AddDialog::new(screen, at, &family);
+        dialog.shelf.clone_from(&self.add_shelf);
+        self.add_menu = Some(dialog);
         self.replacing = None;
     }
 
@@ -1566,6 +1571,7 @@ impl Editor {
                             let family = node.kind.split_once('.').map_or("tex", |(f, _)| f);
                             let mut dialog = AddDialog::new(resp.rect.left_top(), Pos2::ZERO, family);
                             dialog.title = Some(format!("replace {} with", node.name));
+                            dialog.shelf.clone_from(&self.add_shelf);
                             self.add_menu = Some(dialog);
                             ui.close();
                         }
@@ -2304,6 +2310,7 @@ impl Editor {
         menu.in_component = !level_path(input.net, level).is_root();
         let outcome = menu.show(ui, input.types, input.library, auto);
         self.add_family.clone_from(&menu.family);
+        self.add_shelf.clone_from(&menu.shelf);
         let at = menu.at;
         let replacing = self.replacing;
         match outcome {

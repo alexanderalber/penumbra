@@ -199,6 +199,12 @@ pub fn library_names(engine: &Engine) -> Vec<crate::add_dialog::Offered> {
     comps::library(engine)
         .into_iter()
         .filter(|e| seen.insert(e.name.clone()))
-        .map(|e| crate::add_dialog::Offered { name: e.name, place: e.place })
+        .map(|e| crate::add_dialog::Offered {
+            name: e.name,
+            place: e.place,
+            shelf: e.shelf,
+            about: e.about,
+            preview: e.preview,
+        })
         .collect()
 }

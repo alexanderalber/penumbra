@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/mid_smoke": (kind: "comp.base", params: {"expose": "presence = controls.value0\nbrightness = controls.value1\ncalm = controls.value2\nveils = controls.value3\nspacing = controls.value4\nwide = controls.value5\ntall = controls.value6\nspread = controls.value7\nwind = controls.value8\nfade = controls.value9\nstart = controls.value10\nend = controls.value11\nnear = controls.value12\nseed = controls.value13\nwarmth = controls.value14\ncover = controls.value15\ncover_swell = controls.value16\ncurl = controls.value17\nspeed = controls.value18\npeak = controls.value19\nextent = veils1.extent"}, pos: [0.0, 0.0]),
+        "/mid_smoke": (kind: "comp.base", params: {"about": "Copal smoke over the lake of stage_valley.", "expose": "presence = controls.value0\nbrightness = controls.value1\ncalm = controls.value2\nveils = controls.value3\nspacing = controls.value4\nwide = controls.value5\ntall = controls.value6\nspread = controls.value7\nwind = controls.value8\nfade = controls.value9\nstart = controls.value10\nend = controls.value11\nnear = controls.value12\nseed = controls.value13\nwarmth = controls.value14\ncover = controls.value15\ncover_swell = controls.value16\ncurl = controls.value17\nspeed = controls.value18\npeak = controls.value19\nextent = veils1.extent", "shelf": "music stage/mid"}, pos: [0.0, 0.0]),
         "/mid_smoke/bus": (kind: "chan.in", pos: [-1200.0, 0.0]),
         "/mid_smoke/lane": (kind: "tex.in", pos: [-1200.0, 150.0]),
         "/mid_smoke/pose": (kind: "chan.in", pos: [-1200.0, 300.0]),

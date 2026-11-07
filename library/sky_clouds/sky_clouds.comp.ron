@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/sky_clouds": (kind: "comp.base", params: {"expose": "presence = clouds.presence
+        "/sky_clouds": (kind: "comp.base", params: {"about": "A deck of clouds low over the horizon of stage_valley.", "expose": "presence = clouds.presence
 brightness = clouds.brightness
 cover = clouds.cover
 low = clouds.low
@@ -14,7 +14,7 @@ under = clouds.under
 drift = clouds.drift
 wind = clouds.wind
 warmth = clouds.warmth
-seed = clouds.seed"}),
+seed = clouds.seed", "shelf": "music stage/sky"}),
         "/sky_clouds/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/sky_clouds/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
         "/sky_clouds/clouds": (kind: "tex.shader", params: {"file": "library/sky_clouds/clouds.wgsl", "presence": 1.0, "brightness": 1.0, "cover": 0.55, "low": 0.025, "top": 0.22, "size": 1.0, "spread": 0.8, "under": 1.0, "drift": 0.004, "wind": 0.001, "warmth": 0.0, "seed": 0}, binds: {"eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side", "reach": "pose:far", "dawn": "pose:dawn", "swell": "pose:swell", "beats": "bus:travelled"}, pos: [-300.0, 0.0]),

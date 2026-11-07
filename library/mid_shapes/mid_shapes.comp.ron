@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/mid_shapes": (kind: "comp.base", params: {"expose": "presence = places.presence\ncount = places.count\nseed = controls.value0\nsize = places.size\nat = places.at\nhover = places.hover\nradius = places.radius\ndepth = places.depth\ntilt = places.tilt\ntight = places.tight\nscatter = places.scatter\nturn = places.turn\nspin = heading.spin\ncolor = lines.color\nline_width = lines.line_width"}, pos: [0.0, -600.0]),
+        "/mid_shapes": (kind: "comp.base", params: {"about": "Wireframe solids fly in a ring ahead of the camera, above the glider.", "expose": "presence = places.presence\ncount = places.count\nseed = controls.value0\nsize = places.size\nat = places.at\nhover = places.hover\nradius = places.radius\ndepth = places.depth\ntilt = places.tilt\ntight = places.tight\nscatter = places.scatter\nturn = places.turn\nspin = heading.spin\ncolor = lines.color\nline_width = lines.line_width", "shelf": "music stage/mid"}, pos: [0.0, -600.0]),
         "/mid_shapes/bus": (kind: "chan.in", pos: [-1000.0, 0.0]),
         "/mid_shapes/lane": (kind: "tex.in", pos: [-1000.0, 150.0]),
         "/mid_shapes/controls": (kind: "chan.constant", params: {"name0": "seed", "value0": 0.0, "rows": 1}, pos: [-1000.0, 300.0]),

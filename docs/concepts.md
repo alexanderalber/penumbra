@@ -596,8 +596,13 @@ first output of the kind it reads.
   library that ships with penumbra (marked `penumbra`; the `library` folder beside the app,
   catalogued with a preview of each in [its README](../library/README.md)): effects for scanned
   objects such as water in a crate, a lamp going round a pumpkin, contour lines or a carved
-  face. All of them stand in one list by name; the place each comes from is at the right of
-  its entry. Adding one adds a copy. The cross beside a user's library entry moves its file into a
+  face. The tab shows one shelf at a time. A component names its shelf in its `shelf` param,
+  in one or two levels such as `dmx` or `dmx/safety`. A new name makes a new shelf. Its
+  `about` param says in one line what it does: the foot of the tab shows that line under the
+  pointer, with `preview.png` from the component's folder if there is one. Typing searches all
+  shelves, in the names, the shelves and the `about` lines. The shelf `mine` holds all your own
+  components and the project's, also those that have a shelf of their own. Their place is at
+  the right of the entry. Adding one adds a copy. The cross beside a user's library entry moves its file into a
   `removed/` folder beside it; penumbra's own cannot be removed.
 
 Files a component refers to (a shader, an image) are relative to the project. A component in a

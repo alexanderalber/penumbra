@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/floor_animal": (kind: "comp.base", params: {"expose": "presence = controls.value0\nat = controls.value1\nrange = controls.value2\ncycle_min = controls.value3\ncycle_max = controls.value4\nbeats_per_bar = controls.value5\nturn = controls.value6\nside = controls.value7\nlane = controls.value8\nclear = controls.value9\nsize = controls.value10\nseed = controls.value11\ncolor = lines.color\nline_width = lines.line_width"}),
+        "/floor_animal": (kind: "comp.base", params: {"about": "A wireframe horse galloping beside the lane.", "expose": "presence = controls.value0\nat = controls.value1\nrange = controls.value2\ncycle_min = controls.value3\ncycle_max = controls.value4\nbeats_per_bar = controls.value5\nturn = controls.value6\nside = controls.value7\nlane = controls.value8\nclear = controls.value9\nsize = controls.value10\nseed = controls.value11\ncolor = lines.color\nline_width = lines.line_width", "shelf": "music stage/floor"}),
         "/floor_animal/bus": (kind: "chan.in", pos: [-1200.0, 0.0]),
         "/floor_animal/lane": (kind: "tex.in", pos: [-1200.0, 150.0]),
         "/floor_animal/controls": (kind: "chan.constant", params: {"rows": 12, "name0": "presence", "value0": 1.0, "name1": "at", "value1": 5.0, "name2": "range", "value2": 1.5, "name3": "cycle_min", "value3": 16.0, "name4": "cycle_max", "value4": 32.0, "name5": "beats_per_bar", "value5": 4.0, "name6": "turn", "value6": 30.0, "name7": "side", "value7": 1.0, "name8": "lane", "value8": 1.6, "name9": "clear", "value9": 1.1, "name10": "size", "value10": 1.0, "name11": "seed", "value11": 1.0}, pos: [-1200.0, 300.0]),

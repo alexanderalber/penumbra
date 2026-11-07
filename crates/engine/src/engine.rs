@@ -689,6 +689,9 @@ pub struct Engine {
     switching: Mutex<()>,
     /// The user's component library (`comp.*`); `None` until set or asked for.
     library: Mutex<Option<std::path::PathBuf>>,
+    /// What each listed component file says about itself, so that listing the library does not
+    /// parse files that have not changed.
+    described: Mutex<crate::components::DescribedFiles>,
     /// The component library shipped with penumbra (`library/` beside the executable); `None`
     /// offers none (tests).
     shipped: Mutex<Option<std::path::PathBuf>>,
@@ -785,6 +788,7 @@ impl Engine {
             threads: Mutex::new(Vec::new()),
             switching: Mutex::new(()),
             library: Mutex::new(None),
+            described: Mutex::new(Default::default()),
             shipped: Mutex::new(None),
             recent: Mutex::new(None),
             clipboard: Mutex::new(None),
@@ -1059,6 +1063,11 @@ impl Engine {
     pub fn library(&self) -> Option<std::path::PathBuf> {
         let set = lock(&self.library).clone();
         set.or_else(crate::components::default_library)
+    }
+
+    /// What the listed component files say about themselves.
+    pub(crate) fn described(&self) -> std::sync::MutexGuard<'_, crate::components::DescribedFiles> {
+        lock(&self.described)
     }
 
     /// The nodes copied last, with what their locked nodes held.

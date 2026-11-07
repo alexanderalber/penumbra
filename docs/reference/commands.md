@@ -91,7 +91,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `comp.collapse` | Group side-by-side nodes into a new component, ports where wires cross; {paths, name?} |
 | `comp.expand` | Dissolve a component, its nodes move up beside it; {path} |
-| `comp.library` | Component files in the project's components/, the user's library and penumbra's own library |
+| `comp.library` | Component files in the project's components/, the user's library and penumbra's own library, each with its shelf, one line on what it does and its picture |
 | `comp.load` | Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/<name>/ first; {file, path?} |
 | `comp.remove` | Take a component file out of the library (into its removed/ folder); {name, place?: project \| library} |
 | `comp.save` | Write a component to a file (default: the library, <name>.comp.ron); {path, file?} |

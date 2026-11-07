@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/mid_debris": (kind: "comp.base", params: {"expose": "presence = controls.value0\nsize = controls.value1\ncount = places.count\nseed = places.seed\nspeed = places.speed\nspread = places.spread\nclear = places.clear\nlow = places.low\nhigh = places.high\nnear = places.near\nfar = places.far\nspin = spin.spin\nburst = burst.burst\nevery = burst.every\nbeats_per_bar = burst.beats_per_bar\nshard_beats = shard_places.last\nreach = shard_places.reach\ncolor = rock_lines.color\nextent = rocks.extent"}),
+        "/mid_debris": (kind: "comp.base", params: {"about": "Low-poly wireframe rocks come at the camera, tumbling, and pass it on both sides.", "expose": "presence = controls.value0\nsize = controls.value1\ncount = places.count\nseed = places.seed\nspeed = places.speed\nspread = places.spread\nclear = places.clear\nlow = places.low\nhigh = places.high\nnear = places.near\nfar = places.far\nspin = spin.spin\nburst = burst.burst\nevery = burst.every\nbeats_per_bar = burst.beats_per_bar\nshard_beats = shard_places.last\nreach = shard_places.reach\ncolor = rock_lines.color\nextent = rocks.extent", "shelf": "music stage/mid"}),
         "/mid_debris/bus": (kind: "chan.in", pos: [-1000.0, 0.0]),
         "/mid_debris/lane": (kind: "tex.in", pos: [-1000.0, 150.0]),
         "/mid_debris/controls": (kind: "chan.constant", params: {"name0": "presence", "value0": 1.0, "name1": "size", "value1": 0.35, "rows": 2}, pos: [-1000.0, 300.0]),

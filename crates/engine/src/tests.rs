@@ -558,6 +558,39 @@ fn resolution_analysis_and_optimisation_through_commands() {
     eventually("the overlay gone", || !f.engine.view().overlay && f.engine.view().resolution.is_none());
 }
 
+/// A person reads the library one shelf at a time, so a shelf has to stay short enough to read.
+#[test]
+fn every_shipped_component_has_a_shelf_and_says_what_it_does() {
+    const MOST_ON_A_SHELF: usize = 15;
+    let f = Fixture::new("shipped-shelves");
+    let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library");
+    f.engine.set_shipped_library(Some(shipped));
+    let listed = f.call("comp.library", json!({}));
+    let shipped: Vec<&serde_json::Value> =
+        listed["components"].as_array().unwrap().iter().filter(|c| c["place"] == "penumbra").collect();
+    assert!(!shipped.is_empty(), "{listed}");
+    let mut on_shelf = std::collections::BTreeMap::<&str, usize>::new();
+    for c in shipped {
+        let (shelf, about) = (c["shelf"].as_str().unwrap(), c["about"].as_str().unwrap());
+        assert!(!shelf.is_empty(), "no shelf: {c}");
+        assert!(!about.is_empty(), "no about: {c}");
+        *on_shelf.entry(shelf).or_default() += 1;
+    }
+    assert!(on_shelf.values().all(|n| *n <= MOST_ON_A_SHELF), "{on_shelf:?}");
+}
+
+#[test]
+fn a_component_file_that_does_not_parse_stays_listed() {
+    let f = Fixture::new("broken-comp");
+    let lib = ScratchDir::unborn("engine-broken-comp");
+    std::fs::create_dir_all(lib.path()).unwrap();
+    std::fs::write(lib.path().join("bad.comp.ron"), "not a component").unwrap();
+    f.engine.set_library(Some(lib.to_path_buf()));
+    let listed = f.call("comp.library", json!({}));
+    assert_eq!(listed["components"][0]["name"], "bad", "{listed}");
+    assert_eq!(listed["components"][0]["shelf"], "", "{listed}");
+}
+
 #[test]
 fn shipped_components_bring_their_files() {
     let f = Fixture::new("shipped");
@@ -569,7 +602,7 @@ fn shipped_components_bring_their_files() {
     std::fs::write(
         folder.join("glowy.comp.ron"),
         r#"(version: 2, nodes: {
-            "/glowy": (kind: "comp.base"),
+            "/glowy": (kind: "comp.base", params: {"shelf": "looks/soft", "about": "A soft glow."}),
             "/glowy/look": (kind: "tex.shader", params: {"file": "library/glowy/look.wgsl"}),
             "/glowy/out": (kind: "tex.out", inputs: {"in": "look"}),
         })"#,
@@ -582,7 +615,14 @@ fn shipped_components_bring_their_files() {
     let listed = f.call("comp.library", json!({}));
     assert_eq!(
         listed["components"],
-        json!([{"name": "glowy", "place": "penumbra", "file": folder.join("glowy.comp.ron").display().to_string()}]),
+        json!([{
+            "name": "glowy",
+            "place": "penumbra",
+            "file": folder.join("glowy.comp.ron").display().to_string(),
+            "shelf": "looks/soft",
+            "about": "A soft glow.",
+            "preview": folder.join("preview.png").display().to_string(),
+        }]),
         "{listed}"
     );
     let loaded = f.call("comp.load", json!({"file": "glowy"}));

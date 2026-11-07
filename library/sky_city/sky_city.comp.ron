@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/sky_city": (kind: "comp.base", params: {"expose": "presence = city.presence
+        "/sky_city": (kind: "comp.base", params: {"about": "A skyline on the horizon.", "expose": "presence = city.presence
 brightness = city.brightness
 warmth = city.warmth
 seed = city.seed
@@ -13,7 +13,7 @@ windows = city.windows
 flicker = city.flicker
 edge = city.edge
 reach = city.reach
-bend = city.bend"}),
+bend = city.bend", "shelf": "music stage/sky"}),
         "/sky_city/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/sky_city/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
         "/sky_city/city": (kind: "tex.shader", params: {"file": "library/sky_city/city.wgsl", "resolution": "custom", "presence": 1.0, "brightness": 1.0, "warmth": 0.0, "seed": 1, "tall": 0.12, "slide": 0.002, "windows": 0.35, "flicker": 0.7, "edge": 0.8, "reach": 10.0, "bend": 0.0, "axis": 4.0, "radius": 4.0, "far": 20.0}, binds: {"beats": "bus:travelled", "mid": "bus:energy_mid", "eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side", "bend": "pose:curve", "axis": "pose:axis", "radius": "pose:radius", "far": "pose:far"}, pos: [-300.0, 0.0]),

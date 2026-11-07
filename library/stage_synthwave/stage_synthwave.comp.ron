@@ -3,10 +3,10 @@
 (
     version: 2,
     nodes: {
-        "/stage_synthwave": (kind: "comp.base", params: {"expose": "warmth = palette.cross\nlift = energy_lift.b\nenergy_curve = energy_curve.b\nbars_per_turn = lane_map.bars_per_turn\nswing = lane_map.swing\nturn = lane_map.turn\nstep = controls.value0\nbeats_per_bar = lane_map.beats_per_bar\nstart = fade.start\nend = shape.value4\ndim = nebula_dim.brightness\ncamera = preset.row\nglide = glide.rise\npresets = presets.text
+        "/stage_synthwave": (kind: "comp.base", params: {"about": "A world: the camera flies over a wireframe floor towards a nebula.", "expose": "warmth = palette.cross\nlift = energy_lift.b\nenergy_curve = energy_curve.b\nbars_per_turn = lane_map.bars_per_turn\nswing = lane_map.swing\nturn = lane_map.turn\nstep = controls.value0\nbeats_per_bar = lane_map.beats_per_bar\nstart = fade.start\nend = shape.value4\ndim = nebula_dim.brightness\ncamera = preset.row\nglide = glide.rise\npresets = presets.text
 gap = gap_memory.gap
 gap_length = lane_map.gap_length
-ground = ground.ground\nroll_up = controls.value1"}),
+ground = ground.ground\nroll_up = controls.value1", "shelf": "music stage/stages"}),
         "/stage_synthwave/bus": (kind: "chan.in", pos: [-1400.0, 0.0]),
         "/stage_synthwave/floor": (kind: "geo.in", pos: [400.0, 300.0]),
         "/stage_synthwave/mid": (kind: "geo.in", pos: [400.0, 450.0]),

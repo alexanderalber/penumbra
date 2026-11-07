@@ -9,11 +9,16 @@
 //! line. The live inputs (`in`) and, in `tex`, the scan workflow (`scan and shapes`) follow in
 //! columns of their own under a heading ([`penumbra_graph::Block`]), so the types placed by hand
 //! every day are not spread out between them. The content library has a tab of its own,
-//! `library`, in the components' colour: penumbra's components and the user's in one list, each
-//! marked with where it lies.
+//! `library`, in the components' colour. It shows one shelf at a time, because nobody reads
+//! through dozens of names. The shelves come from the components' own `shelf` param, one or two
+//! levels; this file knows no topic. The user's and the project's components are all on `mine`
+//! as well. Under the pointer the foot of the tab shows the component's `about` line and its
+//! picture, if it has one.
 //!
 //! Typing does not hide types: those whose name does not contain the text are greyed out, so
 //! the grid keeps its shape and the eye its places. Spaces, underscores and dots do not count.
+//! The library tab is the exception: there typing shows the matches of all shelves in one list,
+//! found by name, shelf or `about` line, since greying one shelf would not find the others.
 //! A type is also found by a tag that starts with the text: a TouchDesigner name (`chop to`
 //! finds `tex.from_chan`) or a file name extension it reads (`fbx` finds `geo.file`). The
 //! summary names the tag. Families with a match are marked in their tab (bright text, a bar
@@ -26,6 +31,8 @@
 //! The component ports (`tex.in`, `chan.out`, ...) are greyed out and cannot be chosen at the
 //! top level of the project: there they have no component whose sockets they would be.
 
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use egui::{
@@ -70,6 +77,23 @@ const HEADING: f32 = 18.0;
 const ROWS: usize = 12;
 const CELL: egui::Vec2 = vec2(150.0, 22.0);
 const MIN_WIDTH: f32 = 4.0 * 150.0;
+/// The shelf of everything that is the user's or the project's, whatever its own shelf says.
+const MINE: &str = "mine";
+/// The shelf of components that name none, and of those beside a second level.
+const OTHER: &str = "other";
+/// Height of a row of shelves.
+const SHELF_ROW: f32 = 22.0;
+/// Height of the library tab's foot, and the room for a picture in it.
+const FOOT: egui::Vec2 = vec2(164.0, 92.0);
+/// Fewest characters the search looks for in shelves and `about` lines: shorter ones match
+/// nearly every line.
+const TEXT_SEARCH_MIN: usize = 3;
+/// Largest preview file read.
+const MAX_PREVIEW_BYTES: u64 = 16 << 20;
+/// Largest preview side decoded.
+const MAX_PREVIEW_SIDE: u32 = 8192;
+/// Most memory a preview may take while it is decoded.
+const MAX_PREVIEW_ALLOC: u64 = 256 << 20;
 
 pub struct AddDialog {
     /// Where the node goes, in graph units.
@@ -85,6 +109,136 @@ pub struct AddDialog {
     pub title: Option<String>,
     /// Whether the node goes into a component, where the component ports can be chosen.
     pub in_component: bool,
+    /// The shelf of the library tab; the editor opens the next dialog on it.
+    pub shelf: ShelfChoice,
+    /// The pictures shown so far by component name; `None` for one that has no usable picture.
+    previews: BTreeMap<String, Option<egui::TextureHandle>>,
+}
+
+/// Which shelf the library tab shows.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ShelfChoice {
+    pub top: String,
+    /// The second level shown last, by first level.
+    pub sub: BTreeMap<String, String>,
+}
+
+/// A first-level shelf: its name, how many components stand on it and its second level, each
+/// with its count. Empty when nothing on it names a second level.
+#[derive(Clone, Debug, PartialEq)]
+struct Shelf {
+    name: String,
+    count: usize,
+    subs: Vec<(String, usize)>,
+}
+
+/// The one or two levels of a `shelf` text. Further levels are ignored.
+fn levels(shelf: &str) -> (Option<&str>, Option<&str>) {
+    let mut parts = shelf.split('/').map(str::trim).filter(|p| !p.is_empty());
+    let top = parts.next();
+    (top, parts.next())
+}
+
+/// The shelves `o` stands on: its own, and for anything not shipped also `mine`, where its own
+/// first level is the second level.
+fn places_of(o: &Offered) -> Vec<(&str, Option<&str>)> {
+    let (top, sub) = levels(&o.shelf);
+    if o.place == "penumbra" {
+        return vec![(top.unwrap_or(OTHER), sub)];
+    }
+    let mut places = vec![(MINE, top)];
+    if let Some(top) = top {
+        places.push((top, sub));
+    }
+    places
+}
+
+/// The shelves of `library`: `mine` first, `other` last, the rest by name.
+fn shelves(library: &[Offered]) -> Vec<Shelf> {
+    let mut found: BTreeMap<&str, (usize, BTreeMap<Option<&str>, usize>)> = BTreeMap::new();
+    for o in library {
+        for (top, sub) in places_of(o) {
+            let shelf = found.entry(top).or_default();
+            shelf.0 += 1;
+            *shelf.1.entry(sub).or_default() += 1;
+        }
+    }
+    let mut out: Vec<Shelf> = found
+        .into_iter()
+        .map(|(name, (count, by_sub))| {
+            let loose = by_sub.get(&None).copied().unwrap_or(0);
+            let mut subs: Vec<(String, usize)> =
+                by_sub.iter().filter_map(|(s, n)| Some(((*s)?.to_string(), *n))).collect();
+            if !subs.is_empty() && loose > 0 {
+                subs.push((OTHER.to_string(), loose));
+            }
+            Shelf { name: name.to_string(), count, subs }
+        })
+        .collect();
+    let rank = |name: &str| match name {
+        MINE => 0,
+        OTHER => 2,
+        _ => 1,
+    };
+    out.sort_by_key(|s| (rank(&s.name), s.name.to_lowercase()));
+    out
+}
+
+/// The shelf `choice` means among `shelves`: what it names, else the first; and the second level
+/// likewise, if the shelf has one.
+fn active_shelf<'a>(shelves: &'a [Shelf], choice: &ShelfChoice) -> Option<(&'a Shelf, Option<&'a str>)> {
+    let shelf = shelves.iter().find(|s| s.name == choice.top).or_else(|| shelves.first())?;
+    let wanted = choice.sub.get(&shelf.name);
+    let sub = shelf.subs.iter().find(|(n, _)| Some(n) == wanted).or_else(|| shelf.subs.first());
+    Some((shelf, sub.map(|(n, _)| n.as_str())))
+}
+
+/// The components the library tab lists: while searching the matches of all shelves, those
+/// found by name first; else the active shelf, by name.
+fn listed(
+    library: &[Offered],
+    shelves: &[Shelf],
+    choice: &ShelfChoice,
+    usable: Usable<'_>,
+    filter: &str,
+) -> Vec<Offered> {
+    let by_name = |o: &Offered| o.name.to_lowercase();
+    if !filter.is_empty() {
+        let mut hits: Vec<Offered> = library
+            .iter()
+            .filter(|o| usable.hit(&format!("{LIBRARY_MARK}{}", o.name), filter))
+            .cloned()
+            .collect();
+        hits.sort_by_key(|o| (!matches(&o.name, filter), by_name(o)));
+        return hits;
+    }
+    let Some((shelf, sub)) = active_shelf(shelves, choice) else { return Vec::new() };
+    let stands_here = |o: &&Offered| {
+        places_of(o)
+            .iter()
+            .any(|(t, s)| *t == shelf.name && (sub.is_none() || Some(s.unwrap_or(OTHER)) == sub))
+    };
+    let mut on: Vec<Offered> = library.iter().filter(stands_here).cloned().collect();
+    on.sort_by_key(by_name);
+    on
+}
+
+/// A component's picture as an image, smaller than the file. `None` for a missing, oversized or
+/// broken file: the foot then shows no picture.
+fn read_preview(path: &Path) -> Option<egui::ColorImage> {
+    if std::fs::metadata(path).ok()?.len() > MAX_PREVIEW_BYTES {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_PREVIEW_SIDE);
+    limits.max_image_height = Some(MAX_PREVIEW_SIDE);
+    limits.max_alloc = Some(MAX_PREVIEW_ALLOC);
+    reader.limits(limits);
+    let picture = reader.decode().ok()?.thumbnail(2 * FOOT.x as u32, 2 * FOOT.y as u32).to_rgba8();
+    let size = [picture.width() as usize, picture.height() as usize];
+    Some(egui::ColorImage::from_rgba_unmultiplied(size, picture.as_raw()))
 }
 
 pub enum Outcome {
@@ -176,12 +330,10 @@ fn kinds_of(types: &NodeTypes, family: &str, library: &[Offered]) -> Vec<String>
 /// The kinds of `family` by section: its common types sorted by their short name (`comp.base`
 /// first) and its component ports (`tex.in`, `tex.out`) after them behind a gap ([`GAP`]), so
 /// they do not read as a source and a sink; then each [`Block`], empty or not. The `library`
-/// tab holds the component files on offer as `@name`, by name.
+/// tab holds the component files it is given as `@name`, in the order given.
 fn sections_of(types: &NodeTypes, family: &str, library: &[Offered]) -> Vec<(Option<Block>, Vec<String>)> {
     if family == LIBRARY {
-        let mut files: Vec<&Offered> = library.iter().collect();
-        files.sort_by_key(|o| o.name.to_lowercase());
-        return vec![(None, files.iter().map(|o| format!("{LIBRARY_MARK}{}", o.name)).collect())];
+        return vec![(None, library.iter().map(|o| format!("{LIBRARY_MARK}{}", o.name)).collect())];
     }
     let in_family = |k: &&str| k.split_once('.').is_some_and(|(f, _)| f == family);
     let block_of = |k: &str| types.desc(k).and_then(|d| d.block);
@@ -212,12 +364,17 @@ fn sections_of(types: &NodeTypes, family: &str, library: &[Offered]) -> Vec<(Opt
     out
 }
 
-/// A component file on offer and where it lies: `project` (the project's `components/`) or
-/// `library` (the user's library).
+/// A component file on offer and where it lies: `project` (the project's `components/`),
+/// `library` (the user's library) or `penumbra` (shipped).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Offered {
     pub name: String,
     pub place: &'static str,
+    /// Its place in the library, as its `shelf` param says; may be empty.
+    pub shelf: String,
+    /// What it does, in one line; may be empty.
+    pub about: String,
+    pub preview: Option<PathBuf>,
 }
 
 /// The empty cell before a family's component ports: a line, not a choice.
@@ -267,6 +424,7 @@ fn matches(kind: &str, filter: &str) -> bool {
 struct Usable<'a> {
     types: &'a NodeTypes,
     in_component: bool,
+    library: &'a [Offered],
 }
 
 impl Usable<'_> {
@@ -274,10 +432,21 @@ impl Usable<'_> {
         self.in_component || self.types.desc(kind).is_none_or(|d| d.port.is_none())
     }
 
-    /// A choice for the search: usable here, and containing the text in its name or starting a
-    /// tag with it.
+    /// A choice for the search: usable here, and containing the text in its name, starting a
+    /// tag with it or, for a component file, naming it in its shelf or `about` line.
     fn hit(self, kind: &str, filter: &str) -> bool {
-        self.allows(kind) && (matches(kind, filter) || self.tag(kind, filter).is_some())
+        self.allows(kind)
+            && (matches(kind, filter) || self.tag(kind, filter).is_some() || self.says(kind, filter))
+    }
+
+    /// Whether the component file `kind` has `filter` (lower case) in its shelf or `about` line.
+    fn says(self, kind: &str, filter: &str) -> bool {
+        let Some(name) = kind.strip_prefix(LIBRARY_MARK) else { return false };
+        filter.chars().count() >= TEXT_SEARCH_MIN
+            && self.library.iter().any(|o| {
+                o.name == name
+                    && (o.about.to_lowercase().contains(filter) || o.shelf.to_lowercase().contains(filter))
+            })
     }
 
     /// The tag the search finds `kind` by when its name does not contain the text.
@@ -299,6 +468,8 @@ impl AddDialog {
             family: family.to_string(),
             title: None,
             in_component: false,
+            shelf: ShelfChoice::default(),
+            previews: BTreeMap::new(),
         }
     }
 
@@ -313,7 +484,7 @@ impl AddDialog {
     ) -> Outcome {
         let groups = groups(types);
         let filter = self.filter.trim().to_lowercase();
-        let usable = Usable { types, in_component: self.in_component };
+        let usable = Usable { types, in_component: self.in_component, library };
         let mut active = groups.iter().position(|g| g.contains(&self.family)).unwrap_or(0);
         let mut outcome = Outcome::Open;
 
@@ -340,7 +511,11 @@ impl AddDialog {
             outcome = Outcome::Close;
         }
 
-        let (cells, sections) = cells(types, group, library);
+        let on_library = group.iter().any(|f| f == LIBRARY);
+        let shelves = shelves(library);
+        let shown =
+            if on_library { listed(library, &shelves, &self.shelf, usable, &filter) } else { Vec::new() };
+        let (cells, sections) = cells(types, group, &shown);
         let first = enter_choice(cells.iter().map(|c| c.kind.as_str()), usable, &filter);
         if enter && let Some(k) = &first {
             outcome = Outcome::Chosen(k.clone());
@@ -359,6 +534,9 @@ impl AddDialog {
                     ui.add_space(2.0);
                     self.tabs(ui, &groups, active, usable, library, &filter, auto);
                     ui.separator();
+                    if on_library {
+                        self.shelf_rows(ui, &shelves, &filter, shown.len(), width, auto);
+                    }
                     headings(ui, group, &sections, width, auto);
                     let grid = Grid {
                         cells: &cells,
@@ -373,7 +551,11 @@ impl AddDialog {
                     ui.separator();
                     // The summary of the type under the pointer (or of Enter's choice).
                     let about = hovered.or(first.as_deref());
-                    summary(ui, about, usable, library, &filter, width);
+                    if on_library {
+                        self.foot(ui, about, library);
+                    } else {
+                        summary(ui, about, usable, library, &filter, width);
+                    }
                 });
             });
         let outside = ui.input(|i| i.pointer.any_pressed())
@@ -408,6 +590,150 @@ impl AddDialog {
         });
     }
 
+    /// The rows of shelves of the library tab. They keep their room while searching and on a
+    /// shelf without a second level, so the grid stays where it is.
+    fn shelf_rows(
+        &mut self,
+        ui: &mut Ui,
+        shelves: &[Shelf],
+        filter: &str,
+        hits: usize,
+        width: f32,
+        auto: &mut automation::Registry,
+    ) {
+        let row = |ui: &mut Ui, draw: &mut dyn FnMut(&mut Ui)| {
+            ui.allocate_ui_with_layout(
+                vec2(width, SHELF_ROW),
+                egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 3.0;
+                    ui.set_min_height(SHELF_ROW);
+                    draw(ui);
+                },
+            );
+        };
+        if !filter.is_empty() {
+            let text = if hits == 1 {
+                "1 match on all shelves".to_string()
+            } else {
+                format!("{hits} matches on all shelves")
+            };
+            row(ui, &mut |ui| {
+                ui.label(egui::RichText::new(text.as_str()).color(theme::TEXT_WEAK));
+            });
+            row(ui, &mut |_| {});
+            return;
+        }
+        let Some((active, sub)) = active_shelf(shelves, &self.shelf) else {
+            row(ui, &mut |_| {});
+            row(ui, &mut |_| {});
+            return;
+        };
+        let active_name = active.name.clone();
+        let mut picked = None;
+        row(ui, &mut |ui| {
+            for s in shelves {
+                let id = format!("add.shelf.{}", s.name.replace(' ', "_"));
+                if shelf_button(ui, &s.name, s.count, s.name == active_name, false, id, auto).clicked() {
+                    picked = Some(s.name.clone());
+                }
+            }
+        });
+        let mut picked_sub = None;
+        row(ui, &mut |ui| {
+            for (name, count) in &active.subs {
+                let id = format!("add.shelf.{}.{}", active_name.replace(' ', "_"), name.replace(' ', "_"));
+                if shelf_button(ui, name, *count, Some(name.as_str()) == sub, true, id, auto).clicked() {
+                    picked_sub = Some(name.clone());
+                }
+            }
+        });
+        if let Some(name) = picked_sub {
+            self.shelf.sub.insert(active_name.clone(), name);
+            self.focus = true;
+        }
+        self.shelf.top = active_name;
+        if let Some(name) = picked {
+            self.shelf.top = name;
+            self.focus = true;
+        }
+    }
+
+    /// The foot of the library tab, of one height so the dialog does not jump under the pointer:
+    /// the component `about` names, with its picture and what it says.
+    fn foot(&mut self, ui: &mut Ui, about: Option<&str>, library: &[Offered]) {
+        let entry = about
+            .and_then(|k| k.strip_prefix(LIBRARY_MARK))
+            .and_then(|name| library.iter().find(|o| o.name == name));
+        let layout = egui::Layout::left_to_right(egui::Align::TOP);
+        ui.allocate_ui_with_layout(vec2(ui.available_width(), FOOT.y), layout, |ui| {
+            ui.set_min_height(FOOT.y);
+            let Some(entry) = entry else {
+                ui.label(
+                    egui::RichText::new("Point at an entry to see what it does.").color(theme::TEXT_WEAK),
+                );
+                return;
+            };
+            let picture = self.preview(ui, entry);
+            let (room, _) = ui.allocate_exact_size(FOOT, Sense::hover());
+            match picture {
+                Some(picture) => {
+                    let size = picture.size_vec2();
+                    let shown =
+                        Rect::from_center_size(room.center(), size * (FOOT.x / size.x).min(FOOT.y / size.y));
+                    let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                    ui.painter().image(picture.id(), shown, whole, Color32::WHITE);
+                }
+                None => {
+                    ui.painter().rect_stroke(
+                        room.shrink(0.5),
+                        CornerRadius::ZERO,
+                        Stroke::new(1.0, Color32::from_gray(60)),
+                        StrokeKind::Inside,
+                    );
+                    ui.painter().text(
+                        room.center(),
+                        Align2::CENTER_CENTER,
+                        "no picture",
+                        FontId::proportional(12.0),
+                        Color32::from_gray(95),
+                    );
+                }
+            }
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.label(egui::RichText::new(&entry.name).color(theme::TEXT).strong());
+                let shelf = if entry.shelf.is_empty() { MINE } else { entry.shelf.as_str() };
+                ui.label(
+                    egui::RichText::new(shelf.replace('/', " / "))
+                        .small()
+                        .color(theme::family_color(LIBRARY)),
+                );
+                let about = if entry.about.is_empty() {
+                    "This component does not say what it does yet."
+                } else {
+                    &entry.about
+                };
+                ui.label(egui::RichText::new(about).color(theme::TEXT_WEAK));
+            });
+        });
+    }
+
+    /// The picture of `entry`, decoded the first time it is shown.
+    fn preview(&mut self, ui: &Ui, entry: &Offered) -> Option<egui::TextureHandle> {
+        self.previews
+            .entry(entry.name.clone())
+            .or_insert_with(|| {
+                let image = read_preview(entry.preview.as_deref()?)?;
+                Some(ui.ctx().load_texture(
+                    format!("library {}", entry.name),
+                    image,
+                    egui::TextureOptions::LINEAR,
+                ))
+            })
+            .clone()
+    }
+
     /// One tab per group, a segment per family coloured like its node headers; a named tab
     /// writes its name across them.
     #[allow(clippy::too_many_arguments)]
@@ -433,6 +759,51 @@ impl AddDialog {
             }
         });
     }
+}
+
+/// A shelf of the library tab: filled when active on the first level, underlined on the second.
+fn shelf_button(
+    ui: &mut Ui,
+    name: &str,
+    count: usize,
+    active: bool,
+    second: bool,
+    id: String,
+    auto: &mut automation::Registry,
+) -> egui::Response {
+    let color = theme::family_color(LIBRARY);
+    let text = match (active, second) {
+        (true, false) => Color32::from_gray(10),
+        (true, true) => Color32::WHITE,
+        (false, _) => theme::TEXT,
+    };
+    let label = ui.painter().layout_no_wrap(name.to_string(), FontId::proportional(13.0), text);
+    let number =
+        ui.painter().layout_no_wrap(count.to_string(), FontId::proportional(11.0), text.gamma_multiply(0.65));
+    let width = label.size().x + number.size().x + 22.0;
+    let (rect, r) = ui.allocate_exact_size(vec2(width, SHELF_ROW), Sense::click());
+    if second {
+        if active {
+            let bar = Rect::from_min_max(
+                rect.left_bottom() + vec2(3.0, -2.0),
+                rect.right_bottom() - vec2(3.0, 0.0),
+            );
+            ui.painter().rect_filled(bar, CornerRadius::ZERO, color);
+        }
+    } else {
+        let fill = match (active, r.hovered()) {
+            (true, _) => color,
+            (false, true) => color.gamma_multiply(0.45),
+            (false, false) => color.gamma_multiply(0.22),
+        };
+        ui.painter().rect_filled(rect, CornerRadius::ZERO, fill);
+    }
+    let left = rect.min.x + 8.0;
+    let number_at = pos2(left + label.size().x + 5.0, rect.center().y - number.size().y / 2.0);
+    ui.painter().galley(pos2(left, rect.center().y - label.size().y / 2.0), label, text);
+    ui.painter().galley(number_at, number, text);
+    auto.add(id, rect, name);
+    r
 }
 
 /// One tab of the dialog; `families` its families, `filter` the search text.
@@ -566,11 +937,16 @@ struct Grid<'a> {
 impl<'a> Grid<'a> {
     /// Draws the grid; a click on a type chooses it. Returns the type under the pointer.
     fn show(&self, ui: &mut Ui, auto: &mut automation::Registry, outcome: &mut Outcome) -> Option<&'a str> {
-        let rows = self.cells.iter().map(|c| c.row + 1).max().unwrap_or(1);
+        let on_library = self.group.iter().any(|f| f == LIBRARY);
+        // The library tab keeps its height from shelf to shelf.
+        let least = if on_library { ROWS } else { 1 };
+        let rows = self.cells.iter().map(|c| c.row + 1).max().unwrap_or(1).max(least);
         let (grid, _) = ui.allocate_exact_size(vec2(self.width, rows as f32 * CELL.y), Sense::hover());
         let painter = ui.painter_at(grid);
         if self.cells.is_empty() {
-            let text = if self.group.iter().any(|f| f == LIBRARY) {
+            let text = if on_library && !self.filter.is_empty() {
+                "no component has this name or says this".to_string()
+            } else if on_library {
                 "no component files yet: \"Save to the library\" in a component's menu adds one".to_string()
             } else {
                 format!("no {} node types yet", self.group.join(" or "))
@@ -655,6 +1031,11 @@ impl<'a> Grid<'a> {
         auto: &mut automation::Registry,
     ) -> bool {
         let place = self.library.iter().find(|o| o.name == name).map_or("", |o| o.place);
+        // penumbra's own components are nearly all there is: naming each would only crowd the
+        // names. They stay in its library, so they have no button to take them out.
+        if place == "penumbra" {
+            return false;
+        }
         let place_text = || {
             painter.text(
                 cell.right_center() - vec2(6.0, 0.0),
@@ -664,11 +1045,6 @@ impl<'a> Grid<'a> {
                 theme::TEXT_WEAK,
             );
         };
-        // penumbra's own components stay in its library: no button to take them out.
-        if place == "penumbra" {
-            place_text();
-            return false;
-        }
         let cross = Rect::from_center_size(
             cell.right_center() - vec2(4.0 + CELL.y / 2.0, 0.0),
             vec2(CELL.y - 4.0, CELL.y - 4.0),
@@ -763,23 +1139,114 @@ mod tests {
     #[test]
     fn the_library_is_a_tab_of_its_own() {
         let types = penumbra_ops::builtin_types().unwrap();
-        let library = [
-            Offered { name: "water".into(), place: "penumbra" },
-            Offered { name: "Mine".into(), place: "library" },
-        ];
+        let library = [offered("water", "penumbra", "", ""), offered("Mine", "library", "", "")];
         let tabs = groups(&types);
         assert!(tabs.contains(&vec![LIBRARY.to_string()]));
-        assert_eq!(kinds_of(&types, LIBRARY, &library), ["@Mine", "@water"], "one list, by name");
+        assert_eq!(kinds_of(&types, LIBRARY, &library).len(), 2, "the tab's search sees all of them");
         assert_eq!(kinds_of(&types, "comp", &library), ["comp.base"], "comp keeps its own types");
-        let (_, sections) = cells(&types, &[LIBRARY.to_string()], &library);
-        assert_eq!(sections.len(), 1, "no sub-division");
+    }
+
+    fn offered(name: &str, place: &'static str, shelf: &str, about: &str) -> Offered {
+        Offered { name: name.into(), place, shelf: shelf.into(), about: about.into(), preview: None }
+    }
+
+    fn names(list: &[Offered]) -> Vec<&str> {
+        list.iter().map(|o| o.name.as_str()).collect()
+    }
+
+    /// Shelves about things that are not pictures: nothing in the dialog knows a topic.
+    fn stock() -> Vec<Offered> {
+        vec![
+            offered("cue_stack", "penumbra", "show/cues", "Steps through a list of looks."),
+            offered("fade_all", "penumbra", "dmx/safety", "Fades every channel to zero."),
+            offered("par_row", "penumbra", "dmx/fixtures", "A row of lamps."),
+            offered("loose", "penumbra", "dmx", "Beside the second level."),
+            offered("watchdog", "penumbra", "tools", "Warns when the frame rate drops."),
+            offered("nameless", "penumbra", "", ""),
+            offered("my_cue", "library", "show/cues", ""),
+            offered("scratch", "project", "", ""),
+        ]
+    }
+
+    fn choose(top: &str, sub: Option<&str>) -> ShelfChoice {
+        let mut choice = ShelfChoice { top: top.into(), ..Default::default() };
+        if let Some(sub) = sub {
+            choice.sub.insert(top.into(), sub.into());
+        }
+        choice
+    }
+
+    #[test]
+    fn shelves_come_from_the_components() {
+        let found = shelves(&stock());
+        let order: Vec<&str> = found.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(order, ["mine", "dmx", "show", "tools", "other"], "mine first, other last");
+        let dmx = &found[1];
+        assert_eq!(dmx.count, 3);
+        assert_eq!(dmx.subs, [("fixtures".into(), 1), ("safety".into(), 1), ("other".into(), 1)]);
+        assert!(found[3].subs.is_empty(), "one level, no second row");
+        let mine = &found[0];
+        assert_eq!(mine.count, 2);
+        assert_eq!(
+            mine.subs,
+            [("show".to_string(), 1), ("other".to_string(), 1)],
+            "by their own first level"
+        );
+        assert_eq!(levels(" a / b /c"), (Some("a"), Some("b")), "two levels, trimmed");
+        assert_eq!(levels("/"), (None, None));
+    }
+
+    #[test]
+    fn the_tab_shows_one_shelf() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let library = stock();
+        let found = shelves(&library);
+        let usable = Usable { types: &types, in_component: false, library: &library };
+        let on = |c: &ShelfChoice| listed(&library, &found, c, usable, "");
+        assert_eq!(names(&on(&choose("dmx", Some("safety")))), ["fade_all"]);
+        assert_eq!(names(&on(&choose("dmx", Some("other")))), ["loose"], "beside the second level");
+        assert_eq!(names(&on(&choose("dmx", None))), ["par_row"], "the first second level by default");
+        assert_eq!(names(&on(&choose("show", Some("cues")))), ["cue_stack", "my_cue"], "the user's too");
+        assert_eq!(names(&on(&choose("mine", Some("show")))), ["my_cue"]);
+        assert_eq!(names(&on(&choose("mine", Some("other")))), ["scratch"]);
+        assert_eq!(names(&on(&choose("gone", None))), ["my_cue"], "a shelf that left: the first");
+        assert_eq!(names(&on(&choose("other", None))), ["nameless"]);
+    }
+
+    #[test]
+    fn the_search_reaches_every_shelf_and_the_about_lines() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let library = stock();
+        let found = shelves(&library);
+        let usable = Usable { types: &types, in_component: false, library: &library };
+        let shelf = choose("tools", None);
+        let search = |f: &str| listed(&library, &found, &shelf, usable, f);
+        assert_eq!(names(&search("fade")), ["fade_all"], "from another shelf");
+        assert_eq!(names(&search("frame rate")), ["watchdog"], "by what it says");
+        assert_eq!(names(&search("safety")), ["fade_all"], "by its shelf");
+        assert_eq!(names(&search("cue")), ["cue_stack", "my_cue"]);
+        assert_eq!(names(&search("zzz")), Vec::<&str>::new());
+        assert_eq!(names(&search("ro")), ["par_row"], "two letters look at names only");
+        let lamps = search("lamps");
+        let kinds: Vec<String> = lamps.iter().map(|o| format!("@{}", o.name)).collect();
+        let first = enter_choice(kinds.iter().map(String::as_str), usable, "lamps");
+        assert_eq!(first.as_deref(), Some("@par_row"), "Enter takes one found by its line");
+    }
+
+    #[test]
+    fn a_broken_preview_shows_no_picture() {
+        assert!(read_preview(Path::new("no such file.png")).is_none());
+        let file = std::env::temp_dir().join(format!("penumbra-preview-{}.png", std::process::id()));
+        std::fs::write(&file, b"not a picture").unwrap();
+        assert!(read_preview(&file).is_none());
+        std::fs::remove_file(&file).unwrap();
     }
 
     #[test]
     fn the_component_ports_are_offered_only_inside_a_component() {
         let types = penumbra_ops::builtin_types().unwrap();
-        let top = Usable { types: &types, in_component: false };
-        let inside = Usable { types: &types, in_component: true };
+        let top = Usable { types: &types, in_component: false, library: &[] };
+        let inside = Usable { types: &types, in_component: true, library: &[] };
         assert!(!top.allows("tex.in") && !top.allows("chan.out"));
         assert!(top.allows("tex.noise") && top.allows("out.video"));
         assert!(inside.allows("tex.in") && inside.allows("tex.noise"));
@@ -790,7 +1257,7 @@ mod tests {
     #[test]
     fn a_tag_finds_a_type_its_name_does_not() {
         let types = penumbra_ops::builtin_types().unwrap();
-        let u = Usable { types: &types, in_component: false };
+        let u = Usable { types: &types, in_component: false, library: &[] };
         assert!(u.hit("geo.file", "fbx"), "the extensions geo.file reads are its tags");
         assert_eq!(u.tag("geo.file", "fbx").as_deref(), Some("fbx"));
         assert!(!u.hit("tex.blur", "fbx"));
@@ -805,7 +1272,7 @@ mod tests {
     #[test]
     fn enter_takes_the_exact_name_before_one_that_only_contains_it() {
         let types = penumbra_ops::builtin_types().unwrap();
-        let u = Usable { types: &types, in_component: false };
+        let u = Usable { types: &types, in_component: false, library: &[] };
         let kinds = ["tex.denoise", "tex.level", "tex.noise", "tex.lens_distort", "geo.file"];
         let choice = |f: &str| enter_choice(kinds.iter().copied(), u, f);
         assert_eq!(choice("noise").as_deref(), Some("tex.noise"));

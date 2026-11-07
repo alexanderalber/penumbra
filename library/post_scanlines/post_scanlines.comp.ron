@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/post_scanlines": (kind: "comp.base", params: {"expose": "presence = lines.presence\npitch = lines.pitch\nstrength = lines.strength\nthickness = lines.thickness\nroll = lines.roll\nflicker = lines.flicker\ndecay = flash.fall"}),
+        "/post_scanlines": (kind: "comp.base", params: {"about": "Dark lines across the picture, like an old monitor.", "expose": "presence = lines.presence\npitch = lines.pitch\nstrength = lines.strength\nthickness = lines.thickness\nroll = lines.roll\nflicker = lines.flicker\ndecay = flash.fall", "shelf": "music stage/stages"}),
         "/post_scanlines/in": (kind: "tex.in", pos: [-600.0, -150.0]),
         "/post_scanlines/bus": (kind: "chan.in", pos: [-800.0, 100.0]),
         "/post_scanlines/onset": (kind: "chan.select", params: {"channels": "onset"}, inputs: {"in": "bus"}, pos: [-600.0, 100.0]),

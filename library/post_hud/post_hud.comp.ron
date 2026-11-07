@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/post_hud": (kind: "comp.base", params: {"expose": "presence = hud.presence\nwarmth = hud.warmth\nbrightness = hud.brightness\nthickness = hud.thickness\nflicker = hud.flicker\ndecay = flash.fall\nreach = hud.reach\nscale = hud.scale\nbeats_per_bar = hud.beats_per_bar"}),
+        "/post_hud": (kind: "comp.base", params: {"about": "A head-up display over the picture, in thin lines of the palette's colour.", "expose": "presence = hud.presence\nwarmth = hud.warmth\nbrightness = hud.brightness\nthickness = hud.thickness\nflicker = hud.flicker\ndecay = flash.fall\nreach = hud.reach\nscale = hud.scale\nbeats_per_bar = hud.beats_per_bar", "shelf": "music stage/stages"}),
         "/post_hud/in": (kind: "tex.in", pos: [-800.0, -150.0]),
         "/post_hud/bus": (kind: "chan.in", pos: [-1000.0, 100.0]),
         "/post_hud/pose": (kind: "chan.in", pos: [-1000.0, 300.0]),

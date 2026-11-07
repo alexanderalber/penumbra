@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/mid_traps": (kind: "comp.base", params: {"expose": "presence = controls.value0\nseed = controls.value1\ncorridor_bars = controls.value2\nwander = controls.value3\nclimb = controls.value4\nmiddle = controls.value5\nopen = controls.value6\neye = controls.value7\nbeams = controls.value8\nspacing = controls.value9\nslant = controls.value10\nbrightness = controls.value11\nflicker = controls.value12\nbeats_per_bar = controls.value13\narrive = arrive.rise\nleave = arrive.fall\ncolor = light.color\nthickness = scale.thickness\nline_width = core_lines.line_width\nglow_width = glow_lines.line_width"}),
+        "/mid_traps": (kind: "comp.base", params: {"about": "Thin red laser beams in the tunnel, a maze with one free corridor.", "expose": "presence = controls.value0\nseed = controls.value1\ncorridor_bars = controls.value2\nwander = controls.value3\nclimb = controls.value4\nmiddle = controls.value5\nopen = controls.value6\neye = controls.value7\nbeams = controls.value8\nspacing = controls.value9\nslant = controls.value10\nbrightness = controls.value11\nflicker = controls.value12\nbeats_per_bar = controls.value13\narrive = arrive.rise\nleave = arrive.fall\ncolor = light.color\nthickness = scale.thickness\nline_width = core_lines.line_width\nglow_width = glow_lines.line_width", "shelf": "music stage/mid"}),
         "/mid_traps/bus": (kind: "chan.in", pos: [-1000.0, 0.0]),
         "/mid_traps/lane": (kind: "tex.in", pos: [-1000.0, 150.0]),
         "/mid_traps/pose": (kind: "chan.in", pos: [-1000.0, 450.0]),

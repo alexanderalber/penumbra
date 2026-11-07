@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/floor_cenote": (kind: "comp.base", params: {"expose": "at1 = controls.value0\nat2 = controls.value1\nat3 = controls.value2\nradius = controls.value3\nrim = controls.value4\nside = controls.value5\nlight = controls.value6\nflash = controls.value7\nidle = controls.value8\ndecay = controls.value9\nshaft_height = controls.value10\nshaft_light = controls.value11\nnear = controls.value12\nfar = controls.value13\nwarmth = controls.value14\nmargin = controls.value15\nsmooth = level.fall"}, pos: [0.0, 0.0]),
+        "/floor_cenote": (kind: "comp.base", params: {"about": "A low ring of broken rock in stage_valley's lake.", "expose": "at1 = controls.value0\nat2 = controls.value1\nat3 = controls.value2\nradius = controls.value3\nrim = controls.value4\nside = controls.value5\nlight = controls.value6\nflash = controls.value7\nidle = controls.value8\ndecay = controls.value9\nshaft_height = controls.value10\nshaft_light = controls.value11\nnear = controls.value12\nfar = controls.value13\nwarmth = controls.value14\nmargin = controls.value15\nsmooth = level.fall", "shelf": "music stage/floor"}, pos: [0.0, 0.0]),
         "/floor_cenote/bus": (kind: "chan.in", pos: [-1200.0, 0.0]),
         "/floor_cenote/lane": (kind: "tex.in", pos: [-1200.0, 150.0]),
         "/floor_cenote/pose": (kind: "chan.in", pos: [-1200.0, 300.0]),

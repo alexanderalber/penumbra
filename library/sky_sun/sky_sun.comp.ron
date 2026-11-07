@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/sky_sun": (kind: "comp.base", params: {"expose": "presence = sun.presence\nbrightness = sun.brightness\nwarmth = sun.warmth\nsize = sun.size\nheight = sun.above\nlines = sun.lines\nglow = sun.glow\nreach = sun.reach\nthrough = sun.through"}),
+        "/sky_sun": (kind: "comp.base", params: {"about": "A big disc with dark lines across its lower half, standing on the floor's far edge.", "expose": "presence = sun.presence\nbrightness = sun.brightness\nwarmth = sun.warmth\nsize = sun.size\nheight = sun.above\nlines = sun.lines\nglow = sun.glow\nreach = sun.reach\nthrough = sun.through", "shelf": "music stage/sky"}),
         "/sky_sun/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/sky_sun/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
         "/sky_sun/sun": (kind: "tex.shader", params: {"brightness": 1.0, "file": "library/sky_sun/sun.wgsl", "above": 0.2, "glow": 0.6, "lines": 8, "presence": 1.0, "resolution": "custom", "size": 0.26, "warmth": 0.0}, binds: {"eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side", "beats": "bus:travelled", "energy": "bus:energy_low", "flash": "bus:drop"}, pos: [-300.0, 0.0]),

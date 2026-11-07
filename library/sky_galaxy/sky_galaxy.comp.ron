@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/sky_galaxy": (kind: "comp.base", params: {"expose": "presence = galaxy.presence\nbrightness = galaxy.brightness\nwarmth = controls.value0\nspin = spin_rate.b\nlift = energy_lift.b\nenergy_curve = energy_curve.b\ntilt = galaxy.tilt\nangle = galaxy.angle\nsize = galaxy.size\ntwist = galaxy.twist\narms = galaxy.arms\nbulge = galaxy.bulge\ndust = galaxy.dust\ncenter = galaxy.center"}),
+        "/sky_galaxy": (kind: "comp.base", params: {"about": "A spiral galaxy seen at a slant, over black, in the stage's palette.", "expose": "presence = galaxy.presence\nbrightness = galaxy.brightness\nwarmth = controls.value0\nspin = spin_rate.b\nlift = energy_lift.b\nenergy_curve = energy_curve.b\ntilt = galaxy.tilt\nangle = galaxy.angle\nsize = galaxy.size\ntwist = galaxy.twist\narms = galaxy.arms\nbulge = galaxy.bulge\ndust = galaxy.dust\ncenter = galaxy.center", "shelf": "music stage/sky"}),
         "/sky_galaxy/bus": (kind: "chan.in", pos: [-800.0, 0.0]),
         "/sky_galaxy/controls": (kind: "chan.constant", params: {"name0": "warmth", "value0": 0.0}, pos: [-800.0, 300.0]),
         "/sky_galaxy/travelled": (kind: "chan.select", params: {"channels": "travelled"}, inputs: {"in": "bus"}, pos: [-600.0, -100.0]),

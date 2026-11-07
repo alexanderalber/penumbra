@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/sweep": (kind: "comp.base", params: {"expose": "speed = scan.speed\nangle = scan.angle\nline = scan.line\ntrail = scan.trail\ncolor = scan.color\ntint = scan.tint\npause = scan.pause\nclock = scan.clock"}),
+        "/sweep": (kind: "comp.base", params: {"about": "A scan line sweeping across everything the scan found, with a fading trail.", "expose": "speed = scan.speed\nangle = scan.angle\nline = scan.line\ntrail = scan.trail\ncolor = scan.color\ntint = scan.tint\npause = scan.pause\nclock = scan.clock", "shelf": "scanned objects"}),
         "/sweep/labels": (kind: "tex.in"),
         "/sweep/out": (kind: "tex.out", inputs: {"in": "scan"}),
         "/sweep/scan": (kind: "tex.shader", params: {"file": "library/sweep/sweep.wgsl"}, inputs: {"in0": "labels"}),

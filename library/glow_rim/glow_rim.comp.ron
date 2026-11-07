@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/glow_rim": (kind: "comp.base", params: {"expose": "clock = rim.clock\nlid = rim.lid\nbox = rim.box\nreach = rim.reach\nbelow = rim.below\ngain = rim.gain\nflicker = rim.flicker\nignite = rim.ignite\ncolor = rim.color"}),
+        "/glow_rim": (kind: "comp.base", params: {"about": "A faint warm rim on the face the object stands on, flickering with glow.", "expose": "clock = rim.clock\nlid = rim.lid\nbox = rim.box\nreach = rim.reach\nbelow = rim.below\ngain = rim.gain\nflicker = rim.flicker\nignite = rim.ignite\ncolor = rim.color", "shelf": "scanned objects"}),
         "/glow_rim/labels": (kind: "tex.in"),
         "/glow_rim/out": (kind: "tex.out", inputs: {"in": "rim"}),
         "/glow_rim/regions": (kind: "tex.in"),

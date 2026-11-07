@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/previs_room": (kind: "comp.base", params: {"expose": "width = view.width\nheight = view.height\neye = eye.position\nlook_at = eye.target\nfov = eye.fov\nbrightness = projector.intensity\nwash = wash_gain.b\ndeep = deep_gain.b\nambient = ambient.intensity\nwalls = walls.color\nfloor = floor_mat.color"}),
+        "/previs_room": (kind: "comp.base", params: {"about": "A room seen from the audience, for judging a show without standing in one.", "expose": "width = view.width\nheight = view.height\neye = eye.position\nlook_at = eye.target\nfov = eye.fov\nbrightness = projector.intensity\nwash = wash_gain.b\ndeep = deep_gain.b\nambient = ambient.intensity\nwalls = walls.color\nfloor = floor_mat.color", "shelf": "music stage/stages"}),
         "/previs_room/main": (kind: "tex.in", pos: [-1600.0, -400.0]),
         "/previs_room/pattern": (kind: "tex.in", pos: [-1600.0, 200.0]),
         "/previs_room/colours": (kind: "chan.in", pos: [-1600.0, 800.0]),

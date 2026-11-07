@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/sky_eyes": (kind: "comp.base", params: {"expose": "presence = eyes.presence
+        "/sky_eyes": (kind: "comp.base", params: {"about": "Pairs of eyes in the dark sky.", "expose": "presence = eyes.presence
 brightness = eyes.brightness
 warmth = eyes.warmth
 pairs = eyes.pairs
@@ -11,7 +11,7 @@ seed = eyes.seed
 size = eyes.size
 look = eyes.look
 blinks = eyes.blinks
-reach = eyes.reach"}),
+reach = eyes.reach", "shelf": "music stage/sky"}),
         "/sky_eyes/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/sky_eyes/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
         "/sky_eyes/lane": (kind: "tex.in", pos: [-600.0, 300.0]),

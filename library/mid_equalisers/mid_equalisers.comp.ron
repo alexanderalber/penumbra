@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/mid_equalisers": (kind: "comp.base", params: {"expose": "presence = controls.value0\nwarmth = controls.value1\nbrightness = controls.value2\nevery = controls.value3\nturn = controls.value4\ncount = controls.value5\narc = controls.value6\ncells = controls.value7\ntall = controls.value8\nopen = controls.value9\nmiddle = controls.value10\ngap = controls.value11\ndepth = controls.value12\njitter = controls.value13\nkick = controls.value14\npump = controls.value15\nbeats_per_bar = controls.value16"}),
+        "/mid_equalisers": (kind: "comp.base", params: {"about": "Rings of equaliser bars on the wall of the tunnel, to fly through.", "expose": "presence = controls.value0\nwarmth = controls.value1\nbrightness = controls.value2\nevery = controls.value3\nturn = controls.value4\ncount = controls.value5\narc = controls.value6\ncells = controls.value7\ntall = controls.value8\nopen = controls.value9\nmiddle = controls.value10\ngap = controls.value11\ndepth = controls.value12\njitter = controls.value13\nkick = controls.value14\npump = controls.value15\nbeats_per_bar = controls.value16", "shelf": "music stage/mid"}),
         "/mid_equalisers/bus": (kind: "chan.in", pos: [-1000.0, 0.0]),
         "/mid_equalisers/lane": (kind: "tex.in", pos: [-1000.0, 150.0]),
         "/mid_equalisers/pose": (kind: "chan.in", pos: [-1000.0, 450.0]),

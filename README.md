@@ -57,7 +57,7 @@ lists every one.
   ([scanning](docs/scanning.md)). The scan lines the projectors up (side by side or stacked),
   blends them, finds the flat faces and the objects of a scene (crates, a floor, a pumpkin) and
   groups the faces into regions that can be edited by clicking. A relief panel becomes a height
-  map. A [content library](library/README.md) of 15 effects fits any scanned scene. Projector and
+  map. A [content library](library/README.md) of ready-made components fits any scanned scene. Projector and
   camera calibration (where a projector or camera stands and how it sees, solved from point
   pairs) exists as commands; the interactive calibration UI does not exist yet.
 - **Shapes:** content per drawn shape: pulses, chases along outlines, ripples, each shape with

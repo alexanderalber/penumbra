@@ -3626,6 +3626,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui_kittest",
+ "image",
  "log",
  "penumbra-audio",
  "penumbra-camera",

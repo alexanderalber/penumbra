@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/sky_volcano": (kind: "comp.base", params: {"expose": "presence = volcano.presence
+        "/sky_volcano": (kind: "comp.base", params: {"about": "A volcano far off to one side of the horizon of stage_valley, with a smoke plume.", "expose": "presence = volcano.presence
 brightness = volcano.brightness
 place = volcano.place
 tall = volcano.tall
@@ -16,7 +16,7 @@ wind = volcano.wind
 rim = volcano.rim
 warmth = volcano.warmth
 seed = volcano.seed
-sink = flare_lag.fall"}),
+sink = flare_lag.fall", "shelf": "music stage/sky"}),
         "/sky_volcano/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/sky_volcano/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
         "/sky_volcano/drop": (kind: "chan.select", params: {"channels": "drop"}, inputs: {"in": "bus"}, pos: [-600.0, -150.0]),

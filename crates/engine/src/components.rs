@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use penumbra_core::{Name, NodeId, NodePath};
 use penumbra_graph::{EditOutcome, Network, NodeTypes, Op, PortRole};
-use penumbra_ops::comp::COMP_KIND;
+use penumbra_ops::comp::{ABOUT, COMP_KIND, SHELF};
 use penumbra_project::component::{self, FILE_SUFFIX};
 use penumbra_project::{Actor, Content, diff};
 use serde::Deserialize;
@@ -45,7 +45,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "comp.library",
-        "Component files in the project's components/, the user's library and penumbra's own library",
+        "Component files in the project's components/, the user's library and penumbra's own library, each with its shelf, one line on what it does and its picture",
         comp_library,
     );
     add(
@@ -97,7 +97,29 @@ pub struct LibraryEntry {
     pub file: PathBuf,
     /// `project`, `library` or `penumbra` (shipped with penumbra).
     pub place: &'static str,
+    /// The component's `shelf` param: its place in the library, empty for none.
+    pub shelf: String,
+    /// The component's `about` param: what it does, in one line.
+    pub about: String,
+    /// `preview.png` in the component's own folder, if there is one.
+    pub preview: Option<PathBuf>,
 }
+
+/// The file name of a component's picture in its own folder.
+const PREVIEW_FILE: &str = "preview.png";
+/// Longest `shelf` or `about` text kept for the library, in characters.
+const MAX_DESCRIPTION_CHARS: usize = 240;
+
+/// What a component file said about itself when it had this time and size.
+#[derive(Clone, Debug)]
+pub struct Described {
+    modified: std::time::SystemTime,
+    size: u64,
+    shelf: String,
+    about: String,
+}
+
+pub type DescribedFiles = BTreeMap<PathBuf, Described>;
 
 /// Where the shipped library is looked for: as many directories above the executable's own as
 /// the examples (the release zip has it beside the executable, a checkout above `target/`).
@@ -142,7 +164,14 @@ fn files_in(dir: &Path, place: &'static str) -> Vec<LibraryEntry> {
             } else {
                 (path.file_name()?.to_str()?.strip_suffix(FILE_SUFFIX)?.to_string(), path)
             };
-            (!name.is_empty() && file.is_file()).then_some(LibraryEntry { name, file, place })
+            (!name.is_empty() && file.is_file()).then_some(LibraryEntry {
+                name,
+                file,
+                place,
+                shelf: String::new(),
+                about: String::new(),
+                preview: None,
+            })
         })
         .collect();
     found.sort_by(|a, b| penumbra_graph::natural_cmp(&a.name, &b.name));
@@ -157,7 +186,56 @@ pub fn library(e: &Engine) -> Vec<LibraryEntry> {
         (e.library(), "library"),
         (e.shipped_library(), "penumbra"),
     ];
-    dirs.into_iter().filter_map(|(dir, place)| Some(files_in(&dir?, place))).flatten().collect()
+    let mut found: Vec<LibraryEntry> =
+        dirs.into_iter().filter_map(|(dir, place)| Some(files_in(&dir?, place))).flatten().collect();
+    for entry in &mut found {
+        describe(e, entry);
+    }
+    found
+}
+
+/// Fills in what `entry`'s file says about itself. A file that cannot be read says nothing and
+/// stays listed. The UI lists the library every few seconds, so only a changed file is parsed.
+fn describe(e: &Engine, entry: &mut LibraryEntry) {
+    let in_own_folder = entry.file.parent().filter(|d| d.file_name().is_some_and(|n| *n == *entry.name));
+    entry.preview = in_own_folder.map(|d| d.join(PREVIEW_FILE)).filter(|p| p.is_file());
+    let Ok(meta) = std::fs::metadata(&entry.file) else { return };
+    let Ok(modified) = meta.modified() else { return };
+    let size = meta.len();
+    let known = e.described().get(&entry.file).filter(|d| d.modified == modified && d.size == size).cloned();
+    let described = known.unwrap_or_else(|| {
+        let (shelf, about) = self_description(&entry.file, size, e.types());
+        let fresh = Described { modified, size, shelf, about };
+        e.described().insert(entry.file.clone(), fresh.clone());
+        fresh
+    });
+    entry.shelf = described.shelf;
+    entry.about = described.about;
+}
+
+/// The `shelf` and `about` of the component at the top of `file`; empty when it has none or
+/// does not parse.
+fn self_description(file: &Path, size: u64, types: &NodeTypes) -> (String, String) {
+    if size > MAX_FILE_BYTES {
+        return Default::default();
+    }
+    let Ok(text) = std::fs::read_to_string(file) else { return Default::default() };
+    let parsed = match component::parse(&text, types) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            log::warn!("library: {}: {err}", file.display());
+            return Default::default();
+        }
+    };
+    let Some(root) = parsed.nodes.iter().find(|(p, n)| p.names().len() == 1 && n.kind == COMP_KIND) else {
+        return Default::default();
+    };
+    let said = |param: &str| -> String {
+        let value = Name::new(param).ok().and_then(|n| root.1.params.get(&n).cloned());
+        let text = value.as_ref().and_then(|v| v.as_str()).unwrap_or_default();
+        text.lines().next().unwrap_or_default().trim().chars().take(MAX_DESCRIPTION_CHARS).collect()
+    };
+    (said(SHELF), said(ABOUT))
 }
 
 fn history(out: &penumbra_graph::EditOutcome) -> Json {
@@ -471,7 +549,16 @@ fn comp_library(e: &Engine, p: &Json) -> Result<Json> {
     });
     let list: Vec<Json> = library(e)
         .into_iter()
-        .map(|x| json!({"name": x.name, "file": x.file.display().to_string(), "place": x.place}))
+        .map(|x| {
+            json!({
+                "name": x.name,
+                "file": x.file.display().to_string(),
+                "place": x.place,
+                "shelf": x.shelf,
+                "about": x.about,
+                "preview": x.preview.map(|p| p.display().to_string()),
+            })
+        })
         .collect();
     Ok(json!({"dirs": dirs, "components": list}))
 }

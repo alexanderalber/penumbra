@@ -10,6 +10,10 @@ use penumbra_graph::{
 
 /// The kind of a component.
 pub const COMP_KIND: &str = "comp.base";
+/// A component's param naming its place in the library.
+pub const SHELF: &str = "shelf";
+/// A component's param saying in one line what it does.
+pub const ABOUT: &str = "about";
 
 /// The families with component ports, one per data kind.
 const PORT_FAMILIES: [(&str, DataKind); 9] = [
@@ -29,6 +33,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         NodeDesc::new(COMP_KIND, "A box of nodes: groups part of a network into one node, with inputs and outputs of its own (the in and out nodes inside)")
             .param(ParamSpec::text(EXPOSE, "").multiline().more().doc(
                 "Inner params shown on the component, one per line: `name = node.param` or `node.param`",
+            ))
+            .param(ParamSpec::text(SHELF, "").more().doc(
+                "Where this component stands in the add dialog's library tab: one or two levels, `dmx` or `dmx/safety`. Empty: only your own components' shelf `mine` shows it",
+            ))
+            .param(ParamSpec::text(ABOUT, "").more().doc(
+                "One line on what this component does. The add dialog shows it under the pointer, and its search finds it",
             ))
             .container(),
         || Box::new(Holder) as Box<dyn Operator>,

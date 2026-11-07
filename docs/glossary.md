@@ -25,8 +25,8 @@ Select nodes and press Ctrl+G to make one; I goes in, U comes out. Saved to a fi
 the add dialog's `library` tab. See [Components](concepts.md#components).
 
 **Content library.** Ready-made effects for scanned objects, shipped with penumbra as
-components: water in a crate, a lamp going round a pumpkin, contour lines. They are in the add
-dialog's `library` tab, marked `penumbra`. See [its catalogue](../library/README.md).
+components: water in a crate, a lamp going round a pumpkin, contour lines. They are on the
+shelves of the add dialog's `library` tab. See [its catalogue](../library/README.md).
 
 **Control channel.** The way a script, a terminal or Claude drives the running app: JSON
 requests over a local network connection, port 9880. Everything the editor does is a command

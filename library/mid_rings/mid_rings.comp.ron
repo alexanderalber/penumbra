@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/mid_rings": (kind: "comp.base", params: {"expose": "presence = controls.value0\nwarmth = controls.value1\nbrightness = controls.value2\nstorey = controls.value3\nstorey_beats = controls.value4\nchance = controls.value5\ninner = controls.value6\nouter = controls.value7\nband = controls.value8\ntilt = controls.value9\norbit = controls.value10\npulse = controls.value11\nline_width = ring_lines.line_width"}),
+        "/mid_rings": (kind: "comp.base", params: {"about": "Broad rings around the tower of stage_ascent, outside its wall, seen through the open walls.", "expose": "presence = controls.value0\nwarmth = controls.value1\nbrightness = controls.value2\nstorey = controls.value3\nstorey_beats = controls.value4\nchance = controls.value5\ninner = controls.value6\nouter = controls.value7\nband = controls.value8\ntilt = controls.value9\norbit = controls.value10\npulse = controls.value11\nline_width = ring_lines.line_width", "shelf": "music stage/mid"}),
         "/mid_rings/bus": (kind: "chan.in", pos: [-1000.0, 0.0]),
         "/mid_rings/pose": (kind: "chan.in", pos: [-1000.0, 450.0]),
         "/mid_rings/controls": (kind: "chan.constant", params: {"rows": 12, "name0": "presence", "value0": 1.0, "name1": "warmth", "value1": 0.0, "name2": "brightness", "value2": 1.0, "name3": "storey", "value3": 3.0, "name4": "storey_beats", "value4": 4.0, "name5": "chance", "value5": 0.35, "name6": "inner", "value6": 7.5, "name7": "outer", "value7": 10.0, "name8": "band", "value8": 0.35, "name9": "tilt", "value9": 10.0, "name10": "orbit", "value10": 256.0, "name11": "pulse", "value11": 0.5}, pos: [-1000.0, 250.0]),

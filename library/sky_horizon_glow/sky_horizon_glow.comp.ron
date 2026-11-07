@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/sky_horizon_glow": (kind: "comp.base", params: {"expose": "presence = glow.presence
+        "/sky_horizon_glow": (kind: "comp.base", params: {"about": "A second layer of the dawn for stage_valley.", "expose": "presence = glow.presence
 brightness = glow.brightness
 rays = glow.rays
 count = glow.count
@@ -12,7 +12,7 @@ halo = glow.halo
 calm = glow.calm
 warmth = glow.warmth
 seed = glow.seed
-turn = glow.turn"}),
+turn = glow.turn", "shelf": "music stage/sky"}),
         "/sky_horizon_glow/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/sky_horizon_glow/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
         "/sky_horizon_glow/glow": (kind: "tex.shader", params: {"file": "library/sky_horizon_glow/glow.wgsl", "presence": 1.0, "brightness": 1.0, "rays": 1.0, "count": 7.0, "tall": 0.45, "halo": 1.0, "calm": 0.35, "warmth": 0.0, "seed": 0, "turn": 0.0015}, binds: {"eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side", "reach": "pose:far", "dawn": "pose:dawn", "swell": "pose:swell", "beats": "bus:travelled"}, pos: [-300.0, 0.0]),

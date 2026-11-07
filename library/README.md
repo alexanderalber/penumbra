@@ -13,8 +13,8 @@ stage at 20 s into `examples/beat-grid/music.wav`, with `warmth` at 1.
 
 ## Using one
 
-- **Add it:** the add dialog's `library` tab lists them marked `penumbra`; over the control channel
-  `comp.load {"file": "<name>"}`. Adding copies the component's own files (shaders, textures)
+- **Add it:** the add dialog's `library` tab shows them shelf by shelf. Typing searches all shelves.
+  Over the control channel: `comp.load {"file": "<name>"}`. Adding copies the component's own files (shaders, textures)
   into the project's `library/<name>/`, where its nodes look for them, so the project keeps
   working without penumbra's folder and can change its copies. A file the project already has is
   kept as it is (`comp.load` lists what it `copied` and what it `kept`); delete the copy to get
@@ -31,6 +31,10 @@ stage at 20 s into `examples/beat-grid/music.wav`, with `warmth` at 1.
   takes its share as [Scanning, 7. The network](../docs/scanning.md#7-the-network) describes:
   `tex.remap` through the projector's `proj_to_cam_smooth_N.exr`, times its blend weight
   `weight_N.png`. `tiles` can also draw straight in a projector's pixels (see there).
+
+A new component in this folder needs two params on its `comp.base`. `shelf` names its shelf, in
+one or two levels. `about` says in one line what it does. No shelf may hold more than 15 components,
+because a test counts them: a fuller shelf gets split.
 
 ### The pictures they take
 

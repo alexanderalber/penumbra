@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/mid_scope": (kind: "comp.base", params: {"expose": "presence = controls.value0\nsegments = controls.value1\nat = controls.value2\nhover = controls.value3\nacross = controls.value4\ntall = controls.value5\ndepth = controls.value6\ngrow = controls.value7\nkick = controls.value8\nsmooth = levels.fall\nthickness = sizes.thickness\ncolor = trace_lines.color\nline_width = trace_lines.line_width"}),
+        "/mid_scope": (kind: "comp.base", params: {"about": "A green line in the air over the lane, like an oscilloscope.", "expose": "presence = controls.value0\nsegments = controls.value1\nat = controls.value2\nhover = controls.value3\nacross = controls.value4\ntall = controls.value5\ndepth = controls.value6\ngrow = controls.value7\nkick = controls.value8\nsmooth = levels.fall\nthickness = sizes.thickness\ncolor = trace_lines.color\nline_width = trace_lines.line_width", "shelf": "music stage/mid"}),
         "/mid_scope/bus": (kind: "chan.in", pos: [-1200.0, 0.0]),
         "/mid_scope/lane": (kind: "tex.in", pos: [-1200.0, 150.0]),
         "/mid_scope/controls": (kind: "chan.constant", params: {"rows": 9, "name0": "presence", "value0": 1.0, "name1": "segments", "value1": 192.0, "name2": "at", "value2": 6.0, "name3": "hover", "value3": 2.4, "name4": "across", "value4": 1.5, "name5": "tall", "value5": 0.8, "name6": "depth", "value6": 0.15, "name7": "grow", "value7": 0.35, "name8": "kick", "value8": 0.125}, pos: [-1200.0, 300.0]),
