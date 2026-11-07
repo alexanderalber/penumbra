@@ -26,6 +26,7 @@ saves into it.)
 | [python-script](python-script/README.md) | a Python script that keeps state: a bouncing ball | `/view` | Python 3.12 or later |
 | [projection-room](projection-room/README.md) | a 3D room lit by a projector, lamps and its surroundings | `/view`, `/through_beamer` | |
 | [smoke](smoke/README.md) | smoke in a box in space from three emitters: a ball blowing sideways, a moving ball, a flat box; hot smoke glows in colours of its own | `/out` | |
+| [raymarch](raymarch/README.md) | three raymarched looks that follow music: a tunnel, melting shapes and a fractal, chosen with one slider; a built-in beat drives them | `/out` | (for real music: a microphone or line input) |
 | [fluid](fluid/README.md) | a fluid stirred by motion: optical flow and blobs push it, the picture colours it | `/view` | |
 | [music-synthwave](music-synthwave/README.md) | a complete show on one song: 15 elements on two stages, a synthwave world that rolls up into a tunnel at the drop after the break, the arrangement written by one command from the beats and sections found in the file; the song is by Krzna and not under penumbra's licenses | `/out` | speakers or headphones |
 | [projection-onto-objects](projection-onto-objects/README.md) | a relief lit by two projectors from one camera scan: colours and contours by height, a moving sun, tide and snow line; the steps to scan your own object | `/view`, `/out_a` | (to light a real object: two projectors and a camera) |
