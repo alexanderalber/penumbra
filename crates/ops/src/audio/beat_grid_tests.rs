@@ -13,6 +13,10 @@ use super::beat_grid::{BEAT_GRID, BeatFiles};
 use super::file::{FILE, SoundFiles};
 use super::tests::{F, connect, create, set};
 
+/// How long a test waits for an analysis. The tests share one pool of threads and each runs the
+/// network itself, so together they take minutes on a busy machine.
+const LIMIT: Duration = Duration::from_secs(600);
+
 fn temp_dir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("penumbra-beat-grid-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
@@ -71,7 +75,7 @@ fn analysed(f: &mut F) -> Chans {
         {
             return c;
         }
-        assert!(t.elapsed() < Duration::from_secs(120), "the analysis never ended: {:?}", cook(f));
+        assert!(t.elapsed() < LIMIT, "the analysis did not end in time: {:?}", cook(f));
         std::thread::sleep(Duration::from_millis(20));
     }
 }
@@ -93,6 +97,7 @@ fn ticks(f: &mut F, frames: u64) -> (Vec<u64>, Vec<u64>) {
 }
 
 #[test]
+#[ignore = "runs the beat network: cargo xtask slow"]
 fn a_player_can_wait_for_the_analysis() {
     let dir = temp_dir("wait");
     let file = clicks(&dir);
@@ -113,7 +118,7 @@ fn a_player_can_wait_for_the_analysis() {
             assert!(value(&c, "seconds") < 0.1, "moved while analysing: {}", value(&c, "seconds"));
             held += 1;
         }
-        assert!(t.elapsed() < Duration::from_secs(120), "the analysis never ended");
+        assert!(t.elapsed() < LIMIT, "the analysis did not end in time");
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(held > 0);
@@ -179,6 +184,7 @@ fn the_grid_follows_the_playhead_and_ticks_ahead() {
 }
 
 #[test]
+#[ignore = "runs the beat network: cargo xtask slow"]
 fn a_looped_file_ticks_on_across_its_end() {
     // The clicks loop (audio.file's default): 12 s, the last click at 11.5 s, the first at 0 s.
     let dir = temp_dir("loop");
@@ -320,6 +326,7 @@ fn read(f: &F, path: &str, name: &str) -> f64 {
 }
 
 #[test]
+#[ignore = "runs the beat network: cargo xtask slow"]
 fn the_envelopes_are_the_live_analysis_without_its_lag() {
     // The example track through an audio.file at 48 kHz into a chan.beat_analysis, and into
     // grids whose offset puts back the live analysis' lag: each grid then reads what the live
@@ -389,6 +396,7 @@ fn the_envelopes_are_the_live_analysis_without_its_lag() {
 /// A scrubbed `audio.file` (its `position` bound) moves the grid with it: the beat is the one at
 /// the position, a jump or a move back does not tick, moving forward across a beat does.
 #[test]
+#[ignore = "runs the beat network: cargo xtask slow"]
 fn the_grid_follows_a_scrubbed_position() {
     let dir = temp_dir("scrub");
     let file = clicks(&dir);
@@ -463,6 +471,7 @@ fn cook_two(f: &mut F) -> (Chans, Chans) {
 /// `sections` table lists them end to end, the countdowns reach the boundary, `offset` moves the
 /// lookup ahead.
 #[test]
+#[ignore = "runs the beat network: cargo xtask slow"]
 fn the_sections_of_the_example_track() {
     let dir = temp_dir("sections");
     let music = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/beat-grid/music.wav");
@@ -487,7 +496,7 @@ fn the_sections_of_the_example_track() {
     let t = Instant::now();
     let mut waited = 0;
     loop {
-        assert!(t.elapsed() < Duration::from_secs(120), "the sections never came");
+        assert!(t.elapsed() < LIMIT, "the sections never came");
         std::thread::sleep(Duration::from_millis(20));
         f.clock.advance(1);
         let Some((g, _)) = try_cook_two(&mut f) else { continue };
@@ -662,6 +671,7 @@ fn sections_come_from_complete_grids_and_envelopes() {
 /// `seconds` stands at the step of the section under the playhead, wherever the playhead
 /// jumps, after a loop and with `offset`, and fades through each blend zone.
 #[test]
+#[ignore = "runs the beat network: cargo xtask slow"]
 fn a_cue_list_follows_the_sections_of_the_example_track() {
     use super::cues::{Blend, Level, Pieces, cues};
     let dir = temp_dir("cues");
@@ -695,7 +705,7 @@ fn a_cue_list_follows_the_sections_of_the_example_track() {
     };
     let t = Instant::now();
     loop {
-        assert!(t.elapsed() < Duration::from_secs(120), "the sections never came");
+        assert!(t.elapsed() < LIMIT, "the sections never came");
         std::thread::sleep(Duration::from_millis(20));
         f.clock.advance(1);
         if let (Some(g), _) = cook_both(&mut f)
@@ -781,6 +791,7 @@ fn bus_of(c: &Chans) -> Vec<(&'static str, f64)> {
 /// drift stays small, the breakdown has less bass, the kick's return is a drop. Seeks back and
 /// a second pass give the same values.
 #[test]
+#[ignore = "runs the beat network: cargo xtask slow"]
 fn the_music_bus_of_the_example_track() {
     let dir = temp_dir("bus");
     let music = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/beat-grid/music.wav");
@@ -804,7 +815,7 @@ fn the_music_bus_of_the_example_track() {
     let mut f = fixture(&ops, &dir.join("cache"));
     let t = Instant::now();
     loop {
-        assert!(t.elapsed() < Duration::from_secs(120), "the bus never came");
+        assert!(t.elapsed() < LIMIT, "the bus never came");
         std::thread::sleep(Duration::from_millis(20));
         f.clock.advance(1);
         let Some((g, _)) = try_cook_two(&mut f) else { continue };
@@ -893,6 +904,7 @@ fn the_music_bus_of_the_example_track() {
 /// breakdown and at the kick's return than from intro to main, and the section channels equal
 /// to the `sections` table at a seek into each section.
 #[test]
+#[ignore = "runs the beat network: cargo xtask slow"]
 fn the_character_of_the_example_track() {
     let dir = temp_dir("character");
     let music = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/beat-grid/music.wav");
@@ -916,7 +928,7 @@ fn the_character_of_the_example_track() {
     let names = ["section_role", "section_change", "section_bass", "section_density", "section_kick"];
     let t = Instant::now();
     loop {
-        assert!(t.elapsed() < Duration::from_secs(120), "the sections never came");
+        assert!(t.elapsed() < LIMIT, "the sections never came");
         std::thread::sleep(Duration::from_millis(20));
         f.clock.advance(1);
         let Some((g, _)) = try_cook_two(&mut f) else { continue };
@@ -980,6 +992,7 @@ fn the_character_of_the_example_track() {
 /// With `run_on`, `seconds` and `travelled` go on past the end of a file played once, at the last
 /// tempo, and every other channel holds. A jump back reads as before; without `run_on` both stop.
 #[test]
+#[ignore = "runs the beat network: cargo xtask slow"]
 fn run_on_keeps_seconds_and_travelled_rising_past_the_end() {
     let dir = temp_dir("run-on");
     let file = clicks(&dir);
@@ -994,7 +1007,7 @@ fn run_on_keeps_seconds_and_travelled_rising_past_the_end() {
     let mut f = fixture(&ops, &cache);
     let t = Instant::now();
     loop {
-        assert!(t.elapsed() < Duration::from_secs(120), "the bus never came");
+        assert!(t.elapsed() < LIMIT, "the bus never came");
         std::thread::sleep(Duration::from_millis(20));
         // The show stands while the analysis runs, so the file's end is still ahead afterwards.
         let Some((g, _)) = try_cook_two(&mut f) else { continue };

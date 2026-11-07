@@ -7,6 +7,8 @@
 //! - `fmt`: `cargo fmt --check`.
 //! - `clippy`: clippy on all targets with `-D warnings`.
 //! - `test`: the workspace tests.
+//! - `slow`: the tests of `chan.beat_grid` that run the beat network, minutes of CPU that `test`
+//!   leaves out. Not part of `ci`; run before a release.
 //! - `linux`: clippy for `x86_64-unknown-linux-gnu` from Windows, so Windows-only code cannot
 //!   creep in. Clippy includes `cargo check`.
 //! - `layers`: lower crates must not depend on GPU or UI crates.
@@ -87,6 +89,7 @@ fn main() -> ExitCode {
         "fmt" => fmt(),
         "clippy" => clippy(),
         "test" => test(),
+        "slow" => slow(),
         "linux" => linux(),
         "layers" => layers(),
         "bless" => bless(),
@@ -95,7 +98,7 @@ fn main() -> ExitCode {
         "dist" => dist(),
         "mcp" => mcp(),
         other => Err(format!(
-            "unknown task `{other}`; tasks: ci, fmt, clippy, test, linux, layers, bless, docs, notices, dist, mcp"
+            "unknown task `{other}`; tasks: ci, fmt, clippy, test, slow, linux, layers, bless, docs, notices, dist, mcp"
         )),
     };
     match result {
@@ -129,6 +132,10 @@ fn clippy() -> Result<(), String> {
 
 fn test() -> Result<(), String> {
     cargo(&["test", "--workspace"])
+}
+
+fn slow() -> Result<(), String> {
+    cargo(&["test", "-p", "penumbra-ops", "--lib", "audio::beat_grid_tests", "--", "--ignored"])
 }
 
 fn bless() -> Result<(), String> {

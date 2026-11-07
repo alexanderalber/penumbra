@@ -314,9 +314,11 @@ What a build needs:
 
 `cargo xtask ci` is the gate before a commit: `fmt`, `clippy`, `test`, `clippy` for Linux,
 the layer check (`core` and `graph` must not depend on wgpu or egui, nothing below `ui` on
-egui) and the third-party notices. `cargo xtask docs` regenerates the reference from the node
-types and commands, `cargo xtask bless` rewrites the golden images after an intended change
-of a render, `cargo xtask dist` builds the release zip. Linux is only checked by clippy so far.
+egui) and the third-party notices. `cargo xtask slow` runs the tests of `chan.beat_grid` that
+need the beat network; they take minutes, so only a release needs them. `cargo xtask docs`
+regenerates the reference from the node types and commands, `cargo xtask bless` rewrites the
+golden images after an intended change of a render, `cargo xtask dist` builds the release zip.
+Linux is only checked by clippy so far.
 
 ## How this is built
 

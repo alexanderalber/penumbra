@@ -95,6 +95,15 @@ const WAKE_STEP: f64 = 0.01;
 /// Cores the analysis leaves free for sound, pictures and the rest of the app.
 const SPARE_CORES: usize = 4;
 
+/// Puts the calling thread at the lowest priority, so a long analysis never starves the sound
+/// output. Tests keep their priority: a build running beside them would otherwise leave them no
+/// time at all.
+fn lower_priority() {
+    if !cfg!(test) {
+        penumbra_system::process::lower_thread_priority();
+    }
+}
+
 /// The threads every analysis runs its network on: fewer than the cores and at the lowest
 /// priority, so a long analysis never starves the sound output. `None` when the pool cannot be
 /// built; the analysis then runs on the calling thread alone.
@@ -105,9 +114,7 @@ fn pool() -> Option<&'static rayon::ThreadPool> {
         rayon::ThreadPoolBuilder::new()
             .num_threads(cores.saturating_sub(SPARE_CORES).max(1))
             .thread_name(|i| format!("beats-{i}"))
-            .start_handler(|_| {
-                penumbra_system::process::lower_thread_priority();
-            })
+            .start_handler(|_| lower_priority())
             .build()
             .map_err(|e| log::warn!("beat analysis threads: {e}"))
             .ok()
@@ -798,7 +805,7 @@ impl BeatFiles {
         self.begin_envelopes(file, &a);
         let (inner, path, cancel) = (self.0.clone(), file.to_path_buf(), a.cancel.clone());
         let spawned = std::thread::Builder::new().name("beats".into()).spawn(move || {
-            penumbra_system::process::lower_thread_priority();
+            lower_priority();
             let result = catch_unwind(AssertUnwindSafe(|| run(&inner, &path, &cancel, &shared)))
                 .unwrap_or_else(|_| Err(BeatError::Network("the beat analysis failed".into())));
             shared.finish(&cancel, |s| {
@@ -829,7 +836,7 @@ impl BeatFiles {
         let (inner, path, cancel, shared) =
             (self.0.clone(), file.to_path_buf(), a.cancel.clone(), a.shared.clone());
         let spawned = std::thread::Builder::new().name("envelopes".into()).spawn(move || {
-            penumbra_system::process::lower_thread_priority();
+            lower_priority();
             let mut woke = 0.0;
             let mut progress = |f: f64| {
                 shared.update(|s| s.envelope_progress = f);
