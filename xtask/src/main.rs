@@ -6,7 +6,7 @@
 //!   they always run).
 //! - `fmt`: `cargo fmt --check`.
 //! - `clippy`: clippy on all targets with `-D warnings`.
-//! - `test`: the workspace tests.
+//! - `test`: the workspace tests; those of `penumbra-ui` run one process per test.
 //! - `slow`: the tests of `chan.beat_grid` that run the beat network, minutes of CPU that `test`
 //!   leaves out. Not part of `ci`; run before a release.
 //! - `linux`: clippy for `x86_64-unknown-linux-gnu` from Windows, so Windows-only code cannot
@@ -29,8 +29,9 @@
 //!   build. The copy is renamed aside while it runs and replaced; the running servers keep the
 //!   old file until their session reconnects.
 
-use std::path::Path;
-use std::process::{Command, ExitCode};
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitCode, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 const LINUX_TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -131,7 +132,90 @@ fn clippy() -> Result<(), String> {
 }
 
 fn test() -> Result<(), String> {
-    cargo(&["test", "--workspace"])
+    cargo(&["test", "--workspace", "--exclude", "penumbra-ui"])?;
+    test_ui()
+}
+
+/// The tests of `penumbra-ui`, each in a process of its own, as many at once as there are cores.
+/// These tests drive the whole UI on the software adapter. One process runs only one of them at a
+/// time, because two software devices compiling shaders at once can crash it, so in a single
+/// process they would take five times as long.
+fn test_ui() -> Result<(), String> {
+    let start = Instant::now();
+    let dir = root()?.join("crates").join("ui");
+    let exe = ui_test_exe()?;
+    let listed = Command::new(&exe)
+        .arg("--list")
+        .current_dir(&dir)
+        .output()
+        .map_err(|e| format!("cannot run {}: {e}", exe.display()))?;
+    let text = String::from_utf8_lossy(&listed.stdout);
+    let names: Vec<&str> = text.lines().filter_map(|l| l.strip_suffix(": test")).collect();
+    if !listed.status.success() || names.is_empty() {
+        return Err(format!("no tests listed by {}", exe.display()));
+    }
+    eprintln!("xtask: penumbra-ui: {} tests, one process each", names.len());
+
+    let next = AtomicUsize::new(0);
+    let run_all = || {
+        let mut failed = Vec::new();
+        while let Some(name) = names.get(next.fetch_add(1, Ordering::Relaxed)) {
+            let run = Command::new(&exe)
+                .args(["--exact", name])
+                .current_dir(&dir)
+                .env("CARGO_MANIFEST_DIR", &dir)
+                .output();
+            match run {
+                Ok(o) if o.status.success() => {}
+                Ok(o) => {
+                    eprintln!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+                    failed.push((*name).to_string());
+                }
+                Err(e) => {
+                    eprintln!("cannot run {name}: {e}");
+                    failed.push((*name).to_string());
+                }
+            }
+        }
+        failed
+    };
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let failed: Vec<String> = std::thread::scope(|s| {
+        let workers: Vec<_> = (0..cores).map(|_| s.spawn(run_all)).collect();
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().unwrap_or_else(|_| vec!["a thread of xtask itself".to_string()]))
+            .collect()
+    });
+    if !failed.is_empty() {
+        return Err(format!("penumbra-ui: {} failed: {}", failed.len(), failed.join(", ")));
+    }
+    eprintln!("xtask: penumbra-ui: passed in {:.0} s", start.elapsed().as_secs_f64());
+    Ok(())
+}
+
+/// Builds the test program of `penumbra-ui` and says where it is.
+fn ui_test_exe() -> Result<PathBuf, String> {
+    let args = ["test", "-p", "penumbra-ui", "--lib", "--no-run", "--message-format=json"];
+    eprintln!("xtask: cargo {}", args.join(" "));
+    let built = cargo_command()
+        .args(args)
+        .current_dir(root()?)
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|e| format!("cannot run cargo: {e}"))?;
+    if !built.status.success() {
+        return Err(format!("`cargo {}` failed ({})", args.join(" "), built.status));
+    }
+    let text = String::from_utf8_lossy(&built.stdout);
+    text.lines()
+        .filter_map(|line| {
+            let (_, rest) = line.split_once("\"executable\":\"")?;
+            let (path, _) = rest.split_once('"')?;
+            Some(PathBuf::from(path.replace("\\\\", "\\")))
+        })
+        .find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("penumbra_ui-")))
+        .ok_or_else(|| "cargo named no test program of penumbra-ui".to_string())
 }
 
 fn slow() -> Result<(), String> {

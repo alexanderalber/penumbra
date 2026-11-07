@@ -243,10 +243,11 @@ impl DeviceHub for SoundFiles {
 }
 
 /// Where beat analyses are kept: `cache/beats` in the data directory. The engine's own tests
-/// keep theirs apart, in the temp directory.
+/// keep theirs apart, in the temp directory, in one place for every run: a sound file that stays
+/// the same goes through the network once, not once per run.
 fn beat_cache() -> Option<std::path::PathBuf> {
     if cfg!(test) {
-        return Some(std::env::temp_dir().join(format!("penumbra-engine-beats-{}", std::process::id())));
+        return Some(std::env::temp_dir().join("penumbra-engine-beats"));
     }
     crate::projects::data_dir().ok().map(|d| d.join("cache").join("beats"))
 }
