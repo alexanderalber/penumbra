@@ -8,6 +8,8 @@ struct Fake {
     calls: Vec<(String, Value)>,
     /// `edit.status`'s mode.
     claude_holds: bool,
+    /// With `claude_holds`: the turn comes from one-off commands, not from a claim.
+    hold: bool,
     /// `edit.begin` fails as when the user is editing.
     user_editing: bool,
     /// The file `node.snapshot` and `ui.screenshot` answer with.
@@ -24,7 +26,9 @@ impl Channel for Fake {
                 {"id": "node.set", "summary": "Set params"},
                 {"id": "ping", "summary": "Version"},
             ]}),
-            "edit.status" => json!({"mode": if self.claude_holds { "claude" } else { "user" }}),
+            "edit.status" => {
+                json!({"mode": if self.claude_holds { "claude" } else { "user" }, "hold": self.hold})
+            }
             "edit.begin" if self.user_editing => {
                 return fail("the user is editing (last change 1.0 s ago); retry in 2.0 s");
             }
@@ -170,6 +174,12 @@ fn a_batch_is_one_claim() {
     let r = call(&mut f, "command_batch", json!({"steps": [{"id": "ping"}]}));
     assert_eq!(text(&r)["claim"], "joined");
     assert_eq!(methods(&f), ["edit.status", "ping"]);
+
+    // The hold of a one-off command a moment ago is no claim: the batch claims and ends its own.
+    let mut f = Fake { claude_holds: true, hold: true, ..Fake::default() };
+    let r = call(&mut f, "command_batch", json!({"steps": [{"id": "ping"}]}));
+    assert_eq!(text(&r)["claim"], "own");
+    assert_eq!(methods(&f), ["edit.status", "edit.begin", "ping", "edit.end"]);
 }
 
 #[test]

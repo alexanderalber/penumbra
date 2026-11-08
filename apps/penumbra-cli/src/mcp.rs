@@ -593,8 +593,13 @@ fn command_batch(channel: &mut impl Channel, args: &Map<String, Value>) -> Value
     }
     let stop = args.get("stop_on_error").and_then(Value::as_bool).unwrap_or(true);
     // Inside a claim the caller already holds, the steps join it and the claim stays theirs.
+    // The hold that one-off commands leave for a few seconds is no claim: the batch claims
+    // editing itself then, so its steps still become one history entry.
     let held = match ok(channel.call("edit.status", json!({}))) {
-        Ok(status) => status.get("mode").and_then(Value::as_str) == Some("claude"),
+        Ok(status) => {
+            status.get("mode").and_then(Value::as_str) == Some("claude")
+                && status.get("hold").and_then(Value::as_bool) != Some(true)
+        }
         Err(e) => return text_result(&json!(format!("edit.status: {e}. Nothing ran.")), true),
     };
     if !held {
