@@ -2271,7 +2271,10 @@ mod tests {
         f.set("/o.animate", Value::Bool(false));
         f.cook(&["/o"]);
 
-        // The watched file changes on disk: the node recooks without any edit.
+        // The watched file changes on disk: the node recooks without any edit. File times follow a
+        // coarse clock, up to 16 ms behind on Windows, so an edit right after the watch began would
+        // look older than the watch and go unreported.
+        std::thread::sleep(Duration::from_millis(50));
         std::fs::write(dir.join("f.txt"), "abcdefgh").unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         while f.value("/o") != Some(48.0) {
