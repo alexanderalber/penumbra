@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/mapped_camera": (kind: "comp.base", params: {"about": "A camera fitted to a projector: choose corners on the model and move a crosshair onto the real ones.", "expose": "position = camera.position\ntarget = camera.target\nprojection = camera.projection\nfov = camera.fov\nsize = camera.size\nroll = camera.roll\nshift = camera.shift\nnear = camera.near\nfar = camera.far\nwidth = render.width\nheight = render.height", "shelf": "cameras"}, pos: [0.0, 0.0]),
+        "/mapped_camera": (kind: "comp.base", params: {"about": "A camera fitted to a projector: choose corners on the model and move a crosshair onto the real ones. Does the job of CamSchnappr in TouchDesigner.", "expose": "position = camera.position\ntarget = camera.target\nprojection = camera.projection\nfov = camera.fov\nsize = camera.size\nroll = camera.roll\nshift = camera.shift\nnear = camera.near\nfar = camera.far\nwidth = render.width\nheight = render.height", "shelf": "cameras"}, pos: [0.0, 0.0]),
         "/mapped_camera/assign": (kind: "geo.assign_material", inputs: {"in": "geo", "mat": "model_wire"}, pos: [0.0, 332.0]),
         "/mapped_camera/camera": (kind: "view.camera", pos: [0.0, 498.0]),
         "/mapped_camera/crosshair": (kind: "tex.shapes", params: {"keep_size": true}, pos: [0.0, 996.0]),
