@@ -628,8 +628,8 @@ fn every_builtin_cooks_without_warnings() {
                 | "chan.select"
                 | "chan.rename"
                 | "table.null"
-                | "chan.osc_out"
-                | "chan.data_out"
+                | "out.osc"
+                | "out.data"
                 | "out.dmx"
                 | "out.table"
         )
@@ -678,9 +678,9 @@ fn every_builtin_cooks_without_warnings() {
                 ("count", Value::Int(4)),
             ]),
             "chan.data_in" => params.push(("port", Value::Int(i64::from(data_in_port)))),
-            "chan.data_out" => params.push(("host", dmx_host.as_str().into())),
+            "out.data" => params.push(("host", dmx_host.as_str().into())),
             "tex.video_in" => params.push(("device", "test".into())),
-            "chan.midi_in" | "chan.midi_out" => params.push(("device", "test".into())),
+            "chan.midi_in" | "out.midi" => params.push(("device", "test".into())),
             "chan.sequence" => params.push(("steps", "a 1".into())),
             // Its trace input gets the black feed: the whole picture is one dark region, on a
             // surface of the feed's size.

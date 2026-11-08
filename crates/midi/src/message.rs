@@ -1,4 +1,4 @@
-//! MIDI messages: the bytes a device sends, read into [`Event`]s, and what `chan.midi_out`
+//! MIDI messages: the bytes a device sends, read into [`Event`]s, and what `out.midi`
 //! sends, written back into bytes.
 //!
 //! The reader takes whatever a driver hands over (one message per call on WinMM and CoreMIDI,

@@ -8,7 +8,7 @@ Words used here are also in the [glossary](glossary.md).
 
 **Cooking.** A node *cooks* when it computes its outputs. penumbra runs one cook pass per show
 frame, 60 a second. A pass starts from what is wanted: every node without outputs (projectors,
-recorders, senders such as `out.ndi` or `chan.osc_out`), the node in the viewer, and the visible
+recorders, senders such as `out.ndi` or `out.osc`), the node in the viewer, and the visible
 thumbnails while there is time left. From there it pulls: before a wanted node cooks, the nodes
 feeding it cook, and the nodes feeding those. A node nothing wants does not cook and costs
 nothing. The editor marks it "not cooked".
@@ -361,7 +361,7 @@ frame on each beat), `bar`, `bar_beat`. `beats` counts beats since the start, `p
 between start and stop, `clock` is 1 while clocks arrive. Bind to these instead of the audio
 analysis, and the show follows the device's tempo exactly.
 
-`chan.midi_out` sends its input's channels to a device, named as `chan.midi_in` names them:
+`out.midi` sends its input's channels to a device, named as `chan.midi_in` names them:
 `cc_1_24` sends control change 24, `note_1_36` a note on while above 0 (its value the
 velocity, or the value of `note_1_36_vel` when that channel comes too) and a note off at 0. Without a MIDI channel in the name (`cc_24`, `note_36`) the
 node's `channel` is used. This lights pads and moves motor faders on controllers that take it,
@@ -477,7 +477,7 @@ between them. Two kinds of node make it:
   alone, as QLab sends it. `/go 0` is a release and not a press. The channel is 1 for one
   frame per press, so a desk that never sends 0 moves the show on each time. A sender that does
   send `/go 0` counts its next `/go 1` only after a `/go 0`. A button held while it is sent again
-  (a `chan.osc_out` resends every channel once a second) is then one press. Two presses within
+  (an `out.osc` resends every channel once a second) is then one press. Two presses within
   one frame come out one after the other.
 
   **After a crash in show mode** the cue list goes on at the cue that was playing. A holding cue

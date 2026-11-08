@@ -3,7 +3,7 @@
 //! - **`chan.data_in`** reads messages and makes the latest number of every name a channel, and
 //!   the last messages a table (the names as the first row). The link's thread parses, and wakes
 //!   the node when something arrived, so it cooks then and not every frame.
-//! - **`chan.data_out`** sends its input's channels (as one message) and its table's rows (one
+//! - **`out.data`** sends its input's channels (as one message) and its table's rows (one
 //!   message each), at most `rate` times a second: on change, or always.
 //!
 //! One kind each way with a `transport` param: the transports differ only in where the bytes go,
@@ -24,7 +24,7 @@ use penumbra_net::{Decode, Format, Split, encode, frame};
 /// Kind of the input node.
 pub const DATA_IN: &str = "chan.data_in";
 /// Kind of the output node.
-pub const DATA_OUT: &str = "chan.data_out";
+pub const DATA_OUT: &str = "out.data";
 /// The default UDP and TCP port.
 pub const DEFAULT_PORT: i64 = 7000;
 /// The default serial bit rate: what most Arduino examples use.

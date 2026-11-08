@@ -35,7 +35,7 @@ starts its transition, and a timed cue ends early. A GO during a transition does
 double press does not skip a cue. `/go` (a `chan.math` with `op` `max`) is 1 while the space
 key (`/keys`) is down, and for one frame per press of the OSC address `/go`.
 
-**OSC.** `/go_button` is a `chan.button` named `go`. `/desk` (a `chan.osc_out`) sends it as
+**OSC.** `/go_button` is a `chan.button` named `go`. `/desk` (an `out.osc`) sends it as
 `/go` to port 8000 on this machine, and `/osc` (a `chan.osc_in`) receives it there. This loop
 stands in for a lighting desk or QLab. `/osc` lists `/go` under `triggers`, so every
 message `/go 1` (or `/go` alone) to port 8000 is one press and moves the show on. `/go 0`

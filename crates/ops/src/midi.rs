@@ -9,7 +9,7 @@
 //!   `bar_beat`), plus `beats`, `playing` and `clock`. Learn binds a param to the next control
 //!   moved (the engine does that, through the OSC hub). The node recooks when something
 //!   arrives, and every frame while the clock plays.
-//! - **`chan.midi_out`** sends its input's channels to a device, named as `chan.midi_in` makes
+//! - **`out.midi`** sends its input's channels to a device, named as `chan.midi_in` makes
 //!   them (`cc_1_7`, `note_1_36`; `cc_7` and `note_36` on the node's `channel`): pad lights,
 //!   motor faders, another program. Only what changed is sent, and everything again when the
 //!   device is opened anew.
@@ -33,7 +33,7 @@ use crate::osc::Made;
 /// Kind of the MIDI input node.
 pub const MIDI_IN: &str = "chan.midi_in";
 /// Kind of the MIDI output node.
-pub const MIDI_OUT: &str = "chan.midi_out";
+pub const MIDI_OUT: &str = "out.midi";
 
 /// The clock's channels, in their order.
 pub const CLOCK_CHANNELS: [&str; 8] = ["bpm", "beat", "tick", "bar", "bar_beat", "beats", "playing", "clock"];

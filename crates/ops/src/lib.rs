@@ -106,7 +106,6 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("chan.beat_analysis", &["audio analysis"]),
     ("chan.clock", &["timer"]),
     ("chan.data_in", &["serial", "udp in", "tcp", "arduino", "com port", "socket", "json", "uart"]),
-    ("chan.data_out", &["serial", "udp out", "tcp", "arduino", "com port", "socket", "json", "uart"]),
     ("chan.derivative", &["slope"]),
     ("chan.envelope", &["trigger", "adsr"]),
     ("chan.filter", &["lag"]),
@@ -135,8 +134,11 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("comp.base", &["container"]),
     ("out.audio", &["audio device out"]),
     ("out.audio_file", &["audio file out"]),
-    ("out.dmx", &["dmx out"]),
+    ("out.data", &["data out", "serial", "udp out", "tcp", "arduino", "com port", "socket", "json", "uart"]),
+    ("out.dmx", &["dmx out chop"]),
+    ("out.midi", &["midi out chop"]),
     ("out.ndi", &["ndi out"]),
+    ("out.osc", &["osc out chop"]),
     ("out.projector", &["window"]),
     ("out.spout", &["syphon spout out"]),
     ("out.table", &["file out"]),
@@ -159,7 +161,7 @@ pub const RENAMED_KINDS: &[(&str, &str)] = &[
     ("chan.audioin", "audio.device_in"),
     ("chan.fromtex", "chan.from_tex"),
     ("chan.oscin", "chan.osc_in"),
-    ("chan.oscout", "chan.osc_out"),
+    ("chan.oscout", "out.osc"),
     ("geo.texinstance", "geo.tex_instance"),
     ("tex.blobtrack", "tex.blob_track"),
     ("tex.channelmix", "tex.channel_mix"),
@@ -172,6 +174,10 @@ pub const RENAMED_KINDS: &[(&str, &str)] = &[
     // Names that say what the node does.
     ("geo.material", "geo.assign_material"),
     ("chan.speed", "chan.integrator"),
+    // Sending is an output, as for DMX.
+    ("chan.osc_out", "out.osc"),
+    ("chan.midi_out", "out.midi"),
+    ("chan.data_out", "out.data"),
     // Sound got a family of its own.
     ("chan.audio_in", "audio.device_in"),
     // Files, set apart from the live sources.

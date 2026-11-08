@@ -1,5 +1,5 @@
 //! MIDI in the engine: the hub's devices follow the network's `chan.midi_in` and
-//! `chan.midi_out` nodes ([`penumbra_ops::midi::wants`]); the controls a device moves go to the
+//! `out.midi` nodes ([`penumbra_ops::midi::wants`]); the controls a device moves go to the
 //! OSC hub's learn as `/midi/<device>/cc/<channel>/<number>`, so `osc.learn` binds a param to
 //! the next control moved.
 //!
@@ -35,7 +35,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "midi.send",
-        "Send MIDI messages to an output: {device (part of its name), bytes: [144, 36, 127]}; system exclusive is left out. The output must be open (a chan.midi_out names it)",
+        "Send MIDI messages to an output: {device (part of its name), bytes: [144, 36, 127]}; system exclusive is left out. The output must be open (an out.midi names it)",
         midi_send,
     );
 }
@@ -92,7 +92,7 @@ fn midi_send(e: &Engine, p: &Json) -> CmdResult<Json> {
         .output_for(&a.device)
         .ok_or_else(|| CommandError::from(format!("no MIDI output matches `{}`", a.device)))?;
     if !hub.output(&name).is_some_and(|s| s.connected) {
-        return Err(format!("{name} is not open: a chan.midi_out has to name it").into());
+        return Err(format!("{name} is not open: an out.midi has to name it").into());
     }
     // One message per send, as a driver wants them; whatever is no whole message is left out.
     let mut events = Vec::new();

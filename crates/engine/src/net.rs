@@ -1,5 +1,5 @@
 //! Serial ports, UDP and TCP in the engine: the hub is a resource of the cooker, the
-//! `chan.data_in` and `chan.data_out` nodes open their links through it.
+//! `chan.data_in` and `out.data` nodes open their links through it.
 //!
 //! Commands: `net.ports`, `net.status`.
 
@@ -17,12 +17,12 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let mut add = engine_commands(registry, engine);
     add(
         "net.ports",
-        "The serial ports of this machine for chan.data_in and chan.data_out (name, USB ids, product)",
+        "The serial ports of this machine for chan.data_in and out.data (name, USB ids, product)",
         net_ports,
     );
     add(
         "net.status",
-        "Serial, UDP and TCP links of chan.data_in and chan.data_out: endpoint, readers, writers, open, local \
+        "Serial, UDP and TCP links of chan.data_in and out.data: endpoint, readers, writers, open, local \
          address, peers, error, bytes and messages in and out, drops, connects",
         net_status,
     );

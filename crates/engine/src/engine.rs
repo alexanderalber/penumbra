@@ -1386,7 +1386,7 @@ impl Engine {
         &self.hubs.http
     }
 
-    /// MIDI devices: the inputs and outputs of the `chan.midi_in` and `chan.midi_out` nodes.
+    /// MIDI devices: the inputs and outputs of the `chan.midi_in` and `out.midi` nodes.
     pub fn midi(&self) -> &penumbra_midi::Hub {
         &self.hubs.midi
     }
@@ -1421,7 +1421,7 @@ impl Engine {
         &self.hubs.dmx_in
     }
 
-    /// The serial, UDP and TCP links of `chan.data_in` and `chan.data_out`.
+    /// The serial, UDP and TCP links of `chan.data_in` and `out.data`.
     pub fn net(&self) -> &penumbra_net::Hub {
         &self.hubs.net
     }

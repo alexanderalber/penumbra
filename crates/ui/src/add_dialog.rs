@@ -1170,7 +1170,10 @@ mod tests {
         let audio = sections_of(&types, "audio", &[]);
         assert_eq!(audio[1].1, ["audio.device_in"], "the device is a live input");
         assert!(audio[0].1.contains(&"audio.oscillator".to_string()));
-        assert!(chan[0].1.contains(&"chan.osc_out".to_string()), "an output is a common type");
+        let out = sections_of(&types, "out", &[]);
+        for sender in ["out.osc", "out.midi", "out.data"] {
+            assert!(out[0].1.contains(&sender.to_string()), "{sender} sits with the other outputs");
+        }
     }
 
     #[test]
@@ -1315,6 +1318,12 @@ mod tests {
         assert_eq!(types.search("noise").family, None, "a plain search searches every family");
         assert_eq!(types.search("chop to").family, None, "a tag holding the word wins");
         assert_eq!(types.search("top").family, None, "the word alone is a plain search");
+        for (text, kind) in
+            [("osc out chop", "out.osc"), ("midi out chop", "out.midi"), ("dmx out chop", "out.dmx")]
+        {
+            assert_eq!(types.search(text).family, None, "{text}: its CHOP is an output here");
+            assert!(types.tag_found(kind, text).is_some(), "{text}");
+        }
         let u = Usable { types: &types, in_component: false, library: &[], family: search.family };
         assert!(u.hit("tex.noise", &search.text) && !u.hit("chan.noise", &search.text));
         let groups = groups(&types);

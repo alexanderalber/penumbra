@@ -134,7 +134,7 @@ pub struct Entry {
     /// Of those, the presses: messages without a number, or whose first number is 0.5 or more
     /// (a desk's GO, a button going down; its release is no press). A sender that has sent a
     /// release (a number below 0.5) to the address presses again only after the next release:
-    /// a held button that is resent (`chan.osc_out` sends everything once a second) is one
+    /// a held button that is resent (`out.osc` sends everything once a second) is one
     /// press. A sender that never sends a release counts each 1 it sends.
     pub presses: u64,
     #[serde(skip)]

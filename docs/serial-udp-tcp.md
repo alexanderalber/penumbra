@@ -2,9 +2,9 @@
 
 `chan.data_in` (Tab > chan > data_in) reads numbers and text from a serial port, UDP or TCP: an
 Arduino on a USB cable, a sensor on the network, another program. Each name becomes a channel to
-bind params to, and the last messages become a table. `chan.data_out` (Tab > chan > data_out)
+bind params to, and the last messages become a table. `out.data` (Tab > out > data)
 goes the other way: it sends channels and table rows. For OSC use `chan.osc_in` and
-`chan.osc_out`; for DMX see [DMX](dmx.md).
+`out.osc`; for DMX see [DMX](dmx.md).
 
 ## Reading
 
@@ -40,7 +40,7 @@ as its first row, then the last `rows` messages, the newest last.
 
 ## Sending
 
-`chan.data_out` sends its `chans` input as one message and every row of its `table` input as one
+`out.data` sends its `chans` input as one message and every row of its `table` input as one
 more, at most `rate` times a second. One send carries at most 1024 messages; the node warns about
 table rows beyond.
 
@@ -57,7 +57,7 @@ message on a stream; UDP sends each message as one datagram without it. `tcp_con
 
 ## One device both ways
 
-A `chan.data_in` and a `chan.data_out` with the same serial port, or the same `tcp_connect` host and
+A `chan.data_in` and an `out.data` with the same serial port, or the same `tcp_connect` host and
 port, share one connection. A request the out node sends gets its answer in the in node. A serial
 port opens at the `baud` of the node that opened it first; the other node warns when its own `baud`
 differs. When the first node goes away or changes its `baud`, the port opens again at the `baud` of the

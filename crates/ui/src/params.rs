@@ -125,7 +125,7 @@ pub struct ParamPanel {
     /// Monitors and windows offered for a `tex.screen_in`'s `display` or `window`, listed when
     /// the menu opens.
     screen_sources: Listing<penumbra_screen::Sources>,
-    /// MIDI devices offered for a `chan.midi_in`'s or `chan.midi_out`'s `device`, listed when
+    /// MIDI devices offered for a `chan.midi_in`'s or `out.midi`'s `device`, listed when
     /// the menu opens.
     midi_ports: Listing<penumbra_midi::Ports>,
     /// The faces of the scene a `tex.face_content` names, listed when its face menu opens.
@@ -1373,7 +1373,7 @@ impl ParamPanel {
         }
     }
 
-    /// The MIDI inputs (or outputs) of this machine for a `chan.midi_in`'s (or `chan.midi_out`'s)
+    /// The MIDI inputs (or outputs) of this machine for a `chan.midi_in`'s (or `out.midi`'s)
     /// `device` (`param.<path>.menu`, entries `midi.all` for an input and `midi.<i>`).
     fn midi_menu(
         &mut self,

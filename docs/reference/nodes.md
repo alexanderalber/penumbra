@@ -1199,7 +1199,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.data_out](#chandata_out), [chan.derivative](#chanderivative), [chan.envelope](#chanenvelope), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.midi_out](#chanmidi_out), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
+[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.envelope](#chanenvelope), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
 
 *inputs:* [chan.data_in](#chandata_in), [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.midi_in](#chanmidi_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
@@ -1391,34 +1391,6 @@ Outputs:
 | `length` *(more)* | int | `0` (each read) | 0 to 64 (soft, held within 0 to 65536) | For bytes on a stream with an empty `delimiter`: every this many bytes is one message. 0 takes each read as it comes; 0: each read |
 | `rows` | int | `16` | 1 to 100 (soft, held within 1 to 1024) | Messages the table keeps, the newest last |
 | `max` *(more)* | int | `65536` | 256 to 65536 (soft, held within 16 to 1048576) | Longest message in bytes; longer ones are dropped and counted |
-
-### chan.data_out
-
-Sends channels and table rows to a serial port, UDP or TCP, as lines, JSON or bytes
-
-Follows the show clock: cooks again whenever time moves.
-
-Inputs:
-
-- `chans` (chan)
-- `table` (table)
-
-Outputs: none.
-
-| param | type | default | range | meaning |
-|---|---|---|---|---|
-| `transport` | udp \| tcp_connect \| tcp_listen \| serial | `"udp"` |  | Where the messages go; udp: UDP datagrams to `host` and `port`, one message each; tcp_connect: a TCP connection to the server at `host` and `port`; reconnects when it drops; tcp_listen: a TCP server on `port`: every client that connects gets the messages; serial: a serial port such as an Arduino's USB cable |
-| `host` | text | `"127.0.0.1"` |  | IP address of the other side, or localhost; `10.0.0.5:7000` sets the port too. Names are not looked up |
-| `port` | int | `7000` | 1024 to 65535 (soft, held within 0 to 65535) | UDP or TCP port of the receiver; for tcp_listen, the port to listen on (there 0 picks any free port) |
-| `lan` | bool | `false` |  | Also take connections from other devices: listens on every network interface. Off: this machine only |
-| `serial` | text |  |  | Serial port, such as COM3 or /dev/ttyACM0 (net.ports lists them). Empty takes the only one plugged in |
-| `baud` | int | `9600` | 1200 to 1000000 (soft, held within 50 to 4000000) | Serial bit rate; match the device (Arduino: Serial.begin). Always 8 data bits, no parity, 1 stop bit |
-| `format` | lines \| json \| bytes | `"lines"` |  | What one message is; lines: a line of text: numbers split by commas or spaces, or `name:value`; json: one JSON value per line; over UDP a whole datagram, or each line of it; bytes: raw bytes, each 0 to 255 |
-| `separator` | comma \| semicolon \| tab \| space | `"comma"` |  | What goes between the values of a line; comma: `0.5,1`; semicolon: `0.5;1`; tab: a tab; space: `0.5 1` |
-| `names` | bool | `false` |  | Lines: each channel as `name:value`. Off: the values alone, in order. JSON always has the names |
-| `delimiter` | text | `"\\n"` |  | What ends each message on a serial port or TCP: `\n`, `\r\n`, `;`, empty for none. UDP sends each message as one datagram without it |
-| `rate` | float | `30` | 1 to 120 Hz (soft, held within 0.1 to 1000 Hz) | Sends per second at most |
-| `send` | changes \| always | `"changes"` |  | When to send; changes: when a message changed; over UDP everything again once a second, in case a datagram was lost; always: everything, `rate` times a second |
 
 ### chan.derivative
 
@@ -1658,24 +1630,6 @@ Outputs:
 | `beats_per_bar` | int | `4` | 2 to 8 (soft, held within 1 to 64) | Beats in one bar of the MIDI clock: how often bar and bar_beat come round |
 | `pairs` *(more)* | bool | `false` |  | 14-bit controls: control changes 32 to 63 make the controls 0 to 31 finer instead of being controls of their own. Only for a device that sends such pairs |
 
-### chan.midi_out
-
-Sends channels to a MIDI device: pad lights, motor faders, another program
-
-Follows the show clock: cooks again whenever time moves.
-
-Inputs:
-
-- `chans` (chan): Channels named as chan.midi_in makes them: cc_1_7 (0 to 1), note_1_36 (above 0 is on, its value the velocity, or note_1_36_vel's when that channel is there too), bend_1 (-1 to 1), pressure_1, program_1; cc_7, note_36 and so on use `channel`. A chan.midi_in wired straight in sends its controls back
-
-Outputs: none.
-
-| param | type | default | range | meaning |
-|---|---|---|---|---|
-| `device` | text |  |  | Part of the output's name, any case, e.g. `easy control` (the … menu lists them) |
-| `channel` | int | `1` | 1 to 16 | MIDI channel for channels named without one: cc_7, note_36 |
-| `rate` *(more)* | float | `60` | 1 to 120 Hz (soft, held within 1 to 1000 Hz) | Sends per second at most |
-
 ### chan.mouse_in
 
 The mouse pointer and its buttons as channels, anywhere on the desktop: steer or trigger things by hand during a show
@@ -1740,28 +1694,6 @@ Outputs:
 | `addresses` | text | `"*"` |  | Space-separated OSC patterns of the addresses to keep as channels: `/1/* /xy`; `*` all; `^/ping` leaves an address out |
 | `triggers` | text |  |  | Space-separated OSC patterns of addresses that are presses, such as a desk's GO: `/go`. Their channel is 1 for one frame per press, then 0. A press is a message without a number or with 0.5 or more, so `/go 1` and `/go` count and `/go 0` does not. A sender that also sends `/go 0` presses again only after its next `/go 0`, so a held button that is sent again counts once. Two presses within one frame come out one after the other |
 | `params` | bool | `false` |  | Also set the params the addresses name: `/scene/speed 0.5` sets /scene.speed (live, outside the undo history). For continuous control, bind params to the channels instead |
-
-### chan.osc_out
-
-Sends channels and table rows as OSC to another program or device
-
-Follows the show clock: cooks again whenever time moves.
-
-Inputs:
-
-- `chans` (chan)
-- `table` (table)
-
-Outputs: none.
-
-| param | type | default | range | meaning |
-|---|---|---|---|---|
-| `host` | text | `"127.0.0.1"` |  | IP address to send to, or localhost; names are not looked up |
-| `port` | int | `9000` | 1024 to 65535 (soft, held within 1 to 65535) | UDP port the receiver listens on (TouchOSC and many apps use 9000) |
-| `rate` | float | `30` | 1 to 120 Hz (soft, held within 0.1 to 1000 Hz) | Sends per second at most |
-| `send` | changes \| always | `"changes"` |  | Which channels each send carries; changes: only what changed, plus everything once a second; always: everything, each time |
-| `prefix` | text |  |  | Put before every channel's address: `/show` sends /show/x |
-| `bundle` *(more)* | bool | `true` |  | Several messages per packet as a bundle; off sends one packet per message |
 
 ### chan.rename
 
@@ -2647,7 +2579,7 @@ Outputs:
 
 ## out
 
-[out.audio](#outaudio), [out.audio_file](#outaudio_file), [out.dmx](#outdmx), [out.mesh](#outmesh), [out.ndi](#outndi), [out.projector](#outprojector), [out.spout](#outspout), [out.table](#outtable), [out.video](#outvideo)
+[out.audio](#outaudio), [out.audio_file](#outaudio_file), [out.data](#outdata), [out.dmx](#outdmx), [out.mesh](#outmesh), [out.midi](#outmidi), [out.ndi](#outndi), [out.osc](#outosc), [out.projector](#outprojector), [out.spout](#outspout), [out.table](#outtable), [out.video](#outvideo)
 
 ### out.audio
 
@@ -2691,6 +2623,34 @@ Outputs: none.
 | `format` | pcm24 \| float32 | `"pcm24"` |  | How the samples are stored, fixed when the recording starts; pcm24: 24-bit integers, what editing programs expect. Sound above full scale is clipped; float32: 32-bit floats, in files a third larger. Sound above full scale is kept, for an input without a limiter |
 | `file` | text |  |  | The WAV file, relative to the project; empty records to recordings/<node name>.wav. A file that exists is never overwritten: the recording gets the next free name with _2, _3, ... |
 
+### out.data
+
+Sends channels and table rows to a serial port, UDP or TCP, as lines, JSON or bytes
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs:
+
+- `chans` (chan)
+- `table` (table)
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `transport` | udp \| tcp_connect \| tcp_listen \| serial | `"udp"` |  | Where the messages go; udp: UDP datagrams to `host` and `port`, one message each; tcp_connect: a TCP connection to the server at `host` and `port`; reconnects when it drops; tcp_listen: a TCP server on `port`: every client that connects gets the messages; serial: a serial port such as an Arduino's USB cable |
+| `host` | text | `"127.0.0.1"` |  | IP address of the other side, or localhost; `10.0.0.5:7000` sets the port too. Names are not looked up |
+| `port` | int | `7000` | 1024 to 65535 (soft, held within 0 to 65535) | UDP or TCP port of the receiver; for tcp_listen, the port to listen on (there 0 picks any free port) |
+| `lan` | bool | `false` |  | Also take connections from other devices: listens on every network interface. Off: this machine only |
+| `serial` | text |  |  | Serial port, such as COM3 or /dev/ttyACM0 (net.ports lists them). Empty takes the only one plugged in |
+| `baud` | int | `9600` | 1200 to 1000000 (soft, held within 50 to 4000000) | Serial bit rate; match the device (Arduino: Serial.begin). Always 8 data bits, no parity, 1 stop bit |
+| `format` | lines \| json \| bytes | `"lines"` |  | What one message is; lines: a line of text: numbers split by commas or spaces, or `name:value`; json: one JSON value per line; over UDP a whole datagram, or each line of it; bytes: raw bytes, each 0 to 255 |
+| `separator` | comma \| semicolon \| tab \| space | `"comma"` |  | What goes between the values of a line; comma: `0.5,1`; semicolon: `0.5;1`; tab: a tab; space: `0.5 1` |
+| `names` | bool | `false` |  | Lines: each channel as `name:value`. Off: the values alone, in order. JSON always has the names |
+| `delimiter` | text | `"\\n"` |  | What ends each message on a serial port or TCP: `\n`, `\r\n`, `;`, empty for none. UDP sends each message as one datagram without it |
+| `rate` | float | `30` | 1 to 120 Hz (soft, held within 0.1 to 1000 Hz) | Sends per second at most |
+| `send` | changes \| always | `"changes"` |  | When to send; changes: when a message changed; over UDP everything again once a second, in case a datagram was lost; always: everything, `rate` times a second |
+
 ### out.dmx
 
 Sends channels to DMX lights and fixtures: Enttec Open DMX USB, Art-Net, sACN or DDP
@@ -2729,6 +2689,24 @@ Outputs: none.
 | `mode` | changes \| manual | `"changes"` |  | When the node writes; changes: whenever the geometry differs from what was written; manual: only on the command mesh_out.write |
 | `instances` | expand \| skip | `"expand"` |  | What happens to copies from geo.tex_instance. At most 4194304 triangles and 65536 parts are written; expand: one copy per texel, read back from the GPU, each its own part. For copies that move every frame use mode manual; skip: each model once, where it stands without its copies |
 
+### out.midi
+
+Sends channels to a MIDI device: pad lights, motor faders, another program
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs:
+
+- `chans` (chan): Channels named as chan.midi_in makes them: cc_1_7 (0 to 1), note_1_36 (above 0 is on, its value the velocity, or note_1_36_vel's when that channel is there too), bend_1 (-1 to 1), pressure_1, program_1; cc_7, note_36 and so on use `channel`. A chan.midi_in wired straight in sends its controls back
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `device` | text |  |  | Part of the output's name, any case, e.g. `easy control` (the … menu lists them) |
+| `channel` | int | `1` | 1 to 16 | MIDI channel for channels named without one: cc_7, note_36 |
+| `rate` *(more)* | float | `60` | 1 to 120 Hz (soft, held within 1 to 1000 Hz) | Sends per second at most |
+
 ### out.ndi
 
 Sends a picture, and sound if wired, over the network as an NDI® source, to other programs and computers; needs the NDI runtime (ndi.video)
@@ -2744,6 +2722,28 @@ Outputs: none.
 |---|---|---|---|---|
 | `name` | text |  |  | The source name receivers pick. NDI puts the machine's name before the source name, as in `PC (name)`. Empty: `penumbra` and the node's name, such as `penumbra ndi1` |
 | `alpha` | straight \| premultiplied \| opaque | `"opaque"` |  | How transparency travels to the receivers. With alpha, NDI sends an extra plane, which costs about twice the CPU and some latency; straight: colour and alpha apart, as most programs take it; premultiplied: colour multiplied by alpha; opaque: no transparency: sent over black, or a received alpha ignored |
+
+### out.osc
+
+Sends channels and table rows as OSC to another program or device
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs:
+
+- `chans` (chan)
+- `table` (table)
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `host` | text | `"127.0.0.1"` |  | IP address to send to, or localhost; names are not looked up |
+| `port` | int | `9000` | 1024 to 65535 (soft, held within 1 to 65535) | UDP port the receiver listens on (TouchOSC and many apps use 9000) |
+| `rate` | float | `30` | 1 to 120 Hz (soft, held within 0.1 to 1000 Hz) | Sends per second at most |
+| `send` | changes \| always | `"changes"` |  | Which channels each send carries; changes: only what changed, plus everything once a second; always: everything, each time |
+| `prefix` | text |  |  | Put before every channel's address: `/show` sends /show/x |
+| `bundle` *(more)* | bool | `true` |  | Several messages per packet as a bundle; off sends one packet per message |
 
 ### out.projector
 

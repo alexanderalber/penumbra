@@ -52,14 +52,14 @@ pub struct Hubs {
     pub osc: Arc<OscShared>,
     /// HTTP and WebSocket in (`chan.http_in`); hands its messages to the OSC hub.
     pub http: HttpHub,
-    /// MIDI devices (`chan.midi_in`, `chan.midi_out`); hands its controls to the OSC hub's learn.
+    /// MIDI devices (`chan.midi_in`, `out.midi`); hands its controls to the OSC hub's learn.
     pub midi: MidiHub,
     pub audio: AudioHub,
     /// The audio outputs: one bus per device the `out.audio` nodes play on.
     pub audio_out: AudioOutputs,
     pub dmx: DmxHub,
     pub dmx_in: DmxInputs,
-    /// Serial ports, UDP and TCP (`chan.data_in`, `chan.data_out`).
+    /// Serial ports, UDP and TCP (`chan.data_in`, `out.data`).
     pub net: NetHub,
     pub camera: CameraHub,
     /// The movie recordings of `out.video` nodes.

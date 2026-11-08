@@ -416,7 +416,7 @@ impl Helpers {
         if status.listeners.is_empty() && status.senders.is_empty() {
             ui.label(
                 RichText::new(
-                    "Nothing listens or sends: add a chan.osc_in or chan.osc_out node (Tab > chan).",
+                    "Nothing listens or sends: add a chan.osc_in (Tab > chan) or out.osc node (Tab > out).",
                 )
                 .color(weak),
             );

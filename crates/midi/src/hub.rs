@@ -1,5 +1,5 @@
 //! The MIDI hub: the devices the network wants, opened and closed by one thread, what they
-//! sent, and the bytes `chan.midi_out` sends.
+//! sent, and the bytes `out.midi` sends.
 //!
 //! - **Devices by name.** A want names a part of a device's name (`easy control`), empty for
 //!   every input. The hub's thread lists the ports every [`POLL`] (and at once when the wants

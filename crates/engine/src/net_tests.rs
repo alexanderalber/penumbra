@@ -100,7 +100,7 @@ fn data_out_sends_lines_json_and_bytes_over_udp() {
     );
     f.call(
         "node.create",
-        json!({"path": "/out", "kind": "chan.data_out", "params": {"port": port, "names": true}}),
+        json!({"path": "/out", "kind": "out.data", "params": {"port": port, "names": true}}),
     );
     f.call("node.connect", json!({"from": "/k", "to": "/out"}));
     let mut buf = [0u8; 256];
@@ -139,7 +139,7 @@ fn tcp_in_and_out_share_a_connection_and_survive_the_server_going_away() {
     let port = server.local_addr().unwrap().port();
     let params = json!({"transport": "tcp_connect", "host": "127.0.0.1", "port": port});
     f.call("node.create", json!({"path": "/in", "kind": "chan.data_in", "params": params}));
-    f.call("node.create", json!({"path": "/out", "kind": "chan.data_out", "params": params}));
+    f.call("node.create", json!({"path": "/out", "kind": "out.data", "params": params}));
     f.call("node.create", json!({"path": "/k", "kind": "chan.constant", "params": {"value0": 7}}));
     f.call("node.connect", json!({"from": "/k", "to": "/out"}));
     f.call("node.watch", json!({"path": "/in"}));
@@ -205,7 +205,7 @@ fn a_serial_port_that_is_not_there_is_an_error_not_a_crash() {
     );
     f.call(
         "node.create",
-        json!({"path": "/out", "kind": "chan.data_out", "params": {"transport": "serial", "serial": "COM_PENUMBRA_NONE", "baud": 115200}}),
+        json!({"path": "/out", "kind": "out.data", "params": {"transport": "serial", "serial": "COM_PENUMBRA_NONE", "baud": 115200}}),
     );
     f.call("node.create", json!({"path": "/k", "kind": "chan.constant"}));
     f.call("node.connect", json!({"from": "/k", "to": "/out"}));

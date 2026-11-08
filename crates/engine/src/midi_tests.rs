@@ -78,7 +78,7 @@ fn a_missing_device_says_which_there_are() {
         "node.create",
         json!({"path": "/in", "kind": "chan.midi_in", "params": {"device": "no such device 123"}}),
     );
-    f.call("node.create", json!({"path": "/out", "kind": "chan.midi_out", "params": {"device": ""}}));
+    f.call("node.create", json!({"path": "/out", "kind": "out.midi", "params": {"device": ""}}));
     f.call("node.watch", json!({"path": "/in"}));
     f.call("node.watch", json!({"path": "/out"}));
     let error = |path: &str| {
@@ -93,7 +93,7 @@ fn midi_out_sends_what_changed_and_everything_when_opened_anew() {
     let f = Fixture::new("midi_out");
     f.engine.midi().capture("Test Out");
     f.call("node.create", json!({"path": "/in", "kind": "chan.midi_in", "params": {"device": "test pads"}}));
-    f.call("node.create", json!({"path": "/out", "kind": "chan.midi_out", "params": {"device": "test out"}}));
+    f.call("node.create", json!({"path": "/out", "kind": "out.midi", "params": {"device": "test out"}}));
     f.call("node.connect", json!({"from": "/in", "to": "/out"}));
     f.call("node.watch", json!({"path": "/out"}));
     inject(&f, &[0xB0, 7, 127, 0x90, 36, 100]);

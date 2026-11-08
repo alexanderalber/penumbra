@@ -329,7 +329,7 @@ initial input, for example from a binding.
 
 ## OSC
 
-OSC input comes in through `chan.osc_in` nodes, output goes out through `chan.osc_out`; this
+OSC input comes in through `chan.osc_in` nodes, output goes out through `out.osc`; this
 section shows what they are doing.
 
 - **listen** off closes every OSC port for this run; the nodes stay.

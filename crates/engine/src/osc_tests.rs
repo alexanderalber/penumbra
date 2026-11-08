@@ -73,7 +73,7 @@ fn osc_in_becomes_channels_that_bind_and_osc_out_sends_them() {
     let rx_port = rx.local_addr().unwrap().port();
     f.call(
         "node.create",
-        json!({"path": "/out", "kind": "chan.osc_out", "params": {"port": rx_port, "prefix": "/show"}}),
+        json!({"path": "/out", "kind": "out.osc", "params": {"port": rx_port, "prefix": "/show"}}),
     );
     f.call("node.connect", json!({"from": "/k", "to": "/out"}));
     let mut buf = [0u8; 2048];
@@ -315,7 +315,7 @@ fn a_trigger_address_counts_every_press() {
 
 #[test]
 fn a_go_button_held_over_a_resend_is_one_press() {
-    // As the example `show`: a button sent by `chan.osc_out`, which resends everything once a
+    // As the example `show`: a button sent by `out.osc`, which resends everything once a
     // second, into a trigger. Held for over two seconds, it moves the show on once.
     let f = Fixture::new("osc_trigger_held");
     cue_list(&f, false);
@@ -323,7 +323,7 @@ fn a_go_button_held_over_a_resend_is_one_press() {
     f.call("node.create", json!({"path": "/b", "kind": "chan.button", "params": {"name": "go"}}));
     f.call(
         "node.create",
-        json!({"path": "/desk", "kind": "chan.osc_out", "params": {"port": port, "rate": 60.0}}),
+        json!({"path": "/desk", "kind": "out.osc", "params": {"port": port, "rate": 60.0}}),
     );
     f.call("node.connect", json!({"from": "/b", "to": "/desk", "input": "chans"}));
     let step = || channel(&f.registry, "/s", "step");

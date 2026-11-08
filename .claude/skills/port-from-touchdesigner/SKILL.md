@@ -138,7 +138,7 @@ counterpart" below.
 | Trail, Slope, Trigger, Timer CHOP | `chan.trail`, `chan.derivative`, `chan.envelope`, `chan.clock` | |
 | Count, Logic, Pattern, Cross, Delay, Hold CHOP | `script.python`, or `chan.math` where one op does it | |
 | Keyboard, Mouse, MIDI, OSC, DMX In CHOP | `chan.keyboard_in`, `chan.mouse_in`, `chan.midi_in`, `chan.osc_in`, `chan.dmx_in` | |
-| OSC, MIDI, DMX Out CHOP | `chan.osc_out`, `chan.midi_out`, `out.dmx` | |
+| OSC, MIDI, DMX Out CHOP | `out.osc`, `out.midi`, `out.dmx` | |
 | Audio File In, Audio Device In, Audio Device Out CHOP | `audio.file`, `audio.device_in`, `out.audio` | |
 | Audio Spectrum CHOP, Audio Analysis component, Envelope CHOP | `chan.audio_spectrum`, `chan.beat_analysis`, `chan.audio_envelope` | |
 | DAT to CHOP | `chan.from_table` | |

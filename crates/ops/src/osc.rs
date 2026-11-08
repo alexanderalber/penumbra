@@ -8,7 +8,7 @@
 //!   path their address names (the engine does that, see `penumbra-engine`'s `osc` module).
 //!   The node recooks when something arrives, not every frame. Its second output lists what
 //!   arrived as a table.
-//! - **`chan.osc_out`** sends its input's channels (and the rows of a table: address, then
+//! - **`out.osc`** sends its input's channels (and the rows of a table: address, then
 //!   values) to a host and port at a rate, as a bundle per packet; by default only what
 //!   changed, plus everything once a second.
 //!
@@ -31,7 +31,7 @@ use penumbra_osc::{Budget, Pattern, channel_name};
 /// Kind of the OSC input node.
 pub const OSC_IN: &str = "chan.osc_in";
 /// Kind of the OSC output node.
-pub const OSC_OUT: &str = "chan.osc_out";
+pub const OSC_OUT: &str = "out.osc";
 /// The default port to listen on: what TouchOSC sends to by default.
 pub const DEFAULT_IN_PORT: i64 = 8000;
 /// The default port to send to: what TouchOSC listens on by default.

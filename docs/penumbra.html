@@ -258,7 +258,7 @@ details.target { outline: 2px solid var(--accent); }
 <div class="body">
 <h3 id="concepts-how-the-network-runs">How the network runs</h3>
 <p>This section says when a node does its work, in what order, and what decides it. For someone reading the code, <a href="../ARCHITECTURE.md">ARCHITECTURE.md</a> has the same from the inside. Words used here are also in the <a href="#glossary">glossary</a>.</p>
-<p><strong>Cooking.</strong> A node <em>cooks</em> when it computes its outputs. penumbra runs one cook pass per show frame, 60 a second. A pass starts from what is wanted: every node without outputs (projectors, recorders, senders such as <a class="ref" href="#out.ndi"><code>out.ndi</code></a> or <a class="ref" href="#chan.osc_out"><code>chan.osc_out</code></a>), the node in the viewer, and the visible thumbnails while there is time left. From there it pulls: before a wanted node cooks, the nodes feeding it cook, and the nodes feeding those. A node nothing wants does not cook and costs nothing. The editor marks it &quot;not cooked&quot;.</p>
+<p><strong>Cooking.</strong> A node <em>cooks</em> when it computes its outputs. penumbra runs one cook pass per show frame, 60 a second. A pass starts from what is wanted: every node without outputs (projectors, recorders, senders such as <a class="ref" href="#out.ndi"><code>out.ndi</code></a> or <a class="ref" href="#out.osc"><code>out.osc</code></a>), the node in the viewer, and the visible thumbnails while there is time left. From there it pulls: before a wanted node cooks, the nodes feeding it cook, and the nodes feeding those. A node nothing wants does not cook and costs nothing. The editor marks it &quot;not cooked&quot;.</p>
 <p><strong>When a node cooks again.</strong> Only when something it depends on changed:</p>
 <ul>
 <li>one of its params changed, by hand, from the control channel or through a binding;
@@ -420,7 +420,7 @@ moss = #1b4332 #52b788
 </ul>
 <p>A control appears only after it has moved once. <strong>learn from OSC</strong> in a param's link menu takes MIDI too: move a fader, and the param is bound to it. A pad binds its <code>note_</code> channel. The channels hold their last value when the device is unplugged. penumbra looks for the device every second, so a device plugged in again goes on by itself. Many controllers send 7-bit steps, which can show on a slow fade; a <a class="ref" href="#chan.filter"><code>chan.filter</code></a> after the node smooths them. <code>pairs</code> reads 14-bit controls (control changes 32 to 63 refining 0 to 31). Leave it off for a controller that uses 32 to 63 as controls of their own, as most do.</p>
 <p>MIDI clock from a drum machine or another program becomes a tempo on the same node, with the channels <a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> has: <code>bpm</code>, <code>beat</code> (0 at a beat, rising to 1), <code>tick</code> (1 for a frame on each beat), <code>bar</code>, <code>bar_beat</code>. <code>beats</code> counts beats since the start, <code>playing</code> is 1 between start and stop, <code>clock</code> is 1 while clocks arrive. Bind to these instead of the audio analysis, and the show follows the device's tempo exactly.</p>
-<p><a class="ref" href="#chan.midi_out"><code>chan.midi_out</code></a> sends its input's channels to a device, named as <a class="ref" href="#chan.midi_in"><code>chan.midi_in</code></a> names them: <code>cc_1_24</code> sends control change 24, <code>note_1_36</code> a note on while above 0 (its value the velocity, or the value of <code>note_1_36_vel</code> when that channel comes too) and a note off at 0. Without a MIDI channel in the name (<code>cc_24</code>, <code>note_36</code>) the node's <code>channel</code> is used. This lights pads and moves motor faders on controllers that take it, or drives another program. It sends only what changed, and everything again when the device is opened anew.</p>
+<p><a class="ref" href="#out.midi"><code>out.midi</code></a> sends its input's channels to a device, named as <a class="ref" href="#chan.midi_in"><code>chan.midi_in</code></a> names them: <code>cc_1_24</code> sends control change 24, <code>note_1_36</code> a note on while above 0 (its value the velocity, or the value of <code>note_1_36_vel</code> when that channel comes too) and a note off at 0. Without a MIDI channel in the name (<code>cc_24</code>, <code>note_36</code>) the node's <code>channel</code> is used. This lights pads and moves motor faders on controllers that take it, or drives another program. It sends only what changed, and everything again when the device is opened anew.</p>
 <p>From the control channel: <a class="ref" href="#midi.status"><code>midi.status</code></a> (the devices, what is open, recent messages, the clock's tempo), <a class="ref" href="#midi.inject"><code>midi.inject {device, bytes}</code></a> (bytes as if a device had sent them, to try a project without the controller), <a class="ref" href="#midi.send"><code>midi.send {device, bytes}</code></a> and <a class="ref" href="#midi.config"><code>midi.config {enabled}</code></a>.</p>
 <p>Under Windows a device may be open in one program at a time (unless Windows MIDI Services is installed). If another program holds it, the node says so and penumbra tries again every second.</p>
 <h4 id="concepts-a-control-page-in-the-browser">A control page in the browser</h4>
@@ -453,7 +453,7 @@ water      15
 <p><code>cut</code> (or nothing) cuts at the end of the step; <code>fade</code> cross-fades into the next piece over the step's last seconds; <code>black</code> fades this piece out to black over its last seconds and the next one cuts in; <code>flash</code> cuts to white at the end, and the white fades into the next piece over its first seconds. A step's seconds are its whole slot, its transitions included. Before the first step there are <code>lead_in</code> seconds of black, after the last the show ends in black (the last step's transition leads into it). Instead of <code>steps</code>, <code>file</code> may name a file with such lines or with JSON: <code>{&quot;lead_in&quot;: 1, &quot;steps&quot;: [{&quot;piece&quot;: &quot;faces&quot;, &quot;duration&quot;: 10, &quot;transition&quot;: &quot;fade&quot;, &quot;length&quot;: 2}, ...]}</code>; saving the file applies it.</p>
 <p><code>names</code> lists the pieces in a fixed order (<code>intro faces pumpkin tiles water show</code>): piece k is input <code>in&lt;k&gt;</code> of a <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> and gets a channel <code>run_&lt;name&gt;</code>. Steps naming a piece not in the list are left out with a warning. Left empty, the pieces are numbered as the steps first name them.</p>
 <p><strong>Cues by hand.</strong> <code>hold</code> instead of seconds keeps a step on screen until <code>go</code> rises past 0.5; then its transition plays: <code>faces hold fade 2</code>. In a timed step, <code>go</code> ends the step early. A <code>go</code> during a transition does nothing, so a double press skips no cue. Bind <code>go</code> to a key's gate or to an OSC trigger: the <a href="../examples/show/README.md">show</a> example steps five cues with the space key, a button on the show screen and OSC.</p>
-<p><strong>GO from a desk.</strong> List the desk's GO address under <code>triggers</code> on the <a class="ref" href="#chan.osc_in"><code>chan.osc_in</code></a> (<code>/go</code>), and bind <code>go</code> to its channel. Each message is then one press: <code>/go 1</code> or <code>/go</code> alone, as QLab sends it. <code>/go 0</code> is a release and not a press. The channel is 1 for one frame per press, so a desk that never sends 0 moves the show on each time. A sender that does send <code>/go 0</code> counts its next <code>/go 1</code> only after a <code>/go 0</code>. A button held while it is sent again (a <a class="ref" href="#chan.osc_out"><code>chan.osc_out</code></a> resends every channel once a second) is then one press. Two presses within one frame come out one after the other.</p>
+<p><strong>GO from a desk.</strong> List the desk's GO address under <code>triggers</code> on the <a class="ref" href="#chan.osc_in"><code>chan.osc_in</code></a> (<code>/go</code>), and bind <code>go</code> to its channel. Each message is then one press: <code>/go 1</code> or <code>/go</code> alone, as QLab sends it. <code>/go 0</code> is a release and not a press. The channel is 1 for one frame per press, so a desk that never sends 0 moves the show on each time. A sender that does send <code>/go 0</code> counts its next <code>/go 1</code> only after a <code>/go 0</code>. A button held while it is sent again (an <a class="ref" href="#out.osc"><code>out.osc</code></a> resends every channel once a second) is then one press. Two presses within one frame come out one after the other.</p>
 <p><strong>After a crash in show mode</strong> the cue list goes on at the cue that was playing. A holding cue still holds, and the cues let go before stay let go. A timed cue may repeat up to a second. When the steps changed meanwhile, the show starts from its beginning.</p>
 <p><code>run</code> (with <code>equals</code>, as for a clock) starts the show from its beginning each time it turns on; while it is off the show is black. <code>mode</code> <code>loop</code> plays it round after round. Its channels: <code>seconds</code>, <code>step</code> (counted from 0; -1 in the lead-in), <code>piece</code>, <code>from</code>, <code>to</code> and <code>mix</code> (the entries shown, a piece number, -1 for black or -2 for white, and the share of <code>to</code>), <code>done</code>, <code>length</code>, and <code>run_&lt;name&gt;</code> per piece, 1 while that piece is shown, also during its fades. Bind a piece's clock's <code>run</code> to its <code>run_&lt;name&gt;</code> and the piece starts from its beginning each time the show brings it in (a piece listed twice in a row runs on).</p>
 </li>
@@ -686,7 +686,7 @@ water      15
 </ul>
 <p>To start single nodes over, select them and press <strong>R</strong> over the node editor (with nothing selected, R resets every stateful node of the level shown), or use the <strong>reset</strong> button at the top of a stateful node's params. A component resets the stateful nodes inside it. Locked nodes keep their outputs, and the state folder is not touched. From the control channel: <a class="ref" href="#node.reset"><code>node.reset {paths: [...]}</code></a>. A <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a>'s <code>reset</code> param stays for holding a loop at its initial input, for example from a binding.</p>
 <h3 id="helpers-osc">OSC</h3>
-<p>OSC input comes in through <a class="ref" href="#chan.osc_in"><code>chan.osc_in</code></a> nodes, output goes out through <a class="ref" href="#chan.osc_out"><code>chan.osc_out</code></a>; this section shows what they are doing.</p>
+<p>OSC input comes in through <a class="ref" href="#chan.osc_in"><code>chan.osc_in</code></a> nodes, output goes out through <a class="ref" href="#out.osc"><code>out.osc</code></a>; this section shows what they are doing.</p>
 <ul>
 <li><strong>listen</strong> off closes every OSC port for this run; the nodes stay.
 </li>
@@ -1023,7 +1023,7 @@ water      15
 </div></details>
 <details class="entry guide" id="serial-udp-tcp"><summary><span class="name">Serial, UDP and TCP</span></summary>
 <div class="body">
-<p><a class="ref" href="#chan.data_in"><code>chan.data_in</code></a> (Tab &gt; chan &gt; data_in) reads numbers and text from a serial port, UDP or TCP: an Arduino on a USB cable, a sensor on the network, another program. Each name becomes a channel to bind params to, and the last messages become a table. <a class="ref" href="#chan.data_out"><code>chan.data_out</code></a> (Tab &gt; chan &gt; data_out) goes the other way: it sends channels and table rows. For OSC use <a class="ref" href="#chan.osc_in"><code>chan.osc_in</code></a> and <a class="ref" href="#chan.osc_out"><code>chan.osc_out</code></a>; for DMX see <a href="#dmx">DMX</a>.</p>
+<p><a class="ref" href="#chan.data_in"><code>chan.data_in</code></a> (Tab &gt; chan &gt; data_in) reads numbers and text from a serial port, UDP or TCP: an Arduino on a USB cable, a sensor on the network, another program. Each name becomes a channel to bind params to, and the last messages become a table. <a class="ref" href="#out.data"><code>out.data</code></a> (Tab &gt; out &gt; data) goes the other way: it sends channels and table rows. For OSC use <a class="ref" href="#chan.osc_in"><code>chan.osc_in</code></a> and <a class="ref" href="#out.osc"><code>out.osc</code></a>; for DMX see <a href="#dmx">DMX</a>.</p>
 <h3 id="serial-udp-tcp-reading">Reading</h3>
 <ol>
 <li>Add a <a class="ref" href="#chan.data_in"><code>chan.data_in</code></a> and pick the <code>transport</code>:
@@ -1055,7 +1055,7 @@ water      15
 </ul>
 <p>A channel holds its latest number until a message sets it again. The <code>table</code> output has the names as its first row, then the last <code>rows</code> messages, the newest last.</p>
 <h3 id="serial-udp-tcp-sending">Sending</h3>
-<p><a class="ref" href="#chan.data_out"><code>chan.data_out</code></a> sends its <code>chans</code> input as one message and every row of its <code>table</code> input as one more, at most <code>rate</code> times a second. One send carries at most 1024 messages; the node warns about table rows beyond.</p>
+<p><a class="ref" href="#out.data"><code>out.data</code></a> sends its <code>chans</code> input as one message and every row of its <code>table</code> input as one more, at most <code>rate</code> times a second. One send carries at most 1024 messages; the node warns about table rows beyond.</p>
 <ul>
 <li><strong>lines:</strong> <code>0.5,1</code>, or <code>x:0.5,y:1</code> with <code>names</code> on; <code>separator</code> picks the comma. A table row is its cells joined.
 </li>
@@ -1066,7 +1066,7 @@ water      15
 </ul>
 <p><code>send</code> at <code>changes</code> sends when a message changed. Over UDP everything goes again once a second, so a lost datagram does not leave a value wrong. Over TCP and serial nothing is resent: a client that connects, and a connection opened again, get the latest messages at once. <code>delimiter</code> ends each message on a stream; UDP sends each message as one datagram without it. <code>tcp_connect</code> connects to <code>host</code>; <code>tcp_listen</code> sends to every client connected.</p>
 <h3 id="serial-udp-tcp-one-device-both-ways">One device both ways</h3>
-<p>A <a class="ref" href="#chan.data_in"><code>chan.data_in</code></a> and a <a class="ref" href="#chan.data_out"><code>chan.data_out</code></a> with the same serial port, or the same <code>tcp_connect</code> host and port, share one connection. A request the out node sends gets its answer in the in node. A serial port opens at the <code>baud</code> of the node that opened it first; the other node warns when its own <code>baud</code> differs. When the first node goes away or changes its <code>baud</code>, the port opens again at the <code>baud</code> of the oldest node left.</p>
+<p>A <a class="ref" href="#chan.data_in"><code>chan.data_in</code></a> and an <a class="ref" href="#out.data"><code>out.data</code></a> with the same serial port, or the same <code>tcp_connect</code> host and port, share one connection. A request the out node sends gets its answer in the in node. A serial port opens at the <code>baud</code> of the node that opened it first; the other node warns when its own <code>baud</code> differs. When the first node goes away or changes its <code>baud</code>, the port opens again at the <code>baud</code> of the oldest node left.</p>
 <h3 id="serial-udp-tcp-when-something-goes-wrong">When something goes wrong</h3>
 <ul>
 <li><strong>A message that does not fit</strong> (JSON that does not parse, longer than <code>max</code> bytes) is dropped and counted; the node warns with the last reason.
@@ -3863,7 +3863,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-chan">
 <h3>chan</h3>
-<p class="kinds"><a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.beat_analysis">chan.beat_analysis</a> <a href="#chan.beat_grid">chan.beat_grid</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.data_in">chan.data_in</a> <a href="#chan.data_out">chan.data_out</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.envelope">chan.envelope</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.http_in">chan.http_in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.midi_in">chan.midi_in</a> <a href="#chan.midi_out">chan.midi_out</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
+<p class="kinds"><a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.beat_analysis">chan.beat_analysis</a> <a href="#chan.beat_grid">chan.beat_grid</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.data_in">chan.data_in</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.envelope">chan.envelope</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.http_in">chan.http_in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.midi_in">chan.midi_in</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
 <details class="entry node" id="chan.audio_envelope"><summary><code class="name">chan.audio_envelope</code><span class="sum">How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</span></summary>
 <div class="body">
 <p>How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</p>
@@ -4090,37 +4090,6 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#serial-udp-tcp">Serial, UDP and TCP</a>, <a href="#serial-udp-tcp-reading">Serial, UDP and TCP › Reading</a>, <a href="#serial-udp-tcp-one-device-both-ways">Serial, UDP and TCP › One device both ways</a>, <a href="#serial-udp-tcp-trying-it-without-a-device">Serial, UDP and TCP › Trying it without a device</a></p>
-</div></details>
-<details class="entry node" id="chan.data_out"><summary><code class="name">chan.data_out</code><span class="sum">Sends channels and table rows to a serial port, UDP or TCP, as lines, JSON or bytes</span></summary>
-<div class="body">
-<p>Sends channels and table rows to a serial port, UDP or TCP, as lines, JSON or bytes</p>
-<p class="note">Follows the show clock: cooks again whenever time moves.</p>
-<h4>Inputs</h4>
-<ul>
-<li><code>chans</code> <span class="kind">chan</span></li>
-<li><code>table</code> <span class="kind">table</span></li>
-</ul>
-<h4>Outputs</h4>
-<p>none</p>
-<h4>Params</h4>
-<table class="params">
-<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
-<tbody>
-<tr><td><code>transport</code></td><td>udp | tcp_connect | tcp_listen | serial</td><td><code>&quot;udp&quot;</code></td><td></td><td>Where the messages go<ul><li><code>udp</code>: UDP datagrams to <code>host</code> and <code>port</code>, one message each</li><li><code>tcp_connect</code>: a TCP connection to the server at <code>host</code> and <code>port</code>; reconnects when it drops</li><li><code>tcp_listen</code>: a TCP server on <code>port</code>: every client that connects gets the messages</li><li><code>serial</code>: a serial port such as an Arduino's USB cable</li></ul></td></tr>
-<tr><td><code>host</code></td><td>text</td><td><code>&quot;127.0.0.1&quot;</code></td><td></td><td>IP address of the other side, or localhost; <code>10.0.0.5:7000</code> sets the port too. Names are not looked up</td></tr>
-<tr><td><code>port</code></td><td>int</td><td><code>7000</code></td><td>1024 to 65535 (soft, held within 0 to 65535)</td><td>UDP or TCP port of the receiver; for tcp_listen, the port to listen on (there 0 picks any free port)</td></tr>
-<tr><td><code>lan</code></td><td>bool</td><td><code>false</code></td><td></td><td>Also take connections from other devices: listens on every network interface. Off: this machine only</td></tr>
-<tr><td><code>serial</code></td><td>text</td><td></td><td></td><td>Serial port, such as COM3 or /dev/ttyACM0 (net.ports lists them). Empty takes the only one plugged in</td></tr>
-<tr><td><code>baud</code></td><td>int</td><td><code>9600</code></td><td>1200 to 1000000 (soft, held within 50 to 4000000)</td><td>Serial bit rate; match the device (Arduino: Serial.begin). Always 8 data bits, no parity, 1 stop bit</td></tr>
-<tr><td><code>format</code></td><td>lines | json | bytes</td><td><code>&quot;lines&quot;</code></td><td></td><td>What one message is<ul><li><code>lines</code>: a line of text: numbers split by commas or spaces, or <code>name:value</code></li><li><code>json</code>: one JSON value per line; over UDP a whole datagram, or each line of it</li><li><code>bytes</code>: raw bytes, each 0 to 255</li></ul></td></tr>
-<tr><td><code>separator</code></td><td>comma | semicolon | tab | space</td><td><code>&quot;comma&quot;</code></td><td></td><td>What goes between the values of a line<ul><li><code>comma</code>: <code>0.5,1</code></li><li><code>semicolon</code>: <code>0.5;1</code></li><li><code>tab</code>: a tab</li><li><code>space</code>: <code>0.5 1</code></li></ul></td></tr>
-<tr><td><code>names</code></td><td>bool</td><td><code>false</code></td><td></td><td>Lines: each channel as <code>name:value</code>. Off: the values alone, in order. JSON always has the names</td></tr>
-<tr><td><code>delimiter</code></td><td>text</td><td><code>&quot;\\n&quot;</code></td><td></td><td>What ends each message on a serial port or TCP: <code>\n</code>, <code>\r\n</code>, <code>;</code>, empty for none. UDP sends each message as one datagram without it</td></tr>
-<tr><td><code>rate</code></td><td>float</td><td><code>30</code></td><td>1 to 120 Hz (soft, held within 0.1 to 1000 Hz)</td><td>Sends per second at most</td></tr>
-<tr><td><code>send</code></td><td>changes | always</td><td><code>&quot;changes&quot;</code></td><td></td><td>When to send<ul><li><code>changes</code>: when a message changed; over UDP everything again once a second, in case a datagram was lost</li><li><code>always</code>: everything, <code>rate</code> times a second</li></ul></td></tr>
-</tbody>
-</table>
-<p class="mentions">Mentioned in: <a href="#serial-udp-tcp">Serial, UDP and TCP</a>, <a href="#serial-udp-tcp-sending">Serial, UDP and TCP › Sending</a>, <a href="#serial-udp-tcp-one-device-both-ways">Serial, UDP and TCP › One device both ways</a></p>
 </div></details>
 <details class="entry node" id="chan.derivative"><summary><code class="name">chan.derivative</code><span class="sum">How fast each channel changes: a position in, a speed out, for reacting to movement or to a rising level</span></summary>
 <div class="body">
@@ -4506,28 +4475,6 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a></p>
 </div></details>
-<details class="entry node" id="chan.midi_out"><summary><code class="name">chan.midi_out</code><span class="sum">Sends channels to a MIDI device: pad lights, motor faders, another program</span></summary>
-<div class="body">
-<p>Sends channels to a MIDI device: pad lights, motor faders, another program</p>
-<p class="note">Follows the show clock: cooks again whenever time moves.</p>
-<h4>Inputs</h4>
-<ul>
-<li><code>chans</code> <span class="kind">chan</span>: Channels named as chan.midi_in makes them: cc_1_7 (0 to 1), note_1_36 (above 0 is on, its value the velocity, or note_1_36_vel's when that channel is there too), bend_1 (-1 to 1), pressure_1, program_1; cc_7, note_36 and so on use <code>channel</code>. A chan.midi_in wired straight in sends its controls back</li>
-</ul>
-<h4>Outputs</h4>
-<p>none</p>
-<h4>Params</h4>
-<table class="params">
-<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
-<tbody>
-<tr><td><code>device</code></td><td>text</td><td></td><td></td><td>Part of the output's name, any case, e.g. <code>easy control</code> (the … menu lists them)</td></tr>
-<tr><td><code>channel</code></td><td>int</td><td><code>1</code></td><td>1 to 16</td><td>MIDI channel for channels named without one: cc_7, note_36</td></tr>
-<tr class="section"><th colspan="5">more</th></tr>
-<tr><td><code>rate</code></td><td>float</td><td><code>60</code></td><td>1 to 120 Hz (soft, held within 1 to 1000 Hz)</td><td>Sends per second at most</td></tr>
-</tbody>
-</table>
-<p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a></p>
-</div></details>
 <details class="entry node" id="chan.mouse_in"><summary><code class="name">chan.mouse_in</code><span class="sum">The mouse pointer and its buttons as channels, anywhere on the desktop: steer or trigger things by hand during a show</span></summary>
 <div class="body">
 <p>The mouse pointer and its buttons as channels, anywhere on the desktop: steer or trigger things by hand during a show</p>
@@ -4606,32 +4553,6 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-shows">Concepts › Shows</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#helpers-osc">The Helpers window › OSC</a>, <a href="#serial-udp-tcp">Serial, UDP and TCP</a>, <a href="#control">Control</a></p>
-</div></details>
-<details class="entry node" id="chan.osc_out"><summary><code class="name">chan.osc_out</code><span class="sum">Sends channels and table rows as OSC to another program or device</span></summary>
-<div class="body">
-<p>Sends channels and table rows as OSC to another program or device</p>
-<p class="note">Follows the show clock: cooks again whenever time moves.</p>
-<h4>Inputs</h4>
-<ul>
-<li><code>chans</code> <span class="kind">chan</span></li>
-<li><code>table</code> <span class="kind">table</span></li>
-</ul>
-<h4>Outputs</h4>
-<p>none</p>
-<h4>Params</h4>
-<table class="params">
-<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
-<tbody>
-<tr><td><code>host</code></td><td>text</td><td><code>&quot;127.0.0.1&quot;</code></td><td></td><td>IP address to send to, or localhost; names are not looked up</td></tr>
-<tr><td><code>port</code></td><td>int</td><td><code>9000</code></td><td>1024 to 65535 (soft, held within 1 to 65535)</td><td>UDP port the receiver listens on (TouchOSC and many apps use 9000)</td></tr>
-<tr><td><code>rate</code></td><td>float</td><td><code>30</code></td><td>1 to 120 Hz (soft, held within 0.1 to 1000 Hz)</td><td>Sends per second at most</td></tr>
-<tr><td><code>send</code></td><td>changes | always</td><td><code>&quot;changes&quot;</code></td><td></td><td>Which channels each send carries<ul><li><code>changes</code>: only what changed, plus everything once a second</li><li><code>always</code>: everything, each time</li></ul></td></tr>
-<tr><td><code>prefix</code></td><td>text</td><td></td><td></td><td>Put before every channel's address: <code>/show</code> sends /show/x</td></tr>
-<tr class="section"><th colspan="5">more</th></tr>
-<tr><td><code>bundle</code></td><td>bool</td><td><code>true</code></td><td></td><td>Several messages per packet as a bundle; off sends one packet per message</td></tr>
-</tbody>
-</table>
-<p class="mentions">Mentioned in: <a href="#concepts-how-the-network-runs">Concepts › How the network runs</a>, <a href="#concepts-shows">Concepts › Shows</a>, <a href="#helpers-osc">The Helpers window › OSC</a>, <a href="#serial-udp-tcp">Serial, UDP and TCP</a></p>
 </div></details>
 <details class="entry node" id="chan.rename"><summary><code class="name">chan.rename</code><span class="sum">Renames channels by <code>from=to</code> pairs, so they match what other nodes and bindings expect</span></summary>
 <div class="body">
@@ -5802,7 +5723,7 @@ def cook(cx):
 </div>
 <div class="group" id="family-out">
 <h3>out</h3>
-<p class="kinds"><a href="#out.audio">out.audio</a> <a href="#out.audio_file">out.audio_file</a> <a href="#out.dmx">out.dmx</a> <a href="#out.mesh">out.mesh</a> <a href="#out.ndi">out.ndi</a> <a href="#out.projector">out.projector</a> <a href="#out.spout">out.spout</a> <a href="#out.table">out.table</a> <a href="#out.video">out.video</a></p>
+<p class="kinds"><a href="#out.audio">out.audio</a> <a href="#out.audio_file">out.audio_file</a> <a href="#out.data">out.data</a> <a href="#out.dmx">out.dmx</a> <a href="#out.mesh">out.mesh</a> <a href="#out.midi">out.midi</a> <a href="#out.ndi">out.ndi</a> <a href="#out.osc">out.osc</a> <a href="#out.projector">out.projector</a> <a href="#out.spout">out.spout</a> <a href="#out.table">out.table</a> <a href="#out.video">out.video</a></p>
 <details class="entry node" id="out.audio"><summary><code class="name">out.audio</code><span class="sum">Plays sound on a speaker or headphones, always through a limiter that keeps it below -1 dBFS</span></summary>
 <div class="body">
 <p>Plays sound on a speaker or headphones, always through a limiter that keeps it below -1 dBFS</p>
@@ -5852,6 +5773,37 @@ def cook(cx):
 </table>
 <p class="mentions">Mentioned in: <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#audio-recording-sound-to-a-file">Audio › Recording sound to a file</a>, <a href="#recording-sound">Recording › Sound</a></p>
 </div></details>
+<details class="entry node" id="out.data"><summary><code class="name">out.data</code><span class="sum">Sends channels and table rows to a serial port, UDP or TCP, as lines, JSON or bytes</span></summary>
+<div class="body">
+<p>Sends channels and table rows to a serial port, UDP or TCP, as lines, JSON or bytes</p>
+<p class="note">Follows the show clock: cooks again whenever time moves.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>chans</code> <span class="kind">chan</span></li>
+<li><code>table</code> <span class="kind">table</span></li>
+</ul>
+<h4>Outputs</h4>
+<p>none</p>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>transport</code></td><td>udp | tcp_connect | tcp_listen | serial</td><td><code>&quot;udp&quot;</code></td><td></td><td>Where the messages go<ul><li><code>udp</code>: UDP datagrams to <code>host</code> and <code>port</code>, one message each</li><li><code>tcp_connect</code>: a TCP connection to the server at <code>host</code> and <code>port</code>; reconnects when it drops</li><li><code>tcp_listen</code>: a TCP server on <code>port</code>: every client that connects gets the messages</li><li><code>serial</code>: a serial port such as an Arduino's USB cable</li></ul></td></tr>
+<tr><td><code>host</code></td><td>text</td><td><code>&quot;127.0.0.1&quot;</code></td><td></td><td>IP address of the other side, or localhost; <code>10.0.0.5:7000</code> sets the port too. Names are not looked up</td></tr>
+<tr><td><code>port</code></td><td>int</td><td><code>7000</code></td><td>1024 to 65535 (soft, held within 0 to 65535)</td><td>UDP or TCP port of the receiver; for tcp_listen, the port to listen on (there 0 picks any free port)</td></tr>
+<tr><td><code>lan</code></td><td>bool</td><td><code>false</code></td><td></td><td>Also take connections from other devices: listens on every network interface. Off: this machine only</td></tr>
+<tr><td><code>serial</code></td><td>text</td><td></td><td></td><td>Serial port, such as COM3 or /dev/ttyACM0 (net.ports lists them). Empty takes the only one plugged in</td></tr>
+<tr><td><code>baud</code></td><td>int</td><td><code>9600</code></td><td>1200 to 1000000 (soft, held within 50 to 4000000)</td><td>Serial bit rate; match the device (Arduino: Serial.begin). Always 8 data bits, no parity, 1 stop bit</td></tr>
+<tr><td><code>format</code></td><td>lines | json | bytes</td><td><code>&quot;lines&quot;</code></td><td></td><td>What one message is<ul><li><code>lines</code>: a line of text: numbers split by commas or spaces, or <code>name:value</code></li><li><code>json</code>: one JSON value per line; over UDP a whole datagram, or each line of it</li><li><code>bytes</code>: raw bytes, each 0 to 255</li></ul></td></tr>
+<tr><td><code>separator</code></td><td>comma | semicolon | tab | space</td><td><code>&quot;comma&quot;</code></td><td></td><td>What goes between the values of a line<ul><li><code>comma</code>: <code>0.5,1</code></li><li><code>semicolon</code>: <code>0.5;1</code></li><li><code>tab</code>: a tab</li><li><code>space</code>: <code>0.5 1</code></li></ul></td></tr>
+<tr><td><code>names</code></td><td>bool</td><td><code>false</code></td><td></td><td>Lines: each channel as <code>name:value</code>. Off: the values alone, in order. JSON always has the names</td></tr>
+<tr><td><code>delimiter</code></td><td>text</td><td><code>&quot;\\n&quot;</code></td><td></td><td>What ends each message on a serial port or TCP: <code>\n</code>, <code>\r\n</code>, <code>;</code>, empty for none. UDP sends each message as one datagram without it</td></tr>
+<tr><td><code>rate</code></td><td>float</td><td><code>30</code></td><td>1 to 120 Hz (soft, held within 0.1 to 1000 Hz)</td><td>Sends per second at most</td></tr>
+<tr><td><code>send</code></td><td>changes | always</td><td><code>&quot;changes&quot;</code></td><td></td><td>When to send<ul><li><code>changes</code>: when a message changed; over UDP everything again once a second, in case a datagram was lost</li><li><code>always</code>: everything, <code>rate</code> times a second</li></ul></td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#serial-udp-tcp">Serial, UDP and TCP</a>, <a href="#serial-udp-tcp-sending">Serial, UDP and TCP › Sending</a>, <a href="#serial-udp-tcp-one-device-both-ways">Serial, UDP and TCP › One device both ways</a></p>
+</div></details>
 <details class="entry node" id="out.dmx"><summary><code class="name">out.dmx</code><span class="sum">Sends channels to DMX lights and fixtures: Enttec Open DMX USB, Art-Net, sACN or DDP</span></summary>
 <div class="body">
 <p>Sends channels to DMX lights and fixtures: Enttec Open DMX USB, Art-Net, sACN or DDP</p>
@@ -5898,6 +5850,28 @@ def cook(cx):
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
+<details class="entry node" id="out.midi"><summary><code class="name">out.midi</code><span class="sum">Sends channels to a MIDI device: pad lights, motor faders, another program</span></summary>
+<div class="body">
+<p>Sends channels to a MIDI device: pad lights, motor faders, another program</p>
+<p class="note">Follows the show clock: cooks again whenever time moves.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>chans</code> <span class="kind">chan</span>: Channels named as chan.midi_in makes them: cc_1_7 (0 to 1), note_1_36 (above 0 is on, its value the velocity, or note_1_36_vel's when that channel is there too), bend_1 (-1 to 1), pressure_1, program_1; cc_7, note_36 and so on use <code>channel</code>. A chan.midi_in wired straight in sends its controls back</li>
+</ul>
+<h4>Outputs</h4>
+<p>none</p>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>device</code></td><td>text</td><td></td><td></td><td>Part of the output's name, any case, e.g. <code>easy control</code> (the … menu lists them)</td></tr>
+<tr><td><code>channel</code></td><td>int</td><td><code>1</code></td><td>1 to 16</td><td>MIDI channel for channels named without one: cc_7, note_36</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>rate</code></td><td>float</td><td><code>60</code></td><td>1 to 120 Hz (soft, held within 1 to 1000 Hz)</td><td>Sends per second at most</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a></p>
+</div></details>
 <details class="entry node" id="out.ndi"><summary><code class="name">out.ndi</code><span class="sum">Sends a picture, and sound if wired, over the network as an NDI® source, to other programs and computers; needs the NDI runtime (ndi.video)</span></summary>
 <div class="body">
 <p>Sends a picture, and sound if wired, over the network as an NDI® source, to other programs and computers; needs the NDI runtime (ndi.video)</p>
@@ -5917,6 +5891,32 @@ def cook(cx):
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-how-the-network-runs">Concepts › How the network runs</a>, <a href="#ndi-sending-outndi">NDI › Sending: out.ndi</a></p>
+</div></details>
+<details class="entry node" id="out.osc"><summary><code class="name">out.osc</code><span class="sum">Sends channels and table rows as OSC to another program or device</span></summary>
+<div class="body">
+<p>Sends channels and table rows as OSC to another program or device</p>
+<p class="note">Follows the show clock: cooks again whenever time moves.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>chans</code> <span class="kind">chan</span></li>
+<li><code>table</code> <span class="kind">table</span></li>
+</ul>
+<h4>Outputs</h4>
+<p>none</p>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>host</code></td><td>text</td><td><code>&quot;127.0.0.1&quot;</code></td><td></td><td>IP address to send to, or localhost; names are not looked up</td></tr>
+<tr><td><code>port</code></td><td>int</td><td><code>9000</code></td><td>1024 to 65535 (soft, held within 1 to 65535)</td><td>UDP port the receiver listens on (TouchOSC and many apps use 9000)</td></tr>
+<tr><td><code>rate</code></td><td>float</td><td><code>30</code></td><td>1 to 120 Hz (soft, held within 0.1 to 1000 Hz)</td><td>Sends per second at most</td></tr>
+<tr><td><code>send</code></td><td>changes | always</td><td><code>&quot;changes&quot;</code></td><td></td><td>Which channels each send carries<ul><li><code>changes</code>: only what changed, plus everything once a second</li><li><code>always</code>: everything, each time</li></ul></td></tr>
+<tr><td><code>prefix</code></td><td>text</td><td></td><td></td><td>Put before every channel's address: <code>/show</code> sends /show/x</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>bundle</code></td><td>bool</td><td><code>true</code></td><td></td><td>Several messages per packet as a bundle; off sends one packet per message</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-how-the-network-runs">Concepts › How the network runs</a>, <a href="#concepts-shows">Concepts › Shows</a>, <a href="#helpers-osc">The Helpers window › OSC</a>, <a href="#serial-udp-tcp">Serial, UDP and TCP</a></p>
 </div></details>
 <details class="entry node" id="out.projector"><summary><code class="name">out.projector</code><span class="sum">Shows a picture fullscreen on a projector or display, or in a part of it, with colour correction to match projectors; or in a window on the desktop, as a preview</span></summary>
 <div class="body">
@@ -6767,9 +6767,9 @@ def cook(cx):
 <p>Take in MIDI bytes as if the input <code>device</code> had sent them (made if no device has that name): {device, bytes: [176, 7, 127]}. For trying a project without the controller</p>
 <p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a></p>
 </div></details>
-<details class="entry command" id="midi.send"><summary><code class="name">midi.send</code><span class="sum">Send MIDI messages to an output: {device (part of its name), bytes: [144, 36, 127]}; system exclusive is left out. The output must be open (a chan.midi_out names it)</span></summary>
+<details class="entry command" id="midi.send"><summary><code class="name">midi.send</code><span class="sum">Send MIDI messages to an output: {device (part of its name), bytes: [144, 36, 127]}; system exclusive is left out. The output must be open (an out.midi names it)</span></summary>
 <div class="body">
-<p>Send MIDI messages to an output: {device (part of its name), bytes: [144, 36, 127]}; system exclusive is left out. The output must be open (a chan.midi_out names it)</p>
+<p>Send MIDI messages to an output: {device (part of its name), bytes: [144, 36, 127]}; system exclusive is left out. The output must be open (an out.midi names it)</p>
 <p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a></p>
 </div></details>
 <details class="entry command" id="midi.status"><summary><code class="name">midi.status</code><span class="sum">MIDI devices of this machine, the inputs and outputs open (messages, drops, errors, the clock's tempo), recent messages</span></summary>
@@ -6801,14 +6801,14 @@ def cook(cx):
 </div>
 <div class="group" id="group-net">
 <h3>net</h3>
-<details class="entry command" id="net.ports"><summary><code class="name">net.ports</code><span class="sum">The serial ports of this machine for chan.data_in and chan.data_out (name, USB ids, product)</span></summary>
+<details class="entry command" id="net.ports"><summary><code class="name">net.ports</code><span class="sum">The serial ports of this machine for chan.data_in and out.data (name, USB ids, product)</span></summary>
 <div class="body">
-<p>The serial ports of this machine for chan.data_in and chan.data_out (name, USB ids, product)</p>
+<p>The serial ports of this machine for chan.data_in and out.data (name, USB ids, product)</p>
 <p class="mentions">Mentioned in: <a href="#serial-udp-tcp-reading">Serial, UDP and TCP › Reading</a>, <a href="#serial-udp-tcp-commands">Serial, UDP and TCP › Commands</a></p>
 </div></details>
-<details class="entry command" id="net.status"><summary><code class="name">net.status</code><span class="sum">Serial, UDP and TCP links of chan.data_in and chan.data_out: endpoint, readers, writers, open, local address, peers, error, bytes and messages in and out, drops, connects</span></summary>
+<details class="entry command" id="net.status"><summary><code class="name">net.status</code><span class="sum">Serial, UDP and TCP links of chan.data_in and out.data: endpoint, readers, writers, open, local address, peers, error, bytes and messages in and out, drops, connects</span></summary>
 <div class="body">
-<p>Serial, UDP and TCP links of chan.data_in and chan.data_out: endpoint, readers, writers, open, local address, peers, error, bytes and messages in and out, drops, connects</p>
+<p>Serial, UDP and TCP links of chan.data_in and out.data: endpoint, readers, writers, open, local address, peers, error, bytes and messages in and out, drops, connects</p>
 <p class="mentions">Mentioned in: <a href="#serial-udp-tcp-commands">Serial, UDP and TCP › Commands</a></p>
 </div></details>
 </div>

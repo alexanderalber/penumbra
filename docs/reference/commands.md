@@ -187,7 +187,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `midi.config` | MIDI settings for this run: {enabled?}; off closes every device |
 | `midi.inject` | Take in MIDI bytes as if the input `device` had sent them (made if no device has that name): {device, bytes: [176, 7, 127]}. For trying a project without the controller |
-| `midi.send` | Send MIDI messages to an output: {device (part of its name), bytes: [144, 36, 127]}; system exclusive is left out. The output must be open (a chan.midi_out names it) |
+| `midi.send` | Send MIDI messages to an output: {device (part of its name), bytes: [144, 36, 127]}; system exclusive is left out. The output must be open (an out.midi names it) |
 | `midi.status` | MIDI devices of this machine, the inputs and outputs open (messages, drops, errors, the clock's tempo), recent messages |
 
 ## mouse
@@ -207,8 +207,8 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `net.ports` | The serial ports of this machine for chan.data_in and chan.data_out (name, USB ids, product) |
-| `net.status` | Serial, UDP and TCP links of chan.data_in and chan.data_out: endpoint, readers, writers, open, local address, peers, error, bytes and messages in and out, drops, connects |
+| `net.ports` | The serial ports of this machine for chan.data_in and out.data (name, USB ids, product) |
+| `net.status` | Serial, UDP and TCP links of chan.data_in and out.data: endpoint, readers, writers, open, local address, peers, error, bytes and messages in and out, drops, connects |
 
 ## node
 
