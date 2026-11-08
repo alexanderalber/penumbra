@@ -130,6 +130,7 @@ counterpart" below.
 | LFO CHOP | `chan.lfo` | `frequency` becomes `rate`, `amp` `amplitude`, type `tri` `triangle`; check where the wave starts |
 | Noise CHOP | `chan.noise` | |
 | Math CHOP | `chan.math` (`op`, `b`) | a from-range/to-range is a `subtract`, a `multiply` and an `add`; or do the sum where the value is used |
+| Function CHOP | `chan.math` `sin`, `cos`, `tan`, `atan2` (input 1 is y into `a`, input 2 x into `b`), `abs` | `chan.math` works in radians. Check the CHOP's angle unit (`angunit`): degrees need a `multiply` by 0.0174533 first (by 57.2958 after `atan2`), cycles by 6.28319. Other functions (log, exp, sqrt): `script.python` or a `power` |
 | Lag, Filter CHOP | `chan.filter` | Lag: `type` `first_order` with `rise` and `fall` |
 | Speed CHOP | `chan.integrator` | with Limit loop: `limit` `loop`, `min`, `max` |
 | Limit CHOP | `chan.math` `min`/`max` (clamp) or `modulo` (loop), `floor` (quantise) | |

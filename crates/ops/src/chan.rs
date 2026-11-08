@@ -768,7 +768,8 @@ impl Operator for Math {
         let a = cx.input_as::<Chans>(0);
         let b = cx.input_as::<Chans>(1);
         let b_param = cx.float("b")?;
-        let op: fn(f64, f64) -> f64 = match cx.text("op")? {
+        let op_name = cx.text("op")?;
+        let op: fn(f64, f64) -> f64 = match op_name {
             "subtract" => |a, b| a - b,
             "multiply" => |a, b| a * b,
             "divide" => |a, b| a / b,
@@ -785,8 +786,9 @@ impl Operator for Math {
             "abs" => |a, _| a.abs(),
             _ => |a, b| a + b,
         };
-        // The layout (names, length, rate) comes from a, else from b.
-        let shape = a.or(b);
+        // The layout (names, length, rate) comes from a, else from b. An op on a alone takes
+        // nothing from b, its layout neither.
+        let shape = if MATH_UNARY.contains(&op_name) { a } else { a.or(b) };
         let (layout, rate) = match shape {
             Some(c) => {
                 (c.channels().iter().map(|ch| (ch.name.clone(), ch.samples.len())).collect(), c.rate())
@@ -1806,9 +1808,42 @@ mod tests {
             apply(&mut f, &[set("/a.value0", y), set("/m.b", x)]);
             assert!((f.value("/m") - want).abs() < 1e-12, "atan2({y}, {x}) = {}", f.value("/m"));
         }
+        // With only b wired, an op on a alone gives f(0) in one channel: b's layout is not used.
+        apply(&mut f, &[Op::Disconnect { to: "/m".parse().unwrap(), input: 0 }, set("/m.op", "cos")]);
+        create_merge_of_two(&mut f);
+        apply(&mut f, &[connect("/two", "/m", 1)]);
+        let c = f.chans("/m");
+        assert_eq!(c.channels().len(), 1);
+        assert_eq!(c.value(Some("value")), Some(1.0));
+        apply(
+            &mut f,
+            &[
+                Op::Disconnect { to: "/m".parse().unwrap(), input: 1 },
+                connect("/a", "/m", 0),
+                set("/m.op", "atan2"),
+            ],
+        );
         // From a wired b too, channel by channel.
         apply(&mut f, &[connect("/b", "/m", 1), set("/a.value0", 1.0), set("/b.value0", -1.0)]);
         assert!((f.value("/m") - 0.75 * pi).abs() < 1e-12);
+    }
+
+    /// `/two`: two channels, x and y, from `/x2` and `/y2`.
+    fn create_merge_of_two(f: &mut F) {
+        apply(
+            f,
+            &[
+                create("/x2", "chan.constant"),
+                set("/x2.name0", "x"),
+                set("/x2.value0", 0.3),
+                create("/y2", "chan.constant"),
+                set("/y2.name0", "y"),
+                set("/y2.value0", 0.4),
+                create("/two", "chan.merge"),
+                connect("/x2", "/two", 0),
+                connect("/y2", "/two", 1),
+            ],
+        );
     }
 
     fn apply(f: &mut F, ops: &[Op]) {

@@ -2391,9 +2391,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#camera-noise">Camera › Noise</a>, <a href="#camera-motion">Camera › Motion</a></p>
 </div></details>
-<details class="entry node" id="tex.dilate"><summary><code class="name">tex.dilate</code><span class="sum">Grows the bright parts of a picture: each pixel takes the brightest value around it. Thickens lines, fills small holes in a mask</span></summary>
+<details class="entry node" id="tex.dilate"><summary><code class="name">tex.dilate</code><span class="sum">Grows the bright parts of a picture: channel by channel, each pixel takes the largest value around it. Thickens lines, fills small holes in a mask</span></summary>
 <div class="body">
-<p>Grows the bright parts of a picture: each pixel takes the brightest value around it. Thickens lines, fills small holes in a mask</p>
+<p>Grows the bright parts of a picture: channel by channel, each pixel takes the largest value around it. Thickens lines, fills small holes in a mask</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -2406,7 +2406,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>size</code></td><td>vec2</td><td><code>[2, 2]</code></td><td>0 to 32 px (soft)</td><td>How far bright parts grow, in pixels across and down: each pixel takes the largest value within this distance. 0 on one side leaves that direction as it is; fractions grow the outermost pixel in part</td></tr>
+<tr><td><code>size</code></td><td>vec2</td><td><code>[2, 2]</code></td><td>0 to 32 px (soft)</td><td>How far bright parts grow, in pixels across and down, at most 256: each pixel takes the largest value within this distance. 0 on one side leaves that direction as it is. A fraction such as 1.5 takes the outermost pixel in by half</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>extend</code></td><td>hold | zero | repeat | mirror</td><td><code>&quot;hold&quot;</code></td><td></td><td>What the dilate reads beyond the input's edges; hold keeps the edges as they are<ul><li><code>hold</code>: the edge pixels continue outwards</li><li><code>zero</code>: transparent black</li><li><code>repeat</code>: the input again, tiled</li><li><code>mirror</code>: the input again, mirrored, so the copies meet at the edges</li></ul></td></tr>
 </tbody>
@@ -2460,9 +2460,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.erode"><summary><code class="name">tex.erode</code><span class="sum">Shrinks the bright parts of a picture: each pixel takes the darkest value around it. Thins lines, removes specks from a mask</span></summary>
+<details class="entry node" id="tex.erode"><summary><code class="name">tex.erode</code><span class="sum">Shrinks the bright parts of a picture: channel by channel, each pixel takes the smallest value around it. Thins lines, removes specks from a mask</span></summary>
 <div class="body">
-<p>Shrinks the bright parts of a picture: each pixel takes the darkest value around it. Thins lines, removes specks from a mask</p>
+<p>Shrinks the bright parts of a picture: channel by channel, each pixel takes the smallest value around it. Thins lines, removes specks from a mask</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -2475,7 +2475,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>size</code></td><td>vec2</td><td><code>[2, 2]</code></td><td>0 to 32 px (soft)</td><td>How far bright parts shrink, in pixels across and down: each pixel takes the smallest value within this distance. 0 on one side leaves that direction as it is; fractions shrink by the outermost pixel in part</td></tr>
+<tr><td><code>size</code></td><td>vec2</td><td><code>[2, 2]</code></td><td>0 to 32 px (soft)</td><td>How far bright parts shrink, in pixels across and down, at most 256: each pixel takes the smallest value within this distance. 0 on one side leaves that direction as it is. A fraction such as 1.5 takes the outermost pixel in by half</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>extend</code></td><td>hold | zero | repeat | mirror</td><td><code>&quot;hold&quot;</code></td><td></td><td>What the erode reads beyond the input's edges; hold keeps shapes that touch the edge from shrinking away from it<ul><li><code>hold</code>: the edge pixels continue outwards</li><li><code>zero</code>: transparent black</li><li><code>repeat</code>: the input again, tiled</li><li><code>mirror</code>: the input again, mirrored, so the copies meet at the edges</li></ul></td></tr>
 </tbody>
@@ -4239,7 +4239,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p>For a whole range in one go (0 to 1 into 20 to 80), chain two: <code>multiply</code> by 60, then <code>add</code> 20.</p>
-<p><code>sin</code>, <code>cos</code>, <code>tan</code> and <code>abs</code> work on <code>a</code> alone. They ignore <code>b</code>, wired or not. Angles are in radians, as are the results of <code>atan2</code> (-pi to pi). For degrees, <code>multiply</code> by 0.0174533 (pi / 180) before <code>sin</code>, or by 57.2958 after <code>atan2</code>.</p>
+<p><code>sin</code>, <code>cos</code>, <code>tan</code> and <code>abs</code> work on <code>a</code> alone. They use nothing of <code>b</code>, wired or not: not its values, not its channels. Angles are in radians, as are the results of <code>atan2</code> (-pi to pi). For degrees, <code>multiply</code> by 0.0174533 (pi / 180) before <code>sin</code>, or by 57.2958 after <code>atan2</code>.</p>
 <h5 id="chan.math-example">Example</h5>
 <p>A rotation that follows the music: a <a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> level into <a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>op</code> <code>multiply</code> and <code>b</code> 90, and bind a <a class="ref" href="#tex.transform"><code>tex.transform</code></a>'s <code>rotate</code> to the output. Loud passages turn the picture by up to 90 degrees.</p>
 </div>

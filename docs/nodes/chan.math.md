@@ -37,7 +37,8 @@ channel with many samples (a spectrum, a trail) comes out with as many.
 
 For a whole range in one go (0 to 1 into 20 to 80), chain two: `multiply` by 60, then `add` 20.
 
-`sin`, `cos`, `tan` and `abs` work on `a` alone. They ignore `b`, wired or not. Angles are in
+`sin`, `cos`, `tan` and `abs` work on `a` alone. They use nothing of `b`, wired or not: not
+its values, not its channels. Angles are in
 radians, as are the results of `atan2` (-pi to pi). For degrees, `multiply` by 0.0174533
 (pi / 180) before `sin`, or by 57.2958 after `atan2`.
 

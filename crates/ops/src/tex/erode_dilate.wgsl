@@ -1,11 +1,12 @@
 // tex.erode and tex.dilate: one axis of a rectangular minimum (erode) or maximum (dilate), per
-// channel of the stored colour. The node runs it once across and once down, `axis` and `grow`
-// set by the node, not user params. A fractional radius blends the outermost pixel in by its
-// fraction, so a size bound to a channel grows smoothly.
+// channel of the stored colour. The node runs it once across and once down. `axis`, `radius`
+// (already clamped to 0..256 and free of NaN) and `grow` are set by the node, not user params.
+// A fractional radius blends the outermost pixel in by its fraction, so a size bound to a
+// channel grows smoothly.
 
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
-    let radius = clamp(dot(params.size, params.axis), 0.0, 256.0);
+    let radius = clamp(params.radius, 0.0, 256.0);
     var m = pn_extend(in0, v.uv, params.extend);
     if (radius <= 0.0) {
         return m;

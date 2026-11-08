@@ -1371,6 +1371,129 @@ fn erode_and_dilate_shrink_and_grow_a_rectangle_by_their_size() {
     }
 }
 
+/// `px` through a rectangular minimum or maximum of whole radius `r`, channel by channel, the
+/// edges held: what tex.erode and tex.dilate should give.
+fn morph_reference(px: &Pixels, r: [i64; 2], grow: bool) -> Vec<[f32; 4]> {
+    let (w, h) = (i64::from(px.width), i64::from(px.height));
+    let at = |x: i64, y: i64| px.data[(y.clamp(0, h - 1) * w + x.clamp(0, w - 1)) as usize];
+    let mut out = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            let mut m = at(x, y);
+            for dy in -r[1]..=r[1] {
+                for dx in -r[0]..=r[0] {
+                    let p = at(x + dx, y + dy);
+                    for c in 0..4 {
+                        m[c] = if grow { m[c].max(p[c]) } else { m[c].min(p[c]) };
+                    }
+                }
+            }
+            out.push(m);
+        }
+    }
+    out
+}
+
+#[test]
+fn erode_and_dilate_work_channel_by_channel_and_by_fractions() {
+    let Some(gpu) = gpu() else { return };
+    let prim = |path: &str, center: [f64; 2], size: [f64; 2], fill: [f64; 4]| {
+        create(
+            path,
+            "tex.primitive",
+            &[
+                ("width", Value::Int(W)),
+                ("height", Value::Int(H)),
+                ("center", Value::Vec2(center)),
+                ("size", Value::Vec2(size)),
+                ("fill", Value::Vec4(fill)),
+            ],
+        )
+    };
+    // A red rectangle above a green one, touching at row 40, and a blue one overlapping both.
+    let colour = [
+        prim("/r", [0.5, 0.5], [0.5, 0.25], [1.0, 0.0, 0.0, 1.0]),
+        prim("/g", [0.5, 0.75], [0.5, 0.25], [0.0, 1.0, 0.0, 1.0]),
+        prim("/b", [0.25, 0.5], [0.25, 0.5], [0.0, 0.0, 1.0, 1.0]),
+        create("/rg", "tex.composite", &[("op", "add".into())]),
+        create("/rgb", "tex.composite", &[("op", "add".into())]),
+        connect("/r", "/rg", 0),
+        connect("/g", "/rg", 1),
+        connect("/rg", "/rgb", 0),
+        connect("/b", "/rgb", 1),
+    ];
+    for (kind, grow) in [("tex.erode", false), ("tex.dilate", true)] {
+        let mut ops = colour.to_vec();
+        ops.push(create("/m", kind, &[("size", Value::Vec2([2.0, 1.0]))]));
+        ops.push(connect("/rgb", "/m", 0));
+        let mut rig = Rig::new(gpu.clone(), None, &ops);
+        let input = rig.pixels("/rgb");
+        let lit = input.data.iter().filter(|p| p[0] > 0.5 && p[1] < 0.5).count();
+        assert!(lit > 100, "the red rectangle is there: {lit}");
+        let want = morph_reference(&input, [2, 1], grow);
+        let got = rig.pixels("/m");
+        let worst = got
+            .data
+            .iter()
+            .zip(&want)
+            .flat_map(|(a, b)| (0..4).map(move |c| (a[c] - b[c]).abs()))
+            .fold(0.0, f32::max);
+        assert!(worst < 1e-3, "{kind}: differs from the reference by {worst}");
+        // Where red and green meet, dilate takes red from above and green from below.
+        if grow {
+            let p = got.get(56, 39).unwrap();
+            assert!(p[0] > 0.99 && p[1] > 0.99 && p[2] < 0.01, "{p:?}");
+        }
+    }
+
+    // 32 x 16 pixels from (32, 24), white.
+    let rect = prim("/p", [0.5, 0.5], [0.5, 0.25], [1.0; 4]);
+    let run = |kind: &str, params: &[(&str, Value)]| {
+        let ops = [rect.clone(), create("/m", kind, params), connect("/p", "/m", 0)];
+        Rig::new(gpu.clone(), None, &ops).pixels("/m")
+    };
+    let alpha = |px: &Pixels, x: u32, y: u32| px.get(x, y).unwrap()[3];
+
+    // Erode by 1.5: the first pixel inside goes, the second takes the outside in by half.
+    let px = run("tex.erode", &[("size", Value::Vec2([1.5, 0.0]))]);
+    assert!(alpha(&px, 32, 32) < 1e-3, "{}", alpha(&px, 32, 32));
+    assert!((alpha(&px, 33, 32) - 0.5).abs() < 0.02, "{}", alpha(&px, 33, 32));
+    assert!((alpha(&px, 34, 32) - 1.0).abs() < 1e-3, "{}", alpha(&px, 34, 32));
+
+    // Dilate by a half on both axes: a half beside the edges, a quarter at the corner.
+    let px = run("tex.dilate", &[("size", Value::Vec2([0.5, 0.5]))]);
+    assert!((alpha(&px, 31, 30) - 0.5).abs() < 0.02, "{}", alpha(&px, 31, 30));
+    assert!((alpha(&px, 48, 23) - 0.5).abs() < 0.02, "{}", alpha(&px, 48, 23));
+    assert!((alpha(&px, 31, 23) - 0.25).abs() < 0.02, "{}", alpha(&px, 31, 23));
+    assert!(alpha(&px, 30, 22) < 1e-3, "{}", alpha(&px, 30, 22));
+
+    // A size far beyond what a GPU float holds is 256 pixels: the rectangle fills the frame.
+    let px = run("tex.dilate", &[("size", Value::Vec2([1e300, 1e300]))]);
+    assert!(px.data.iter().all(|p| (p[3] - 1.0).abs() < 1e-3), "a huge dilate fills everything");
+    let px = run("tex.erode", &[("size", Value::Vec2([1e300, 0.0]))]);
+    assert!(px.data.iter().all(|p| p[3] < 1e-3), "a huge erode leaves nothing");
+    assert!(px.data.iter().all(|p| p.iter().all(|c| c.is_finite())));
+
+    // 16 x 16 pixels at the left edge. Repeat wraps the left edge round to the right, mirror
+    // adds only what the window holds anyway, as hold does.
+    let edge = prim("/p", [8.0 / 96.0, 0.5], [0.25, 0.25], [1.0; 4]);
+    let lit = |extend: &str, kind: &str| {
+        let ops = [
+            edge.clone(),
+            create("/m", kind, &[("size", Value::Vec2([2.0, 0.0])), ("extend", extend.into())]),
+            connect("/p", "/m", 0),
+        ];
+        Rig::new(gpu.clone(), None, &ops).pixels("/m").data.iter().filter(|p| p[3] > 0.5).count()
+    };
+    assert_eq!(lit("hold", "tex.dilate"), 18 * 16);
+    assert_eq!(lit("mirror", "tex.dilate"), 18 * 16);
+    assert_eq!(lit("repeat", "tex.dilate"), 20 * 16);
+    assert_eq!(lit("hold", "tex.erode"), 14 * 16);
+    assert_eq!(lit("mirror", "tex.erode"), 14 * 16);
+    assert_eq!(lit("repeat", "tex.erode"), 12 * 16);
+    assert_eq!(lit("zero", "tex.erode"), 12 * 16);
+}
+
 #[test]
 fn text_follows_a_new_size_before_its_raster_is_done() {
     let Some(gpu) = gpu() else { return };

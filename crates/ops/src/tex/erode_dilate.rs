@@ -22,14 +22,14 @@ const MAX_RADIUS: f64 = 256.0;
 fn desc(kind: &str) -> NodeDesc {
     let (summary, size_doc, extend_doc) = if kind == DILATE {
         (
-            "Grows the bright parts of a picture: each pixel takes the brightest value around it. Thickens lines, fills small holes in a mask",
-            "How far bright parts grow, in pixels across and down: each pixel takes the largest value within this distance. 0 on one side leaves that direction as it is; fractions grow the outermost pixel in part",
+            "Grows the bright parts of a picture: channel by channel, each pixel takes the largest value around it. Thickens lines, fills small holes in a mask",
+            "How far bright parts grow, in pixels across and down, at most 256: each pixel takes the largest value within this distance. 0 on one side leaves that direction as it is. A fraction such as 1.5 takes the outermost pixel in by half",
             "What the dilate reads beyond the input's edges; hold keeps the edges as they are",
         )
     } else {
         (
-            "Shrinks the bright parts of a picture: each pixel takes the darkest value around it. Thins lines, removes specks from a mask",
-            "How far bright parts shrink, in pixels across and down: each pixel takes the smallest value within this distance. 0 on one side leaves that direction as it is; fractions shrink by the outermost pixel in part",
+            "Shrinks the bright parts of a picture: channel by channel, each pixel takes the smallest value around it. Thins lines, removes specks from a mask",
+            "How far bright parts shrink, in pixels across and down, at most 256: each pixel takes the smallest value within this distance. 0 on one side leaves that direction as it is. A fraction such as 1.5 takes the outermost pixel in by half",
             "What the erode reads beyond the input's edges; hold keeps shapes that touch the edge from shrinking away from it",
         )
     };
@@ -45,6 +45,7 @@ fn desc(kind: &str) -> NodeDesc {
 fn pass(gpu: &Gpu) -> Result<Arc<Pass>, Error> {
     let mut params = desc(ERODE).params;
     params.push(ParamSpec::vec2("axis", [1.0, 0.0]));
+    params.push(ParamSpec::float("radius", 0.0));
     params.push(ParamSpec::float("grow", 0.0));
     gpu.cached_pass(ERODE, SOURCE, &params)
 }
@@ -98,27 +99,26 @@ impl Operator for Morph {
             Some(Value::Vec2(s)) => *s,
             _ => [0.0; 2],
         };
-        let reaches = |r: f64| r.is_finite() && r.clamp(0.0, MAX_RADIUS) > 0.0;
-        let mut axes: Vec<[f64; 2]> = Vec::with_capacity(2);
-        if reaches(size[0]) {
-            axes.push([1.0, 0.0]);
-        }
-        if reaches(size[1]) {
-            axes.push([0.0, 1.0]);
+        let radius = |r: f64| if r.is_nan() { 0.0 } else { r.clamp(0.0, MAX_RADIUS) };
+        let mut passes: Vec<([f64; 2], f64)> = Vec::with_capacity(2);
+        for (axis, r) in [([1.0, 0.0], radius(size[0])), ([0.0, 1.0], radius(size[1]))] {
+            if r > 0.0 {
+                passes.push((axis, r));
+            }
         }
         // A size of 0 still renders once, a copy, so the output is a texture of this node.
-        if axes.is_empty() {
-            axes.push([0.0, 0.0]);
+        if passes.is_empty() {
+            passes.push(([0.0, 0.0], 0.0));
         }
         let grow = if self.kind == DILATE { 1.0 } else { 0.0 };
         let mut current = src.clone();
-        for (i, axis) in axes.iter().enumerate() {
-            let last = i + 1 == axes.len();
+        for (i, &(axis, radius)) in passes.iter().enumerate() {
+            let last = i + 1 == passes.len();
             let ring = if last { &mut self.out } else { &mut self.middle };
             let target = ring.next(gpu, w, h, self.kind)?;
-            let axis = *axis;
             let param = move |name: &str| match name {
                 "axis" => Some(Value::Vec2(axis)),
+                "radius" => Some(Value::Float(radius)),
                 "grow" => Some(Value::Float(grow)),
                 _ => cx.param(name).cloned(),
             };

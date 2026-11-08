@@ -230,7 +230,7 @@ Outputs: `out` (tex).
 
 ### tex.dilate
 
-Grows the bright parts of a picture: each pixel takes the brightest value around it. Thickens lines, fills small holes in a mask
+Grows the bright parts of a picture: channel by channel, each pixel takes the largest value around it. Thickens lines, fills small holes in a mask
 
 Inputs:
 
@@ -240,7 +240,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `size` | vec2 | `[2, 2]` | 0 to 32 px (soft) | How far bright parts grow, in pixels across and down: each pixel takes the largest value within this distance. 0 on one side leaves that direction as it is; fractions grow the outermost pixel in part |
+| `size` | vec2 | `[2, 2]` | 0 to 32 px (soft) | How far bright parts grow, in pixels across and down, at most 256: each pixel takes the largest value within this distance. 0 on one side leaves that direction as it is. A fraction such as 1.5 takes the outermost pixel in by half |
 | `extend` *(more)* | hold \| zero \| repeat \| mirror | `"hold"` |  | What the dilate reads beyond the input's edges; hold keeps the edges as they are; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
 ### tex.displace
@@ -281,7 +281,7 @@ Outputs: `out` (tex).
 
 ### tex.erode
 
-Shrinks the bright parts of a picture: each pixel takes the darkest value around it. Thins lines, removes specks from a mask
+Shrinks the bright parts of a picture: channel by channel, each pixel takes the smallest value around it. Thins lines, removes specks from a mask
 
 Inputs:
 
@@ -291,7 +291,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `size` | vec2 | `[2, 2]` | 0 to 32 px (soft) | How far bright parts shrink, in pixels across and down: each pixel takes the smallest value within this distance. 0 on one side leaves that direction as it is; fractions shrink by the outermost pixel in part |
+| `size` | vec2 | `[2, 2]` | 0 to 32 px (soft) | How far bright parts shrink, in pixels across and down, at most 256: each pixel takes the smallest value within this distance. 0 on one side leaves that direction as it is. A fraction such as 1.5 takes the outermost pixel in by half |
 | `extend` *(more)* | hold \| zero \| repeat \| mirror | `"hold"` |  | What the erode reads beyond the input's edges; hold keeps shapes that touch the edge from shrinking away from it; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
 ### tex.face_content
