@@ -373,6 +373,9 @@ struct OscOut {
     last_full: Option<f64>,
     /// What was sent last, per address.
     sent: BTreeMap<String, Vec<Arg>>,
+    /// The last sending cook's warning, shown again on the frames between sends (a warning
+    /// lasts one cook).
+    warning: Option<String>,
 }
 
 /// `prefix` as an address start: empty, or `/a/b` without a trailing slash.
@@ -420,6 +423,9 @@ impl Operator for OscOut {
             && now - last < period * 0.9
             && !cx.params_changed()
         {
+            if let Some(w) = &self.warning {
+                cx.warn(w.clone());
+            }
             return Ok(Cooked::Outputs(Vec::new()));
         }
         self.last = Some(now);
@@ -473,11 +479,16 @@ impl Operator for OscOut {
                 }
             }
         }
+        let mut warnings = Vec::new();
         if skipped > 0 {
-            cx.warn(format!("{skipped} table rows skipped: an address has no spaces"));
+            warnings.push(format!("{skipped} table rows skipped: an address has no spaces"));
         }
         if let Some(e) = errors.first() {
-            cx.warn(format!("sending to {target}: {e}"));
+            warnings.push(format!("sending to {target}: {e}"));
+        }
+        self.warning = (!warnings.is_empty()).then(|| warnings.join("; "));
+        if let Some(w) = &self.warning {
+            cx.warn(w.clone());
         }
         Ok(Cooked::Outputs(Vec::new()))
     }
