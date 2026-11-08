@@ -28,6 +28,7 @@ penumbra-midi = { path = "crates/midi" }
 penumbra-ops = { path = "crates/ops" }
 penumbra-ndi = { path = "crates/ndi" }
 penumbra-nn = { path = "crates/nn" }
+penumbra-net = { path = "crates/net" }
 penumbra-osc = { path = "crates/osc" }
 penumbra-output = { path = "crates/output" }
 penumbra-project = { path = "crates/project" }

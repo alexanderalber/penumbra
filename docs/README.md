@@ -16,6 +16,8 @@ offline: [penumbra.html](penumbra.html), which the `?` on every node opens.
   with ready-made instruments.
 - [DMX](dmx.md): driving lights through the Enttec Open DMX USB, Art-Net, sACN or DDP, and
   receiving Art-Net or sACN from a lighting desk.
+- [Serial, UDP and TCP](serial-udp-tcp.md): numbers and text from an Arduino, a sensor or another
+  program as channels, and channels sent back, as lines, JSON or bytes.
 - [Recording](recording.md): the show to a movie file with `out.video` (H.264 or ProRes).
 - [Spout](spout.md): pictures to and from other programs on this machine (TouchDesigner, OBS, Resolume) with `out.spout` and `tex.spout_in`.
 - [NDI](ndi.md): pictures and sound over the network, to and from OBS, vMix, cameras or another machine, with `out.ndi` and `tex.ndi_in`.

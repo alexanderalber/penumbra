@@ -18,6 +18,7 @@ use penumbra_dmx::Inputs as DmxInputs;
 use penumbra_graph::{Cooker, Network, NodeTypes};
 use penumbra_http::Hub as HttpHub;
 use penumbra_midi::Hub as MidiHub;
+use penumbra_net::Hub as NetHub;
 use penumbra_ops::audio::beat_grid::BeatFiles;
 use penumbra_ops::audio::file::SoundFiles;
 use penumbra_ops::chan::controls::Buttons;
@@ -58,6 +59,8 @@ pub struct Hubs {
     pub audio_out: AudioOutputs,
     pub dmx: DmxHub,
     pub dmx_in: DmxInputs,
+    /// Serial ports, UDP and TCP (`chan.data_in`, `chan.data_out`).
+    pub net: NetHub,
     pub camera: CameraHub,
     /// The movie recordings of `out.video` nodes.
     pub record: RecordHub,
@@ -92,6 +95,7 @@ impl Hubs {
             audio_out: if cfg!(test) { AudioOutputs::offline(48_000, 2) } else { AudioOutputs::new() },
             dmx: DmxHub::new(),
             dmx_in: DmxInputs::new(),
+            net: NetHub::new(),
             camera: CameraHub::new(),
             record: RecordHub::new(),
             scans: Scans::new(),
@@ -107,7 +111,7 @@ impl Hubs {
     /// Every hub, in the order they shut down. Recordings come first: when the app closes, the
     /// cook thread has dropped its nodes and every recording is finishing its file, which the
     /// shutdown waits for.
-    pub fn all(&self) -> [&dyn DeviceHub; 16] {
+    pub fn all(&self) -> [&dyn DeviceHub; 17] {
         // Destructured so that a field missing here does not compile.
         let Hubs {
             osc,
@@ -117,6 +121,7 @@ impl Hubs {
             audio_out,
             dmx,
             dmx_in,
+            net,
             camera,
             record,
             scans,
@@ -136,6 +141,7 @@ impl Hubs {
             audio_out,
             dmx,
             dmx_in,
+            net,
             camera,
             scans,
             spacenav,
@@ -283,6 +289,16 @@ impl DeviceHub for DmxInputs {
     }
 }
 
+impl DeviceHub for NetHub {
+    fn provide(&self, cooker: &mut Cooker) {
+        cooker.provide(self.clone());
+    }
+
+    fn shutdown(&self) {
+        NetHub::shutdown(self);
+    }
+}
+
 impl DeviceHub for CameraHub {
     fn provide(&self, cooker: &mut Cooker) {
         cooker.provide(self.clone());
@@ -398,6 +414,7 @@ mod tests {
         }
         assert!(cooker.resource::<penumbra_osc::Hub>().is_some());
         assert!(cooker.resource::<HttpHub>().is_some());
+        assert!(cooker.resource::<NetHub>().is_some());
         assert!(cooker.resource::<MidiHub>().is_some());
         assert!(cooker.resource::<AudioHub>().is_some());
         assert!(cooker.resource::<AudioOutputs>().is_some());

@@ -132,6 +132,7 @@ impl Rig {
         cooker.provide(camera.clone());
         cooker.provide(penumbra_dmx::Hub::new());
         cooker.provide(penumbra_dmx::Inputs::new());
+        cooker.provide(penumbra_net::Hub::new());
         // A MIDI input and output that are no device.
         let midi = penumbra_midi::Hub::new(hub.clone());
         midi.inject("test", &[0xB0, 1, 64], None);
@@ -627,6 +628,7 @@ fn every_builtin_cooks_without_warnings() {
                 | "chan.rename"
                 | "table.null"
                 | "chan.osc_out"
+                | "chan.data_out"
                 | "out.dmx"
                 | "out.table"
         )
@@ -636,6 +638,8 @@ fn every_builtin_cooks_without_warnings() {
     let dmx_host = dmx_rx.local_addr().unwrap().to_string();
     // chan.dmx_in listens on this machine only, on a port that was free, not on Art-Net's.
     let dmx_in_port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    // A free port for chan.data_in, which warns until a line arrived.
+    let data_in_port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     // tex.spout_in receives what out.spout sends (it cooks first, `out` sorts before `tex`).
     let spout = format!("penumbra test registry {}", std::process::id());
     // The component ports sit in a component: the top level has no sockets for them.
@@ -672,6 +676,8 @@ fn every_builtin_cooks_without_warnings() {
                 ("port", Value::Int(i64::from(dmx_in_port))),
                 ("count", Value::Int(4)),
             ]),
+            "chan.data_in" => params.push(("port", Value::Int(i64::from(data_in_port)))),
+            "chan.data_out" => params.push(("host", dmx_host.as_str().into())),
             "tex.video_in" => params.push(("device", "test".into())),
             "chan.midi_in" | "chan.midi_out" => params.push(("device", "test".into())),
             "chan.sequence" => params.push(("steps", "a 1".into())),
@@ -761,9 +767,19 @@ fn every_builtin_cooks_without_warnings() {
                 let packet = penumbra_dmx::artnet::dmx_packet(1, 0, &[255; 4]);
                 dmx_rx.send_to(&packet, ("127.0.0.1", dmx_in_port)).unwrap();
             }
+            let data_in = kind == crate::data_io::DATA_IN;
+            if data_in {
+                dmx_rx
+                    .send_to(
+                        b"x=1
+",
+                        ("127.0.0.1", data_in_port),
+                    )
+                    .unwrap();
+            }
             rig.cook(&path);
             let s = rig.cooker.status(rig.id(&path)).unwrap();
-            if s.has_output && !(dmx_in && s.warning.is_some()) {
+            if s.has_output && !((dmx_in || data_in) && s.warning.is_some()) {
                 // One more pass at a new time, where an undeclared time read would show.
                 rig.clock.advance(1);
                 rig.cook(&path);

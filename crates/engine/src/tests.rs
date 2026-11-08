@@ -1178,6 +1178,9 @@ mod bind_tests;
 #[path = "mouse_tests.rs"]
 mod mouse_tests;
 
+#[path = "net_tests.rs"]
+mod net_tests;
+
 #[path = "dmx_tests.rs"]
 mod dmx_tests;
 

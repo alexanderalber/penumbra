@@ -1386,6 +1386,11 @@ impl Engine {
         &self.hubs.dmx_in
     }
 
+    /// The serial, UDP and TCP links of `chan.data_in` and `chan.data_out`.
+    pub fn net(&self) -> &penumbra_net::Hub {
+        &self.hubs.net
+    }
+
     /// The cameras.
     pub fn camera(&self) -> &CameraHub {
         &self.hubs.camera

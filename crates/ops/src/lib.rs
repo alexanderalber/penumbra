@@ -4,6 +4,7 @@
 pub mod audio;
 pub mod chan;
 pub mod comp;
+pub mod data_io;
 pub mod dmx;
 pub mod freeview;
 pub mod geo;
@@ -46,6 +47,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     audio::register(types)?;
     chan::register(types)?;
     comp::register(types)?;
+    data_io::register(types)?;
     dmx::register(types)?;
     geo::register(types)?;
     geo_text::register(types)?;
@@ -96,6 +98,8 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("tex.video_in", &["video device in", "webcam"]),
     ("chan.beat_analysis", &["audio analysis"]),
     ("chan.clock", &["timer"]),
+    ("chan.data_in", &["serial", "udp in", "tcp", "arduino", "com port", "socket", "json", "uart"]),
+    ("chan.data_out", &["serial", "udp out", "tcp", "arduino", "com port", "socket", "json", "uart"]),
     ("chan.derivative", &["slope"]),
     ("chan.envelope", &["trigger", "adsr"]),
     ("chan.filter", &["lag"]),

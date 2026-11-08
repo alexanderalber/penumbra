@@ -1181,9 +1181,9 @@ Outputs:
 
 ## chan
 
-[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.envelope](#chanenvelope), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.midi_out](#chanmidi_out), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
+[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.data_out](#chandata_out), [chan.derivative](#chanderivative), [chan.envelope](#chanenvelope), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.midi_out](#chanmidi_out), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
 
-*inputs:* [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.midi_in](#chanmidi_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
+*inputs:* [chan.data_in](#chandata_in), [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.midi_in](#chanmidi_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
 ### chan.audio_envelope
 
@@ -1346,6 +1346,61 @@ Outputs: `out` (chan).
 | `value0` | float | `0` | -1 to 1 (soft) | The channel's value; the slider spans -1 to 1, any number can be typed |
 | `name0` | text | `"chan0"` |  | Name of the channel this row makes, as other nodes and bindings see it |
 | `rows` *(more)* | int | `1` | 1 to 64 | How many rows; row k is the params `name<k>` and `value<k>`, counted from 0 |
+
+### chan.data_in
+
+Numbers and text from a serial port, UDP or TCP (an Arduino, a sensor, another program) as channels and a table
+
+Inputs: none.
+
+Outputs:
+
+- `out` (chan): A channel per name holding its latest number, in the order the names first came
+- `table` (table): The last messages: the names as the first row, then one row per message
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `transport` | udp \| tcp_listen \| tcp_connect \| serial | `"udp"` |  | Where the messages come from; udp: UDP datagrams sent to `port`; tcp_listen: a TCP server on `port`: programs connect to it and send; tcp_connect: a TCP connection to the server at `host` and `port`; reconnects when it drops; serial: a serial port such as an Arduino's USB cable |
+| `host` | text |  |  | IP address of the other side, or localhost; `10.0.0.5:7000` sets the port too. Names are not looked up |
+| `port` | int | `7000` | 1024 to 65535 (soft, held within 0 to 65535) | UDP or TCP port to listen on (net.status says which one 0 got); for tcp_connect, the server's port; 0: any free port |
+| `lan` | bool | `false` |  | Also take connections from other devices: listens on every network interface. Off: this machine only |
+| `serial` | text |  |  | Serial port, such as COM3 or /dev/ttyACM0 (net.ports lists them). Empty takes the only one plugged in |
+| `baud` | int | `9600` | 1200 to 1000000 (soft, held within 50 to 4000000) | Serial bit rate; match the device (Arduino: Serial.begin). Always 8 data bits, no parity, 1 stop bit |
+| `format` | lines \| json \| bytes | `"lines"` |  | What one message is; lines: a line of text: numbers split by commas or spaces, or `name:value`; json: one JSON object or array per line (per datagram over UDP); bytes: raw bytes, each 0 to 255 |
+| `split` | auto \| comma \| semicolon \| tab \| space \| none | `"auto"` |  | Where a line is split into fields; auto: at commas, semicolons and tabs; at spaces when the line has none of those; comma: at commas; semicolon: at semicolons; tab: at tabs; space: at runs of spaces and tabs; none: not at all: the whole line is one field |
+| `names` | text |  |  | Space-separated names for the fields without a name, in order: `x y z` makes `1,2,3` channels x, y and z. `-` leaves a field out. Fields past the names are chan3, chan4 and so on |
+| `delimiter` | text | `"\\n"` |  | Where a message ends: `\n` (a `\r` before it is ignored), `\r`, `;`, `\xff`. Over UDP a datagram is a message; lines and JSON in one are split at it too |
+| `length` *(more)* | int | `0` (by delimiter) | 0 to 64 (soft, held within 0 to 65536) | For bytes on a stream with no delimiter: every this many bytes is one message. 0 with no delimiter takes each read as it comes; 0: by delimiter |
+| `rows` | int | `16` | 1 to 100 (soft, held within 1 to 1024) | Messages the table keeps, the newest last |
+| `max` *(more)* | int | `65536` | 256 to 65536 (soft, held within 16 to 1048576) | Longest message in bytes; longer ones are dropped and counted |
+
+### chan.data_out
+
+Sends channels and table rows to a serial port, UDP or TCP, as lines, JSON or bytes
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs:
+
+- `chans` (chan)
+- `table` (table)
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `transport` | udp \| tcp_connect \| tcp_listen \| serial | `"udp"` |  | Where the messages go; udp: UDP datagrams to `host` and `port`, one message each; tcp_connect: a TCP connection to the server at `host` and `port`; reconnects when it drops; tcp_listen: a TCP server on `port`: every client that connects gets the messages; serial: a serial port such as an Arduino's USB cable |
+| `host` | text | `"127.0.0.1"` |  | IP address of the other side, or localhost; `10.0.0.5:7000` sets the port too. Names are not looked up |
+| `port` | int | `7000` | 1024 to 65535 (soft, held within 0 to 65535) | UDP or TCP port of the receiver; for tcp_listen, the port to listen on; 0: any free port |
+| `lan` | bool | `false` |  | Also take connections from other devices: listens on every network interface. Off: this machine only |
+| `serial` | text |  |  | Serial port, such as COM3 or /dev/ttyACM0 (net.ports lists them). Empty takes the only one plugged in |
+| `baud` | int | `9600` | 1200 to 1000000 (soft, held within 50 to 4000000) | Serial bit rate; match the device (Arduino: Serial.begin). Always 8 data bits, no parity, 1 stop bit |
+| `format` | lines \| json \| bytes | `"lines"` |  | What one message is; lines: a line of text: numbers split by commas or spaces, or `name:value`; json: one JSON object or array per line (per datagram over UDP); bytes: raw bytes, each 0 to 255 |
+| `separator` | comma \| semicolon \| tab \| space | `"comma"` |  | What goes between the values of a line; comma: `0.5,1`; semicolon: `0.5;1`; tab: a tab; space: `0.5 1` |
+| `names` | bool | `false` |  | Lines: each channel as `name:value`. Off: the values alone, in order. JSON always has the names |
+| `delimiter` | text | `"\\n"` |  | What ends each message on a serial port or TCP: `\n`, `\r\n`, `;`, empty for none. UDP sends each message as one datagram without it |
+| `rate` | float | `30` | 1 to 120 Hz (soft, held within 0.1 to 1000 Hz) | Sends per second at most |
+| `send` | changes \| always | `"changes"` |  | When to send; changes: when a message changed; over UDP everything again once a second, in case a datagram was lost; always: everything, `rate` times a second |
 
 ### chan.derivative
 

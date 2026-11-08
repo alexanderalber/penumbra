@@ -32,6 +32,7 @@ pub mod midi;
 pub mod mouse;
 pub mod navigation;
 pub mod ndi;
+pub mod net;
 pub mod osc;
 pub mod palettes;
 pub mod pictures;
@@ -96,6 +97,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     palettes::register(&mut registry, engine);
     audio::register(&mut registry, engine);
     dmx::register(&mut registry, engine);
+    net::register(&mut registry, engine);
     ndi::register(&mut registry);
     spout::register(&mut registry);
     video_file::register(&mut registry, engine);

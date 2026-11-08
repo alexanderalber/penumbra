@@ -1,0 +1,18 @@
+[package]
+name = "penumbra-net"
+description = "Lines, JSON and bytes over serial ports, UDP and TCP: framing and parsing with caps, one thread per port or connection, reconnects. No GPU, no UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+penumbra-core.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serialport.workspace = true
+
+[lints]
+workspace = true

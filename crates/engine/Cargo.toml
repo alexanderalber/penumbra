@@ -19,6 +19,7 @@ penumbra-record.workspace = true
 penumbra-gpu.workspace = true
 penumbra-http.workspace = true
 penumbra-mesh.workspace = true
+penumbra-net.workspace = true
 penumbra-midi.workspace = true
 penumbra-ops.workspace = true
 penumbra-osc.workspace = true

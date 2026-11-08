@@ -203,6 +203,13 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `ndi.sources` | The NDI sources on the network, this process's out.ndi nodes included (name as `PC (Source)`, address), and the NDI runtime in use. The first call starts looking: `settling` is true while the list may still be filling |
 
+## net
+
+| command | |
+|---|---|
+| `net.ports` | The serial ports of this machine for chan.data_in and chan.data_out (name, USB ids, product) |
+| `net.status` | Serial, UDP and TCP links of chan.data_in and chan.data_out: endpoint, readers, writers, open, local address, peers, error, bytes and messages in and out, drops, connects |
+
 ## node
 
 | command | |
