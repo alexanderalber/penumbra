@@ -101,6 +101,7 @@ pub fn test_types() -> NodeTypes {
         &mut t,
         NodeDesc::new("test.panic", "Panics on request")
             .param(ParamSpec::bool("boom", false))
+            .input("in", DataKind::Chan)
             .output("out", DataKind::Chan),
         |cx| if cx.bool("boom")? { panic!("boom") } else { chan(1.0) },
     );
@@ -264,7 +265,58 @@ pub fn test_types() -> NodeTypes {
         || Box::new(Trims(0)) as Box<dyn Operator>,
     ))
     .unwrap();
+    t.register(FnNodeType::new(
+        NodeDesc::new("test.asks", "Cooks, but panics when asked anything else")
+            .input("in", DataKind::Chan)
+            .output("out", DataKind::Chan),
+        || Box::new(Asks { time: false }) as Box<dyn Operator>,
+    ))
+    .unwrap();
+    t.register(FnNodeType::new(
+        NodeDesc::new(
+            "test.asks_time",
+            "Cooks, reads the time, panics when asked whether it follows the clock",
+        )
+        .output("out", DataKind::Chan),
+        || Box::new(Asks { time: true }) as Box<dyn Operator>,
+    ))
+    .unwrap();
     t
+}
+
+/// Cooks to 1; asking it anything else panics. With `time`, it reads the show time, so the
+/// cooker asks [`Operator::time_dependent`] right after the cook.
+struct Asks {
+    time: bool,
+}
+
+impl Operator for Asks {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        if self.time {
+            let _ = cx.time();
+        }
+        chan(1.0)
+    }
+
+    fn time_dependent(&self) -> Option<bool> {
+        if self.time { panic!("asked about time") } else { None }
+    }
+
+    fn job_status(&self) -> Option<JobStatus> {
+        panic!("asked about a job")
+    }
+
+    fn params(&self) -> Option<Vec<ParamSpec>> {
+        panic!("asked for params")
+    }
+
+    fn density(&self, _def: &crate::NodeDef, _desc: &NodeDesc, _input: usize) -> crate::Density {
+        panic!("asked for a density")
+    }
+
+    fn sets_size(&self, _def: &crate::NodeDef, _desc: &NodeDesc) -> bool {
+        panic!("asked about the size")
+    }
 }
 
 /// Counts [`Operator::trim`] calls and puts the count out.

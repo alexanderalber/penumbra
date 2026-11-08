@@ -5,12 +5,15 @@
 //! few times per second. Polling instead of OS notifications: a handful of files, no extra
 //! dependency, the same behaviour on every platform and on network drives, and editors that
 //! save by replacing the file are covered without special cases.
+//!
+//! Only that thread touches the disk, so a slow or unreachable drive never holds up the cook
+//! thread that asks for a watch. It takes a file's first stamp at its next pass; a file
+//! modified since the watch began counts as changed then.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, Weak};
-use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 
 use penumbra_core::{NodeId, lock};
@@ -25,7 +28,10 @@ struct Entry {
     key: u64,
     path: PathBuf,
     node: NodeId,
-    stamp: Stamp,
+    /// `None` until the poll thread first looked at the file.
+    stamp: Option<Stamp>,
+    /// When the watch began.
+    since: SystemTime,
     changed: Arc<AtomicBool>,
 }
 
@@ -38,8 +44,9 @@ struct Shared {
 /// Polls files on its own thread and reports the node of a file that changed.
 pub(crate) struct Watcher {
     shared: Arc<Mutex<Shared>>,
-    stop: Option<Sender<()>>,
-    thread: Option<JoinHandle<()>>,
+    /// Dropping it ends the thread. The thread is not joined: it may wait for a slow drive,
+    /// and it holds nothing that needs it to finish.
+    _stop: Sender<()>,
 }
 
 impl Watcher {
@@ -56,14 +63,10 @@ impl Watcher {
                 }
             }
         });
-        let thread = match thread {
-            Ok(t) => Some(t),
-            Err(e) => {
-                log::error!("cannot start the file watcher, hot reload is off: {e}");
-                None
-            }
-        };
-        Self { shared, stop: Some(stop_tx), thread }
+        if let Err(e) = thread {
+            log::error!("cannot start the file watcher, hot reload is off: {e}");
+        }
+        Self { shared, _stop: stop_tx }
     }
 
     /// Starts watching `path` for `node` until the returned handle is dropped.
@@ -76,21 +79,11 @@ impl Watcher {
             key,
             path: path.to_path_buf(),
             node,
-            stamp: stamp(path),
+            stamp: None,
+            since: SystemTime::now(),
             changed: changed.clone(),
         });
         FileWatch { shared: Arc::downgrade(&self.shared), key, path: path.to_path_buf(), changed }
-    }
-}
-
-impl Drop for Watcher {
-    fn drop(&mut self) {
-        drop(self.stop.take());
-        if let Some(t) = self.thread.take()
-            && t.join().is_err()
-        {
-            log::error!("the file watcher panicked");
-        }
     }
 }
 
@@ -105,10 +98,14 @@ fn poll(shared: &Weak<Mutex<Shared>>, changed: &Sender<NodeId>) -> bool {
     let stamps: Vec<(u64, Stamp)> = paths.into_iter().map(|(k, p)| (k, stamp(&p))).collect();
     let mut s = lock(&shared);
     for (key, now) in stamps {
-        if let Some(e) = s.entries.iter_mut().find(|e| e.key == key)
-            && e.stamp != now
-        {
-            e.stamp = now;
+        let Some(e) = s.entries.iter_mut().find(|e| e.key == key) else { continue };
+        let report = match e.stamp {
+            // Modified since the watch began: the node may have read it before the edit.
+            None => now.is_some_and(|(modified, _)| modified >= e.since),
+            Some(before) => before != now,
+        };
+        e.stamp = Some(now);
+        if report {
             e.changed.store(true, Ordering::Release);
             // A closed channel means the cooker is gone; the next pass ends the thread.
             changed.send(e.node).ok();
@@ -164,6 +161,8 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let watcher = Watcher::new(tx);
         let handle = watcher.watch(&file, NodeId(7));
+        // File times follow a coarse clock; an edit a moment after the watch began is newer.
+        std::thread::sleep(Duration::from_millis(50));
         std::fs::write(&file, "two, longer").unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let got = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();
@@ -174,5 +173,22 @@ mod tests {
         std::fs::write(&file, "three, longer still").unwrap();
         assert!(rx.recv_timeout(WATCH_INTERVAL * 3).is_err());
         drop(watcher);
+    }
+
+    #[test]
+    fn an_old_file_is_not_reported_at_the_first_look_but_its_edit_is() {
+        let dir = penumbra_core::scratch::ScratchDir::new("watch-old").unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "one").unwrap();
+        let old = SystemTime::now() - Duration::from_secs(3600);
+        std::fs::File::options().write(true).open(&file).unwrap().set_modified(old).unwrap();
+        let (tx, rx) = mpsc::channel();
+        let watcher = Watcher::new(tx);
+        let handle = watcher.watch(&file, NodeId(3));
+        assert!(rx.recv_timeout(WATCH_INTERVAL * 4).is_err(), "the first look is no change");
+        assert!(!handle.take_changed());
+        std::fs::write(&file, "two, longer").unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), NodeId(3));
+        assert!(handle.take_changed());
     }
 }

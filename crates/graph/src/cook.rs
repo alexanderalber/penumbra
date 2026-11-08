@@ -38,8 +38,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use penumbra_core::bind as bindv;
@@ -63,6 +63,11 @@ use crate::watch::{FileWatch, Watcher};
 pub const TRIM_AFTER_PASSES: u64 = 120;
 /// How often the cooker looks for nodes to trim, in passes.
 const TRIM_CHECK_EVERY: u64 = 30;
+
+/// A node whose operator panicked is tried again after this long, even when nothing about it
+/// changed (its params, its wiring, a finished job). Until then the error stays and the last
+/// result is kept.
+const PANIC_RETRY: Duration = Duration::from_secs(2);
 
 /// What an operator sees while cooking.
 pub struct CookContext<'a> {
@@ -601,9 +606,20 @@ struct Runtime {
     blank_previous: bool,
     /// Which outputs were wanted at the last cook ([`CookContext::output_wanted`]).
     seen_wanted: Vec<bool>,
+    /// When the operator last panicked; it is made anew only when something about the node
+    /// changed or after [`PANIC_RETRY`].
+    panicked: Option<Instant>,
 }
 
 impl Runtime {
+    /// The operator panicked in `what`: it is dropped, and the node shows the error.
+    fn panicked_in(&mut self, what: &str, message: &str) {
+        self.error = Some(format!("node panicked in {what}: {message}"));
+        self.op = None;
+        self.gpu_bytes = 0;
+        self.panicked = Some(Instant::now());
+    }
+
     /// Whether the operator holds state now (or state restored for it waits).
     fn holds_state(&self, id: NodeId) -> bool {
         self.restored.is_some()
@@ -674,6 +690,7 @@ impl Runtime {
             restored: None,
             restored_place: None,
             seen_wanted: Vec::new(),
+            panicked: None,
         }
     }
 }
@@ -710,6 +727,9 @@ pub struct Cooker {
     spent: PassSpent,
     /// The clock waits for every frame ([`CookContext::exact_frames`]).
     exact: bool,
+    /// Operators that panicked when asked something where they could not be dropped at once
+    /// (a status, a density): node, what was asked, the message. Dropped at the next pass.
+    asked_panics: Mutex<Vec<(NodeId, &'static str, String)>>,
 }
 
 impl Cooker {
@@ -735,6 +755,34 @@ impl Cooker {
             for_thumbnails: false,
             spent: PassSpent::default(),
             exact: false,
+            asked_panics: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Asks the operator of node `id` something outside a cook. A panic is logged and gives
+    /// `None`; the operator is dropped at the start of the next pass.
+    fn ask<T>(&self, id: NodeId, what: &'static str, f: impl FnOnce() -> T) -> Option<T> {
+        match ask(f) {
+            Ok(v) => Some(v),
+            Err(message) => {
+                self.asked_panicked(id, what, message);
+                None
+            }
+        }
+    }
+
+    fn asked_panicked(&self, id: NodeId, what: &'static str, message: String) {
+        log::error!("node {id}: {what} panicked: {message}");
+        penumbra_core::lock(&self.asked_panics).push((id, what, message));
+    }
+
+    /// Drops the operators that panicked in [`Cooker::ask`] since the last pass.
+    fn drop_asked_panics(&mut self) {
+        let asked = std::mem::take(&mut *penumbra_core::lock(&self.asked_panics));
+        for (id, what, message) in asked {
+            if let Some(rt) = self.runtimes.get_mut(&id) {
+                rt.panicked_in(what, &message);
+            }
         }
     }
 
@@ -799,6 +847,7 @@ impl Cooker {
         self.pass += 1;
         let mut report = CookReport { pass: self.pass, ..CookReport::default() };
         self.sync(net);
+        self.drop_asked_panics();
         for id in self.done.try_iter() {
             if let Some(rt) = self.runtimes.get_mut(&id) {
                 rt.notified = true;
@@ -1153,6 +1202,11 @@ impl Cooker {
         let mut inputs = Vec::with_capacity(rt.def.inputs.len());
         let mut signature = Vec::with_capacity(rt.def.inputs.len());
         let mut stuck = Vec::new();
+        // Sources on a loop back to this node: everything a node needs is evaluated before it
+        // in a pass, except what waits for the node itself. A node reference can close such a
+        // loop (also onto the node itself). Their new results do not recook the node, or the
+        // loop would cook every frame.
+        let mut loops = Vec::new();
         for (i, slot) in rt.def.inputs.iter().enumerate() {
             let Some(port) = slot else {
                 inputs.push(None);
@@ -1171,6 +1225,12 @@ impl Cooker {
             let data =
                 src.and_then(|s| s.outputs.as_ref()).and_then(|o| o.get(port.output as usize)).cloned();
             let previous = rt.def.is_previous(i);
+            let looped = !previous && src.is_some_and(|s| s.evaluated_pass != self.pass);
+            if looped {
+                let name =
+                    rt.ty.as_ref().and_then(|t| t.desc().inputs.get(i)).map_or("?", |s| s.name.as_str());
+                loops.push(format!("input `{name}`"));
+            }
             let is_stuck = !previous && data.is_none() && self.stuck(*port);
             if is_stuck {
                 stuck.push(i);
@@ -1178,7 +1238,7 @@ impl Cooker {
             inputs.push(data.filter(|_| !(rt.blank_previous && previous)));
             // A previous-result input does not recook the node when its source changes (the
             // node is time-dependent; otherwise a loop would recook itself forever).
-            let version = if previous {
+            let version = if previous || looped {
                 0
             } else if is_stuck {
                 // A source that goes from waiting to failed keeps its version, and a node waiting
@@ -1195,12 +1255,24 @@ impl Cooker {
             let data = target.map(|t| {
                 let t = t?;
                 let src = self.runtimes.get(&t);
+                let looped = src.is_some_and(|s| s.evaluated_pass != self.pass);
+                if looped {
+                    loops.push(format!("`{name}`"));
+                }
                 // A new result of a referenced node recooks this one, as an input would.
-                signature.push(Some((Port { node: t, output: u32::MAX }, src.map_or(0, |s| s.version))));
+                let version = if looped { 0 } else { src.map_or(0, |s| s.version) };
+                signature.push(Some((Port { node: t, output: u32::MAX }, version)));
                 src.and_then(|s| s.outputs.clone())
             });
             ref_data.insert(name, data);
         }
+
+        let loop_warning = (!loops.is_empty()).then(|| {
+            format!(
+                "{} leads back to this node through a node reference; new results there do not recook it",
+                loops.join(", ")
+            )
+        });
 
         let wanted = match rt.ty.as_ref().map(|t| t.desc()) {
             Some(desc) if self.lazy && desc.outputs.iter().any(|o| o.lazy) => self.wanted(id, desc),
@@ -1234,16 +1306,30 @@ impl Cooker {
             return;
         };
         let desc = ty.desc();
-        let time_moved = time_dependent(desc, rt.op.as_deref()) && rt.seen_tick != Some(time.tick);
+        let follows_clock = match time_dependent(desc, rt.op.as_deref()) {
+            Ok(t) => t,
+            Err(message) => {
+                rt.panicked_in("time_dependent", &message);
+                return;
+            }
+        };
+        let time_moved = follows_clock && rt.seen_tick != Some(time.tick);
         let inputs_changed = rt.seen_inputs != signature;
         let wanted_changed = !rt.fresh && rt.seen_wanted != wanted;
         // A channel driving a parameter is a parameter change, but only when the value moved:
         // a source that recooked to the same number does not recook this node.
         let params_changed = rt.params_changed || bound_changed;
-        // A node whose operator panicked is not retried until something changes, so a
-        // deterministic panic does not repeat every frame.
         if !(rt.fresh || params_changed || rt.notified || time_moved || inputs_changed || wanted_changed) {
             return;
+        }
+        // A node whose operator panicked is made anew only after an edit of its params, a change
+        // of its wiring, a finished job or a pause, so a deterministic panic does not repeat
+        // every frame. The clock and new results upstream are no reason.
+        if let Some(at) = rt.panicked {
+            let rewired = !same_ports(&rt.seen_inputs, &signature);
+            if !(rt.fresh || rt.params_changed || rt.notified || rewired || at.elapsed() >= PANIC_RETRY) {
+                return;
+            }
         }
 
         let first_cook = rt.op.is_none();
@@ -1291,6 +1377,7 @@ impl Cooker {
         rt.trimmed = false;
         let started = Instant::now();
         let result = catch_unwind(AssertUnwindSafe(|| op.cook(&cx)));
+        let panicked = result.is_err();
         let elapsed = started.elapsed();
         let read_time = cx.time_read.get();
         let op_warning = cx.warning.take();
@@ -1322,8 +1409,17 @@ impl Cooker {
                 rt.op = None;
             }
         }
+        rt.panicked = panicked.then(Instant::now);
         // Asked again after the cook, which is when an operator learns what it depends on.
-        let time_warning = (read_time && !time_dependent(desc, rt.op.as_deref()))
+        let declared = !read_time
+            || match time_dependent(desc, rt.op.as_deref()) {
+                Ok(t) => t,
+                Err(message) => {
+                    rt.panicked_in("time_dependent", &message);
+                    true
+                }
+            };
+        let time_warning = (!declared)
             .then(|| format!("`{}` reads the show time but is not declared time-dependent", desc.kind));
         // Values the type does not declare, kept from the project file (`Params::Keep`).
         let stray: Vec<&str> = if desc.extra_params {
@@ -1334,7 +1430,7 @@ impl Cooker {
         let stray_warning = (!stray.is_empty()).then(|| {
             format!("`{}` has no param {}; the value is ignored, remove it", desc.kind, quoted(&stray))
         });
-        rt.warning = [restore_warning, time_warning, op_warning, stray_warning]
+        rt.warning = [restore_warning, time_warning, op_warning, stray_warning, loop_warning]
             .into_iter()
             .flatten()
             .reduce(|a, b| format!("{a}; {b}"));
@@ -1396,12 +1492,20 @@ impl Cooker {
             return true;
         }
         let Some(ty) = rt.ty.as_ref() else { return false };
-        let time_moved = time_dependent(ty.desc(), rt.op.as_deref()) && rt.seen_tick != Some(time.tick);
+        let follows_clock = match time_dependent(ty.desc(), rt.op.as_deref()) {
+            Ok(t) => t,
+            Err(message) => {
+                self.asked_panicked(rt.def.id, "time_dependent", message);
+                return false;
+            }
+        };
+        let time_moved = follows_clock && rt.seen_tick != Some(time.tick);
         if rt.fresh || rt.params_changed || rt.notified || time_moved {
             return false;
         }
         let needed = if chooser(rt).is_some() { self.needed(rt, &self.resolve_binds(rt)) } else { None };
-        let refs_same = self.current_refs(rt).all(|t| {
+        // A node naming itself does not wait for itself.
+        let refs_same = self.current_refs(rt).filter(|t| *t != rt.def.id).all(|t| {
             known.get(&t) == Some(&true)
                 && rt.seen_inputs.iter().flatten().any(|(p, v)| {
                     p.node == t
@@ -1521,7 +1625,12 @@ impl Cooker {
             let spec = match desc.param_spec(name.as_str()) {
                 Some(spec) => Some(spec),
                 None => instance
-                    .get_or_insert_with(|| rt.op.as_ref().and_then(|op| op.params()).unwrap_or_default())
+                    .get_or_insert_with(|| {
+                        rt.op
+                            .as_ref()
+                            .and_then(|op| self.ask(rt.def.id, "params", || op.params()).flatten())
+                            .unwrap_or_default()
+                    })
                     .iter()
                     .find(|s| s.name == name.as_str()),
             };
@@ -1824,12 +1933,24 @@ impl Cooker {
                 (Some(a), Some(b)) => Some(format!("{a}; {b}")),
                 (a, b) => a.clone().or_else(|| b.clone()),
             },
-            job: rt.op.as_ref().and_then(|op| op.job_status()),
+            job: rt.op.as_ref().and_then(|op| self.ask(id, "job_status", || op.job_status()).flatten()),
             stats: rt.stats,
             gpu_bytes: rt.gpu_bytes,
-            params: if params { rt.op.as_ref().and_then(|op| op.params()) } else { None },
+            params: if params {
+                rt.op.as_ref().and_then(|op| self.ask(id, "params", || op.params()).flatten())
+            } else {
+                None
+            },
             bound: rt.seen_bound.clone(),
-            time_dependent: rt.ty.as_ref().is_some_and(|ty| time_dependent(ty.desc(), rt.op.as_deref())),
+            time_dependent: rt.ty.as_ref().is_some_and(|ty| {
+                match time_dependent(ty.desc(), rt.op.as_deref()) {
+                    Ok(t) => t,
+                    Err(message) => {
+                        self.asked_panicked(id, "time_dependent", message);
+                        ty.desc().time_dependent
+                    }
+                }
+            }),
         })
     }
 
@@ -1845,17 +1966,21 @@ impl Cooker {
     }
 
     /// How input `input` of node `id` relates to its output ([`Operator::density`]); `None`
-    /// before the node has an operator.
+    /// before the node has an operator, or when asking it panicked.
     pub fn density(&self, id: NodeId, input: usize) -> Option<Density> {
         let rt = self.runtimes.get(&id)?;
-        Some(rt.op.as_ref()?.density(&rt.def, rt.ty.as_ref()?.desc(), input))
+        let (op, desc) = (rt.op.as_ref()?, rt.ty.as_ref()?.desc());
+        self.ask(id, "density", || op.density(&rt.def, desc, input))
     }
 
     /// Whether node `id`'s `width` and `height` set its resolution ([`Operator::sets_size`]).
     pub fn sets_size(&self, id: NodeId) -> bool {
         self.runtimes
             .get(&id)
-            .and_then(|rt| Some(rt.op.as_ref()?.sets_size(&rt.def, rt.ty.as_ref()?.desc())))
+            .and_then(|rt| {
+                let (op, desc) = (rt.op.as_ref()?, rt.ty.as_ref()?.desc());
+                self.ask(id, "sets_size", || op.sets_size(&rt.def, desc))
+            })
             .unwrap_or(false)
     }
 }
@@ -1891,8 +2016,21 @@ fn is_needed(mask: Option<&[bool]>, i: usize) -> bool {
     mask.is_none_or(|m| m.get(i).copied().unwrap_or(true))
 }
 
-fn time_dependent(desc: &NodeDesc, op: Option<&dyn Operator>) -> bool {
-    op.and_then(|op| op.time_dependent()).unwrap_or(desc.time_dependent)
+/// Whether a node follows the clock, as its operator says or else its type; the message when
+/// asking the operator panicked.
+fn time_dependent(desc: &NodeDesc, op: Option<&dyn Operator>) -> Result<bool, String> {
+    let Some(op) = op else { return Ok(desc.time_dependent) };
+    ask(|| op.time_dependent()).map(|t| t.unwrap_or(desc.time_dependent))
+}
+
+/// Runs `f`, a question to an operator outside its cook; a panic comes back as its message.
+fn ask<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    catch_unwind(AssertUnwindSafe(f)).map_err(|p| panic_message(p.as_ref()))
+}
+
+/// Whether two input signatures name the same sources, whatever their versions.
+fn same_ports(a: &[Option<(Port, u64)>], b: &[Option<(Port, u64)>]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.map(|(p, _)| p) == y.map(|(p, _)| p))
 }
 
 fn check_outputs(desc: &NodeDesc, outs: &[Data]) -> Result<(), String> {
@@ -2440,6 +2578,76 @@ mod tests {
         let st = f.status("/p");
         assert_eq!(st.error, None);
         assert!(st.has_output);
+    }
+
+    #[test]
+    fn a_panicking_node_waits_for_a_change_not_the_clock() {
+        let mut f =
+            Fixture::new(&[create("/t", "test.time"), create("/p", "test.panic"), connect("/t", "/p", 0)]);
+        f.set("/p.boom", Value::Bool(true));
+        assert_eq!(f.cook(&["/p"]), ["/t", "/p"]);
+        assert!(f.status("/p").error.unwrap().contains("node panicked: boom"));
+        // The clock moves and its input has a new result every frame: no retry.
+        for _ in 0..5 {
+            f.clock.advance(1);
+            assert_eq!(f.cook(&["/p"]), ["/t"]);
+        }
+        // Rewired: tried again (and it panics again).
+        f.edit(&[Op::Disconnect { to: pp("/p"), input: 0 }]);
+        assert_eq!(f.cook(&["/p"]), ["/p"]);
+        assert!(f.cook(&["/p"]).is_empty());
+        f.edit(&[connect("/t", "/p", 0)]);
+        f.clock.advance(1);
+        assert_eq!(f.cook(&["/p"]), ["/t", "/p"]);
+        f.clock.advance(1);
+        assert_eq!(f.cook(&["/p"]), ["/t"]);
+        // After a pause, a new result upstream is reason enough again.
+        if let Some(rt) = f.cooker.runtimes.get_mut(&f.id("/p")) {
+            rt.panicked = rt.panicked.and_then(|t| t.checked_sub(PANIC_RETRY));
+        }
+        f.clock.advance(1);
+        assert_eq!(f.cook(&["/p"]), ["/t", "/p"]);
+    }
+
+    #[test]
+    fn an_operator_that_panics_when_asked_is_dropped_and_the_pass_goes_on() {
+        let mut f = Fixture::new(&[
+            create("/q", "test.asks_time"),
+            create("/k", "test.const"),
+            create("/a", "test.asks"),
+        ]);
+        // Asked about the clock right after its cook: the pass goes on to /k.
+        assert_eq!(f.cook(&["/q", "/k", "/a"]), ["/q", "/k", "/a"]);
+        let q = f.status("/q");
+        assert!(q.error.unwrap().contains("panicked in time_dependent: asked about time"));
+        assert!(q.has_output, "the result of the cook stays");
+        assert_eq!(f.value("/k"), Some(0.0));
+        // Asked for a status, a density or a size: answered without the operator's part, and
+        // the operator is dropped at the next pass.
+        let a = f.status("/a");
+        assert_eq!((a.error, a.job, a.params), (None, None, None));
+        assert_eq!(f.cooker.density(f.id("/a"), 0), None);
+        assert!(!f.cooker.sets_size(f.id("/a")));
+        f.cook(&["/a"]);
+        assert!(f.status("/a").error.unwrap().contains("panicked in"), "{:?}", f.status("/a").error);
+        assert!(f.cook(&["/a"]).is_empty(), "not made anew every frame");
+    }
+
+    #[test]
+    fn a_node_naming_itself_or_a_loop_does_not_cook_every_frame() {
+        let mut f =
+            Fixture::new(&[create("/r", "test.ref"), create("/x", "test.ref"), create("/y", "test.ref")]);
+        f.set("/r.node", Value::Text("/r".into()));
+        f.set("/x.node", Value::Text("/y".into()));
+        f.set("/y.node", Value::Text("/x".into()));
+        f.cook(&["/r", "/x"]);
+        assert!(f.cook(&["/r", "/x"]).is_empty());
+        let w = f.status("/r").warning.unwrap();
+        assert!(w.contains("`node` leads back to this node"), "{w}");
+        assert!(f.status("/y").warning.is_some_and(|w| w.contains("leads back")));
+        // The node it names still recooks it when it changes for a reason of its own.
+        f.set("/y.node", Value::Text("".into()));
+        assert_eq!(f.cook(&["/x"]), ["/y", "/x"]);
     }
 
     #[test]
