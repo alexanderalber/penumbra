@@ -2,6 +2,9 @@
 //! `table.file` reads a file off the cook thread and reloads it when it changes on disk.
 //! `chan.from_table` turns a table of numbers into channels, so cells can drive params.
 
+use std::collections::BTreeSet;
+
+use penumbra_core::chan::MAX_CHANNELS;
 use penumbra_core::{Channel, Chans, Error, Name, ParamSpec, SampleAxis, Table, table::Format};
 use penumbra_graph::{
     AsyncSlot, CookContext, CookError, Cooked, Data, DataKind, FileWatch, FnNodeType, JobStatus, NodeDesc,
@@ -167,6 +170,9 @@ impl Operator for File {
 /// makes no channel; so are named ones holding words alone, such as a label per row.
 struct FromTable;
 
+/// Names a `twice` warning lists before it only counts the rest.
+const SHOWN_TWICE: usize = 8;
+
 impl Operator for FromTable {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let table = cx.input_as::<Table>(0).ok_or_else(|| waiting(cx))?;
@@ -185,23 +191,34 @@ impl Operator for FromTable {
         // One sample of each channel, when `row` picks one.
         let pick = usize::try_from(cx.int("row")?).ok().map(|r| r.min(len - 1));
         let mut channels: Vec<Channel> = Vec::new();
-        let mut not_numbers: Vec<String> = Vec::new();
+        let mut names: BTreeSet<String> = BTreeSet::new();
+        // The first cell that is no number, and how many there are.
+        let mut not_numbers: (Option<String>, usize) = (None, 0);
         let mut twice: Vec<String> = Vec::new();
+        let mut twice_count = 0usize;
+        let mut cut = false;
         for i in 0..lines {
             if (0..cells).all(|k| cell(i, k).0.is_empty()) {
                 continue;
+            }
+            if channels.len() >= MAX_CHANNELS {
+                cut = true;
+                break;
             }
             let name = if named { channel_name(cell(i, 0).0) } else { None };
             let name = match name {
                 Some(n) => n,
                 None => Name::new(&format!("chan{i}"))?,
             };
-            if channels.iter().any(|c| c.name == name) {
-                twice.push(name.as_str().to_string());
+            if names.contains(name.as_str()) {
+                twice_count += 1;
+                if twice.len() < SHOWN_TWICE {
+                    twice.push(name.as_str().to_string());
+                }
                 continue;
             }
             let mut samples = vec![0.0; len];
-            let mut words = Vec::new();
+            let mut words: (Option<String>, usize) = (None, 0);
             let mut numbers = 0usize;
             for (k, s) in (first..cells).zip(samples.iter_mut()) {
                 let (text, row, col) = cell(i, k);
@@ -213,32 +230,51 @@ impl Operator for FromTable {
                         *s = v;
                         numbers += 1;
                     }
-                    Err(_) => words.push(format!("`{}` (row {row}, column {col})", short(text))),
+                    Err(_) => {
+                        if words.0.is_none() {
+                            words.0 = Some(format!("`{}` (row {row}, column {col})", short(text)));
+                        }
+                        words.1 += 1;
+                    }
                 }
             }
             // A named column of words alone (a label per row) gives no channel and no warning.
-            if named && numbers == 0 && !words.is_empty() {
+            if named && numbers == 0 && words.1 > 0 {
                 continue;
             }
-            not_numbers.extend(words);
+            if not_numbers.0.is_none() {
+                not_numbers.0 = words.0;
+            }
+            not_numbers.1 += words.1;
             if let Some(k) = pick {
                 samples = vec![samples.get(k).copied().unwrap_or(0.0)];
             }
+            names.insert(name.as_str().to_string());
             channels.push(Channel { name, samples });
         }
         let mut warnings = Vec::new();
         if named && cells < 2 && !channels.is_empty() {
             warnings.push("there are only names, no values: every channel is 0".to_string());
         }
-        if let Some(t) = not_numbers.first() {
-            let more = match not_numbers.len() {
-                1 => String::new(),
+        if let (Some(t), n) = &not_numbers {
+            let more = match n {
+                0 | 1 => String::new(),
                 n => format!(" and {} more cells", n - 1),
             };
             warnings.push(format!("{t}{more} hold no number and count as 0"));
         }
         if !twice.is_empty() {
-            warnings.push(format!("{} named twice, the first is kept", twice.join(", ")));
+            let more = match twice_count.saturating_sub(twice.len()) {
+                0 => String::new(),
+                n => format!(" and {n} more"),
+            };
+            warnings.push(format!("{}{more} named twice, the first is kept", twice.join(", ")));
+        }
+        if cut {
+            let what = if by_rows { "rows" } else { "columns" };
+            warnings.push(format!(
+                "more than {MAX_CHANNELS} {what} with values: the first {MAX_CHANNELS} are kept"
+            ));
         }
         if !warnings.is_empty() {
             cx.warn(warnings.join("; "));
@@ -397,6 +433,23 @@ mod tests {
 
     fn names(c: &Chans) -> Vec<&str> {
         c.names().map(|n| n.as_str()).collect()
+    }
+
+    #[test]
+    fn a_wide_table_stops_at_the_channel_limit() {
+        // Rows, unnamed: one channel per row, more rows than channels can be.
+        use super::{MAX_CHANNELS, SHOWN_TWICE};
+        let rows = MAX_CHANNELS + 100;
+        let text: String = (0..rows).map(|i| format!("{i}\n")).collect();
+        let (c, warning) = from_table(&text, &[set("/c.layout", "rows"), set("/c.names", false)]);
+        assert_eq!(c.channels().len(), MAX_CHANNELS);
+        assert!(warning.is_some_and(|w| w.contains(&format!("the first {MAX_CHANNELS} are kept"))));
+        // The same name many times: listed a few times, the rest counted.
+        let text = format!("{}\n{}\n", vec!["a"; 50].join(","), vec!["1"; 50].join(","));
+        let (c, warning) = from_table(&text, &[]);
+        assert_eq!(names(&c), ["a"]);
+        let warning = warning.unwrap_or_default();
+        assert!(warning.contains(&format!("and {} more named twice", 49 - SHOWN_TWICE)), "{warning}");
     }
 
     #[test]

@@ -20,12 +20,15 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use penumbra_core::chan::MAX_CHANNELS;
 use penumbra_core::{Channel, Chans, Error, Name, ParamSpec, Table, Unit, Value};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, Network, NodeDesc, NodeTypes, Operator,
 };
 use penumbra_midi::hub::{Hub, Want, Watch, matches};
 use penumbra_midi::{Control, Event, Snapshot, encode};
+
+use crate::osc::Made;
 
 /// Kind of the MIDI input node.
 pub const MIDI_IN: &str = "chan.midi_in";
@@ -200,12 +203,13 @@ impl Operator for MidiIn {
             return Ok(Cooked::Unchanged);
         }
         self.seen = Some(seen);
-        let mut channels: Vec<Channel> = Vec::new();
+        // The clock's channels always fit: the devices' stop short of them.
+        let mut devices = Made::new(MAX_CHANNELS - if clock.is_some() { CLOCK_CHANNELS.len() } else { 0 });
         let mut taken: BTreeMap<String, String> = BTreeMap::new();
         let mut clashes = Vec::new();
         let mut rows =
             vec![vec!["device".to_string(), "channel".to_string(), "count".to_string(), "value".to_string()]];
-        let mut push = |name: String, value: f64, device: &str, channels: &mut Vec<Channel>| {
+        let mut push = |name: String, value: f64, device: &str, made: &mut Made| {
             if let Some(first) = taken.get(&name) {
                 if first != device {
                     clashes.push(format!("{device} and {first} both make `{name}`"));
@@ -213,8 +217,12 @@ impl Operator for MidiIn {
                 return;
             }
             let Ok(n) = Name::new(&name) else { return };
+            if made.full() {
+                return;
+            }
             taken.insert(name, device.to_string());
-            channels.push(Channel { name: n, samples: vec![if value.is_finite() { value } else { 0.0 }] });
+            made.channels
+                .push(Channel { name: n, samples: vec![if value.is_finite() { value } else { 0.0 }] });
         };
         let mut again = false;
         for input in &inputs {
@@ -238,10 +246,10 @@ impl Operator for MidiIn {
                         seen.pulsed = false;
                     }
                     seen.presses = e.presses;
-                    push(name.clone(), gate, &input.name, &mut channels);
-                    push(format!("{name}_vel"), e.velocity, &input.name, &mut channels);
+                    push(name.clone(), gate, &input.name, &mut devices);
+                    push(format!("{name}_vel"), e.velocity, &input.name, &mut devices);
                 } else {
-                    push(name, e.value, &input.name, &mut channels);
+                    push(name, e.value, &input.name, &mut devices);
                 }
             }
         }
@@ -263,9 +271,11 @@ impl Operator for MidiIn {
                 if c.playing { 1.0 } else { 0.0 },
                 if c.ticking { 1.0 } else { 0.0 },
             ];
+            let mut beat = Made::new(MAX_CHANNELS);
             for (name, v) in CLOCK_CHANNELS.iter().zip(values) {
-                push((*name).to_string(), v, "the clock", &mut channels);
+                push((*name).to_string(), v, "the clock", &mut beat);
             }
+            devices.channels.extend(beat.channels);
             // The beat glides between clocks, and `tick` falls again at the next frame.
             again |= c.playing || tick;
         }
@@ -280,10 +290,11 @@ impl Operator for MidiIn {
         if let Some(c) = clashes.first() {
             warnings.push(format!("{c}; the first is kept"));
         }
+        warnings.extend(devices.warning("`device`"));
         if !warnings.is_empty() {
             cx.warn(warnings.join("; "));
         }
-        let chans = Chans::new(cx.rate().as_f64(), channels)?;
+        let chans = Chans::new(cx.rate().as_f64(), devices.channels)?;
         Ok(Cooked::Outputs(vec![
             Data::new(DataKind::Chan, chans),
             Data::new(DataKind::Table, Table::new(rows)?),

@@ -19,6 +19,7 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use penumbra_core::chan::MAX_CHANNELS;
 use penumbra_core::{Channel, Chans, Error, Name, ParamSpec, Table, Unit};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, Network, NodeDesc, NodeTypes, Operator,
@@ -135,6 +136,37 @@ pub fn wants(net: &Network, types: &NodeTypes) -> Vec<Want> {
             })
         })
         .collect()
+}
+
+/// Channels made from what arrives, at most `limit`. Past it the first ones stay and the rest
+/// are counted, so a flood of new addresses leaves the channels a binding reads in place
+/// instead of failing the node.
+pub(crate) struct Made {
+    pub(crate) channels: Vec<Channel>,
+    limit: usize,
+    left_out: usize,
+}
+
+impl Made {
+    pub(crate) fn new(limit: usize) -> Self {
+        Self { channels: Vec::new(), limit: limit.min(MAX_CHANNELS), left_out: 0 }
+    }
+
+    /// Whether no more channels fit; counts the one that was to come.
+    pub(crate) fn full(&mut self) -> bool {
+        let full = self.channels.len() >= self.limit;
+        if full {
+            self.left_out += 1;
+        }
+        full
+    }
+
+    /// The warning for the channels left out, naming the param that narrows them.
+    pub(crate) fn warning(&self, narrow: &str) -> Option<String> {
+        (self.left_out > 0).then(|| {
+            format!("{} channels kept, {} more left out; narrow {narrow}", self.channels.len(), self.left_out)
+        })
+    }
 }
 
 /// `chan.osc_in`'s `addresses`: OSC patterns to keep and to leave out (`^`). `*` on its own
@@ -294,7 +326,7 @@ impl Operator for OscIn {
                 .map(|e| (e.address.clone(), Trigger { seen: e.presses, ..Trigger::default() }))
                 .collect();
         }
-        let mut channels: Vec<Channel> = Vec::new();
+        let mut made = Made::new(MAX_CHANNELS);
         let mut taken: BTreeMap<String, String> = BTreeMap::new();
         let mut clashes = Vec::new();
         // A trigger written out in full has its channel (at 0) before its first press, so a
@@ -307,9 +339,11 @@ impl Operator for OscIn {
             }
             let Some(name) = channel_name(address) else { continue };
             let Ok(n) = Name::new(&name) else { continue };
-            if taken.insert(name, address.to_string()).is_none() {
-                channels.push(Channel { name: n, samples: vec![0.0] });
+            if taken.contains_key(&name) || made.full() {
+                continue;
             }
+            taken.insert(name, address.to_string());
+            made.channels.push(Channel { name: n, samples: vec![0.0] });
         }
         let mut rows = vec![vec!["address".to_string(), "count".to_string(), "values".to_string()]];
         for e in &store.entries {
@@ -327,8 +361,11 @@ impl Operator for OscIn {
                     continue;
                 }
                 let Ok(n) = Name::new(&name) else { continue };
+                if made.full() {
+                    continue;
+                }
                 taken.insert(name, e.address.clone());
-                channels.push(Channel { name: n, samples: vec![value] });
+                made.channels.push(Channel { name: n, samples: vec![value] });
                 continue;
             }
             if !filter.admits(&e.address) {
@@ -340,8 +377,11 @@ impl Operator for OscIn {
                     continue;
                 }
                 let Ok(n) = Name::new(&name) else { continue };
+                if made.full() {
+                    continue;
+                }
                 taken.insert(name, e.address.clone());
-                channels.push(Channel { name: n, samples: vec![if v.is_finite() { *v } else { 0.0 }] });
+                made.channels.push(Channel { name: n, samples: vec![if v.is_finite() { *v } else { 0.0 }] });
             }
         }
         if self.triggers.values().any(Trigger::busy) {
@@ -353,10 +393,11 @@ impl Operator for OscIn {
         if let Some(c) = clashes.first() {
             warnings.push(format!("{c}; the first is kept"));
         }
+        warnings.extend(made.warning("`addresses` or `triggers`"));
         if !warnings.is_empty() {
             cx.warn(warnings.join("; "));
         }
-        let chans = Chans::new(cx.rate().as_f64(), channels)?;
+        let chans = Chans::new(cx.rate().as_f64(), made.channels)?;
         Ok(Cooked::Outputs(vec![
             Data::new(DataKind::Chan, chans),
             Data::new(DataKind::Table, Table::new(rows)?),
@@ -463,6 +504,9 @@ impl Operator for OscOut {
             || cx.params_changed();
         if full {
             self.last_full = Some(now);
+            // Only what this send names is remembered: addresses that came and went do not
+            // pile up.
+            self.sent.clear();
         } else {
             messages.retain(|m| self.sent.get(&m.address) != Some(&m.args));
         }

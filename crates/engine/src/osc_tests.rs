@@ -442,3 +442,25 @@ fn a_cue_list_and_values_set_by_address_survive_a_restart_in_show_mode() {
     assert_eq!(step(&r), 0.0);
     i.shutdown();
 }
+
+#[test]
+fn osc_in_keeps_the_first_channels_when_addresses_flood_in() {
+    let f = Fixture::new("osc_flood");
+    f.call("node.create", json!({"path": "/in", "kind": "chan.osc_in", "params": {"port": 0}}));
+    let port = osc_port(&f, 0);
+    // 70 addresses of 64 values: 4480 channels, more than a node holds.
+    for a in 0..70 {
+        send(port, &format!("/a{a:02}"), (0..64).map(|v| Arg::Float(v as f32)).collect());
+    }
+    eventually("70 addresses", || f.engine.osc().hub().read(0).is_some_and(|s| s.entries.len() == 70));
+    f.call("node.watch", json!({"path": "/in"}));
+    eventually("the channels", || {
+        f.call("chan.read", json!({"path": "/in"}))["channels"].as_array().is_some_and(|c| !c.is_empty())
+    });
+    let read = f.call("chan.read", json!({"path": "/in"}));
+    assert_eq!(read["channels"].as_array().map(Vec::len), Some(penumbra_core::chan::MAX_CHANNELS));
+    let status = f.call("node.info", json!({"path": "/in"}))["status"].clone();
+    assert_eq!(status["error"], Json::Null, "{status}");
+    let warning = status["warning"].as_str().unwrap_or("").to_string();
+    assert!(warning.contains("384 more left out"), "{warning}");
+}

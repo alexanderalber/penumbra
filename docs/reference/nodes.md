@@ -1454,7 +1454,7 @@ Outputs:
 | `protocol` | art_net \| sacn | `"art_net"` |  | What the sender speaks; art_net: Art-Net, sent to this machine or as a broadcast; sacn: sACN (E1.31), to the universe's multicast group or to this machine |
 | `universe` | int | `1` | 0 to 16 (soft, held within 0 to 63999) | Universe of the first slot, as the protocol counts (Art-Net from 0, sACN from 1); channels past its end read on in the next |
 | `address` | int | `1` | 1 to 512 (soft) | DMX address (slot, from 1) that becomes ch1 |
-| `count` | int | `512` | 1 to 512 (soft, held within 1 to 32768) | Channels made: ch1 is slot `address`, ch2 the next and so on |
+| `count` | int | `512` | 1 to 512 (soft, held within 1 to 4096) | Channels made: ch1 is slot `address`, ch2 the next and so on |
 | `values` | unit \| byte | `"unit"` |  | What the channels hold; unit: 0 to 1, from 0 to 255; byte: 0 to 255, as the slots are |
 | `interface` *(more)* | text |  |  | IP address of this machine's network card to listen on; empty listens on all (sACN multicast then joins on the system's default one) |
 | `port` *(more)* | int | `0` (the protocol's port) | 1024 to 65535 (soft, held within 0 to 65535) | UDP port to listen on; 0 is the protocol's own (Art-Net 6454, sACN 5568); 0: the protocol's port |

@@ -17,13 +17,14 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use penumbra_core::chan::MAX_CHANNELS;
 use penumbra_core::{Channel, Chans, Error, Name, ParamSpec, Table, Unit};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, Network, NodeDesc, NodeTypes, Operator,
 };
 use penumbra_http::hub::{Hub, Params, Publisher, Want, Watch};
 
-use crate::osc::{Filter, channels_of};
+use crate::osc::{Filter, Made, channels_of};
 
 /// Kind of the HTTP input node.
 pub const HTTP_IN: &str = "chan.http_in";
@@ -177,7 +178,7 @@ impl Operator for HttpIn {
         }
         self.seen = Some(seen);
         let filter = Filter::parse(text);
-        let mut channels: Vec<Channel> = Vec::new();
+        let mut made = Made::new(MAX_CHANNELS);
         let mut taken: BTreeMap<String, String> = BTreeMap::new();
         let mut clashes = Vec::new();
         let mut rows = vec![vec!["address".to_string(), "count".to_string(), "values".to_string()]];
@@ -197,8 +198,11 @@ impl Operator for HttpIn {
                     continue;
                 }
                 let Ok(n) = Name::new(&name) else { continue };
+                if made.full() {
+                    continue;
+                }
                 taken.insert(name, e.address.clone());
-                channels.push(Channel { name: n, samples: vec![if v.is_finite() { *v } else { 0.0 }] });
+                made.channels.push(Channel { name: n, samples: vec![if v.is_finite() { *v } else { 0.0 }] });
             }
         }
         let wanted = if table_name.is_empty() {
@@ -217,10 +221,11 @@ impl Operator for HttpIn {
         if let Some(c) = clashes.first() {
             warnings.push(format!("{c}; the first is kept"));
         }
+        warnings.extend(made.warning("`addresses`"));
         if !warnings.is_empty() {
             cx.warn(warnings.join("; "));
         }
-        let chans = Chans::new(cx.rate().as_f64(), channels)?;
+        let chans = Chans::new(cx.rate().as_f64(), made.channels)?;
         Ok(Cooked::Outputs(vec![
             Data::new(DataKind::Chan, chans),
             Data::new(DataKind::Table, Table::new(rows)?),

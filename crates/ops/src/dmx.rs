@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
+use penumbra_core::chan::MAX_CHANNELS;
 use penumbra_core::{Channel, Chans, Error, Name, ParamSpec, Unit, Value};
 use penumbra_dmx::hub::{Hub, Output, Target};
 use penumbra_dmx::input::{self, Input, Inputs, Listen, Protocol, Reading};
@@ -272,9 +273,9 @@ impl Operator for DmxOut {
     }
 }
 
-/// Most channels one `chan.dmx_in` makes: as many universes as one input may ask for.
+/// Most channels one `chan.dmx_in` makes: as many as one channel set holds (8 universes).
 // `as`: a small count, exact as a float.
-const MAX_IN_CHANNELS: f64 = (SLOTS * input::MAX_UNIVERSES) as f64;
+const MAX_IN_CHANNELS: f64 = MAX_CHANNELS as f64;
 
 #[derive(Default)]
 struct DmxIn {
@@ -326,7 +327,9 @@ impl Operator for DmxIn {
             .filter(|u| (lowest..=highest).contains(u))
             .ok_or_else(|| CookError::failed(format!("`universe` is {lowest} to {highest} here")))?;
         let address = usize::try_from(cx.int("address")?.clamp(1, 512) - 1).unwrap_or(0);
-        let count = usize::try_from(cx.int("count")?).unwrap_or(1).clamp(1, SLOTS * input::MAX_UNIVERSES);
+        let count = usize::try_from(cx.int("count")?)
+            .unwrap_or(1)
+            .clamp(1, MAX_CHANNELS.min(SLOTS * input::MAX_UNIVERSES));
         let first = usize::from(universe) * SLOTS + address;
         let last_universe = u16::try_from((first + count - 1) / SLOTS)
             .ok()
