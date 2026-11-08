@@ -1,7 +1,7 @@
 //! Spout's directory of senders: registering one, listing them, reading one's description.
 //! The maps and locks are [`crate::d3d`]'s; the bytes are [`crate::protocol`]'s.
 
-use crate::d3d::{Map, NamedMutex, Semaphore, setting};
+use crate::d3d::{MAP_WAIT_MS, Map, NamedMutex, Semaphore, setting};
 use crate::protocol::{
     DEFAULT_MAX_SENDERS, INFO_LEN, Info, NAME_LEN, check_name, free_name, read_names, text, write_names,
 };
@@ -24,31 +24,55 @@ pub struct Listing {
 /// The senders registered now, sorted by name. Names whose description is gone (a program
 /// that ended without cleaning up) are left out.
 pub fn senders() -> Vec<Listing> {
+    senders_within(MAP_WAIT_MS)
+}
+
+fn senders_within(wait_ms: u32) -> Vec<Listing> {
     let Some(map) = Map::open(NAMES) else { return Vec::new() };
-    let names = map.with(|b| read_names(b, b.len() / NAME_LEN)).unwrap_or_default();
-    names.into_iter().filter_map(|name| info(&name).map(|info| Listing { name, info })).collect()
+    let names = map.with_wait(wait_ms, |b| read_names(b, b.len() / NAME_LEN)).unwrap_or_default();
+    names
+        .into_iter()
+        .filter_map(|name| info_within(&name, wait_ms).map(|info| Listing { name, info }))
+        .collect()
 }
 
 /// The sender a receiver without a name takes: the one the user picked last in a Spout
 /// program, else the newest. `None` without one.
 pub fn active() -> Option<String> {
+    active_within(MAP_WAIT_MS)
+}
+
+fn active_within(wait_ms: u32) -> Option<String> {
     let map = Map::open(ACTIVE)?;
-    let name = map.with(|b| text(b.get(..NAME_LEN).unwrap_or(b)))?;
+    let name = map.with_wait(wait_ms, |b| text(b.get(..NAME_LEN).unwrap_or(b)))?;
     (!name.is_empty()).then_some(name)
 }
 
 /// The description of sender `name`, `None` if there is no such sender.
 pub fn info(name: &str) -> Option<Info> {
+    info_within(name, MAP_WAIT_MS)
+}
+
+/// Like [`info`], waiting at most `wait_ms` for each lock; a locked one counts as missing.
+pub fn info_within(name: &str, wait_ms: u32) -> Option<Info> {
     if name.is_empty() {
         return None;
     }
     let map = Map::open(name)?;
-    map.with(|b| Info::from_bytes(b))?
+    map.with_wait(wait_ms, |b| Info::from_bytes(b))?
 }
 
 /// The active sender if it is still there, else the first one listed.
 pub fn default_sender() -> Option<String> {
-    active().filter(|n| info(n).is_some()).or_else(|| senders().into_iter().next().map(|l| l.name))
+    default_sender_within(MAP_WAIT_MS)
+}
+
+/// Like [`default_sender`], waiting at most `wait_ms` for each lock, so a program that holds
+/// a lock cannot hold up the caller for long.
+pub fn default_sender_within(wait_ms: u32) -> Option<String> {
+    active_within(wait_ms)
+        .filter(|n| info_within(n, wait_ms).is_some())
+        .or_else(|| senders_within(wait_ms).into_iter().next().map(|l| l.name))
 }
 
 /// A sender of this process in the directory, removed when dropped.

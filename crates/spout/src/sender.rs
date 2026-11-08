@@ -30,6 +30,8 @@ pub struct Sender {
     interop: Interop,
     registration: Registration,
     staging: Option<Staging>,
+    /// Whether the directory names the current staging texture.
+    described: bool,
     converter: Converter,
     frames: u64,
     busy: u64,
@@ -50,7 +52,15 @@ impl Sender {
     pub fn new(gpu: &Gpu, name: &str) -> Result<Self, String> {
         let interop = Interop::new(gpu.device(), gpu.queue())?;
         let registration = Registration::new(name, &description(None))?;
-        Ok(Self { interop, registration, staging: None, converter: Converter::new(), frames: 0, busy: 0 })
+        Ok(Self {
+            interop,
+            registration,
+            staging: None,
+            described: false,
+            converter: Converter::new(),
+            frames: 0,
+            busy: 0,
+        })
     }
 
     /// The name receivers see.
@@ -75,9 +85,15 @@ impl Sender {
         {
             // Released before the new one exists, so a size change does not hold two.
             self.staging = None;
-            let staging = self.make_staging(gpu, w, h, format)?;
+            self.staging = Some(self.make_staging(gpu, w, h, format)?);
+            self.described = false;
+        }
+        // The description names the new texture. Until it could be written (another program
+        // held its lock) receivers see the old one, and the next send tries again.
+        if !self.described {
+            let Some(staging) = &self.staging else { return Err("no staging texture".into()) };
             self.registration.update(&description(Some(&staging.shared)))?;
-            self.staging = Some(staging);
+            self.described = true;
         }
         let Some(staging) = &self.staging else { return Err("no staging texture".into()) };
         let mut encoder = gpu

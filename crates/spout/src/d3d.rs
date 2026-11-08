@@ -48,7 +48,7 @@ use windows::Win32::System::Threading::{
 use windows::core::{HSTRING, IUnknown, Interface, PCSTR};
 
 /// How long the lock of a shared memory map is waited for, as Spout waits (4 frames at 60 Hz).
-const MAP_WAIT_MS: u32 = 67;
+pub(crate) const MAP_WAIT_MS: u32 = 67;
 
 fn err(what: &str, e: windows::core::Error) -> String {
     format!("{what}: {}", e.message().trim())
@@ -456,7 +456,12 @@ impl Map {
     /// Runs `f` on the bytes while holding the map's mutex; `None` if another program held it
     /// past [`MAP_WAIT_MS`].
     pub fn with<R>(&self, f: impl FnOnce(&mut [u8]) -> R) -> Option<R> {
-        let _guard = self.mutex.lock(MAP_WAIT_MS)?;
+        self.with_wait(MAP_WAIT_MS, f)
+    }
+
+    /// Like [`Map::with`], waiting at most `wait_ms` for the mutex.
+    pub fn with_wait<R>(&self, wait_ms: u32, f: impl FnOnce(&mut [u8]) -> R) -> Option<R> {
+        let _guard = self.mutex.lock(wait_ms)?;
         // SAFETY: `len` bytes are mapped for the lifetime of `self`; other processes write
         // them only under the same mutex, which is held for the slice's lifetime.
         let bytes = unsafe { std::slice::from_raw_parts_mut(self.view.Value.cast::<u8>(), self.len) };

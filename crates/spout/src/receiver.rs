@@ -6,16 +6,42 @@
 //! texture into a wgpu texture of the same format on wgpu's queue, and a pass converts that into
 //! a `tex` texture.
 
+use std::time::{Duration, Instant};
+
 use penumbra_gpu::{Gpu, TexRing};
 
 use crate::convert::{Alpha, Converter, Direction};
-use crate::d3d::{Interop, NamedMutex, Semaphore, Shared, Side, Wrapped};
+use crate::d3d::{Interop, Map, NamedMutex, Semaphore, Shared, Side, Wrapped};
 use crate::directory;
 use crate::protocol::{Info, format_name, receive_format};
 use crate::{Connected, Received};
 
 /// How long a receive waits for the sender to finish writing a frame.
 const ACCESS_WAIT_MS: u32 = 4;
+/// How long a receive waits for the lock of the sender's description. A sender that holds
+/// it longer (a hung program) leaves the last description in use.
+const INFO_WAIT_MS: u32 = 1;
+/// How long the description's map is kept open before it is opened again. An open handle
+/// keeps a map alive, so only opening it again tells whether the sender ended.
+const REOPEN: Duration = Duration::from_millis(250);
+/// How long the sender found for an empty name is kept before it is looked for again.
+const RESOLVE: Duration = Duration::from_millis(250);
+
+/// The open map of a sender's description.
+struct Described {
+    name: String,
+    map: Map,
+    opened: Instant,
+}
+
+/// Where a sender's description stands.
+enum Description {
+    Read(Box<Info>),
+    /// Another program holds its lock.
+    Busy,
+    /// No such sender.
+    Gone,
+}
 
 struct Connection {
     name: String,
@@ -35,6 +61,9 @@ struct Connection {
 pub struct Receiver {
     interop: Interop,
     connection: Option<Connection>,
+    described: Option<Described>,
+    /// The sender an empty name stands for, and when it was looked for.
+    default: Option<(Option<String>, Instant)>,
     converter: Converter,
     ring: TexRing,
     frames: u64,
@@ -48,7 +77,15 @@ impl Receiver {
 
     pub fn new(gpu: &Gpu) -> Result<Self, String> {
         let interop = Interop::new(gpu.device(), gpu.queue())?;
-        Ok(Self { interop, connection: None, converter: Converter::new(), ring: TexRing::new(), frames: 0 })
+        Ok(Self {
+            interop,
+            connection: None,
+            described: None,
+            default: None,
+            converter: Converter::new(),
+            ring: TexRing::new(),
+            frames: 0,
+        })
     }
 
     pub fn connected(&self) -> Option<Connected> {
@@ -69,19 +106,57 @@ impl Receiver {
 
     pub fn disconnect(&mut self) {
         self.connection = None;
+        self.described = None;
+    }
+
+    /// The sender an empty name stands for, looked for at most every [`RESOLVE`]. Looking
+    /// takes a lock per sender, so it is not done on every frame.
+    fn default_sender(&mut self) -> Option<String> {
+        if let Some((name, at)) = &self.default
+            && at.elapsed() < RESOLVE
+        {
+            return name.clone();
+        }
+        let name = directory::default_sender_within(INFO_WAIT_MS);
+        self.default = Some((name.clone(), Instant::now()));
+        name
+    }
+
+    /// The description of sender `name`, from a map kept open for [`REOPEN`].
+    fn describe(&mut self, name: &str) -> Description {
+        if self.described.as_ref().is_none_or(|d| d.name != name || d.opened.elapsed() >= REOPEN) {
+            // Closed first: a map of a sender that ended vanishes only with the last handle.
+            self.described = None;
+            let Some(map) = Map::open(name) else { return Description::Gone };
+            self.described = Some(Described { name: name.to_string(), map, opened: Instant::now() });
+        }
+        let Some(d) = &self.described else { return Description::Gone };
+        match d.map.with_wait(INFO_WAIT_MS, |b| Info::from_bytes(b)) {
+            Some(Some(info)) => Description::Read(Box::new(info)),
+            Some(None) => Description::Gone,
+            None => Description::Busy,
+        }
     }
 
     /// The next frame of sender `name` (empty: the active sender). `again` copies even when the
     /// sender's frame count has not moved (a changed param wants a new conversion).
     pub fn receive(&mut self, gpu: &Gpu, name: &str, alpha: Alpha, again: bool) -> Result<Received, String> {
         let name = if name.is_empty() {
-            directory::default_sender().ok_or("no Spout sender is running")?
+            self.default_sender().ok_or("no Spout sender is running")?
         } else {
             name.to_string()
         };
-        let Some(info) = directory::info(&name) else {
-            self.connection = None;
-            return Err(format!("no Spout sender named `{name}`"));
+        let info = match self.describe(&name) {
+            Description::Read(info) => *info,
+            Description::Busy => match &self.connection {
+                Some(c) if c.name == name => c.info.clone(),
+                _ => return Ok(Received::Unchanged),
+            },
+            Description::Gone => {
+                self.connection = None;
+                self.described = None;
+                return Err(format!("no Spout sender named `{name}`"));
+            }
         };
         if self.connection.as_ref().is_none_or(|c| c.name != name || c.info != info) {
             self.connection = None;

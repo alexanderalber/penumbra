@@ -132,6 +132,14 @@ fn receives_from_another_device(choice: AdapterChoice) {
         receiver.receive(&gpu, &sender_name, Alpha::Straight, true).unwrap(),
         Received::Frame(_)
     ));
+    // A sender that ends is noticed although the receiver keeps its description open.
+    registration.frame_sent();
+    drop(registration);
+    let start = std::time::Instant::now();
+    while receiver.receive(&gpu, &sender_name, Alpha::Straight, false).is_ok() {
+        assert!(start.elapsed() < std::time::Duration::from_secs(2), "the ended sender is still received");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     assert!(receiver.receive(&gpu, "penumbra test nobody", Alpha::Straight, false).is_err());
 }
 
