@@ -83,6 +83,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 pub const TAGS: &[(&str, &[&str])] = &[
     ("tex.channel_mix", &["reorder"]),
     ("tex.composite", &["over", "add", "multiply", "screen", "subtract", "difference"]),
+    ("tex.dilate", &["grow", "expand", "thicken", "maximum", "morphology"]),
+    ("tex.erode", &["shrink", "thin", "minimum", "morphology"]),
     ("tex.from_chan", &["chop to"]),
     ("tex.hsv", &["hsv adjust"]),
     ("tex.image_file", &["movie file in"]),

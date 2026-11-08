@@ -31,8 +31,15 @@ channel with many samples (a spectrum, a trail) comes out with as many.
 | make steps (whole numbers only) | `floor` | 1 |
 | bend a curve (gentle start, steep end) | `power` | 2 |
 | switch something on for one piece of a show | `equal` | the piece's number |
+| make a swing from an angle that grows (-1 to 1 and back) | `sin` or `cos` | not used |
+| drop the sign (how far from 0, either way) | `abs` | not used |
+| find the direction of a movement (from a speed in x and y) | `atan2` | the x channel, with y in `a` |
 
 For a whole range in one go (0 to 1 into 20 to 80), chain two: `multiply` by 60, then `add` 20.
+
+`sin`, `cos`, `tan` and `abs` work on `a` alone. They ignore `b`, wired or not. Angles are in
+radians, as are the results of `atan2` (-pi to pi). For degrees, `multiply` by 0.0174533
+(pi / 180) before `sin`, or by 57.2958 after `atan2`.
 
 ## Example
 

@@ -139,11 +139,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "Calculates with channels: adds, multiplies or compares two inputs, or one input and a number",
         )
         .param(
-            ParamSpec::choice(
-                "op",
-                &["add", "subtract", "multiply", "divide", "min", "max", "power", "modulo", "floor", "equal"],
-            )
-            .doc("What is done with a and b, sample by sample")
+            ParamSpec::choice("op", &[MATH_BINARY, MATH_UNARY].concat())
+            .doc("What is done with a and b, sample by sample. Angles are in radians: multiply degrees by 0.0174533 (pi / 180) first")
             .choice_doc("add", "a + b")
             .choice_doc("subtract", "a - b")
             .choice_doc("multiply", "a times b: b scales a")
@@ -156,16 +153,22 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .choice_doc(
                 "equal",
                 "1 where a equals b (to within a millionth), else 0: whether the piece channel is 3",
-            ),
+            )
+            .choice_doc("atan2", "the angle of the point x = b, y = a, from -pi to pi: the direction of a tracked movement (a and b both 0 give 0)")
+            .choice_doc("sin", "the sine of a, from -1 to 1: a swing as a goes round (b is not used)")
+            .choice_doc("cos", "the cosine of a, from -1 to 1: the sine a quarter turn ahead (b is not used)")
+            .choice_doc("tan", "the tangent of a; near a quarter turn it grows without bound (b is not used)")
+            .choice_doc("abs", "a without its sign: -3 becomes 3 (b is not used)"),
         )
         .param(
             ParamSpec::float("b", 0.0)
                 .range(-1.0, 1.0)
-                .doc("The b side as a number, used while input b is unconnected"),
+                .doc("The b side as a number, used while input b is unconnected")
+                .applies_when("op", MATH_BINARY),
         )
         .input("a", DataKind::Chan)
         .input("b", DataKind::Chan)
-        .describe_input("b", "Each channel of a meets b's channel of the same name, else b's first channel. Unconnected: the param `b`")
+        .describe_input("b", "Each channel of a meets b's channel of the same name, else b's first channel. Unconnected: the param `b`. Not used by sin, cos, tan and abs")
         .output("out", DataKind::Chan),
         || Box::new(Math) as Box<dyn Operator>,
     ))?;
@@ -751,6 +754,13 @@ pub(crate) fn hash(i: i64, seed: i64) -> u32 {
     (word >> 22) ^ word
 }
 
+/// `chan.math`'s ops that combine a with b.
+const MATH_BINARY: &[&str] =
+    &["add", "subtract", "multiply", "divide", "min", "max", "power", "modulo", "floor", "equal", "atan2"];
+
+/// `chan.math`'s ops that work on a alone; b is not used.
+const MATH_UNARY: &[&str] = &["sin", "cos", "tan", "abs"];
+
 struct Math;
 
 impl Operator for Math {
@@ -768,6 +778,11 @@ impl Operator for Math {
             "modulo" => |a, b| if b == 0.0 { a } else { a.rem_euclid(b) },
             "floor" => |a, b| if b == 0.0 { a } else { (a / b).floor() * b },
             "equal" => |a, b| if equal(a, b) { 1.0 } else { 0.0 },
+            "atan2" => f64::atan2,
+            "sin" => |a, _| a.sin(),
+            "cos" => |a, _| a.cos(),
+            "tan" => |a, _| a.tan(),
+            "abs" => |a, _| a.abs(),
             _ => |a, b| a + b,
         };
         // The layout (names, length, rate) comes from a, else from b.
@@ -1753,6 +1768,47 @@ mod tests {
         assert_eq!(f.value("/m"), 0.0);
         apply(&mut f, &[set("/m.b", 3.0 + 1e-9)]);
         assert_eq!(f.value("/m"), 1.0);
+    }
+
+    #[test]
+    fn math_trig_and_abs() {
+        let mut f = F::new(&[
+            create("/a", "chan.constant"),
+            create("/b", "chan.constant"),
+            create("/m", "chan.math"),
+            connect("/a", "/m", 0),
+        ]);
+        let pi = std::f64::consts::PI;
+        let cases = [
+            ("sin", pi / 6.0, 0.5),
+            ("cos", pi / 3.0, 0.5),
+            ("tan", pi / 4.0, 1.0),
+            ("abs", -3.0, 3.0),
+            ("abs", 2.5, 2.5),
+        ];
+        for (op, a, want) in cases {
+            // b is not used: neither the param nor a wired input changes the result.
+            apply(&mut f, &[set("/m.op", op), set("/a.value0", a), set("/m.b", 7.0)]);
+            assert!((f.value("/m") - want).abs() < 1e-12, "{op}({a}) = {}", f.value("/m"));
+            apply(&mut f, &[connect("/b", "/m", 1), set("/b.value0", -2.0)]);
+            assert!((f.value("/m") - want).abs() < 1e-12, "{op}({a}) with b wired");
+            apply(&mut f, &[Op::Disconnect { to: "/m".parse().unwrap(), input: 1 }]);
+        }
+        // atan2(a, b): a is y, b is x, the angle in radians from -pi to pi.
+        apply(&mut f, &[set("/m.op", "atan2")]);
+        for (y, x, want) in [
+            (1.0, 0.0, pi / 2.0),
+            (0.0, -1.0, pi),
+            (-1.0, -1.0, -0.75 * pi),
+            (1.0, 1.0, pi / 4.0),
+            (0.0, 0.0, 0.0),
+        ] {
+            apply(&mut f, &[set("/a.value0", y), set("/m.b", x)]);
+            assert!((f.value("/m") - want).abs() < 1e-12, "atan2({y}, {x}) = {}", f.value("/m"));
+        }
+        // From a wired b too, channel by channel.
+        apply(&mut f, &[connect("/b", "/m", 1), set("/a.value0", 1.0), set("/b.value0", -1.0)]);
+        assert!((f.value("/m") - 0.75 * pi).abs() < 1e-12);
     }
 
     fn apply(f: &mut F, ops: &[Op]) {

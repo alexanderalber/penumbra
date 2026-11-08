@@ -8,7 +8,7 @@ Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#g
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.render_volume](#texrender_volume), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.dilate](#texdilate), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.erode](#texerode), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.render_volume](#texrender_volume), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
 
 *inputs:* [tex.ndi_in](#texndi_in), [tex.spout_in](#texspout_in), [tex.video_in](#texvideo_in)
 
@@ -228,6 +228,21 @@ Outputs: `out` (tex).
 | `color_spatial` | float | `0.5` | 0 to 1 (soft) | The same for the colour; the eye forgives soft colour more than soft brightness |
 | `reset` *(more)* | bool | `false` |  | Forget the average, while on |
 
+### tex.dilate
+
+Grows the bright parts of a picture: each pixel takes the brightest value around it. Thickens lines, fills small holes in a mask
+
+Inputs:
+
+- `in` (tex)
+
+Outputs: `out` (tex).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `size` | vec2 | `[2, 2]` | 0 to 32 px (soft) | How far bright parts grow, in pixels across and down: each pixel takes the largest value within this distance. 0 on one side leaves that direction as it is; fractions grow the outermost pixel in part |
+| `extend` *(more)* | hold \| zero \| repeat \| mirror | `"hold"` |  | What the dilate reads beyond the input's edges; hold keeps the edges as they are; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
+
 ### tex.displace
 
 Warps a picture by another: each pixel is pushed by the values of a map (ripples, heat haze, flow)
@@ -263,6 +278,21 @@ Outputs: `out` (tex).
 | `distance` | float | `1` | 0.5 to 8 px (soft) | Distance of the neighbours compared; larger finds broader, softer edges |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the edges |
 | `mode` | edges \| alpha \| over | `"edges"` |  | What the edges are drawn on; edges: on opaque black; alpha: on transparent, to lay over something else; over: over the input |
+
+### tex.erode
+
+Shrinks the bright parts of a picture: each pixel takes the darkest value around it. Thins lines, removes specks from a mask
+
+Inputs:
+
+- `in` (tex)
+
+Outputs: `out` (tex).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `size` | vec2 | `[2, 2]` | 0 to 32 px (soft) | How far bright parts shrink, in pixels across and down: each pixel takes the smallest value within this distance. 0 on one side leaves that direction as it is; fractions shrink by the outermost pixel in part |
+| `extend` *(more)* | hold \| zero \| repeat \| mirror | `"hold"` |  | What the erode reads beyond the input's edges; hold keeps shapes that touch the edge from shrinking away from it; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
 ### tex.face_content
 
@@ -1519,14 +1549,14 @@ Calculates with channels: adds, multiplies or compares two inputs, or one input 
 Inputs:
 
 - `a` (chan)
-- `b` (chan): Each channel of a meets b's channel of the same name, else b's first channel. Unconnected: the param `b`
+- `b` (chan): Each channel of a meets b's channel of the same name, else b's first channel. Unconnected: the param `b`. Not used by sin, cos, tan and abs
 
 Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `op` | add \| subtract \| multiply \| divide \| min \| max \| power \| modulo \| floor \| equal | `"add"` |  | What is done with a and b, sample by sample; add: a + b; subtract: a - b; multiply: a times b: b scales a; divide: a divided by b; min: the smaller of a and b: b is a ceiling; max: the larger of a and b: b is a floor; power: a to the power b; modulo: a wrapped into 0 to b (b = 0 leaves a); floor: a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a); equal: 1 where a equals b (to within a millionth), else 0: whether the piece channel is 3 |
-| `b` | float | `0` | -1 to 1 (soft) | The b side as a number, used while input b is unconnected |
+| `op` | add \| subtract \| multiply \| divide \| min \| max \| power \| modulo \| floor \| equal \| atan2 \| sin \| cos \| tan \| abs | `"add"` |  | What is done with a and b, sample by sample. Angles are in radians: multiply degrees by 0.0174533 (pi / 180) first; add: a + b; subtract: a - b; multiply: a times b: b scales a; divide: a divided by b; min: the smaller of a and b: b is a ceiling; max: the larger of a and b: b is a floor; power: a to the power b; modulo: a wrapped into 0 to b (b = 0 leaves a); floor: a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a); equal: 1 where a equals b (to within a millionth), else 0: whether the piece channel is 3; atan2: the angle of the point x = b, y = a, from -pi to pi: the direction of a tracked movement (a and b both 0 give 0); sin: the sine of a, from -1 to 1: a swing as a goes round (b is not used); cos: the cosine of a, from -1 to 1: the sine a quarter turn ahead (b is not used); tan: the tangent of a; near a quarter turn it grows without bound (b is not used); abs: a without its sign: -3 becomes 3 (b is not used) |
+| `b` | float | `0` | -1 to 1 (soft) | The b side as a number, used while input b is unconnected. Does something only with op add, subtract, multiply, divide, min, max, power, modulo, floor, equal or atan2. |
 
 ### chan.merge
 

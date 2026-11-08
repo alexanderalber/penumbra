@@ -1296,6 +1296,82 @@ fn primitive_shapes_cover_their_area() {
 }
 
 #[test]
+fn erode_and_dilate_shrink_and_grow_a_rectangle_by_their_size() {
+    let Some(gpu) = gpu() else { return };
+    // 32 x 16 pixels from (32, 24), its edges on pixel boundaries.
+    let rect = create(
+        "/p",
+        "tex.primitive",
+        &[size()[0].clone(), size()[1].clone(), ("size", Value::Vec2([0.5, 0.25]))],
+    );
+    let lit = |px: &Pixels| px.data.iter().filter(|p| p[3] > 0.5).count();
+    let cases: [(&str, [f64; 2], &str, usize); 6] = [
+        ("tex.erode", [2.0, 3.0], "hold", 28 * 10),
+        ("tex.dilate", [2.0, 3.0], "hold", 36 * 22),
+        ("tex.erode", [0.0, 0.0], "hold", 32 * 16),
+        ("tex.dilate", [4.0, 0.0], "hold", 40 * 16),
+        ("tex.erode", [20.0, 0.0], "hold", 0),
+        ("tex.dilate", [0.0, 1.0], "zero", 32 * 18),
+    ];
+    for (kind, radius, extend, want) in cases {
+        let ops = [
+            rect.clone(),
+            create("/m", kind, &[("size", Value::Vec2(radius)), ("extend", extend.into())]),
+            connect("/p", "/m", 0),
+        ];
+        let mut rig = Rig::new(gpu.clone(), None, &ops);
+        assert_eq!(lit(&rig.pixels("/p")), 32 * 16);
+        let px = rig.pixels("/m");
+        assert_eq!((px.width, px.height), (W as u32, H as u32));
+        assert_eq!(lit(&px), want, "{kind} {radius:?}");
+        assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors());
+    }
+
+    // Dilate, then erode by as much (a closing), gives the rectangle back.
+    let ops = [
+        rect.clone(),
+        create("/d", "tex.dilate", &[("size", Value::Vec2([3.0, 3.0]))]),
+        create("/e", "tex.erode", &[("size", Value::Vec2([3.0, 3.0]))]),
+        connect("/p", "/d", 0),
+        connect("/d", "/e", 0),
+    ];
+    let mut rig = Rig::new(gpu.clone(), None, &ops);
+    let back = rig.pixels("/e");
+    let orig = rig.pixels("/p");
+    let worst = back.data.iter().zip(&orig.data).map(|(a, b)| (a[3] - b[3]).abs()).fold(0.0, f32::max);
+    assert!(worst < 1e-3, "closing differs by {worst}");
+
+    // A fractional size grows the outermost pixel by its fraction.
+    let ops = [
+        rect.clone(),
+        create("/d", "tex.dilate", &[("size", Value::Vec2([1.5, 0.0]))]),
+        connect("/p", "/d", 0),
+    ];
+    let mut rig = Rig::new(gpu.clone(), None, &ops);
+    let px = rig.pixels("/d");
+    let alpha = |x: u32| px.get(x, 32).unwrap()[3];
+    assert!((alpha(31) - 1.0).abs() < 1e-3, "{}", alpha(31));
+    assert!((alpha(30) - 0.5).abs() < 0.02, "{}", alpha(30));
+    assert!(alpha(29) < 1e-3, "{}", alpha(29));
+
+    // A picture filled to its edges: hold keeps it whole, zero eats in from the edges.
+    let full = create(
+        "/f",
+        "tex.constant",
+        &[size()[0].clone(), size()[1].clone(), ("color", Value::Vec4([1.0; 4]))],
+    );
+    for (extend, want) in [("hold", W * H), ("zero", (W - 4) * (H - 4))] {
+        let ops = [
+            full.clone(),
+            create("/m", "tex.erode", &[("size", Value::Vec2([2.0, 2.0])), ("extend", extend.into())]),
+            connect("/f", "/m", 0),
+        ];
+        let mut rig = Rig::new(gpu.clone(), None, &ops);
+        assert_eq!(lit(&rig.pixels("/m")) as i64, want, "{extend}");
+    }
+}
+
+#[test]
 fn text_follows_a_new_size_before_its_raster_is_done() {
     let Some(gpu) = gpu() else { return };
     let ops = [create(

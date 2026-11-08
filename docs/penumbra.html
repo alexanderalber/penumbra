@@ -2097,7 +2097,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>Every built-in node kind with its inputs, outputs and params, by family, and the component ports of all families in a section of their own. A param under a heading such as <i>more</i> sits in that folded section of the param panel. A soft range limits only the slider; typed values outside it are kept.</p>
 <div class="group" id="family-tex">
 <h3>tex</h3>
-<p class="kinds"><a href="#tex.blend_weight">tex.blend_weight</a> <a href="#tex.blob_track">tex.blob_track</a> <a href="#tex.blur">tex.blur</a> <a href="#tex.cache">tex.cache</a> <a href="#tex.channel_mix">tex.channel_mix</a> <a href="#tex.chroma_key">tex.chroma_key</a> <a href="#tex.composite">tex.composite</a> <a href="#tex.constant">tex.constant</a> <a href="#tex.contour">tex.contour</a> <a href="#tex.cross">tex.cross</a> <a href="#tex.denoise">tex.denoise</a> <a href="#tex.displace">tex.displace</a> <a href="#tex.edge">tex.edge</a> <a href="#tex.face_content">tex.face_content</a> <a href="#tex.feedback">tex.feedback</a> <a href="#tex.fit">tex.fit</a> <a href="#tex.flip">tex.flip</a> <a href="#tex.fluid">tex.fluid</a> <a href="#tex.from_chan">tex.from_chan</a> <a href="#tex.hsv">tex.hsv</a> <a href="#tex.image_file">tex.image_file</a> <a href="#tex.layer">tex.layer</a> <a href="#tex.lens_distort">tex.lens_distort</a> <a href="#tex.level">tex.level</a> <a href="#tex.limit">tex.limit</a> <a href="#tex.lookup">tex.lookup</a> <a href="#tex.mapper">tex.mapper</a> <a href="#tex.matte">tex.matte</a> <a href="#tex.monochrome">tex.monochrome</a> <a href="#tex.ndi_in">tex.ndi_in</a> <a href="#tex.noise">tex.noise</a> <a href="#tex.null">tex.null</a> <a href="#tex.optical_flow">tex.optical_flow</a> <a href="#tex.primitive">tex.primitive</a> <a href="#tex.quantize">tex.quantize</a> <a href="#tex.ramp">tex.ramp</a> <a href="#tex.remap">tex.remap</a> <a href="#tex.render">tex.render</a> <a href="#tex.render_volume">tex.render_volume</a> <a href="#tex.resolution">tex.resolution</a> <a href="#tex.scan">tex.scan</a> <a href="#tex.scan_pattern">tex.scan_pattern</a> <a href="#tex.select">tex.select</a> <a href="#tex.sequence">tex.sequence</a> <a href="#tex.shader">tex.shader</a> <a href="#tex.shape_content">tex.shape_content</a> <a href="#tex.shapes">tex.shapes</a> <a href="#tex.slope">tex.slope</a> <a href="#tex.spout_in">tex.spout_in</a> <a href="#tex.switch">tex.switch</a> <a href="#tex.text">tex.text</a> <a href="#tex.threshold">tex.threshold</a> <a href="#tex.tile">tex.tile</a> <a href="#tex.time_machine">tex.time_machine</a> <a href="#tex.transform">tex.transform</a> <a href="#tex.video_file">tex.video_file</a> <a href="#tex.video_in">tex.video_in</a></p>
+<p class="kinds"><a href="#tex.blend_weight">tex.blend_weight</a> <a href="#tex.blob_track">tex.blob_track</a> <a href="#tex.blur">tex.blur</a> <a href="#tex.cache">tex.cache</a> <a href="#tex.channel_mix">tex.channel_mix</a> <a href="#tex.chroma_key">tex.chroma_key</a> <a href="#tex.composite">tex.composite</a> <a href="#tex.constant">tex.constant</a> <a href="#tex.contour">tex.contour</a> <a href="#tex.cross">tex.cross</a> <a href="#tex.denoise">tex.denoise</a> <a href="#tex.dilate">tex.dilate</a> <a href="#tex.displace">tex.displace</a> <a href="#tex.edge">tex.edge</a> <a href="#tex.erode">tex.erode</a> <a href="#tex.face_content">tex.face_content</a> <a href="#tex.feedback">tex.feedback</a> <a href="#tex.fit">tex.fit</a> <a href="#tex.flip">tex.flip</a> <a href="#tex.fluid">tex.fluid</a> <a href="#tex.from_chan">tex.from_chan</a> <a href="#tex.hsv">tex.hsv</a> <a href="#tex.image_file">tex.image_file</a> <a href="#tex.layer">tex.layer</a> <a href="#tex.lens_distort">tex.lens_distort</a> <a href="#tex.level">tex.level</a> <a href="#tex.limit">tex.limit</a> <a href="#tex.lookup">tex.lookup</a> <a href="#tex.mapper">tex.mapper</a> <a href="#tex.matte">tex.matte</a> <a href="#tex.monochrome">tex.monochrome</a> <a href="#tex.ndi_in">tex.ndi_in</a> <a href="#tex.noise">tex.noise</a> <a href="#tex.null">tex.null</a> <a href="#tex.optical_flow">tex.optical_flow</a> <a href="#tex.primitive">tex.primitive</a> <a href="#tex.quantize">tex.quantize</a> <a href="#tex.ramp">tex.ramp</a> <a href="#tex.remap">tex.remap</a> <a href="#tex.render">tex.render</a> <a href="#tex.render_volume">tex.render_volume</a> <a href="#tex.resolution">tex.resolution</a> <a href="#tex.scan">tex.scan</a> <a href="#tex.scan_pattern">tex.scan_pattern</a> <a href="#tex.select">tex.select</a> <a href="#tex.sequence">tex.sequence</a> <a href="#tex.shader">tex.shader</a> <a href="#tex.shape_content">tex.shape_content</a> <a href="#tex.shapes">tex.shapes</a> <a href="#tex.slope">tex.slope</a> <a href="#tex.spout_in">tex.spout_in</a> <a href="#tex.switch">tex.switch</a> <a href="#tex.text">tex.text</a> <a href="#tex.threshold">tex.threshold</a> <a href="#tex.tile">tex.tile</a> <a href="#tex.time_machine">tex.time_machine</a> <a href="#tex.transform">tex.transform</a> <a href="#tex.video_file">tex.video_file</a> <a href="#tex.video_in">tex.video_in</a></p>
 <details class="entry node" id="tex.blend_weight"><summary><code class="name">tex.blend_weight</code><span class="sum">A projector's picture weighted for a blend: all of it by the blend weight, or the small features from one projector only</span></summary>
 <div class="body">
 <p>A projector's picture weighted for a blend: all of it by the blend weight, or the small features from one projector only</p>
@@ -2391,6 +2391,27 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#camera-noise">Camera › Noise</a>, <a href="#camera-motion">Camera › Motion</a></p>
 </div></details>
+<details class="entry node" id="tex.dilate"><summary><code class="name">tex.dilate</code><span class="sum">Grows the bright parts of a picture: each pixel takes the brightest value around it. Thickens lines, fills small holes in a mask</span></summary>
+<div class="body">
+<p>Grows the bright parts of a picture: each pixel takes the brightest value around it. Thickens lines, fills small holes in a mask</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">tex</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">tex</span></li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>size</code></td><td>vec2</td><td><code>[2, 2]</code></td><td>0 to 32 px (soft)</td><td>How far bright parts grow, in pixels across and down: each pixel takes the largest value within this distance. 0 on one side leaves that direction as it is; fractions grow the outermost pixel in part</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>extend</code></td><td>hold | zero | repeat | mirror</td><td><code>&quot;hold&quot;</code></td><td></td><td>What the dilate reads beyond the input's edges; hold keeps the edges as they are<ul><li><code>hold</code>: the edge pixels continue outwards</li><li><code>zero</code>: transparent black</li><li><code>repeat</code>: the input again, tiled</li><li><code>mirror</code>: the input again, mirrored, so the copies meet at the edges</li></ul></td></tr>
+</tbody>
+</table>
+</div></details>
 <details class="entry node" id="tex.displace"><summary><code class="name">tex.displace</code><span class="sum">Warps a picture by another: each pixel is pushed by the values of a map (ripples, heat haze, flow)</span></summary>
 <div class="body">
 <p>Warps a picture by another: each pixel is pushed by the values of a map (ripples, heat haze, flow)</p>
@@ -2436,6 +2457,27 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>distance</code></td><td>float</td><td><code>1</code></td><td>0.5 to 8 px (soft)</td><td>Distance of the neighbours compared; larger finds broader, softer edges</td></tr>
 <tr><td><code>color</code></td><td>colour</td><td><code>[1, 1, 1, 1]</code></td><td></td><td>Colour of the edges</td></tr>
 <tr><td><code>mode</code></td><td>edges | alpha | over</td><td><code>&quot;edges&quot;</code></td><td></td><td>What the edges are drawn on<ul><li><code>edges</code>: on opaque black</li><li><code>alpha</code>: on transparent, to lay over something else</li><li><code>over</code>: over the input</li></ul></td></tr>
+</tbody>
+</table>
+</div></details>
+<details class="entry node" id="tex.erode"><summary><code class="name">tex.erode</code><span class="sum">Shrinks the bright parts of a picture: each pixel takes the darkest value around it. Thins lines, removes specks from a mask</span></summary>
+<div class="body">
+<p>Shrinks the bright parts of a picture: each pixel takes the darkest value around it. Thins lines, removes specks from a mask</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">tex</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">tex</span></li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>size</code></td><td>vec2</td><td><code>[2, 2]</code></td><td>0 to 32 px (soft)</td><td>How far bright parts shrink, in pixels across and down: each pixel takes the smallest value within this distance. 0 on one side leaves that direction as it is; fractions shrink by the outermost pixel in part</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>extend</code></td><td>hold | zero | repeat | mirror</td><td><code>&quot;hold&quot;</code></td><td></td><td>What the erode reads beyond the input's edges; hold keeps shapes that touch the edge from shrinking away from it<ul><li><code>hold</code>: the edge pixels continue outwards</li><li><code>zero</code>: transparent black</li><li><code>repeat</code>: the input again, tiled</li><li><code>mirror</code>: the input again, mirrored, so the copies meet at the edges</li></ul></td></tr>
 </tbody>
 </table>
 </div></details>
@@ -4153,7 +4195,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h4>Inputs</h4>
 <ul>
 <li><code>a</code> <span class="kind">chan</span></li>
-<li><code>b</code> <span class="kind">chan</span>: Each channel of a meets b's channel of the same name, else b's first channel. Unconnected: the param <code>b</code></li>
+<li><code>b</code> <span class="kind">chan</span>: Each channel of a meets b's channel of the same name, else b's first channel. Unconnected: the param <code>b</code>. Not used by sin, cos, tan and abs</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -4163,7 +4205,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>op</code></td><td>add | subtract | multiply | divide | min | max | power | modulo | floor | equal</td><td><code>&quot;add&quot;</code></td><td></td><td>What is done with a and b, sample by sample<ul><li><code>add</code>: a + b</li><li><code>subtract</code>: a - b</li><li><code>multiply</code>: a times b: b scales a</li><li><code>divide</code>: a divided by b</li><li><code>min</code>: the smaller of a and b: b is a ceiling</li><li><code>max</code>: the larger of a and b: b is a floor</li><li><code>power</code>: a to the power b</li><li><code>modulo</code>: a wrapped into 0 to b (b = 0 leaves a)</li><li><code>floor</code>: a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a)</li><li><code>equal</code>: 1 where a equals b (to within a millionth), else 0: whether the piece channel is 3</li></ul></td></tr>
+<tr><td><code>op</code></td><td>add | subtract | multiply | divide | min | max | power | modulo | floor | equal | atan2 | sin | cos | tan | abs</td><td><code>&quot;add&quot;</code></td><td></td><td>What is done with a and b, sample by sample. Angles are in radians: multiply degrees by 0.0174533 (pi / 180) first<ul><li><code>add</code>: a + b</li><li><code>subtract</code>: a - b</li><li><code>multiply</code>: a times b: b scales a</li><li><code>divide</code>: a divided by b</li><li><code>min</code>: the smaller of a and b: b is a ceiling</li><li><code>max</code>: the larger of a and b: b is a floor</li><li><code>power</code>: a to the power b</li><li><code>modulo</code>: a wrapped into 0 to b (b = 0 leaves a)</li><li><code>floor</code>: a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a)</li><li><code>equal</code>: 1 where a equals b (to within a millionth), else 0: whether the piece channel is 3</li><li><code>atan2</code>: the angle of the point x = b, y = a, from -pi to pi: the direction of a tracked movement (a and b both 0 give 0)</li><li><code>sin</code>: the sine of a, from -1 to 1: a swing as a goes round (b is not used)</li><li><code>cos</code>: the cosine of a, from -1 to 1: the sine a quarter turn ahead (b is not used)</li><li><code>tan</code>: the tangent of a; near a quarter turn it grows without bound (b is not used)</li><li><code>abs</code>: a without its sign: -3 becomes 3 (b is not used)</li></ul></td></tr>
 <tr><td><code>b</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>The b side as a number, used while input b is unconnected</td></tr>
 </tbody>
 </table>
@@ -4191,9 +4233,13 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td>make steps (whole numbers only)</td><td><code>floor</code></td><td>1</td></tr>
 <tr><td>bend a curve (gentle start, steep end)</td><td><code>power</code></td><td>2</td></tr>
 <tr><td>switch something on for one piece of a show</td><td><code>equal</code></td><td>the piece's number</td></tr>
+<tr><td>make a swing from an angle that grows (-1 to 1 and back)</td><td><code>sin</code> or <code>cos</code></td><td>not used</td></tr>
+<tr><td>drop the sign (how far from 0, either way)</td><td><code>abs</code></td><td>not used</td></tr>
+<tr><td>find the direction of a movement (from a speed in x and y)</td><td><code>atan2</code></td><td>the x channel, with y in <code>a</code></td></tr>
 </tbody>
 </table>
 <p>For a whole range in one go (0 to 1 into 20 to 80), chain two: <code>multiply</code> by 60, then <code>add</code> 20.</p>
+<p><code>sin</code>, <code>cos</code>, <code>tan</code> and <code>abs</code> work on <code>a</code> alone. They ignore <code>b</code>, wired or not. Angles are in radians, as are the results of <code>atan2</code> (-pi to pi). For degrees, <code>multiply</code> by 0.0174533 (pi / 180) before <code>sin</code>, or by 57.2958 after <code>atan2</code>.</p>
 <h5 id="chan.math-example">Example</h5>
 <p>A rotation that follows the music: a <a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> level into <a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>op</code> <code>multiply</code> and <code>b</code> 90, and bind a <a class="ref" href="#tex.transform"><code>tex.transform</code></a>'s <code>rotate</code> to the output. Loud passages turn the picture by up to 90 degrees.</p>
 </div>
