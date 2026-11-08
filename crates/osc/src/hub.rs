@@ -58,6 +58,8 @@ pub const BUSY: Duration = Duration::from_millis(1500);
 const RECV_TIMEOUT: Duration = Duration::from_millis(100);
 /// How often a listener retries a port it could not bind.
 const RETRY: Duration = Duration::from_secs(1);
+/// Receive errors in a row after which the socket is opened again.
+const MAX_FAILURES: u32 = 64;
 
 /// Settings for all listeners. Not stored: every start has the defaults (`osc.config`).
 #[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
@@ -860,6 +862,8 @@ fn bind(want: Want) -> std::io::Result<UdpSocket> {
 fn listen(inner: &Weak<Inner>, l: &Arc<Listener>) {
     let mut socket: Option<(UdpSocket, bool)> = None;
     let mut retry_at: Option<Instant> = None;
+    // Receive errors in a row, with no packet or timeout between them.
+    let mut failures = 0u32;
     let mut buf = vec![0u8; 65_536];
     // Ends when told to, and when the hub itself is gone (a cooker dropped without shutdown).
     while !l.stop.load(Ordering::Acquire) && inner.strong_count() > 0 {
@@ -910,13 +914,16 @@ fn listen(inner: &Weak<Inner>, l: &Arc<Listener>) {
         };
         match sock.recv_from(&mut buf) {
             Ok((n, from)) => {
+                failures = 0;
                 let Some(inner) = inner.upgrade() else { return };
                 let data = buf.get(..n).unwrap_or(&[]);
                 if catch(|| receive(&inner, l, want, data, from)).is_err() {
                     log::error!("OSC: handling a packet panicked; dropped");
                 }
             }
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                failures = 0;
+            }
             Err(e) => {
                 // A datagram larger than the buffer (WSAEMSGSIZE on Windows) or an ICMP error
                 // reported on the socket: count it and go on.
@@ -926,6 +933,22 @@ fn listen(inner: &Weak<Inner>, l: &Arc<Listener>) {
                 } else {
                     st.malformed += 1;
                     st.last_malformed = Some(e.to_string());
+                }
+                // An error that comes back at once, receive after receive, is the socket's
+                // own: it would spin this thread. The socket is opened again after RETRY.
+                failures += 1;
+                if failures >= MAX_FAILURES {
+                    let msg = format!("receiving failed: {e}; listening again in a moment");
+                    log::warn!("OSC: {msg}");
+                    st.bound = None;
+                    st.error = Some(msg);
+                    drop(st);
+                    failures = 0;
+                    socket = None;
+                    retry_at = Some(Instant::now() + RETRY);
+                    if let Some(inner) = inner.upgrade() {
+                        wake(&inner, want.port);
+                    }
                 }
             }
         }
