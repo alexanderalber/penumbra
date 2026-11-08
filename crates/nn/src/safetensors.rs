@@ -41,6 +41,9 @@ pub struct SafeTensors {
     metadata: BTreeMap<String, String>,
 }
 
+/// How many times over the tensors of a file may read its data bytes in all.
+const MAX_ALIASING: usize = 4;
+
 fn bad<T>(msg: impl Into<String>) -> Result<T> {
     Err(Error::Format(msg.into()))
 }
@@ -108,6 +111,10 @@ impl SafeTensors {
         };
         let mut out = SafeTensors::default();
         let mut codes = BTreeMap::new();
+        // Entries may name the same bytes; a file of a few that all span the whole data would
+        // otherwise make a copy each, without bound.
+        let most = data.len().saturating_mul(MAX_ALIASING);
+        let mut taken = 0usize;
         for (name, entry) in entries {
             if name == "__metadata__" {
                 let Some(meta) = entry.as_object() else {
@@ -122,6 +129,13 @@ impl SafeTensors {
                 continue;
             }
             let (dtype, shape, bytes) = parse_entry(name, entry, data)?;
+            taken = taken.saturating_add(bytes.len());
+            if taken > most {
+                return bad(format!(
+                    "the tensors name more than {MAX_ALIASING} times the {} data bytes: they overlap",
+                    data.len()
+                ));
+            }
             match dtype {
                 Dtype::F32 => {
                     let (words, _) = bytes.as_chunks::<4>();
@@ -410,6 +424,18 @@ mod tests {
         assert_eq!(st.metadata().get("model").map(String::as_str), Some("x"));
         assert!(st.get("c").is_err());
         assert!(st.get_shaped("a", &[4]).is_err());
+    }
+
+    #[test]
+    fn tensors_that_all_name_the_same_bytes_are_refused() {
+        let entry = |k: usize| format!(r#""t{k}":{{"dtype":"F32","shape":[4],"data_offsets":[0,16]}}"#);
+        let some: Vec<String> = (0..4).map(entry).collect();
+        let st = SafeTensors::parse(&file(&format!("{{{}}}", some.join(",")), &floats(&[1.0; 4]))).unwrap();
+        assert_eq!(st.get("t3").unwrap().data(), &[1.0; 4], "a few shared ranges are read");
+        let many: Vec<String> = (0..5).map(entry).collect();
+        let e =
+            SafeTensors::parse(&file(&format!("{{{}}}", many.join(",")), &floats(&[1.0; 4]))).unwrap_err();
+        assert!(e.to_string().contains("overlap"), "{e}");
     }
 
     #[test]
