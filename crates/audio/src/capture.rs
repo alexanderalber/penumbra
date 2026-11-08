@@ -168,6 +168,9 @@ impl Ring {
         self.total = 0;
         self.generation += 1;
         self.peak = vec![0.0; channels];
+        // Pushes evict before they append, so the device callback never grows the queue.
+        let cap = self.cap();
+        self.data.reserve(cap);
     }
 
     fn cap(&self) -> usize {
@@ -175,8 +178,11 @@ impl Ring {
         ((f64::from(self.rate) * RING_SECONDS) as usize).max(1) * self.channels.max(1)
     }
 
-    fn push(&mut self, samples: impl Iterator<Item = f32>) {
+    fn push(&mut self, samples: &[f32]) {
         let channels = self.channels.max(1);
+        let cap = self.cap();
+        let excess = (self.data.len() + samples.len()).saturating_sub(cap).min(self.data.len());
+        self.data.drain(..excess);
         let now = Instant::now();
         let fall =
             self.last_meter.map_or(1.0, |t| METER_FALL.powf(now.saturating_duration_since(t).as_secs_f32()));
@@ -185,7 +191,7 @@ impl Ring {
             *p *= fall;
         }
         let mut n = 0usize;
-        for (i, s) in samples.enumerate() {
+        for (i, &s) in samples.iter().enumerate() {
             let s = if s.is_finite() { s } else { 0.0 };
             if let Some(p) = self.peak.get_mut(i % channels) {
                 *p = p.max(s.abs());
@@ -193,7 +199,7 @@ impl Ring {
             self.data.push_back(s);
             n += 1;
         }
-        let cap = self.cap();
+        // Only a single block longer than the ring gets here.
         while self.data.len() > cap {
             self.data.pop_front();
         }
@@ -291,14 +297,27 @@ impl Drop for Watch {
 }
 
 fn wake(inner: &Inner, key: &str) {
-    let watches: Vec<Wake> = lock(&inner.watches)
-        .iter()
-        .filter(|(k, _, pending, _)| k == key && !pending.swap(true, Ordering::AcqRel))
-        .map(|(_, _, _, w)| w.clone())
-        .collect();
-    for w in watches {
+    wake_with(inner, key, &mut Vec::new());
+}
+
+/// Watchers a device callback's scratch holds before it has to grow.
+const WAKE_SCRATCH: usize = 16;
+
+/// Calls the watchers of `key` that have no callback pending. They are collected into
+/// `scratch` and called after the lock is released, so a callback may drop its own watch.
+/// A scratch with room never allocates.
+fn wake_with(inner: &Inner, key: &str, scratch: &mut Vec<Wake>) {
+    scratch.clear();
+    scratch.extend(
+        lock(&inner.watches)
+            .iter()
+            .filter(|(k, _, pending, _)| k == key && !pending.swap(true, Ordering::AcqRel))
+            .map(|(_, _, _, w)| w.clone()),
+    );
+    for w in scratch.iter() {
         w();
     }
+    scratch.clear();
 }
 
 impl Hub {
@@ -472,7 +491,7 @@ impl Hub {
                 st.open = true;
                 st.opens += 1;
             }
-            ring.push(samples.iter().copied());
+            ring.push(samples);
         }
         {
             let mut st = lock(&s.status);
@@ -632,6 +651,7 @@ fn open(inner: &Weak<Inner>, s: &Arc<Stream>) -> Result<cpal::Stream, String> {
     let data_stream = s.clone();
     let data_inner = inner.clone();
     let mut scratch: Vec<f32> = Vec::new();
+    let mut wakes: Vec<Wake> = Vec::with_capacity(WAKE_SCRATCH);
     let on_data = move |data: &cpal::Data, info: &cpal::InputCallbackInfo| {
         // A panic must not unwind into the system's audio thread.
         let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -641,7 +661,7 @@ fn open(inner: &Weak<Inner>, s: &Arc<Stream>) -> Result<cpal::Stream, String> {
                     Some(format!("samples in an unexpected format ({})", data.sample_format()));
                 return;
             }
-            lock(&data_stream.ring).push(scratch.iter().copied());
+            lock(&data_stream.ring).push(&scratch);
             {
                 let mut st = lock(&data_stream.status);
                 st.frames += (scratch.len() / channels) as u64;
@@ -653,7 +673,7 @@ fn open(inner: &Weak<Inner>, s: &Arc<Stream>) -> Result<cpal::Stream, String> {
             }
             data_stream.mark_data();
             if let Some(i) = data_inner.upgrade() {
-                wake(&i, &data_stream.key);
+                wake_with(&i, &data_stream.key, &mut wakes);
             }
         }));
     };
@@ -780,5 +800,42 @@ mod tests {
         assert!((st.peak_db[0] - 0.0).abs() < 0.1, "{:?}", st.peak_db);
         assert_eq!(st.peak_db[1], -120.0);
         assert!(st.fed && st.open);
+    }
+
+    #[test]
+    fn a_full_ring_takes_blocks_without_growing() {
+        let mut ring = Ring::default();
+        ring.reset(48_000, 2);
+        let room = ring.data.capacity();
+        assert!(room >= ring.cap());
+        let block = vec![0.25f32; 512 * 2];
+        for _ in 0..400 {
+            ring.push(&block);
+        }
+        assert_eq!(ring.data.len(), ring.cap());
+        assert_eq!(ring.data.capacity(), room, "the ring grew while full");
+        assert_eq!(ring.total, 400 * 512);
+    }
+
+    #[test]
+    fn waking_from_a_scratch_with_room_keeps_it_and_frees_the_callbacks() {
+        let hub = Hub::new();
+        let hits = Arc::new(AtomicU64::new(0));
+        let h = hits.clone();
+        let watch = hub.watch(
+            "w",
+            Arc::new(move || {
+                h.fetch_add(1, Ordering::AcqRel);
+            }),
+        );
+        let mut scratch: Vec<Wake> = Vec::with_capacity(WAKE_SCRATCH);
+        let room = scratch.capacity();
+        wake_with(&hub.inner, "w", &mut scratch);
+        // Pending until acknowledged: the second wake calls nothing.
+        wake_with(&hub.inner, "w", &mut scratch);
+        watch.ack();
+        wake_with(&hub.inner, "w", &mut scratch);
+        assert_eq!(hits.load(Ordering::Acquire), 2);
+        assert!(scratch.is_empty() && scratch.capacity() == room);
     }
 }

@@ -556,6 +556,14 @@ impl Source {
         if learning {
             self.rate = spec.rate;
             self.channels = have;
+        } else if spec.rate != self.rate {
+            // Everything after would play at the wrong speed and its times would not match.
+            log::warn!(
+                "sound file: the sample rate changes from {} to {} Hz; the rest counts as the end",
+                self.rate,
+                spec.rate
+            );
+            return Ok(Next::End);
         }
         let frames = decoded.frames();
         if have == 0 || frames == 0 {

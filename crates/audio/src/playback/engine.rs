@@ -3,7 +3,8 @@
 //! [`Engine::pull`].
 //!
 //! - **Ring:** source frames, interleaved, preallocated when the source format changes (on the
-//!   producer's side, never in the device callback). The first [`MIRROR`] frames are mirrored
+//!   producer's side, never in the device callback). It is sized for the longest latency
+//!   target, so a new target never reallocates it. The first [`MIRROR`] frames are mirrored
 //!   past the end, so the resampler's window is always one contiguous slice.
 //! - **Resampler:** the [`Kernel`] of [`crate::resample`] (windowed sinc, cut off at half the
 //!   lower of the two rates, 64 taps or more when the rate falls), read straight from the ring:
@@ -46,7 +47,7 @@ const KI: f64 = 0.0025;
 /// Time constant of the fill's smoothing, seconds. The fill is a sawtooth (a block arrives per
 /// show frame, late by a jitter, the device takes its own blocks); the loop sees its mean.
 const SMOOTH_SECONDS: f64 = 4.0;
-/// The ring holds this much beyond three times the target, seconds.
+/// The ring holds this much beyond three times the longest target, seconds.
 const RING_SECONDS: f64 = 1.0;
 /// Latency targets accepted, milliseconds.
 pub const MIN_LATENCY_MS: f64 = 5.0;
@@ -204,28 +205,16 @@ impl Engine {
         self.settings
     }
 
-    /// A new target takes effect at once; the drift loop moves the fill there.
+    /// A new target takes effect at once and the sound goes on: the drift loop moves the fill
+    /// there. A fill far beyond a lower target fades out, drops down to it and fades in, without
+    /// counting an overrun.
     pub fn set_settings(&mut self, settings: Settings) {
         self.settings = settings;
-        let cap = self.capacity_for(self.rate);
-        if self.rate != 0 && self.channels != 0 && cap != self.cap {
-            // Keeps the newest frames that fit; the output fades in again.
-            let keep = self.len.min(cap);
-            let mut ring = vec![0.0; (cap + MIRROR) * self.channels];
-            let ch = self.channels;
-            for i in 0..keep {
-                let from = (self.head + self.len - keep + i) % self.cap.max(1);
-                for c in 0..ch {
-                    let v = self.ring.get(from * ch + c).copied().unwrap_or(0.0);
-                    write(&mut ring, cap, ch, i, c, v);
-                }
-            }
-            self.dropped += (self.len - keep) as u64;
-            self.ring = ring;
-            self.cap = cap;
-            self.head = 0;
-            self.len = keep;
-            self.silence();
+        if self.rate != 0
+            && matches!(self.state, State::Playing | State::FadingIn)
+            && self.fill_frames() > self.high_frames()
+        {
+            self.state = State::Dropping;
         }
     }
 
@@ -290,8 +279,9 @@ impl Engine {
         self.smoothed = None;
     }
 
-    fn capacity_for(&self, rate: u32) -> usize {
-        let seconds = RING_SECONDS + 3.0 * self.settings.latency_seconds();
+    /// Frames the ring holds at `rate`, enough for the longest target.
+    fn capacity_for(rate: u32) -> usize {
+        let seconds = RING_SECONDS + 3.0 * MAX_LATENCY_MS / 1000.0;
         // `as`: a positive count of frames, well inside `usize`.
         ((f64::from(rate) * seconds).ceil() as usize).max(MIRROR * 2)
     }
@@ -309,6 +299,12 @@ impl Engine {
 
     fn target_frames(&self) -> f64 {
         f64::from(self.rate) * self.settings.latency_seconds()
+    }
+
+    /// A smoothed fill beyond this is an overrun: twice the target, at least 50 ms beyond it.
+    fn high_frames(&self) -> f64 {
+        let target = self.target_frames();
+        target + target.max(0.05 * f64::from(self.rate))
     }
 
     /// Queued frames ahead of what plays now (the play point sits in the window's middle).
@@ -346,7 +342,7 @@ impl Engine {
         if rate != self.rate || channels != self.channels {
             self.rate = rate;
             self.channels = channels;
-            self.cap = self.capacity_for(rate);
+            self.cap = Self::capacity_for(rate);
             self.ring = vec![0.0; (self.cap + MIRROR) * channels];
             self.head = 0;
             self.len = 0;
@@ -533,9 +529,7 @@ impl Engine {
         let error = (smoothed - self.target_frames()) / f64::from(self.rate);
         self.integral = (self.integral + KI * error * dt).clamp(-MAX_CORRECTION, MAX_CORRECTION);
         self.correction = (KP * error + self.integral).clamp(-MAX_CORRECTION, MAX_CORRECTION);
-        let target = self.target_frames();
-        let high = target + target.max(0.05 * f64::from(self.rate));
-        if fill > high {
+        if fill > self.high_frames() {
             self.state = State::Dropping;
             self.overruns += 1;
         }

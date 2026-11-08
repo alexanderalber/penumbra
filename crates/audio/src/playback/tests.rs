@@ -347,6 +347,52 @@ fn a_big_block_after_a_stall_is_cut_to_the_target() {
 }
 
 #[test]
+fn a_new_latency_keeps_the_sound_going() {
+    let mut sim = Sim::new(48_000, 48_000, 0.0);
+    let mut probe = Probe::default();
+    sim.run(20.0, |_, block, _| probe.feed(block, false));
+    let silent_before = probe.longest_zeros;
+    // A longer target: the drift loop slows the device side down until the fill gets there.
+    sim.engine.set_settings(Settings { latency_ms: 70.0, ..Settings::default() });
+    let mut states = Vec::new();
+    // `run` goes up to a time since the start, not for a time.
+    sim.run(200.0, |_, block, st| {
+        probe.feed(block, false);
+        states.push(st.state);
+    });
+    let st = sim.engine.status();
+    assert!(states.iter().all(|s| *s == State::Playing), "{st:?}");
+    assert_eq!((st.underruns, st.overruns), (0, 0), "{st:?}");
+    assert!(st.fill_ms > 60.0, "{st:?}");
+    // Back to a shorter one.
+    sim.engine.set_settings(Settings::default());
+    sim.run(380.0, |_, block, _| probe.feed(block, false));
+    let st = sim.engine.status();
+    assert_eq!((st.underruns, st.overruns), (0, 0), "{st:?}");
+    assert_eq!(st.state, State::Playing);
+    assert!(st.fill_ms < 60.0, "{st:?}");
+    assert_eq!(probe.longest_zeros, silent_before, "the sound stopped");
+    assert!(probe.max_step < max_step(sim.freq, 48_000) * 1.05, "{}", probe.max_step);
+}
+
+#[test]
+fn a_much_lower_latency_fades_down_to_it_without_an_overrun() {
+    let mut sim = Sim::new(48_000, 48_000, 0.0);
+    sim.engine.set_settings(Settings { latency_ms: 500.0, ..Settings::default() });
+    sim.run(10.0, |_, _, _| {});
+    assert_eq!(sim.engine.status().state, State::Playing);
+    sim.engine.set_settings(Settings::default());
+    let mut probe = Probe::default();
+    sim.run(20.0, |_, block, _| probe.feed(block, false));
+    let st = sim.engine.status();
+    assert_eq!((st.underruns, st.overruns), (0, 0), "{st:?}");
+    assert_eq!(st.state, State::Playing, "{st:?}");
+    assert!((st.fill_ms - 50.0).abs() < 10.0, "{st:?}");
+    assert!(st.dropped_frames > 48_000 / 4, "{st:?}");
+    assert!(probe.max_step < max_step(sim.freq, 48_000) * 1.05, "{}", probe.max_step);
+}
+
+#[test]
 fn the_first_samples_wait_for_the_target_and_fade_in() {
     let mut e = Engine::new(Settings { latency_ms: 20.0, ..Settings::default() });
     e.set_device(48_000, 1);
@@ -473,7 +519,8 @@ fn hostile_input_is_refused_or_silenced() {
     let huge = vec![0.1f32; 48_000 * 10];
     e.push(48_000, &[&huge]).unwrap();
     let st = e.status();
-    assert!(st.dropped_frames > 0 && st.fill_now_ms < 2000.0, "{st:?}");
+    let ring_ms = (1.0 + 3.0 * MAX_LATENCY_MS / 1000.0) * 1000.0;
+    assert!(st.dropped_frames > 0 && st.fill_now_ms <= ring_ms, "{st:?}");
     // Odd settings.
     for ms in [f64::NAN, -5.0, 0.0, 1e12, f64::INFINITY] {
         e.set_settings(Settings { latency_ms: ms, ..Settings::default() });
