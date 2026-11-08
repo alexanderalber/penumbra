@@ -416,3 +416,37 @@ fn encoder_speed_at_1440p() {
         }
     }
 }
+
+/// Planes whose readback panics.
+struct Panics;
+
+impl Planes for Panics {
+    fn read(
+        &mut self,
+        _timeout: Duration,
+        _f: &mut dyn FnMut(&[u8]) -> Result<(), String>,
+    ) -> Result<(), String> {
+        panic!("a readback went wrong")
+    }
+}
+
+#[test]
+fn a_panic_while_recording_still_finishes_the_file() {
+    let dir = scratch("panic");
+    let hub = Hub::new();
+    let node = NodeId(1);
+    let path = dir.join("panic.mov");
+    let rec = hub.start(node, settings(&path, Codec::Prores422, 32, 32)).unwrap();
+    let layout = rec.layout();
+    for k in 0..2 {
+        assert!(rec.push(Frame { index: k, planes: Box::new(Bytes(flat(&layout, 100, 128, 128))) }).is_ok());
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(rec.push(Frame { index: 2, planes: Box::new(Panics) }).is_ok());
+    let s = wait_done(&hub, node);
+    assert!(s.error.as_deref().is_some_and(|e| e.contains("unexpectedly")), "{s:?}");
+    assert_eq!(s.frames, 2, "{s:?}");
+    drop(rec);
+    let d = penumbra_video::open(&path, &Limits::default()).unwrap();
+    assert_eq!(d.info().frames, 2, "{:?}", d.info());
+}

@@ -388,39 +388,11 @@ fn record(
         st.encoder = encoder.to_string();
         st.encoder_note = note;
     });
-    let mut last_index = -1i64;
-    let mut busy: Option<f64> = None;
-    let mut failure: Option<String> = None;
-    loop {
-        drain_audio(&mut sink, audio, shared);
-        let mut frame = match rx.recv_timeout(NAP) {
-            Ok(f) => f,
-            Err(RecvTimeoutError::Timeout) if !shared.stop.load(Ordering::Acquire) => continue,
-            Err(_) => break,
-        };
-        shared.queued.fetch_sub(1, Ordering::AcqRel);
-        if frame.index <= last_index {
-            continue;
-        }
-        last_index = frame.index;
-        let took = match sink.encode(frame.index, frame.planes.as_mut(), planes_timeout) {
-            Ok(t) => t,
-            Err(e) => {
-                failure = Some(e);
-                break;
-            }
-        };
-        drop(frame);
-        busy = Some(busy.map_or(took, |b| 0.9 * b + 0.1 * took));
-        let seconds = (last_index + 1) as f64 / s.fps.as_f64();
-        let (frames, bytes) = (sink.frames(), sink.bytes());
-        shared.update(|st| {
-            st.frames = frames;
-            st.bytes = bytes;
-            st.seconds = seconds;
-            st.encoder_fps = busy.filter(|b| *b > 0.0).map_or(0.0, |b| 1.0 / b);
-        });
-    }
+    // A panic while frames go in (the muxer, a readback, the sound track) still finishes the
+    // file with what was written: without its index a movie file plays nowhere.
+    let failure =
+        catch_unwind(AssertUnwindSafe(|| take_frames(s, rx, audio, shared, planes_timeout, &mut sink)))
+            .unwrap_or_else(|_| Some("the recording failed unexpectedly".to_string()));
     shared.update(|st| {
         st.recording = false;
         st.finishing = true;
@@ -446,6 +418,47 @@ fn record(
         }
     });
     closed.result
+}
+
+/// Encodes the frames handed over until the recording stops; says why it stopped early.
+fn take_frames(
+    s: &Settings,
+    rx: &Receiver<Frame>,
+    audio: &Receiver<AudioBlock>,
+    shared: &Shared,
+    planes_timeout: Duration,
+    sink: &mut Sink,
+) -> Option<String> {
+    let mut last_index = -1i64;
+    let mut busy: Option<f64> = None;
+    loop {
+        drain_audio(sink, audio, shared);
+        let mut frame = match rx.recv_timeout(NAP) {
+            Ok(f) => f,
+            Err(RecvTimeoutError::Timeout) if !shared.stop.load(Ordering::Acquire) => continue,
+            Err(_) => break,
+        };
+        shared.queued.fetch_sub(1, Ordering::AcqRel);
+        if frame.index <= last_index {
+            continue;
+        }
+        last_index = frame.index;
+        let took = match sink.encode(frame.index, frame.planes.as_mut(), planes_timeout) {
+            Ok(t) => t,
+            Err(e) => return Some(e),
+        };
+        drop(frame);
+        busy = Some(busy.map_or(took, |b| 0.9 * b + 0.1 * took));
+        let seconds = (last_index + 1) as f64 / s.fps.as_f64();
+        let (frames, bytes) = (sink.frames(), sink.bytes());
+        shared.update(|st| {
+            st.frames = frames;
+            st.bytes = bytes;
+            st.seconds = seconds;
+            st.encoder_fps = busy.filter(|b| *b > 0.0).map_or(0.0, |b| 1.0 / b);
+        });
+    }
+    None
 }
 
 /// A movie file written frame after frame on the caller's thread. The recording thread uses
