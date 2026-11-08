@@ -103,6 +103,10 @@ pub struct Planes {
     pub cr: Vec<u8>,
 }
 
+/// Largest width or height of a frame that is read. A device that reports more is broken, and
+/// its planes would take gigabytes.
+pub const MAX_SIDE: u32 = 16384;
+
 /// Rearranges a device buffer into planes. `stride` is the byte distance between luma rows (at
 /// least the format's row size). Refuses buffers that are too short instead of reading past
 /// them.
@@ -116,11 +120,24 @@ pub fn rearrange(
     if width == 0 || height == 0 {
         return Err("an empty frame".into());
     }
+    if width > MAX_SIDE || height > MAX_SIDE {
+        return Err(format!("a {width}x{height} frame is larger than {MAX_SIDE} on a side"));
+    }
     let row = format.min_stride(width);
     if stride < row {
         return Err(format!("a stride of {stride} bytes is less than a row of {row}"));
     }
     let (w, h) = (width as usize, height as usize);
+    // Every format has at least its luma rows: a buffer shorter than that is refused before
+    // the planes are allocated.
+    let least = stride.saturating_mul(h - 1).saturating_add(row);
+    if !matches!(format, PixelFormat::Other) && data.len() < least {
+        return Err(format!(
+            "{} bytes, a {width}x{height} {} frame needs {least}",
+            data.len(),
+            format.name()
+        ));
+    }
     let (sx, sy) = format.shift();
     let (cw, ch) = (w.div_ceil(1 << sx), h.div_ceil(1 << sy));
     let short = |need: usize| {
@@ -197,6 +214,15 @@ pub fn rearrange(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bogus_mode_is_refused_before_anything_is_allocated() {
+        // A device that claims 65535 x 65535 would ask for gigabytes of planes.
+        let e = rearrange(PixelFormat::Nv12, 65535, 65535, 65535, &[0; 64]).unwrap_err();
+        assert!(e.contains("larger than"), "{e}");
+        let e = rearrange(PixelFormat::Yuy2, 16000, 16000, 32000, &[0; 64]).unwrap_err();
+        assert!(e.contains("needs"), "{e}");
+    }
 
     #[test]
     fn nv12_splits_its_chroma() {

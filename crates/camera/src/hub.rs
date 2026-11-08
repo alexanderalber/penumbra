@@ -32,6 +32,16 @@ const SHUTDOWN_WAIT: Duration = Duration::from_secs(1);
 const TICK: Duration = Duration::from_millis(50);
 /// The window the frame rate is measured over.
 const RATE_WINDOW: Duration = Duration::from_secs(2);
+/// A camera that has sent no frame for this long, or for four of its frame intervals if
+/// those are longer, has stopped: the status says so, and the stream opens it again where
+/// the camera still answers.
+pub const STALL: Duration = Duration::from_secs(5);
+
+/// When an open camera at `fps` counts as stopped.
+fn stall_after(fps: f64) -> Duration {
+    let frames = if fps > 0.0 { Duration::try_from_secs_f64(4.0 / fps).unwrap_or(STALL) } else { STALL };
+    STALL.max(frames)
+}
 
 /// What a node asks for: a camera by part of its name (empty: the first) and a mode text
 /// (see [`Wanted::parse`]; empty: the largest, fastest).
@@ -429,7 +439,17 @@ fn status_of(s: &Stream) -> StreamStatus {
     };
     st.delay_ms = m.delay;
     st.copy_ms = m.copy;
-    st.since_frame_ms = m.arrivals.back().map(|t| now.saturating_duration_since(*t).as_secs_f64() * 1000.0);
+    let since = m.arrivals.back().map(|t| now.saturating_duration_since(*t));
+    st.since_frame_ms = since.map(|d| d.as_secs_f64() * 1000.0);
+    // A camera whose read never comes back cannot report itself; the status does.
+    if let Some(since) = since
+        && st.open
+        && !st.fed
+        && st.error.is_none()
+        && since > STALL
+    {
+        st.error = Some(format!("the camera has sent no frame for {:.0} s", since.as_secs_f64()));
+    }
     st
 }
 
@@ -484,9 +504,12 @@ fn capture(inner: &Weak<Inner>, s: &Arc<Stream>) -> Option<String> {
     if let Some(i) = inner.upgrade() {
         wake(&i, &s.key);
     }
+    let stall = stall_after(mode.fps());
+    let mut last_frame = Instant::now();
     while !s.stop.load(Ordering::Acquire) {
         match cam.read() {
             Ok(Some(sample)) => {
+                last_frame = Instant::now();
                 let (sx, sy) = mode.format.shift();
                 let frame = CameraFrame {
                     width: mode.width,
@@ -505,6 +528,13 @@ fn capture(inner: &Weak<Inner>, s: &Arc<Stream>) -> Option<String> {
                 s.put(frame, sample.stamp, mode.fps(), Some(sample.copy_ms));
                 let i = inner.upgrade()?;
                 wake(&i, &s.key);
+            }
+            // Gaps only: a camera that reports them but no frame for long is opened again.
+            Ok(None) if last_frame.elapsed() > stall => {
+                return Some(format!(
+                    "the camera sent no frame for {:.0} s",
+                    last_frame.elapsed().as_secs_f64()
+                ));
             }
             Ok(None) => {}
             Err(e) => return Some(e),
@@ -533,6 +563,13 @@ mod tests {
             arrived: Instant::now(),
             delay_ms: Some(20.0),
         }
+    }
+
+    #[test]
+    fn a_camera_counts_as_stopped_after_five_seconds_or_four_frames() {
+        assert_eq!(stall_after(30.0), STALL);
+        assert_eq!(stall_after(0.0), STALL);
+        assert_eq!(stall_after(0.5), Duration::from_secs(8));
     }
 
     #[test]

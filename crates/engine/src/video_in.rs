@@ -3,7 +3,8 @@
 //!
 //! Commands: `video_in.devices`, `video_in.status`, `video_in.config`.
 
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
+use std::time::Duration;
 
 use penumbra_camera::Config;
 use serde::Deserialize;
@@ -30,8 +31,29 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("video_in.config", "Camera settings for this run: {enabled?}", video_in_config);
 }
 
+/// How long `video_in.devices` waits for the system's list of cameras. Listing opens each
+/// camera, and a driver that hangs would otherwise hold the control channel.
+const LIST_TIMEOUT: Duration = Duration::from_secs(10);
+
 fn video_in_devices(e: &Engine, _p: &Json) -> CmdResult<Json> {
-    let list = e.camera().devices().map_err(CommandError)?;
+    let hub = e.camera().clone();
+    let (tx, rx) = mpsc::channel();
+    // Not joined: a listing stuck in a driver is left behind rather than waited for.
+    std::thread::Builder::new()
+        .name("camera list".into())
+        .spawn(move || {
+            let _ = tx.send(hub.devices());
+        })
+        .map_err(|e| CommandError(format!("cannot start listing the cameras: {e}")))?;
+    let list = match rx.recv_timeout(LIST_TIMEOUT) {
+        Ok(list) => list.map_err(CommandError)?,
+        Err(_) => {
+            return Err(CommandError(format!(
+                "the system did not list its cameras within {} s; a camera driver may hang",
+                LIST_TIMEOUT.as_secs()
+            )));
+        }
+    };
     Ok(json!({ "devices": list }))
 }
 
