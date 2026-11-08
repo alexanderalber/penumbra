@@ -17,7 +17,7 @@ pub mod protocol;
 use std::sync::OnceLock;
 
 pub use host::{Bench, Host, ScriptError, Status};
-pub use protocol::{Call, CallOutput, Load, Loaded};
+pub use protocol::{Call, CallOutput, InPicture, Load, Loaded, OutMesh, OutPicture, Samples};
 
 static HOST: OnceLock<Host> = OnceLock::new();
 

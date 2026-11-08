@@ -1,0 +1,15 @@
+// penumbra project. Written by the app about a second after each change; while the app
+// runs, edits to this file are merged into the open project.
+(
+    version: 2,
+    nodes: {
+        "/about": (kind: "ui.note", params: {"height": 140, "text": "# Pictures and meshes from Python\n`rings` runs `rings.py`: it draws a picture with numpy. `sheet` runs `sheet.py`: it builds a wavy mesh with numpy. `skin` lays the picture on the mesh, `render` lights it. Needs Python 3.12 or later with numpy.\n- `rings`, `speed` on `rings`; `height`, `waves` on `sheet`", "width": 620}, pos: [0.0, -200.0]),
+        "/camera": (kind: "view.camera", params: {"position": [0.0, -3.6, 2.4]}, pos: [400.0, 220.0]),
+        "/light": (kind: "light.point", params: {"position": [1.5, -2.0, 3.0]}, pos: [400.0, 300.0]),
+        "/render": (kind: "tex.render", inputs: {"camera": "camera", "geo": "skin", "lights": "light"}, pos: [600.0, 100.0]),
+        "/rings": (kind: "script.python", params: {"file": "rings.py"}, pos: [0.0, 0.0]),
+        "/sheet": (kind: "script.python", params: {"file": "sheet.py"}, pos: [0.0, 160.0]),
+        "/shine": (kind: "mat.phong", inputs: {"texture": "rings:picture"}, pos: [200.0, 0.0]),
+        "/skin": (kind: "geo.assign_material", inputs: {"in": "sheet:mesh", "mat": "shine"}, pos: [400.0, 100.0]),
+    },
+)

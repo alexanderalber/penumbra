@@ -24,6 +24,7 @@ saves into it.)
 | [blob-tracking](blob-tracking/README.md) | finding and following spots of light, with ids that stay | `/view`, `/track` | |
 | [silhouette-wake](silhouette-wake/README.md) | a person in front of a wall, from a depth camera's mask (drawn by a shader here): stripes run across the wall without stopping, and each pixel counts them from the moment the person left it, so they bend and tear into the person's old outlines | `/out` | (for a real person: a depth camera that sends its mask through Spout or NDI) |
 | [python-script](python-script/README.md) | a Python script that keeps state: a bouncing ball | `/view` | Python 3.12 or later |
+| [python-pictures](python-pictures/README.md) | Python scripts that draw a picture and build a mesh with numpy: rings on a wavy sheet | `/render` | Python 3.12 or later with numpy |
 | [projection-room](projection-room/README.md) | a 3D room lit by a projector, lamps and its surroundings | `/view`, `/through_beamer` | |
 | [smoke](smoke/README.md) | smoke in a box in space from three emitters: a ball blowing sideways, a moving ball, a flat box; hot smoke glows in colours of its own | `/out` | |
 | [raymarch](raymarch/README.md) | three raymarched looks that follow music: a tunnel, melting shapes and a fractal, chosen with one slider; a built-in beat drives them | `/out` | (for real music: a microphone or line input) |

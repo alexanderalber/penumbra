@@ -2617,7 +2617,7 @@ Outputs:
 
 ### script.python
 
-Logic of your own in Python: turns channels and tables into new channels and a table
+Logic of your own in Python: turns channels, tables and pictures into new channels, a table, a picture and a mesh
 
 Declares further params per node, from its file or code.
 
@@ -2627,11 +2627,15 @@ Inputs:
 - `chan1` (chan)
 - `table0` (table)
 - `table1` (table)
+- `tex0` (tex): A picture for cx.pictures[0], read back to the CPU before every call; at most 2048 x 2048 pixels, so shrink larger ones first
+- `tex1` (tex): A picture for cx.pictures[1], as tex0
 
 Outputs:
 
 - `out` (chan): The channels cook(cx) returns
 - `table` (table): The table cook(cx) returns; bind a text or a choice param to one of its cells
+- `picture` (tex): The picture cook(cx) puts in cx.picture; holds the last one until the script sets another
+- `mesh` (geo): The mesh cook(cx) puts in cx.mesh; holds the last one until the script sets another
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -2639,6 +2643,7 @@ Outputs:
 | `cook` | auto \| every frame \| on change | `"auto"` |  | When cook(cx) runs; auto: every frame if the code mentions `time` or `frame`, else as on change; every frame: every frame, for scripts that keep changing on their own; on change: only when an input or a param changes |
 | `timeout` | float | `0.1` | 0.01 to 1 s (soft, held within 0.001 to 10 s) | A call running longer than this is stopped. The node then stays stopped until the script or `timeout` changes |
 | `code` | text | an example script |  | The script while `file` is empty |
+| `values` | color \| data | `"color"` |  | How the numbers in `cx.picture` and `cx.pictures` relate to the colours; color: a picture: uint8 is sRGB (0 to 255), float is linear (0 to 1), alpha straight; inputs come as linear floats with straight alpha; data: every channel as stored, for maps, positions and masks: no sRGB, no alpha applied |
 
 ## out
 

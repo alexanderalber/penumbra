@@ -7,13 +7,14 @@
 //! loader dialog or a process that does not start.
 //!
 //! The interface is a handful of C functions, all of them guarded by `catch_unwind`, exchanging
-//! UTF-8 text through a caller-supplied sink (so no memory crosses the two allocators):
+//! bytes through a caller-supplied sink (so no memory crosses the two allocators):
 //!
 //! - [`pn_pyhost_abi`]: the interface version, checked before anything else is called.
 //! - [`pn_pyhost_init`]: initialises the interpreter and the bootstrap module
 //!   (`bootstrap.py`); call once, from the thread that will run every request.
-//! - [`pn_pyhost_request`]: one JSON request (load a script, call it, ...) handed to the
-//!   bootstrap's `handle`, the JSON reply out through the sink.
+//! - [`pn_pyhost_request`]: one JSON request (load a script, call it, ...) and a block of
+//!   binary data (pictures) handed to the bootstrap's `handle`; the JSON reply and the binary
+//!   parts returned with it (pictures, mesh arrays) go out through the sink as one frame.
 //! - [`pn_pyhost_interrupt`]: raises `Timeout` in the request thread; the watchdog's call,
 //!   from any other thread.
 //! - [`pn_pyhost_bench_attach`]: times attaching to and detaching from the interpreter.
@@ -33,11 +34,13 @@ use std::time::Instant;
 
 use pyo3::ffi;
 use pyo3::prelude::*;
+use pyo3::types::{PyByteArray, PyBytes, PyString};
 
 /// Version of the C interface. `penumbra-script` refuses a library with another one.
-pub const ABI: u32 = 1;
+pub const ABI: u32 = 2;
 
-/// Receives text from the library: `ctx` as passed in, then the UTF-8 bytes.
+/// Receives output from the library: `ctx` as passed in, then bytes. One reply may come in
+/// several pieces; the caller appends them.
 pub type Sink = extern "C" fn(ctx: *mut c_void, data: *const u8, len: usize);
 
 const BOOTSTRAP: &str = include_str!("bootstrap.py");
@@ -72,17 +75,24 @@ pub unsafe extern "C" fn pn_pyhost_init(sink: Sink, ctx: *mut c_void) -> i32 {
 }
 
 /// Runs one JSON request through the bootstrap's `handle` on the calling thread, which must be
-/// the thread that called [`pn_pyhost_init`]. The reply (JSON) or an error message goes to
-/// `sink`; 0 means a reply.
+/// the thread that called [`pn_pyhost_init`]. `blob` is binary data the request refers to by
+/// offset (input pictures), handed to Python as a `bytearray` (`None` when empty).
+///
+/// Returns 0 for a reply, which goes to `sink` as one frame: little-endian `u64`s for the
+/// JSON's length, the number `n` of binary parts and the `n` lengths of the parts, then the
+/// JSON text and the parts one after the other. Anything else returned means an error message
+/// (plain UTF-8) went to `sink`.
 ///
 /// # Safety
 ///
-/// `request` must point to `len` readable bytes (or be null with `len` 0) for the duration of
-/// the call; `sink` as for [`pn_pyhost_init`].
+/// `request` must point to `len` readable bytes and `blob` to `blob_len` (either may be null
+/// with length 0) for the duration of the call; `sink` as for [`pn_pyhost_init`].
 #[unsafe(no_mangle)] // SAFETY: unique, prefixed symbol name.
 pub unsafe extern "C" fn pn_pyhost_request(
     request: *const u8,
     len: usize,
+    blob: *const u8,
+    blob_len: usize,
     sink: Sink,
     ctx: *mut c_void,
 ) -> i32 {
@@ -92,7 +102,13 @@ pub unsafe extern "C" fn pn_pyhost_request(
         // SAFETY: the caller guarantees `len` readable bytes at `request` for this call.
         unsafe { std::slice::from_raw_parts(request, len) }
     };
-    guarded(sink, ctx, || request_text(bytes))
+    let blob: &[u8] = if blob.is_null() || blob_len == 0 {
+        &[]
+    } else {
+        // SAFETY: as for `request`: `blob_len` readable bytes at `blob` for this call.
+        unsafe { std::slice::from_raw_parts(blob, blob_len) }
+    };
+    guarded_with(sink, ctx, |emit| request_frame(bytes, blob, emit))
 }
 
 /// Raises the bootstrap's `Timeout` in thread `thread` the next time it runs Python code.
@@ -135,8 +151,20 @@ pub extern "C" fn pn_pyhost_bench_attach(n: u32) -> u64 {
 
 /// Runs `f`, sends its text to `sink` and returns 0 for `Ok`, 1 for `Err`, 2 for a panic.
 fn guarded(sink: Sink, ctx: *mut c_void, f: impl FnOnce() -> Result<String, String>) -> i32 {
-    let (code, text) = match catch_unwind(AssertUnwindSafe(f)) {
-        Ok(Ok(text)) => (0, text),
+    guarded_with(sink, ctx, |emit| {
+        let text = f()?;
+        emit(text.as_bytes());
+        Ok(())
+    })
+}
+
+/// Runs `f`, which sends its output to `sink` through the `emit` it is given; an error or a
+/// panic sends its message instead. Returns 0 for `Ok`, 1 for `Err`, 2 for a panic. `f` emits
+/// only once it cannot fail any more, so an error message never follows part of a reply.
+fn guarded_with(sink: Sink, ctx: *mut c_void, f: impl FnOnce(&dyn Fn(&[u8])) -> Result<(), String>) -> i32 {
+    let emit = |bytes: &[u8]| sink(ctx, bytes.as_ptr(), bytes.len());
+    let (code, text) = match catch_unwind(AssertUnwindSafe(|| f(&emit))) {
+        Ok(Ok(())) => return 0,
         Ok(Err(e)) => (1, e),
         Err(panic) => {
             let msg = panic
@@ -147,7 +175,7 @@ fn guarded(sink: Sink, ctx: *mut c_void, f: impl FnOnce() -> Result<String, Stri
             (2, format!("pyhost panicked: {msg}"))
         }
     };
-    sink(ctx, text.as_ptr(), text.len());
+    emit(text.as_bytes());
     code
 }
 
@@ -185,19 +213,32 @@ fn init() -> Result<String, String> {
     Ok(info)
 }
 
-fn request_text(bytes: &[u8]) -> Result<String, String> {
+/// One request. The bootstrap's `handle(text, blob)` returns the reply's JSON text, or a tuple
+/// of it and a list of `bytes`; either goes out as the frame [`pn_pyhost_request`] describes.
+fn request_frame(bytes: &[u8], blob: &[u8], emit: &dyn Fn(&[u8])) -> Result<(), String> {
     let boot = BOOT.get().ok_or("Python is not initialised")?;
     let text = std::str::from_utf8(bytes).map_err(|e| format!("request is not UTF-8: {e}"))?;
     Python::attach(|py| {
+        let blob = if blob.is_empty() { py.None() } else { PyByteArray::new(py, blob).into_any().unbind() };
         // A watchdog interrupt that arrived after the previous request ended would hit this one:
         // clear it first, and again afterwards.
         clear_interrupt(boot.thread);
-        let result = boot.handle.bind(py).call1((text,));
+        let result = boot.handle.bind(py).call1((text, blob));
         clear_interrupt(boot.thread);
-        match result {
-            Ok(reply) => reply.extract::<String>().map_err(|e| describe(py, &e)),
-            Err(e) => Err(describe(py, &e)),
+        let reply = result.map_err(|e| describe(py, &e))?;
+        let (json, parts): (Bound<'_, PyString>, Vec<Bound<'_, PyBytes>>) = match reply.cast::<PyString>() {
+            Ok(s) => (s.clone(), Vec::new()),
+            Err(_) => reply.extract().map_err(|e| describe(py, &e))?,
+        };
+        let json = json.to_str().map_err(|e| describe(py, &e))?;
+        let lengths = [json.len(), parts.len()].into_iter().chain(parts.iter().map(|p| p.as_bytes().len()));
+        let header: Vec<u8> = lengths.flat_map(|n| (n as u64).to_le_bytes()).collect();
+        emit(&header);
+        emit(json.as_bytes());
+        for p in &parts {
+            emit(p.as_bytes());
         }
+        Ok(())
     })
 }
 

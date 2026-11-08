@@ -166,8 +166,8 @@ The families:
   frame, use mode `manual`: in mode `changes` such an input is written every frame. With
   `instances` on `skip` each model is written once, without its copies. A file holds at most
   4 Mi triangles and 256 MiB; over that the node shows an error and writes nothing.
-- **`script`**: Python that turns channels and tables into channels and a table (see
-  [Scripts](scripts.md)).
+- **`script`**: Python that turns channels, tables and pictures into channels, a table, a
+  picture and a mesh (see [Scripts](scripts.md)).
 - **`out`**: sinks. `out.projector` shows a picture fullscreen on a display, or with `window`
   on in a window on the desktop.
 - **`comp`**: components, nodes that hold nodes (see [Components](#components)).

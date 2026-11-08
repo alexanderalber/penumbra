@@ -159,12 +159,13 @@ struct Work {
     limit: Duration,
     /// `None` for housekeeping sent ahead of a request (freeing module slots): its end does
     /// not end the busy phase.
-    reply: Option<Sender<Result<String, String>>>,
+    reply: Option<Sender<Result<Vec<u8>, String>>>,
 }
 
 #[derive(Clone)]
 enum Request {
-    Json(String),
+    /// The JSON, and the binary data it refers to (input pictures).
+    Json(String, Vec<u8>),
     BenchAttach(u32),
 }
 
@@ -287,11 +288,11 @@ impl Host {
             if cancelled() {
                 return Err(ScriptError::Script("cancelled".into()));
             }
-            match self.begin(load.label, Request::Json(request.clone()), LOAD_LIMIT, None) {
+            match self.begin(load.label, Request::Json(request.clone(), Vec::new()), LOAD_LIMIT, None) {
                 Err(ScriptError::Busy) => {}
                 Err(e) => return Err(e),
                 Ok(rx) => {
-                    let reply = self.wait(rx, LOAD_LIMIT)?;
+                    let (reply, _) = self.wait(rx, LOAD_LIMIT)?;
                     if reply.ok {
                         return reply.loaded().map_err(ScriptError::Script);
                     }
@@ -317,9 +318,9 @@ impl Host {
         limit: Duration,
         wake: Box<dyn FnOnce() + Send>,
     ) -> Result<CallOutput, ScriptError> {
-        let request = protocol::call_json(call).map_err(ScriptError::Script)?;
+        let (request, blob) = protocol::call_request(call).map_err(ScriptError::Script)?;
         let start = Instant::now();
-        let rx = self.begin(label, Request::Json(request), limit, Some(wake))?;
+        let rx = self.begin(label, Request::Json(request, blob), limit, Some(wake))?;
         let reply = self.wait(rx, limit);
         let us = start.elapsed().as_secs_f64() * 1e6;
         {
@@ -328,9 +329,9 @@ impl Host {
             st.stats.call_total_us += us;
             st.stats.call_max_us = st.stats.call_max_us.max(us);
         }
-        let reply = reply?;
+        let (reply, frame) = reply?;
         if reply.ok {
-            reply.output(call.rate).map_err(ScriptError::Script)
+            reply.output(call.rate, &frame).map_err(ScriptError::Script)
         } else {
             Err(failure(reply, limit))
         }
@@ -347,14 +348,14 @@ impl Host {
         self.load(&Load { key, generation: 1, source, label: "bench", folder: None }, &never)?;
         let rx = self.begin_waiting(Request::BenchAttach(runs), limit)?;
         let ns = self.wait_raw(rx, limit)?;
-        let attach_ns = ns.trim().parse::<f64>().unwrap_or(0.0) / f64::from(runs);
+        let attach_ns = String::from_utf8_lossy(&ns).trim().parse::<f64>().unwrap_or(0.0) / f64::from(runs);
 
         let timed = |request: &dyn Fn() -> Result<String, String>| -> Result<f64, ScriptError> {
             let text = request().map_err(ScriptError::Script)?;
             let start = Instant::now();
             for _ in 0..runs {
-                let rx = self.begin_waiting(Request::Json(text.clone()), limit)?;
-                let reply = self.wait(rx, limit)?;
+                let rx = self.begin_waiting(Request::Json(text.clone(), Vec::new()), limit)?;
+                let (reply, _) = self.wait(rx, limit)?;
                 if !reply.ok {
                     return Err(failure(reply, limit));
                 }
@@ -370,14 +371,18 @@ impl Host {
         .map_err(|e| ScriptError::Script(e.0))?;
         let params = Default::default();
         let call = |chans: &penumbra_core::Chans| {
-            protocol::call_json(&Call {
+            protocol::call_request(&Call {
                 key,
                 time: None,
                 rate: 60.0,
                 params: &params,
                 chans: vec![Some(chans), None],
                 tables: vec![None, None],
+                pictures: Vec::new(),
+                want_picture: false,
+                want_mesh: false,
             })
+            .map(|(text, _)| text)
         };
         let call_trivial_us = timed(&|| call(&one))?;
         let many = (0..200)
@@ -401,7 +406,7 @@ impl Host {
         &self,
         request: Request,
         limit: Duration,
-    ) -> Result<Receiver<Result<String, String>>, ScriptError> {
+    ) -> Result<Receiver<Result<Vec<u8>, String>>, ScriptError> {
         let deadline = Instant::now() + LOAD_WAIT;
         loop {
             match self.begin("bench", request.clone(), limit, None) {
@@ -423,7 +428,7 @@ impl Host {
         request: Request,
         limit: Duration,
         wake: Option<Box<dyn FnOnce() + Send>>,
-    ) -> Result<Receiver<Result<String, String>>, ScriptError> {
+    ) -> Result<Receiver<Result<Vec<u8>, String>>, ScriptError> {
         let install = self.install.as_ref().map_err(|e| ScriptError::Unavailable(e.clone()))?;
         let mut st = lock(&self.shared.state);
         if matches!(st.phase, Phase::NotStarted) {
@@ -459,7 +464,8 @@ impl Host {
         };
         if !drops.is_empty() {
             let text = serde_json::json!({"op": "ping", "drops": drops}).to_string();
-            work.send(Work { seq, request: Request::Json(text), limit: LOAD_LIMIT, reply: None }).ok();
+            work.send(Work { seq, request: Request::Json(text, Vec::new()), limit: LOAD_LIMIT, reply: None })
+                .ok();
         }
         st.phase = Phase::Busy;
         st.running = Some(Running { label: label.to_string(), since: Instant::now() });
@@ -471,21 +477,27 @@ impl Host {
         Ok(rx)
     }
 
-    /// Waits for a reply, at most `limit` plus [`GRACE`].
+    /// Waits for a reply, at most `limit` plus [`GRACE`]: the JSON part read, and the frame with
+    /// the binary parts.
     fn wait(
         &self,
-        rx: Receiver<Result<String, String>>,
+        rx: Receiver<Result<Vec<u8>, String>>,
         limit: Duration,
-    ) -> Result<protocol::Reply, ScriptError> {
-        let text = self.wait_raw(rx, limit)?;
-        let reply = protocol::parse(&text).map_err(ScriptError::Script)?;
+    ) -> Result<(protocol::Reply, protocol::Frame), ScriptError> {
+        let bytes = self.wait_raw(rx, limit)?;
+        let frame = protocol::Frame::parse(bytes).map_err(ScriptError::Script)?;
+        let reply = protocol::parse(frame.json()).map_err(ScriptError::Script)?;
         if reply.timeout {
             lock(&self.shared.state).stats.timeouts += 1;
         }
-        Ok(reply)
+        Ok((reply, frame))
     }
 
-    fn wait_raw(&self, rx: Receiver<Result<String, String>>, limit: Duration) -> Result<String, ScriptError> {
+    fn wait_raw(
+        &self,
+        rx: Receiver<Result<Vec<u8>, String>>,
+        limit: Duration,
+    ) -> Result<Vec<u8>, ScriptError> {
         match rx.recv_timeout(limit + GRACE) {
             Ok(Ok(text)) => Ok(text),
             Ok(Err(e)) => Err(ScriptError::Script(e)),
@@ -568,9 +580,10 @@ fn python_thread(shared: &Arc<Shared>, install: &Install, rx: &Receiver<Work>) {
         *lock(&shared.gate) = work.seq;
         arm(shared, Some((work.seq, Instant::now() + work.limit)));
         let result = match &work.request {
-            Request::Json(text) => lib.request(text),
-            Request::BenchAttach(n) => Ok(lib.bench_attach(*n).to_string()),
+            Request::Json(text, blob) => lib.request(text, blob),
+            Request::BenchAttach(n) => Ok(lib.bench_attach(*n).to_string().into_bytes()),
         };
+
         arm(shared, None);
         *lock(&shared.gate) = 0;
         if let Some(reply) = work.reply {

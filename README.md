@@ -279,8 +279,8 @@ The program is not signed. Windows may show "Windows protected your PC": click "
 then "Run anyway". The zip also holds the [examples](examples/README.md), the content library
 and the documentation.
 
-Two features need something installed. The script node needs Python 3.12 or newer
-([scripts](docs/scripts.md)). The two NDI nodes need the NDI runtime ([NDI](docs/ndi.md)).
+Two features need something installed. The script node needs Python 3.12 or newer, and
+numpy for pictures and meshes ([scripts](docs/scripts.md)). The two NDI nodes need the NDI runtime ([NDI](docs/ndi.md)).
 Everything else runs without them.
 
 ## Building from source

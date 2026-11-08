@@ -176,6 +176,10 @@ opt-level = 2
 [profile.dev.package.penumbra-ops]
 opt-level = 2
 
+# A script's pictures and meshes cross as raw arrays, checked and converted per sample.
+[profile.dev.package.penumbra-script]
+opt-level = 2
+
 # Neural network inference: one 30 s chunk of Beat This! is about 90 GFLOP.
 [profile.dev.package.penumbra-nn]
 opt-level = 2

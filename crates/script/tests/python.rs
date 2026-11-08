@@ -88,6 +88,9 @@ mod python {
             params: &none,
             chans: vec![None, None],
             tables: vec![None, None],
+            pictures: vec![None, None],
+            want_picture: false,
+            want_mesh: false,
         };
         let limit = Duration::from_millis(200);
 
@@ -186,6 +189,16 @@ def cook(cx):
         eprintln!("memory runaway stopped after {:?}: {e}", start.elapsed());
         call(4, &base, limit).unwrap();
 
+        // Pictures and meshes, when numpy is there.
+        let has_numpy = load(20, "import numpy\ndef cook(cx):\n    pass\n");
+        match has_numpy {
+            Err(e) => {
+                assert!(e.to_string().contains("pip install numpy"), "{e}");
+                eprintln!("no numpy, pictures and meshes skipped: {e}");
+            }
+            Ok(_) => pictures_and_meshes(&base, limit),
+        }
+
         // Freed slots are gone.
         host().forget(4);
         let e = call(4, &base, limit).unwrap_err();
@@ -221,11 +234,111 @@ def cook(cx):
         assert!(s.interrupts >= 4 && s.timeouts >= 1, "{s:?}");
     }
 
+    fn pictures_and_meshes(base: &Call<'_>, limit: Duration) {
+        use penumbra_script::{InPicture, Samples};
+        let wants = Call { want_picture: true, want_mesh: true, ..base.clone() };
+        let src = r#"
+import numpy as np
+def cook(cx):
+    p = cx.pictures[0]
+    if p is not None:
+        p[..., 0] += 1.0
+        cx.picture = p
+        cx.out["w"] = p.shape[1]
+        return
+    img = np.zeros((2, 3, 4), np.uint8)
+    img[0, 0] = (255, 0, 0, 255)
+    cx.picture = img
+    cx.mesh = dict(positions=[[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]], indices=[[0, 1, 2], [2, 1, 3]],
+                   uvs=np.zeros((4, 2)))
+"#;
+        load(21, src).unwrap();
+        let out = call(21, &wants, limit).unwrap();
+        let p = out.picture.unwrap();
+        assert_eq!((p.width, p.height, p.channels), (3, 2, 4));
+        let Samples::U8(s) = p.samples else { panic!("uint8 stays uint8") };
+        assert_eq!(s[..8], [255, 0, 0, 255, 0, 0, 0, 0]);
+        let m = out.mesh.unwrap();
+        assert_eq!(m.positions.len(), 4);
+        assert_eq!(m.indices.unwrap(), [[0, 1, 2], [2, 1, 3]]);
+        assert_eq!(m.uvs.unwrap().len(), 4);
+        assert!(m.normals.is_none());
+        // Nothing reads them: left out.
+        let out = call(21, base, limit).unwrap();
+        assert_eq!((out.picture, out.mesh), (None, None));
+
+        // A picture in, changed in place and put out again (float32 stays float32).
+        let pic = InPicture { width: 2, height: 1, rgba: vec![0.5, 0.0, 0.0, 1.0, 0.25, 0.0, 0.0, 1.0] };
+        let with_picture = Call { pictures: vec![Some(&pic), None], ..wants.clone() };
+        let out = call(21, &with_picture, limit).unwrap();
+        assert_eq!(out.chans.value(Some("w")), Some(2.0));
+        let p = out.picture.unwrap();
+        assert_eq!(p.samples, Samples::F32(vec![1.5, 0.0, 0.0, 1.0, 1.25, 0.0, 0.0, 1.0]));
+
+        // Malformed arrays are errors naming what is wrong.
+        let bad = |code: &str| {
+            load(22, &format!("import numpy as np\ndef cook(cx):\n    {code}\n")).unwrap();
+            call(22, &wants, limit).unwrap_err().to_string()
+        };
+        assert!(bad("cx.picture = np.zeros((2, 2, 2))").contains("give (height, width)"));
+        assert!(bad("cx.picture = np.zeros((2, 2), np.int32)").contains("dtype int32"));
+        assert!(bad("cx.picture = np.zeros((9000, 1), np.uint8)").contains("too large"));
+        assert!(bad("cx.picture = np.zeros((0, 4))").contains("empty"));
+        assert!(bad("cx.mesh = [1, 2]").contains("give a dict"));
+        assert!(bad("cx.mesh = dict(points=[])").contains("unknown key 'points'"));
+        assert!(bad("cx.mesh = dict(positions=np.zeros((4, 3)))").contains("multiple of 3"));
+        assert!(bad("cx.mesh = dict(positions=np.zeros((3, 2)))").contains("give (n, 3)"));
+        assert!(bad("cx.mesh = dict(positions=[[0, 0, np.nan]] * 3)").contains("NaN"));
+        assert!(
+            bad("cx.mesh = dict(positions=np.zeros((3, 3)), indices=[[0, 1, 3]])")
+                .contains("past the last vertex")
+        );
+        assert!(bad("cx.mesh = dict(positions=np.zeros((3, 3)), indices=[[0, 1, -1]])").contains("negative"));
+        assert!(
+            bad("cx.mesh = dict(positions=np.zeros((3, 3)), indices=[[0.0, 1, 2]])")
+                .contains("give integers")
+        );
+        assert!(
+            bad("cx.mesh = dict(positions=np.zeros((3, 3)), uvs=np.zeros((2, 2)))")
+                .contains("one per vertex")
+        );
+        assert!(bad("cx.mesh = dict(positions=np.zeros((2_000_000, 3)))").contains("too many"));
+
+        // The two sizes of the measurement: a 512 x 512 RGBA8 picture and a 10k-vertex mesh.
+        let src = r#"
+import numpy as np
+img = np.zeros((512, 512, 4), np.uint8)
+pos = np.random.default_rng(1).random((10000, 3), dtype=np.float32)
+idx = np.arange(9999, dtype=np.uint32).reshape(-1, 3)
+def cook(cx):
+    cx.picture = img
+    cx.mesh = dict(positions=pos, indices=idx)
+"#;
+        load(23, src).unwrap();
+        let runs = 50;
+        let start = Instant::now();
+        for _ in 0..runs {
+            let out = call(23, &wants, limit).unwrap();
+            assert!(out.picture.is_some() && out.mesh.is_some());
+        }
+        eprintln!("512x512 RGBA8 and 10k vertices: {:?} per call (debug test build)", start.elapsed() / runs);
+    }
+
     #[test]
     fn no_python_is_a_clean_error() {
         let h = penumbra_script::Host::new(Err("no Python 3.12 or newer found".into()));
         let none = BTreeMap::new();
-        let c = Call { key: 1, time: None, rate: 60.0, params: &none, chans: vec![], tables: vec![] };
+        let c = Call {
+            key: 1,
+            time: None,
+            rate: 60.0,
+            params: &none,
+            chans: vec![],
+            tables: vec![],
+            pictures: vec![],
+            want_picture: false,
+            want_mesh: false,
+        };
         let e = h.call("x", &c, Duration::from_millis(10), Box::new(|| {})).unwrap_err();
         assert_eq!(e.to_string(), "Python is not available: no Python 3.12 or newer found");
         assert!(!h.available());

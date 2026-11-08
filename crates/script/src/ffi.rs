@@ -21,13 +21,13 @@ use crate::locate::{self, Install};
 type Sink = extern "C" fn(ctx: *mut c_void, data: *const u8, len: usize);
 type AbiFn = extern "C" fn() -> u32;
 type InitFn = unsafe extern "C" fn(Sink, *mut c_void) -> i32;
-type RequestFn = unsafe extern "C" fn(*const u8, usize, Sink, *mut c_void) -> i32;
+type RequestFn = unsafe extern "C" fn(*const u8, usize, *const u8, usize, Sink, *mut c_void) -> i32;
 type InterruptFn = extern "C" fn(u64) -> i32;
 type BenchFn = extern "C" fn(u32) -> u64;
 type VersionFn = unsafe extern "C" fn() -> *const c_char;
 
 /// The interface version this crate speaks (pyhost's `ABI`).
-const ABI: u32 = 1;
+const ABI: u32 = 2;
 
 /// pyhost's file name.
 #[cfg(windows)]
@@ -108,12 +108,22 @@ impl Library {
         text(code, out)
     }
 
-    /// One JSON request on the calling thread (the one that called `init`).
-    pub fn request(&self, request: &str) -> Result<String, String> {
+    /// One JSON request and its binary data on the calling thread (the one that called `init`):
+    /// the reply's frame as pyhost sends it ([`crate::protocol::Frame`]), or an error message.
+    pub fn request(&self, request: &str, blob: &[u8]) -> Result<Vec<u8>, String> {
         let mut out = Vec::new();
-        // SAFETY: pointer and length of a live `str`; `out` as in `init`.
-        let code = unsafe { (self.request)(request.as_ptr(), request.len(), sink, (&raw mut out).cast()) };
-        text(code, out)
+        // SAFETY: pointers and lengths of a live `str` and slice; `out` as in `init`.
+        let code = unsafe {
+            (self.request)(
+                request.as_ptr(),
+                request.len(),
+                blob.as_ptr(),
+                blob.len(),
+                sink,
+                (&raw mut out).cast(),
+            )
+        };
+        if code == 0 { Ok(out) } else { Err(String::from_utf8_lossy(&out).into_owned()) }
     }
 
     /// Raises `Timeout` in the interpreter thread `thread`. May block (see pyhost).

@@ -152,7 +152,7 @@ details.target { outline: 2px solid var(--accent); }
 <tr><td><code>--headless SCRIPT</code></td><td>run without a window, driven by a script (see <a href="#control-headless-runs">Control</a>)</td></tr>
 </tbody>
 </table>
-<p>The script node needs a Python 3.12 or newer installed (see <a href="#scripts">Scripts</a>); everything else runs without it.</p>
+<p>The script node needs a Python 3.12 or newer installed, and numpy for pictures and meshes (see <a href="#scripts">Scripts</a>); everything else runs without them.</p>
 <h3 id="getting-started-the-window">The window</h3>
 <p><img src="../assets/screenshot.png" alt="The window: the node editor on the left, parameters, viewer and change log on the right, the status bar at the bottom"></p>
 <ul>
@@ -338,7 +338,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong><code>geo</code></strong>, <strong><code>mat</code></strong>, <strong><code>light</code></strong>, <strong><code>view</code></strong>: a 3D scene. Geometry from files or primitives, transformed and merged; materials put on it with <a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a>; lights and a <a class="ref" href="#view.camera"><code>view.camera</code></a> wired into a <a class="ref" href="#tex.render"><code>tex.render</code></a>, which makes a picture of it all (a render needs its camera; the camera is perspective, orthographic or calibrated). <a class="ref" href="#light.projector"><code>light.projector</code></a> throws a picture through a camera onto the geometry: a virtual projector, for trying a mapping on a model of the room. Coordinates are metres, z up. <a class="ref" href="#geo.file"><code>geo.file</code></a> reads OBJ, STL, glTF and FBX. FBX works from file version 7.0 on, binary or ASCII. Binary is the default of Blender, Maya, 3ds Max and Unity. An FBX 6 file gives an error: export it again as FBX 2011 or later. Each FBX model becomes a part with its name, placed as in the file, in metres and z up. Materials bring their diffuse colour and texture, embedded or from a file beside the FBX. Animated models play: each part moves as its model does in the file. A skinned character bends with its bones: each vertex follows the bones that weigh on it, blended by the weights (linear blend skinning). <code>take</code> picks the animation (the <code>takes</code> output lists them), <code>play</code>, <code>speed</code> and <code>loop</code> work as for a video, and with <code>play</code> off a channel bound to <code>time</code> drives it. Posing runs on the CPU and costs about 20 ns per vertex and frame. A file whose skin asks for dual quaternion blending is blended linearly, with a warning; twisting joints then thin out a little. Blend shapes, cameras and lights are not read. <a class="ref" href="#out.mesh"><code>out.mesh</code></a> writes geometry to an OBJ, STL or glb file, every model where it stands in the scene. Each part stays a part: an OBJ object or a glTF node. Only glb keeps material colours; textures are not written. File, <code>overwrite</code> and the modes <code>changes</code> and <code>manual</code> work as for <a class="ref" href="#out.table"><code>out.table</code></a>; the command is <a class="ref" href="#mesh_out.write"><code>mesh_out.write</code></a>. Copies from <a class="ref" href="#geo.tex_instance"><code>geo.tex_instance</code></a> are read back from the GPU and written one by one (<code>instances</code> on <code>expand</code>). For copies that move every frame, use mode <code>manual</code>: in mode <code>changes</code> such an input is written every frame. With <code>instances</code> on <code>skip</code> each model is written once, without its copies. A file holds at most 4 Mi triangles and 256 MiB; over that the node shows an error and writes nothing.
 </li>
-<li><strong><code>script</code></strong>: Python that turns channels and tables into channels and a table (see <a href="#scripts">Scripts</a>).
+<li><strong><code>script</code></strong>: Python that turns channels, tables and pictures into channels, a table, a picture and a mesh (see <a href="#scripts">Scripts</a>).
 </li>
 <li><strong><code>out</code></strong>: sinks. <a class="ref" href="#out.projector"><code>out.projector</code></a> shows a picture fullscreen on a display, or with <code>window</code> on in a window on the desktop.
 </li>
@@ -2049,7 +2049,7 @@ fn main(v: PnVertex) -&gt; @location(0) vec4f {
 </div></details>
 <details class="entry guide" id="scripts"><summary><span class="name">Scripts</span></summary>
 <div class="body">
-<p><a class="ref" href="#script.python"><code>script.python</code></a> runs a Python function each time the node cooks: channels and tables in, channels and a table out. It is meant for logic (counting, state machines, sorting a table, turning OSC into something useful), not for pixels; pictures are the job of <code>tex</code> nodes and <a href="#shaders">shaders</a>.</p>
+<p><a class="ref" href="#script.python"><code>script.python</code></a> runs a Python function each time the node cooks. Channels, tables and pictures go in; channels, a table, a picture and a mesh come out. It is meant for logic (counting, state machines, sorting a table, turning OSC into something useful) and for pictures and meshes that numpy computes well: a height field, a data plot, a mesh from a formula. Per-pixel effects are faster as <code>tex</code> nodes and <a href="#shaders">shaders</a>.</p>
 <h3 id="scripts-python">Python</h3>
 <p>The node needs Python 3.12 or newer, installed separately; nothing else in penumbra does. penumbra looks for it in this order:</p>
 <ol>
@@ -2083,6 +2083,7 @@ def cook(cx):
 <tr><td><code>cx.warn(text)</code></td><td>a warning on the node</td></tr>
 </tbody>
 </table>
+<p>Pictures and meshes are below.</p>
 <p>Module globals keep their values between calls, so a script can count or remember; they start over when the script reloads. The script's folder (the project's, for <code>code</code>) is on <code>sys.path</code>, so it can import modules beside it. <code>print</code> goes to the app's log.</p>
 <h3 id="scripts-params">Params</h3>
 <p><code>PARAMS</code> declares params that appear in the panel under &quot;from the script&quot;, set, bound, saved and undone like any other:</p>
@@ -2095,11 +2096,44 @@ def cook(cx):
     &quot;mode&quot;: [&quot;a&quot;, &quot;b&quot;],          # a menu; the first entry is the default
 }
 </code></pre>
+<h3 id="scripts-pictures-and-meshes">Pictures and meshes</h3>
+<p>Pictures and meshes are numpy arrays. numpy must be installed in the Python penumbra uses (<a class="ref" href="#script.info"><code>script.info</code></a> names it): <code>python -m pip install numpy</code> with that Python. Without numpy, a script that uses them shows an error that says so; scripts without arrays still run.</p>
+<p><strong>Out.</strong> <code>cx.picture = array</code> puts a picture on the <code>picture</code> output. <code>cx.mesh = dict(...)</code> puts a mesh on the <code>mesh</code> output. Both outputs keep the last picture or mesh until the script sets another, so a script may update them only now and then. The script's work for an output is skipped while nothing reads it.</p>
+<table>
+<thead><tr><th></th><th></th></tr></thead>
+<tbody>
+<tr><td><code>cx.picture</code></td><td>shape <code>(height, width)</code> (grey), <code>(height, width, 3)</code> (RGB) or <code>(height, width, 4)</code> (RGBA); row 0 is the top. <code>uint8</code> is 0 to 255, floats are 0 to 1 (above 1 is brighter than white)</td></tr>
+<tr><td><code>cx.mesh[&quot;positions&quot;]</code></td><td>shape <code>(n, 3)</code>: x, y, z in metres, z up</td></tr>
+<tr><td><code>cx.mesh[&quot;indices&quot;]</code></td><td>optional, shape <code>(m, 3)</code>, integers: three vertices per triangle. Without it, every three vertices make a triangle</td></tr>
+<tr><td><code>cx.mesh[&quot;normals&quot;]</code></td><td>optional, shape <code>(n, 3)</code>. Without it, vertices shared by several triangles get the average of their normals (smooth), others the triangle's own (flat)</td></tr>
+<tr><td><code>cx.mesh[&quot;uvs&quot;]</code></td><td>optional, shape <code>(n, 2)</code>: texture coordinates, 0 to 1, origin at the top left</td></tr>
+</tbody>
+</table>
+<p><strong>In.</strong> A picture wired to <code>tex0</code> or <code>tex1</code> arrives as <code>cx.pictures[0]</code> or <code>cx.pictures[1]</code>: a float32 array of shape <code>(height, width, 4)</code>, RGBA. The script may change it in place and put it out again. The node reads the picture back from the GPU before each call. For 512 by 512 pixels that adds about 4 milliseconds, most of it waiting for the GPU to draw the picture. Inputs are limited to 2048 by 2048 pixels: shrink a larger picture with <a class="ref" href="#tex.resolution"><code>tex.resolution</code></a> or <a class="ref" href="#tex.fit"><code>tex.fit</code></a> first.</p>
+<p><strong>Colour.</strong> The node's <code>values</code> param says what the numbers mean. With <code>color</code> (the default), <code>uint8</code> is sRGB like a PNG, floats are linear light, and alpha is straight (not multiplied in). Pictures in come as linear floats with straight alpha. With <code>data</code>, every number is taken as stored, for maps such as heights, positions or masks.</p>
+<p><strong>Limits.</strong> A picture out has at most 8192 pixels on a side and 8.4 million pixels (4K UHD fits). A mesh has at most 1 048 576 vertices and 2 097 152 triangles. A wrong shape or type, a NaN position or an index past the last vertex is an error on the node.</p>
+<p>A picture of rings and a wavy sheet:</p>
+<pre><code class="lang-python">import numpy as np
+
+y, x = np.mgrid[0:256, 0:256] / 256 - 0.5
+u, v = np.meshgrid(np.linspace(0, 1, 50), np.linspace(0, 1, 50))
+i = np.arange(50 * 50).reshape(50, 50)
+a, b, c, d = i[:-1, :-1], i[:-1, 1:], i[1:, :-1], i[1:, 1:]
+cells = np.concatenate([np.stack([a, c, b], -1), np.stack([b, c, d], -1)]).reshape(-1, 3)
+
+def cook(cx):
+    rings = np.sin(40 * np.hypot(x, y) - 3 * cx.time) * 0.5 + 0.5
+    cx.picture = (rings * 255).astype(np.uint8)
+    z = 0.1 * np.sin(8 * u + cx.time)
+    cx.mesh = dict(positions=np.stack([u - 0.5, 0.5 - v, z], -1).reshape(-1, 3),
+                   indices=cells, uvs=np.stack([u, v], -1).reshape(-1, 2))
+</code></pre>
+<p>Wire <code>picture</code> into a viewer or a material's <code>texture</code>, and <code>mesh</code> into <a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a> and <a class="ref" href="#tex.render"><code>tex.render</code></a>. The <a href="../examples/python-pictures/README.md">python-pictures</a> example does both.</p>
 <h3 id="scripts-when-it-runs">When it runs</h3>
 <p>The <code>cook</code> param decides: <code>on change</code> runs the script when an input or a param changes, <code>every frame</code> runs it every frame, <code>auto</code> (the default) runs it every frame if the code mentions <code>time</code> or <code>frame</code> anywhere (also <code>import time</code>) and on change otherwise. A script that cooks on change sees <code>cx.time</code> as <code>None</code>.</p>
 <h3 id="scripts-errors-and-limits">Errors and limits</h3>
 <p>An error shows on the node, naming the script's line. A version that fails to load leaves the last good one running. A call that runs longer than <code>timeout</code> (100 ms by default) is stopped, and the node with it, until the code or the timeout changes.</p>
-<p>There is no sandbox: a script can do anything Python can, including taking the app down (<code>os._exit</code>, a crash in a C extension). A script stuck in C code or in <code>time.sleep</code> cannot be stopped and holds up every other script until it returns. All scripts share one Python thread; a call costs a few hundredths of a millisecond plus the script itself.</p>
+<p>There is no sandbox: a script can do anything Python can, including taking the app down (<code>os._exit</code>, a crash in a C extension). A script stuck in C code or in <code>time.sleep</code> cannot be stopped and holds up every other script until it returns. All scripts share one Python thread; a call costs a few hundredths of a millisecond plus the script itself. A 512 by 512 picture or a mesh of 10 000 vertices adds about 2 milliseconds per call.</p>
 </div></details>
 <details class="entry guide" id="control"><summary><span class="name">Control</span></summary>
 <div class="body">
@@ -2679,6 +2713,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
 </tbody>
 </table>
+<p class="mentions">Mentioned in: <a href="#scripts-pictures-and-meshes">Scripts › Pictures and meshes</a></p>
 </div></details>
 <details class="entry node" id="tex.flip"><summary><code class="name">tex.flip</code><span class="sum">Mirrors a picture left to right or top to bottom, or turns its rows into columns</span></summary>
 <div class="body">
@@ -3266,7 +3301,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>ao_strength</code></td><td>float</td><td><code>1</code></td><td>0 to 3 (soft, held within 0 to 8)</td><td>How much of the hidden ambient light is taken away: 1 as estimated, 0.3 at most 30 %, above 1 darker</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-resolution">The Helpers window › Resolution</a>, <a href="#mapping-without-camera-a-3d-model-of-the-object-model-mapping">Mapping without a camera › A 3D model of the object: Model mapping</a>, <a href="#navigation">Looking around in 3D</a>, <a href="#navigation-the-viewers-modes">Looking around in 3D › The viewer's modes</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-resolution">The Helpers window › Resolution</a>, <a href="#mapping-without-camera-a-3d-model-of-the-object-model-mapping">Mapping without a camera › A 3D model of the object: Model mapping</a>, <a href="#navigation">Looking around in 3D</a>, <a href="#navigation-the-viewers-modes">Looking around in 3D › The viewer's modes</a>, <a href="#scripts-pictures-and-meshes">Scripts › Pictures and meshes</a></p>
 </div></details>
 <details class="entry node" id="tex.render_volume"><summary><code class="name">tex.render_volume</code><span class="sum">Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, thin smoke lets through</span></summary>
 <div class="body">
@@ -3329,6 +3364,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
 </tbody>
 </table>
+<p class="mentions">Mentioned in: <a href="#scripts-pictures-and-meshes">Scripts › Pictures and meshes</a></p>
 </div></details>
 <details class="entry node" id="tex.scan"><summary><code class="name">tex.scan</code><span class="sum">Measures with a camera what a projector lights (structured light) and keeps the result until the next scan: maps to put content onto real objects</span></summary>
 <div class="body">
@@ -5013,7 +5049,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <ul>
 <li><code>out</code> <span class="kind">geo</span></li>
 </ul>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#scripts-pictures-and-meshes">Scripts › Pictures and meshes</a></p>
 </div></details>
 <details class="entry node" id="geo.file"><summary><code class="name">geo.file</code><span class="sum">A 3D model from a file (OBJ, STL, glTF/GLB, FBX) with its parts; updates when the file changes. An animated FBX plays: parts move with their models, skinned characters bend with their bones</span></summary>
 <div class="body">
@@ -5729,9 +5765,9 @@ def cook(cx):
 <div class="group" id="family-script">
 <h3>script</h3>
 <p class="kinds"><a href="#script.python">script.python</a></p>
-<details class="entry node" id="script.python"><summary><code class="name">script.python</code><span class="sum">Logic of your own in Python: turns channels and tables into new channels and a table</span></summary>
+<details class="entry node" id="script.python"><summary><code class="name">script.python</code><span class="sum">Logic of your own in Python: turns channels, tables and pictures into new channels, a table, a picture and a mesh</span></summary>
 <div class="body">
-<p>Logic of your own in Python: turns channels and tables into new channels and a table</p>
+<p>Logic of your own in Python: turns channels, tables and pictures into new channels, a table, a picture and a mesh</p>
 <p class="note">Declares further params per node, from its file or code.</p>
 <h4>Inputs</h4>
 <ul>
@@ -5739,11 +5775,15 @@ def cook(cx):
 <li><code>chan1</code> <span class="kind">chan</span></li>
 <li><code>table0</code> <span class="kind">table</span></li>
 <li><code>table1</code> <span class="kind">table</span></li>
+<li><code>tex0</code> <span class="kind">tex</span>: A picture for cx.pictures[0], read back to the CPU before every call; at most 2048 x 2048 pixels, so shrink larger ones first</li>
+<li><code>tex1</code> <span class="kind">tex</span>: A picture for cx.pictures[1], as tex0</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
 <li><code>out</code> <span class="kind">chan</span>: The channels cook(cx) returns</li>
 <li><code>table</code> <span class="kind">table</span>: The table cook(cx) returns; bind a text or a choice param to one of its cells</li>
+<li><code>picture</code> <span class="kind">tex</span>: The picture cook(cx) puts in cx.picture; holds the last one until the script sets another</li>
+<li><code>mesh</code> <span class="kind">geo</span>: The mesh cook(cx) puts in cx.mesh; holds the last one until the script sets another</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
@@ -5753,6 +5793,7 @@ def cook(cx):
 <tr><td><code>cook</code></td><td>auto | every frame | on change</td><td><code>&quot;auto&quot;</code></td><td></td><td>When cook(cx) runs<ul><li><code>auto</code>: every frame if the code mentions <code>time</code> or <code>frame</code>, else as on change</li><li><code>every frame</code>: every frame, for scripts that keep changing on their own</li><li><code>on change</code>: only when an input or a param changes</li></ul></td></tr>
 <tr><td><code>timeout</code></td><td>float</td><td><code>0.1</code></td><td>0.01 to 1 s (soft, held within 0.001 to 10 s)</td><td>A call running longer than this is stopped. The node then stays stopped until the script or <code>timeout</code> changes</td></tr>
 <tr><td><code>code</code></td><td>text</td><td>an example script</td><td></td><td>The script while <code>file</code> is empty</td></tr>
+<tr><td><code>values</code></td><td>color | data</td><td><code>&quot;color&quot;</code></td><td></td><td>How the numbers in <code>cx.picture</code> and <code>cx.pictures</code> relate to the colours<ul><li><code>color</code>: a picture: uint8 is sRGB (0 to 255), float is linear (0 to 1), alpha straight; inputs come as linear floats with straight alpha</li><li><code>data</code>: every channel as stored, for maps, positions and masks: no sRGB, no alpha applied</li></ul></td></tr>
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-text-and-choices">Concepts › Text and choices</a>, <a href="#scripts">Scripts</a></p>
@@ -7113,7 +7154,7 @@ def cook(cx):
 <details class="entry command" id="script.info"><summary><code class="name">script.info</code><span class="sum">The script node's Python: where it was found (or why not), version, state, call times, timeouts</span></summary>
 <div class="body">
 <p>The script node's Python: where it was found (or why not), version, state, call times, timeouts</p>
-<p class="mentions">Mentioned in: <a href="#scripts-python">Scripts › Python</a></p>
+<p class="mentions">Mentioned in: <a href="#scripts-python">Scripts › Python</a>, <a href="#scripts-pictures-and-meshes">Scripts › Pictures and meshes</a></p>
 </div></details>
 </div>
 <div class="group" id="group-shapes">

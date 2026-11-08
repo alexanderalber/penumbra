@@ -51,8 +51,8 @@ Other arguments:
 | `--fresh` | start without what feedback loops, caches and similar nodes kept from the last run (see [persistent state](helpers.md#state)) |
 | `--headless SCRIPT` | run without a window, driven by a script (see [Control](control.md#headless-runs)) |
 
-The script node needs a Python 3.12 or newer installed (see [Scripts](scripts.md)); everything
-else runs without it.
+The script node needs a Python 3.12 or newer installed, and numpy for pictures and meshes (see
+[Scripts](scripts.md)); everything else runs without them.
 
 ## The window
 
