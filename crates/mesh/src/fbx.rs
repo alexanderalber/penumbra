@@ -68,6 +68,7 @@ pub fn parse(
         local: Vec::new(),
         piece_of: Vec::new(),
         pieces: Vec::new(),
+        clip_work: fbx_reader::geometry::CLIP_WORK,
     };
     let mut geometries: HashMap<i64, Geometry> = HashMap::new();
     // Skins matter only when something can move them.
@@ -151,6 +152,8 @@ struct Reader<'a> {
     piece_of: Vec<u32>,
     /// Per piece: its hierarchy node, geometry-to-file matrix and skin.
     pieces: Vec<(usize, Mat, Option<Arc<Bind>>)>,
+    /// What is left of the file's ear clipping budget.
+    clip_work: u64,
 }
 
 impl Reader<'_> {
@@ -261,7 +264,7 @@ impl Reader<'_> {
             let material = slots.get(g.material(k) as usize).copied().unwrap_or(0);
             let n = poly.count as usize;
             let first = poly.first as usize;
-            for tri in g.triangulate(poly) {
+            for tri in g.triangulate_within(poly, &mut self.clip_work) {
                 let tri = if flip { [tri[0], tri[2], tri[1]] } else { tri };
                 // Bit k: the edge opposite corner k lies inside the polygon (its corners are
                 // not neighbours on the polygon's outline).

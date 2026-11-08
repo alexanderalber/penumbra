@@ -229,6 +229,8 @@ fn concave_polygons_triangulate_inside() {
         [1.0, 2.0, 0.0],
         [0.0, 2.0, 0.0],
     ];
+    // Without work left, the same polygon is a fan (one triangle of it then lies outside).
+    assert_eq!(geometry::triangulate_within(&l, &mut 0), [[0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 5]]);
     let tris = geometry::triangulate(&l);
     assert_eq!(tris.len(), 4);
     let area: f64 = tris

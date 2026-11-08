@@ -228,22 +228,43 @@ impl Geometry {
     /// polygon it cannot clip (self-intersecting, or of more than 256 corners) is split as a
     /// fan.
     pub fn triangulate(&self, p: &Polygon) -> Vec<[u32; 3]> {
+        let mut unlimited = u64::MAX;
+        self.triangulate_within(p, &mut unlimited)
+    }
+
+    /// Like [`Geometry::triangulate`], taking the clipping's work from `work` (steps of the
+    /// inside test). Ear clipping takes up to the cube of the corners; a file of many large
+    /// polygons could tie up the reader for minutes. Once `work` runs out, the rest are split
+    /// as fans. [`CLIP_WORK`] is a budget for one file.
+    pub fn triangulate_within(&self, p: &Polygon, work: &mut u64) -> Vec<[u32; 3]> {
         let first = p.first as usize;
         let n = p.count as usize;
         let points: Vec<[f64; 3]> =
             (first..first + n).map(|c| self.position(c).unwrap_or([0.0; 3])).collect();
-        triangulate(&points).into_iter().map(|t| t.map(|k| (first + k) as u32)).collect()
+        triangulate_within(&points, work).into_iter().map(|t| t.map(|k| (first + k) as u32)).collect()
     }
 }
 
+/// Steps of ear clipping one file may take, a second or two of work; polygons after that are
+/// split as fans.
+pub const CLIP_WORK: u64 = 400_000_000;
+
 /// Triangles over the corners of a planar-ish polygon (indices into `points`).
+#[cfg(test)]
 pub(crate) fn triangulate(points: &[[f64; 3]]) -> Vec<[usize; 3]> {
+    let mut unlimited = u64::MAX;
+    triangulate_within(points, &mut unlimited)
+}
+
+/// Triangles over the corners of a planar-ish polygon (indices into `points`), the clipping
+/// taking its steps from `work`.
+pub(crate) fn triangulate_within(points: &[[f64; 3]], work: &mut u64) -> Vec<[usize; 3]> {
     let n = points.len();
     let fan = || (1..n.saturating_sub(1)).map(|k| [0, k, k + 1]).collect::<Vec<_>>();
     if n < 3 {
         return Vec::new();
     }
-    if n == 3 || n > 256 {
+    if n == 3 || n > 256 || *work == 0 {
         return fan();
     }
     // Newell's normal, then the plane it is most perpendicular to.
@@ -287,6 +308,12 @@ pub(crate) fn triangulate(points: &[[f64; 3]]) -> Vec<[usize; 3]> {
         let m = left.len();
         let mut clipped = false;
         for k in 0..m {
+            // `as`: at most 256 corners.
+            let Some(rest) = work.checked_sub(m as u64) else {
+                *work = 0;
+                break;
+            };
+            *work = rest;
             let (Some(&i0), Some(&i1), Some(&i2)) =
                 (left.get((k + m - 1) % m), left.get(k), left.get((k + 1) % m))
             else {
