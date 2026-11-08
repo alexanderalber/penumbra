@@ -53,7 +53,7 @@ pub enum DataKind {
     ///   step with its first input. The `out.audio` nodes on one device must share one rate.
     Audio,
     /// A volume: a grid of cells filling a box in space, as a 3D simulation makes it
-    /// (`vol.smoke`) and a ray-march draws it (`tex.raymarch`).
+    /// (`vol.smoke`) and a ray-march draws it (`tex.render_volume`).
     Vol,
 }
 

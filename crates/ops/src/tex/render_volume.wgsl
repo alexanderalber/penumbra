@@ -1,4 +1,4 @@
-// tex.raymarch: a volume seen through an orthographic camera looking along -z. vol0 is the
+// tex.render_volume: a volume seen through an orthographic camera looking along -z. vol0 is the
 // volume (density in red, temperature in green), pic0 the glow's palette when `palette` is 1. Rays run in the box's own frame: `axis_x`, `axis_y`, `axis_z` are
 // the world's axes there (the box's rotation undone), positions in metres from its centre.
 

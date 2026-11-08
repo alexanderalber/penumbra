@@ -1,5 +1,5 @@
-//! `tex.raymarch`: draws a volume (`vol` data, such as `vol.smoke`'s) by marching a ray through
-//! it for every pixel (`raymarch.wgsl`). The camera is orthographic and looks along -z, the
+//! `tex.render_volume`: draws a volume (`vol` data, such as `vol.smoke`'s) by marching a ray through
+//! it for every pixel (`render_volume.wgsl`). The camera is orthographic and looks along -z, the
 //! picture's right along +x and its top along +y; `rotate` turns the volume in front of it. The
 //! smoke absorbs light by its density and shows in `color`, unlit; hot smoke glows in the colour
 //! its temperature has on a palette.
@@ -15,8 +15,8 @@ use penumbra_graph::{
 use super::{height_param, keep_size, side, width_param};
 use crate::{on_gpu, waiting};
 
-pub(crate) const KIND: &str = "tex.raymarch";
-const SOURCE: &str = include_str!("raymarch.wgsl");
+pub(crate) const KIND: &str = "tex.render_volume";
+const SOURCE: &str = include_str!("render_volume.wgsl");
 
 /// Most steps per cell.
 const MAX_QUALITY: f64 = 8.0;
@@ -142,7 +142,7 @@ fn program(gpu: &Gpu) -> Result<Arc<Compute>, Error> {
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(
-        FnNodeType::new(desc(), || Box::new(Raymarch::default()) as Box<dyn Operator>)
+        FnNodeType::new(desc(), || Box::new(RenderVolume::default()) as Box<dyn Operator>)
             .warm_up(on_gpu(|gpu| program(gpu).map(|_| ()))),
     )
 }
@@ -180,7 +180,7 @@ pub(crate) fn extent(size: [f64; 3], axes: [[f64; 3]; 3]) -> [f64; 2] {
     [x * 2.0, y * 2.0]
 }
 
-/// The vectors of `raymarch.wgsl`'s shapes, two each, those `emitters` and `obstacles` ask for.
+/// The vectors of `render_volume.wgsl`'s shapes, two each, those `emitters` and `obstacles` ask for.
 /// Positions count from the box's centre.
 fn shape_vectors(medium: &Medium, emitters: bool, obstacles: bool) -> Vec<[f32; 4]> {
     let [cx, cy, cz] = medium.center;
@@ -195,14 +195,14 @@ fn shape_vectors(medium: &Medium, emitters: bool, obstacles: bool) -> Vec<[f32; 
 }
 
 #[derive(Default)]
-struct Raymarch {
+struct RenderVolume {
     out_ring: TexRing,
     density_ring: TexRing,
     /// The shapes for the shader, made when the first is drawn.
     shapes: Option<DataBlock>,
 }
 
-impl Operator for Raymarch {
+impl Operator for RenderVolume {
     fn gpu_bytes(&self) -> u64 {
         penumbra_gpu::unique_bytes(self.out_ring.iter().chain(self.density_ring.iter()))
             + self.shapes.as_ref().map_or(0, DataBlock::bytes)

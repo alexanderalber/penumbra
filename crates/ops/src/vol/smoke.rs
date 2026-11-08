@@ -51,7 +51,7 @@ const EXPANSION_SCALE: f64 = 0.075;
 const MAX_CELLS_PER_STEP: f64 = 6.0;
 
 fn desc() -> NodeDesc {
-    NodeDesc::new(KIND, "Smoke in a box in space: emitters blow hot smoke in, it rises, swirls and fades. tex.raymarch draws it")
+    NodeDesc::new(KIND, "Smoke in a box in space: emitters blow hot smoke in, it rises, swirls and fades. tex.render_volume draws it")
         .stateful()
         .time_dependent()
         .input_run(
@@ -248,7 +248,7 @@ fn desc() -> NodeDesc {
         .describe_output(
             "out",
             "The smoke: density in red, temperature in green, fuel in blue, fuel burning per second in \
-             alpha, for tex.raymarch",
+             alpha, for tex.render_volume",
         )
 }
 

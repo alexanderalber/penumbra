@@ -134,7 +134,7 @@ The families:
   emitter per row, so a computed table can move or multiply them. With no emitter the box stays
   empty. Fuel in the smoke burns once it is hot enough: it heats, makes more smoke and swells,
   so a jet of it widens like a flame. A `vol.obstacle` on the `obstacle` inputs is a still sphere or box the smoke flows around.
-  `tex.raymarch` draws a volume as a picture, seen from the front through the whole box. Hot
+  `tex.render_volume` draws a volume as a picture, seen from the front through the whole box. Hot
   smoke glows with `glow`, in the colours of a palette picture on its `palette` input. Its
   `density` output shows how much smoke covers each pixel, as grey, for `tex.lookup`. Burning
   smoke is dense: a `thickness` well below 1 lets the eye see into it. `vol.smoke` keeps its

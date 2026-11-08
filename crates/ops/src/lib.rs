@@ -131,6 +131,8 @@ pub const TAGS: &[(&str, &[&str])] = &[
 /// as long as files with the old name may be around; a further rename of a kind updates its
 /// rows here.
 pub const RENAMED_KINDS: &[(&str, &str)] = &[
+    // Named for what it does, so the name reads in the list of kinds.
+    ("tex.raymarch", "tex.render_volume"),
     // The analysis is named for what it is there for: the beat.
     ("chan.audio_analysis", "chan.beat_analysis"),
     // Compound names got an underscore.

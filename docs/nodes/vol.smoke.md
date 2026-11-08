@@ -13,7 +13,7 @@ lot of `fuel` leaves thin streaks where it has been. Low `fuel` with a `correcti
 Wire a `vol.obstacle` into each `obstacle` input, 64 obstacles at most over all inputs. Smoke flows
 around an obstacle and none stays inside it. An emitter inside an obstacle makes nothing.
 
-`tex.raymarch` does not draw obstacles. You see them as the shape the smoke leaves out, so draw the
+`tex.render_volume` does not draw obstacles. You see them as the shape the smoke leaves out, so draw the
 body yourself if it should show.
 
 Obstacles stand still in the simulation. Bind `position` to move one anyway: the smoke in its new
@@ -25,7 +25,7 @@ A body is made of whole cells of the smoke's grid, so a round one has small step
 An obstacle input also reads a table, with the same place and shape columns as an emitter table.
 
 To see what the smoke is given, turn on `show_emitters`, `show_obstacles` and `show_grid` on
-`tex.raymarch`. They draw over its `out` picture and leave its `density` output alone.
+`tex.render_volume`. They draw over its `out` picture and leave its `density` output alone.
 
 ## Emitters from a table
 

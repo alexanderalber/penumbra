@@ -1,4 +1,4 @@
-//! `vol.smoke` drawn by `tex.raymarch` on WARP: hot smoke rises against gravity, a jet blows
+//! `vol.smoke` drawn by `tex.render_volume` on WARP: hot smoke rises against gravity, a jet blows
 //! along its velocity, projection keeps the volume's flow free of divergence, reset, a still
 //! show, a restored state, the density output, burning, vorticity, the box emitter, the glow and
 //! emitters from tables.
@@ -49,7 +49,7 @@ fn smoke_rig(params: &[(&str, Value)]) -> Rig {
     let ops = [
         create("/emit", "vol.emitter", &emit),
         create("/smoke", "vol.smoke", &smoke),
-        create("/march", "tex.raymarch", &[("width", Value::Int(48)), ("height", Value::Int(24))]),
+        create("/march", "tex.render_volume", &[("width", Value::Int(48)), ("height", Value::Int(24))]),
         connect("/emit", "/smoke", 0),
         connect("/smoke", "/march", 0),
     ];
@@ -67,7 +67,7 @@ fn table_rig(tables: &[String], params: &[(&str, Value)]) -> Rig {
     smoke.extend(params.iter().cloned());
     let mut ops = vec![
         create("/smoke", "vol.smoke", &smoke),
-        create("/march", "tex.raymarch", &[("width", Value::Int(48)), ("height", Value::Int(24))]),
+        create("/march", "tex.render_volume", &[("width", Value::Int(48)), ("height", Value::Int(24))]),
         connect("/smoke", "/march", 0),
     ];
     for (i, text) in tables.iter().enumerate() {

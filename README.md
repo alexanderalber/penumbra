@@ -35,7 +35,7 @@ sound, `table` text tables, `geo`, `mat`, `light` and `view` for 3D, `vol` volum
   [palettes and colormaps](docs/concepts.md#palettes). Image files read as data (maps, positions,
   normals).
 - **Volumes:** 3D smoke with burning fuel in a box (`vol.smoke`), up to 64 emitters, drawn by
-  `tex.raymarch` ([smoke](examples/smoke/README.md) example).
+  `tex.render_volume` ([smoke](examples/smoke/README.md) example).
 - **3D:** OBJ, STL, glTF, FBX. Primitives, solid 3D text, texture projection (planar, cylinder,
   sphere, box). Instancing from a table or a texture, tens of thousands on the GPU. Phong, PBR,
   wireframe, occluder materials. Ambient, directional, point, spot, environment lights. Shadows,

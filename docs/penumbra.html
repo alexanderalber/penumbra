@@ -330,7 +330,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong><code>table</code></strong>: text tables, typed in or read from a file, for scripts and OSC. <a class="ref" href="#table.file"><code>table.file</code></a> reads a CSV, TSV or text file and reloads it when the file changes. <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a> turns a table of numbers into channels, a channel per column (or row), named by its first cell. A param bound to a channel follows the last value in that column (or row). <a class="ref" href="#out.table"><code>out.table</code></a> writes a table to a CSV or TSV file. With <code>file</code> empty it writes <code>export/&lt;node name&gt;.csv</code> in the project folder. In mode <code>changes</code> it writes whenever the table differs from what the file holds; in mode <code>manual</code> it writes only on <a class="ref" href="#table_out.write"><code>table_out.write</code></a>. <code>overwrite</code> on replaces the file in place, for a program that keeps reading it; off, every write gets a new name with <code>_2</code>, <code>_3</code>, ...
 </li>
-<li><strong><code>vol</code></strong>: volumes, such as smoke. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> simulates smoke in a box: emitters blow hot smoke in, the smoke rises against <code>gravity</code>, swirls and fades. <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a> is one emitter; wire several into the <code>emitter</code> inputs of <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a>, 64 at most, later ones acting on what earlier ones left. Any table with columns x and y (see <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a>'s output) gives one emitter per row, so a computed table can move or multiply them. With no emitter the box stays empty. Fuel in the smoke burns once it is hot enough: it heats, makes more smoke and swells, so a jet of it widens like a flame. A <a class="ref" href="#vol.obstacle"><code>vol.obstacle</code></a> on the <code>obstacle</code> inputs is a still sphere or box the smoke flows around. <a class="ref" href="#tex.raymarch"><code>tex.raymarch</code></a> draws a volume as a picture, seen from the front through the whole box. Hot smoke glows with <code>glow</code>, in the colours of a palette picture on its <code>palette</code> input. Its <code>density</code> output shows how much smoke covers each pixel, as grey, for <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a>. Burning smoke is dense: a <code>thickness</code> well below 1 lets the eye see into it. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> keeps its smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean the same; how strongly a number acts was matched by eye to one Flow scene.
+<li><strong><code>vol</code></strong>: volumes, such as smoke. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> simulates smoke in a box: emitters blow hot smoke in, the smoke rises against <code>gravity</code>, swirls and fades. <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a> is one emitter; wire several into the <code>emitter</code> inputs of <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a>, 64 at most, later ones acting on what earlier ones left. Any table with columns x and y (see <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a>'s output) gives one emitter per row, so a computed table can move or multiply them. With no emitter the box stays empty. Fuel in the smoke burns once it is hot enough: it heats, makes more smoke and swells, so a jet of it widens like a flame. A <a class="ref" href="#vol.obstacle"><code>vol.obstacle</code></a> on the <code>obstacle</code> inputs is a still sphere or box the smoke flows around. <a class="ref" href="#tex.render_volume"><code>tex.render_volume</code></a> draws a volume as a picture, seen from the front through the whole box. Hot smoke glows with <code>glow</code>, in the colours of a palette picture on its <code>palette</code> input. Its <code>density</code> output shows how much smoke covers each pixel, as grey, for <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a>. Burning smoke is dense: a <code>thickness</code> well below 1 lets the eye see into it. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> keeps its smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean the same; how strongly a number acts was matched by eye to one Flow scene.
 </li>
 <li><strong><code>geo</code></strong>, <strong><code>mat</code></strong>, <strong><code>light</code></strong>, <strong><code>view</code></strong>: a 3D scene. Geometry from files or primitives, transformed and merged; materials put on it with <a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a>; lights and a <a class="ref" href="#view.camera"><code>view.camera</code></a> wired into a <a class="ref" href="#tex.render"><code>tex.render</code></a>, which makes a picture of it all (a render needs its camera; the camera is perspective, orthographic or calibrated). <a class="ref" href="#light.projector"><code>light.projector</code></a> throws a picture through a camera onto the geometry: a virtual projector, for trying a mapping on a model of the room. Coordinates are metres, z up. <a class="ref" href="#geo.file"><code>geo.file</code></a> reads OBJ, STL, glTF and FBX. FBX works from file version 7.0 on, binary or ASCII. Binary is the default of Blender, Maya, 3ds Max and Unity. An FBX 6 file gives an error: export it again as FBX 2011 or later. Each FBX model becomes a part with its name, placed as in the file, in metres and z up. Materials bring their diffuse colour and texture, embedded or from a file beside the FBX. Animated models play: each part moves as its model does in the file. A skinned character bends with its bones: each vertex follows the bones that weigh on it, blended by the weights (linear blend skinning). <code>take</code> picks the animation (the <code>takes</code> output lists them), <code>play</code>, <code>speed</code> and <code>loop</code> work as for a video, and with <code>play</code> off a channel bound to <code>time</code> drives it. Posing runs on the CPU and costs about 20 ns per vertex and frame. A file whose skin asks for dual quaternion blending is blended linearly, with a warning; twisting joints then thin out a little. Blend shapes, cameras and lights are not read. <a class="ref" href="#out.mesh"><code>out.mesh</code></a> writes geometry to an OBJ, STL or glb file, every model where it stands in the scene. Each part stays a part: an OBJ object or a glTF node. Only glb keeps material colours; textures are not written. File, <code>overwrite</code> and the modes <code>changes</code> and <code>manual</code> work as for <a class="ref" href="#out.table"><code>out.table</code></a>; the command is <a class="ref" href="#mesh_out.write"><code>mesh_out.write</code></a>. Copies from <a class="ref" href="#geo.tex_instance"><code>geo.tex_instance</code></a> are read back from the GPU and written one by one (<code>instances</code> on <code>expand</code>). For copies that move every frame, use mode <code>manual</code>: in mode <code>changes</code> such an input is written every frame. With <code>instances</code> on <code>skip</code> each model is written once, without its copies. A file holds at most 4 Mi triangles and 256 MiB; over that the node shows an error and writes nothing.
 </li>
@@ -2097,7 +2097,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>Every built-in node kind with its inputs, outputs and params, by family, and the component ports of all families in a section of their own. A param under a heading such as <i>more</i> sits in that folded section of the param panel. A soft range limits only the slider; typed values outside it are kept.</p>
 <div class="group" id="family-tex">
 <h3>tex</h3>
-<p class="kinds"><a href="#tex.blend_weight">tex.blend_weight</a> <a href="#tex.blob_track">tex.blob_track</a> <a href="#tex.blur">tex.blur</a> <a href="#tex.cache">tex.cache</a> <a href="#tex.channel_mix">tex.channel_mix</a> <a href="#tex.chroma_key">tex.chroma_key</a> <a href="#tex.composite">tex.composite</a> <a href="#tex.constant">tex.constant</a> <a href="#tex.contour">tex.contour</a> <a href="#tex.cross">tex.cross</a> <a href="#tex.denoise">tex.denoise</a> <a href="#tex.displace">tex.displace</a> <a href="#tex.edge">tex.edge</a> <a href="#tex.face_content">tex.face_content</a> <a href="#tex.feedback">tex.feedback</a> <a href="#tex.fit">tex.fit</a> <a href="#tex.flip">tex.flip</a> <a href="#tex.fluid">tex.fluid</a> <a href="#tex.from_chan">tex.from_chan</a> <a href="#tex.hsv">tex.hsv</a> <a href="#tex.image_file">tex.image_file</a> <a href="#tex.layer">tex.layer</a> <a href="#tex.lens_distort">tex.lens_distort</a> <a href="#tex.level">tex.level</a> <a href="#tex.limit">tex.limit</a> <a href="#tex.lookup">tex.lookup</a> <a href="#tex.mapper">tex.mapper</a> <a href="#tex.matte">tex.matte</a> <a href="#tex.monochrome">tex.monochrome</a> <a href="#tex.ndi_in">tex.ndi_in</a> <a href="#tex.noise">tex.noise</a> <a href="#tex.null">tex.null</a> <a href="#tex.optical_flow">tex.optical_flow</a> <a href="#tex.primitive">tex.primitive</a> <a href="#tex.quantize">tex.quantize</a> <a href="#tex.ramp">tex.ramp</a> <a href="#tex.raymarch">tex.raymarch</a> <a href="#tex.remap">tex.remap</a> <a href="#tex.render">tex.render</a> <a href="#tex.resolution">tex.resolution</a> <a href="#tex.scan">tex.scan</a> <a href="#tex.scan_pattern">tex.scan_pattern</a> <a href="#tex.select">tex.select</a> <a href="#tex.sequence">tex.sequence</a> <a href="#tex.shader">tex.shader</a> <a href="#tex.shape_content">tex.shape_content</a> <a href="#tex.shapes">tex.shapes</a> <a href="#tex.slope">tex.slope</a> <a href="#tex.spout_in">tex.spout_in</a> <a href="#tex.switch">tex.switch</a> <a href="#tex.text">tex.text</a> <a href="#tex.threshold">tex.threshold</a> <a href="#tex.tile">tex.tile</a> <a href="#tex.time_machine">tex.time_machine</a> <a href="#tex.transform">tex.transform</a> <a href="#tex.video_file">tex.video_file</a> <a href="#tex.video_in">tex.video_in</a></p>
+<p class="kinds"><a href="#tex.blend_weight">tex.blend_weight</a> <a href="#tex.blob_track">tex.blob_track</a> <a href="#tex.blur">tex.blur</a> <a href="#tex.cache">tex.cache</a> <a href="#tex.channel_mix">tex.channel_mix</a> <a href="#tex.chroma_key">tex.chroma_key</a> <a href="#tex.composite">tex.composite</a> <a href="#tex.constant">tex.constant</a> <a href="#tex.contour">tex.contour</a> <a href="#tex.cross">tex.cross</a> <a href="#tex.denoise">tex.denoise</a> <a href="#tex.displace">tex.displace</a> <a href="#tex.edge">tex.edge</a> <a href="#tex.face_content">tex.face_content</a> <a href="#tex.feedback">tex.feedback</a> <a href="#tex.fit">tex.fit</a> <a href="#tex.flip">tex.flip</a> <a href="#tex.fluid">tex.fluid</a> <a href="#tex.from_chan">tex.from_chan</a> <a href="#tex.hsv">tex.hsv</a> <a href="#tex.image_file">tex.image_file</a> <a href="#tex.layer">tex.layer</a> <a href="#tex.lens_distort">tex.lens_distort</a> <a href="#tex.level">tex.level</a> <a href="#tex.limit">tex.limit</a> <a href="#tex.lookup">tex.lookup</a> <a href="#tex.mapper">tex.mapper</a> <a href="#tex.matte">tex.matte</a> <a href="#tex.monochrome">tex.monochrome</a> <a href="#tex.ndi_in">tex.ndi_in</a> <a href="#tex.noise">tex.noise</a> <a href="#tex.null">tex.null</a> <a href="#tex.optical_flow">tex.optical_flow</a> <a href="#tex.primitive">tex.primitive</a> <a href="#tex.quantize">tex.quantize</a> <a href="#tex.ramp">tex.ramp</a> <a href="#tex.remap">tex.remap</a> <a href="#tex.render">tex.render</a> <a href="#tex.render_volume">tex.render_volume</a> <a href="#tex.resolution">tex.resolution</a> <a href="#tex.scan">tex.scan</a> <a href="#tex.scan_pattern">tex.scan_pattern</a> <a href="#tex.select">tex.select</a> <a href="#tex.sequence">tex.sequence</a> <a href="#tex.shader">tex.shader</a> <a href="#tex.shape_content">tex.shape_content</a> <a href="#tex.shapes">tex.shapes</a> <a href="#tex.slope">tex.slope</a> <a href="#tex.spout_in">tex.spout_in</a> <a href="#tex.switch">tex.switch</a> <a href="#tex.text">tex.text</a> <a href="#tex.threshold">tex.threshold</a> <a href="#tex.tile">tex.tile</a> <a href="#tex.time_machine">tex.time_machine</a> <a href="#tex.transform">tex.transform</a> <a href="#tex.video_file">tex.video_file</a> <a href="#tex.video_in">tex.video_in</a></p>
 <details class="entry node" id="tex.blend_weight"><summary><code class="name">tex.blend_weight</code><span class="sum">A projector's picture weighted for a blend: all of it by the blend weight, or the small features from one projector only</span></summary>
 <div class="body">
 <p>A projector's picture weighted for a blend: all of it by the blend weight, or the small features from one projector only</p>
@@ -3065,43 +3065,6 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-palettes">Concepts › Palettes</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a></p>
 </div></details>
-<details class="entry node" id="tex.raymarch"><summary><code class="name">tex.raymarch</code><span class="sum">Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, thin smoke lets through</span></summary>
-<div class="body">
-<p>Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, thin smoke lets through</p>
-<h4>Inputs</h4>
-<ul>
-<li><code>in</code> <span class="kind">vol</span>: The volume: its red is the density, its green the temperature</li>
-<li><code>palette</code> <span class="kind">tex</span>: Colours of the glow from cold on the left to hot on the right, read along the middle row. Unwired: black over red, orange and yellow to white</li>
-</ul>
-<h4>Outputs</h4>
-<ul>
-<li><code>out</code> <span class="kind">tex</span>: The smoke in its colour over transparent black, premultiplied, with what the Debug params draw on top</li>
-<li><code>density</code> <span class="kind">tex</span>: How much the smoke covers, as grey on black: white where nothing shows through. Opaque, so tex.lookup reads the cover rather than the colour</li>
-</ul>
-<h4>Params</h4>
-<table class="params">
-<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
-<tbody>
-<tr><td><code>width</code></td><td>int</td><td><code>1920</code></td><td>1 to 16384 px</td><td>Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
-<tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>1 to 16384 px</td><td>Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
-<tr><td><code>rotate</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>-36000 to 36000°</td><td>Turns the volume about its centre: about x, then y, then z</td></tr>
-<tr><td><code>view_height</code></td><td>float</td><td><code>0</code></td><td>0 to 10 m (soft)</td><td>How high a slice of the world the picture shows; 0: as much as the whole box needs</td></tr>
-<tr><td><code>pan</code></td><td>vec2</td><td><code>[0, 0]</code></td><td>m</td><td>Moves the view across: the picture's centre this far right and up of the box's centre</td></tr>
-<tr><td><code>thickness</code></td><td>float</td><td><code>4</code></td><td>0 to 20 (soft)</td><td>How much light smoke of density 1 takes away per metre: at 4, a metre of it lets about 2 % through</td></tr>
-<tr><td><code>color</code></td><td>colour</td><td><code>[1, 1, 1, 1]</code></td><td></td><td>Colour of the smoke; its alpha thins it</td></tr>
-<tr><td><code>glow</code></td><td>float</td><td><code>0</code></td><td>0 to 4 (soft)</td><td>How brightly hot smoke glows, on top of <code>color</code>: in the palette's colour at its temperature. 0: no glow</td></tr>
-<tr><td><code>hot</code></td><td>float</td><td><code>2</code></td><td>0.1 to 10 (soft)</td><td>Temperature that glows in the palette's right end; cold smoke takes its left end</td></tr>
-<tr class="section"><th colspan="5">more</th></tr>
-<tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
-<tr><td><code>quality</code></td><td>float</td><td><code>1</code></td><td>0.25 to 4 (soft)</td><td>Steps per cell along each ray. More shows less banding and costs more</td></tr>
-<tr class="section"><th colspan="5">Debug</th></tr>
-<tr><td><code>show_emitters</code></td><td>bool</td><td><code>false</code></td><td></td><td>Draws the outline of every emitter over the picture, in orange</td></tr>
-<tr><td><code>show_obstacles</code></td><td>bool</td><td><code>false</code></td><td></td><td>Draws the outline of every obstacle over the picture, in cyan</td></tr>
-<tr><td><code>show_grid</code></td><td>bool</td><td><code>false</code></td><td></td><td>Draws the box and its cells on the box's far sides. Where cells would be under 4 pixels, only every 2nd, 4th or 8th line shows</td></tr>
-</tbody>
-</table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
-</div></details>
 <details class="entry node" id="tex.remap"><summary><code class="name">tex.remap</code><span class="sum">Rearranges a picture by a map: each pixel shows the input where the map's red and green point. Undistorts, unwraps, carries a camera's view onto a projector</span></summary>
 <div class="body">
 <p>Rearranges a picture by a map: each pixel shows the input where the map's red and green point. Undistorts, unwraps, carries a camera's view onto a projector</p>
@@ -3158,6 +3121,43 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-resolution">The Helpers window › Resolution</a>, <a href="#mapping-without-camera-a-3d-model-of-the-object-model-mapping">Mapping without a camera › A 3D model of the object: Model mapping</a>, <a href="#navigation">Looking around in 3D</a>, <a href="#navigation-the-viewers-modes">Looking around in 3D › The viewer's modes</a></p>
+</div></details>
+<details class="entry node" id="tex.render_volume"><summary><code class="name">tex.render_volume</code><span class="sum">Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, thin smoke lets through</span></summary>
+<div class="body">
+<p>Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, thin smoke lets through</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">vol</span>: The volume: its red is the density, its green the temperature</li>
+<li><code>palette</code> <span class="kind">tex</span>: Colours of the glow from cold on the left to hot on the right, read along the middle row. Unwired: black over red, orange and yellow to white</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">tex</span>: The smoke in its colour over transparent black, premultiplied, with what the Debug params draw on top</li>
+<li><code>density</code> <span class="kind">tex</span>: How much the smoke covers, as grey on black: white where nothing shows through. Opaque, so tex.lookup reads the cover rather than the colour</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>width</code></td><td>int</td><td><code>1920</code></td><td>1 to 16384 px</td><td>Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
+<tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>1 to 16384 px</td><td>Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
+<tr><td><code>rotate</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>-36000 to 36000°</td><td>Turns the volume about its centre: about x, then y, then z</td></tr>
+<tr><td><code>view_height</code></td><td>float</td><td><code>0</code></td><td>0 to 10 m (soft)</td><td>How high a slice of the world the picture shows; 0: as much as the whole box needs</td></tr>
+<tr><td><code>pan</code></td><td>vec2</td><td><code>[0, 0]</code></td><td>m</td><td>Moves the view across: the picture's centre this far right and up of the box's centre</td></tr>
+<tr><td><code>thickness</code></td><td>float</td><td><code>4</code></td><td>0 to 20 (soft)</td><td>How much light smoke of density 1 takes away per metre: at 4, a metre of it lets about 2 % through</td></tr>
+<tr><td><code>color</code></td><td>colour</td><td><code>[1, 1, 1, 1]</code></td><td></td><td>Colour of the smoke; its alpha thins it</td></tr>
+<tr><td><code>glow</code></td><td>float</td><td><code>0</code></td><td>0 to 4 (soft)</td><td>How brightly hot smoke glows, on top of <code>color</code>: in the palette's colour at its temperature. 0: no glow</td></tr>
+<tr><td><code>hot</code></td><td>float</td><td><code>2</code></td><td>0.1 to 10 (soft)</td><td>Temperature that glows in the palette's right end; cold smoke takes its left end</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
+<tr><td><code>quality</code></td><td>float</td><td><code>1</code></td><td>0.25 to 4 (soft)</td><td>Steps per cell along each ray. More shows less banding and costs more</td></tr>
+<tr class="section"><th colspan="5">Debug</th></tr>
+<tr><td><code>show_emitters</code></td><td>bool</td><td><code>false</code></td><td></td><td>Draws the outline of every emitter over the picture, in orange</td></tr>
+<tr><td><code>show_obstacles</code></td><td>bool</td><td><code>false</code></td><td></td><td>Draws the outline of every obstacle over the picture, in cyan</td></tr>
+<tr><td><code>show_grid</code></td><td>bool</td><td><code>false</code></td><td></td><td>Draws the box and its cells on the box's far sides. Where cells would be under 4 pixels, only every 2nd, 4th or 8th line shows</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 <details class="entry node" id="tex.resolution"><summary><code class="name">tex.resolution</code><span class="sum">Scales a picture to another size, smaller to save work, say; shrinking stays smooth, without aliasing</span></summary>
 <div class="body">
@@ -5393,9 +5393,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
-<details class="entry node" id="vol.smoke"><summary><code class="name">vol.smoke</code><span class="sum">Smoke in a box in space: emitters blow hot smoke in, it rises, swirls and fades. tex.raymarch draws it</span></summary>
+<details class="entry node" id="vol.smoke"><summary><code class="name">vol.smoke</code><span class="sum">Smoke in a box in space: emitters blow hot smoke in, it rises, swirls and fades. tex.render_volume draws it</span></summary>
 <div class="body">
-<p>Smoke in a box in space: emitters blow hot smoke in, it rises, swirls and fades. tex.raymarch draws it</p>
+<p>Smoke in a box in space: emitters blow hot smoke in, it rises, swirls and fades. tex.render_volume draws it</p>
 <p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
@@ -5404,7 +5404,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </ul>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">vol</span>: The smoke: density in red, temperature in green, fuel in blue, fuel burning per second in alpha, for tex.raymarch</li>
+<li><code>out</code> <span class="kind">vol</span>: The smoke: density in red, temperature in green, fuel in blue, fuel burning per second in alpha, for tex.render_volume</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
@@ -5449,11 +5449,11 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>Keep an emitter at least 1 m from the open box edge behind it. Closer than that, air comes in through the edge as a straight jet and leaves straight streaks. An emitter that moves and holds a lot of <code>fuel</code> leaves thin streaks where it has been. Low <code>fuel</code> with a <code>correction_rate</code> of 2 keeps the rim clean, <code>advection: smooth</code> removes the streaks.</p>
 <h5 id="vol.smoke-obstacles">Obstacles</h5>
 <p>Wire a <a class="ref" href="#vol.obstacle"><code>vol.obstacle</code></a> into each <code>obstacle</code> input, 64 obstacles at most over all inputs. Smoke flows around an obstacle and none stays inside it. An emitter inside an obstacle makes nothing.</p>
-<p><a class="ref" href="#tex.raymarch"><code>tex.raymarch</code></a> does not draw obstacles. You see them as the shape the smoke leaves out, so draw the body yourself if it should show.</p>
+<p><a class="ref" href="#tex.render_volume"><code>tex.render_volume</code></a> does not draw obstacles. You see them as the shape the smoke leaves out, so draw the body yourself if it should show.</p>
 <p>Obstacles stand still in the simulation. Bind <code>position</code> to move one anyway: the smoke in its new place disappears and it pushes nothing along.</p>
 <p>A body is made of whole cells of the smoke's grid, so a round one has small steps at low <code>resolution</code>. Thinner than one cell, it can fall between the cells and do nothing.</p>
 <p>An obstacle input also reads a table, with the same place and shape columns as an emitter table.</p>
-<p>To see what the smoke is given, turn on <code>show_emitters</code>, <code>show_obstacles</code> and <code>show_grid</code> on <a class="ref" href="#tex.raymarch"><code>tex.raymarch</code></a>. They draw over its <code>out</code> picture and leave its <code>density</code> output alone.</p>
+<p>To see what the smoke is given, turn on <code>show_emitters</code>, <code>show_obstacles</code> and <code>show_grid</code> on <a class="ref" href="#tex.render_volume"><code>tex.render_volume</code></a>. They draw over its <code>out</code> picture and leave its <code>density</code> output alone.</p>
 <h5 id="vol.smoke-emitters-from-a-table">Emitters from a table</h5>
 <p>Any table can be an emitter input, one emitter per row. Its first row names the columns. <code>x</code> and <code>y</code> are required, every other column is optional:</p>
 <table>

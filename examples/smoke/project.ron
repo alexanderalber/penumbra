@@ -9,7 +9,7 @@
         "/colors": (kind: "tex.ramp", params: {"height": 1, "keep_size": true, "keys": "0 0 0 0 1\n0.25 0.12 0.03 0.40 1\n0.55 0.9 0.15 0.35 1\n0.8 1 0.6 0.15 1\n1 1 0.9 0.6 1", "width": 256}, pos: [340.0, 180.0]),
         "/drifting": (kind: "vol.emitter", params: {"correction_rate": 2.0, "fuel": 0.8, "linear_velocity": [0.0, 1.0, 0.0], "position": [0.0, -0.95, 0.0], "smoke": 1.5, "temp": 2.5}, binds: {"position.0": "sway"}, pos: [-340.0, 140.0]),
         "/left": (kind: "vol.emitter", params: {"fuel": 3.0, "linear_velocity": [0.8, 1.0, 0.0], "position": [-2.0, -1.0, 0.0], "radius": 0.25, "smoke": 1.5, "temp": 2.5}, pos: [-340.0, 0.0]),
-        "/march": (kind: "tex.raymarch", params: {"color": [0.04, 0.05, 0.08, 1.0], "glow": 1.4, "height": 720, "hot": 1.0, "keep_size": true, "pan": [0.0, 0.35], "thickness": 1.0, "view_height": 3.4, "width": 1280}, inputs: {"in": "smoke", "palette": "colors"}, pos: [340.0, 0.0]),
+        "/march": (kind: "tex.render_volume", params: {"color": [0.04, 0.05, 0.08, 1.0], "glow": 1.4, "height": 720, "hot": 1.0, "keep_size": true, "pan": [0.0, 0.35], "thickness": 1.0, "view_height": 3.4, "width": 1280}, inputs: {"in": "smoke", "palette": "colors"}, pos: [340.0, 0.0]),
         "/out": (kind: "tex.composite", inputs: {"in0": "black", "in1": "march"}, pos: [980.0, 60.0]),
         "/smoke": (kind: "vol.smoke", params: {"resolution": 160, "size": [8.0, 4.5, 3.0]}, inputs: {"emitter0": "left", "emitter1": "drifting", "emitter2": "wide"}, pos: [0.0, 60.0]),
         "/sway": (kind: "chan.lfo", params: {"amplitude": 0.9, "name": "sway", "rate": 0.05}, pos: [-660.0, 160.0]),

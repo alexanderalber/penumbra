@@ -25,8 +25,8 @@ pub mod ndi_in;
 mod optical_flow;
 mod primitive;
 mod ramp;
-mod raymarch;
 pub mod render;
+mod render_volume;
 pub mod scan;
 mod scan_pattern;
 mod sequence;
@@ -545,7 +545,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     flow::register(types)?;
     sequence::register(types)?;
     fluid::register(types)?;
-    raymarch::register(types)?;
+    render_volume::register(types)?;
     image_file::register(types)?;
     layer::register(types)?;
     mapper::register(types)?;

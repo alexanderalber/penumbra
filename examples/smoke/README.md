@@ -1,7 +1,7 @@
 # smoke
 
 `vol.smoke` is smoke in a box in space. Three `vol.emitter` nodes blow smoke, heat and fuel into
-the box. `tex.raymarch` draws the result, and hot smoke glows in the colours of `/colors`.
+the box. `tex.render_volume` draws the result, and hot smoke glows in the colours of `/colors`.
 
 The smoke needs a moment to develop: look at `/out` after about 10 seconds.
 

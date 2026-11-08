@@ -8,7 +8,7 @@ Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#g
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.raymarch](#texraymarch), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.render_volume](#texrender_volume), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
 
 *inputs:* [tex.ndi_in](#texndi_in), [tex.spout_in](#texspout_in), [tex.video_in](#texvideo_in)
 
@@ -713,37 +713,6 @@ Outputs: `out` (tex).
 | `steps` | bool | `false` |  | With a palette: equal bands, one per colour, instead of blending between them |
 | `shape` | horizontal \| vertical \| radial \| circular | `"horizontal"` |  | How the key positions 0 to 1 lie on the picture; horizontal: left (0) to right (1); vertical: bottom (0) to top (1); radial: the centre (0) out to the middle of the top edge (1), in rings; circular: once around the centre, counter-clockwise from the right (0) |
 
-### tex.raymarch
-
-Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, thin smoke lets through
-
-Inputs:
-
-- `in` (vol): The volume: its red is the density, its green the temperature
-- `palette` (tex): Colours of the glow from cold on the left to hot on the right, read along the middle row. Unwired: black over red, orange and yellow to white
-
-Outputs:
-
-- `out` (tex): The smoke in its colour over transparent black, premultiplied, with what the Debug params draw on top
-- `density` (tex): How much the smoke covers, as grey on black: white where nothing shows through. Opaque, so tex.lookup reads the cover rather than the colour
-
-| param | type | default | range | meaning |
-|---|---|---|---|---|
-| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
-| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
-| `rotate` | vec3 | `[0, 0, 0]` | -36000 to 36000° | Turns the volume about its centre: about x, then y, then z |
-| `view_height` | float | `0` | 0 to 10 m (soft) | How high a slice of the world the picture shows; 0: as much as the whole box needs |
-| `pan` | vec2 | `[0, 0]` | m | Moves the view across: the picture's centre this far right and up of the box's centre |
-| `thickness` | float | `4` | 0 to 20 (soft) | How much light smoke of density 1 takes away per metre: at 4, a metre of it lets about 2 % through |
-| `color` | colour | `[1, 1, 1, 1]` |  | Colour of the smoke; its alpha thins it |
-| `glow` | float | `0` | 0 to 4 (soft) | How brightly hot smoke glows, on top of `color`: in the palette's colour at its temperature. 0: no glow |
-| `hot` | float | `2` | 0.1 to 10 (soft) | Temperature that glows in the palette's right end; cold smoke takes its left end |
-| `quality` *(more)* | float | `1` | 0.25 to 4 (soft) | Steps per cell along each ray. More shows less banding and costs more |
-| `show_emitters` *(Debug)* | bool | `false` |  | Draws the outline of every emitter over the picture, in orange |
-| `show_obstacles` *(Debug)* | bool | `false` |  | Draws the outline of every obstacle over the picture, in cyan |
-| `show_grid` *(Debug)* | bool | `false` |  | Draws the box and its cells on the box's far sides. Where cells would be under 4 pixels, only every 2nd, 4th or 8th line shows |
-
 ### tex.remap
 
 Rearranges a picture by a map: each pixel shows the input where the map's red and green point. Undistorts, unwraps, carries a camera's view onto a projector
@@ -788,6 +757,37 @@ Outputs:
 | `ao` *(occlusion)* | bool | `false` |  | Ambient occlusion: less ambient and environment light in creases and where objects meet; direct light and unlit surfaces stay as they are |
 | `ao_radius` *(occlusion)* | float | `0.5` | 0.01 to 2 m (soft) | How far around a point geometry darkens it |
 | `ao_strength` *(occlusion)* | float | `1` | 0 to 3 (soft) | How much of the hidden ambient light is taken away: 1 as estimated, 0.3 at most 30 %, above 1 darker |
+
+### tex.render_volume
+
+Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, thin smoke lets through
+
+Inputs:
+
+- `in` (vol): The volume: its red is the density, its green the temperature
+- `palette` (tex): Colours of the glow from cold on the left to hot on the right, read along the middle row. Unwired: black over red, orange and yellow to white
+
+Outputs:
+
+- `out` (tex): The smoke in its colour over transparent black, premultiplied, with what the Debug params draw on top
+- `density` (tex): How much the smoke covers, as grey on black: white where nothing shows through. Opaque, so tex.lookup reads the cover rather than the colour
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
+| `rotate` | vec3 | `[0, 0, 0]` | -36000 to 36000° | Turns the volume about its centre: about x, then y, then z |
+| `view_height` | float | `0` | 0 to 10 m (soft) | How high a slice of the world the picture shows; 0: as much as the whole box needs |
+| `pan` | vec2 | `[0, 0]` | m | Moves the view across: the picture's centre this far right and up of the box's centre |
+| `thickness` | float | `4` | 0 to 20 (soft) | How much light smoke of density 1 takes away per metre: at 4, a metre of it lets about 2 % through |
+| `color` | colour | `[1, 1, 1, 1]` |  | Colour of the smoke; its alpha thins it |
+| `glow` | float | `0` | 0 to 4 (soft) | How brightly hot smoke glows, on top of `color`: in the palette's colour at its temperature. 0: no glow |
+| `hot` | float | `2` | 0.1 to 10 (soft) | Temperature that glows in the palette's right end; cold smoke takes its left end |
+| `quality` *(more)* | float | `1` | 0.25 to 4 (soft) | Steps per cell along each ray. More shows less banding and costs more |
+| `show_emitters` *(Debug)* | bool | `false` |  | Draws the outline of every emitter over the picture, in orange |
+| `show_obstacles` *(Debug)* | bool | `false` |  | Draws the outline of every obstacle over the picture, in cyan |
+| `show_grid` *(Debug)* | bool | `false` |  | Draws the box and its cells on the box's far sides. Where cells would be under 4 pixels, only every 2nd, 4th or 8th line shows |
 
 ### tex.resolution
 
@@ -2464,7 +2464,7 @@ Outputs:
 
 ### vol.smoke
 
-Smoke in a box in space: emitters blow hot smoke in, it rises, swirls and fades. tex.raymarch draws it
+Smoke in a box in space: emitters blow hot smoke in, it rises, swirls and fades. tex.render_volume draws it
 
 Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
@@ -2475,7 +2475,7 @@ Inputs:
 
 Outputs:
 
-- `out` (vol): The smoke: density in red, temperature in green, fuel in blue, fuel burning per second in alpha, for tex.raymarch
+- `out` (vol): The smoke: density in red, temperature in green, fuel in blue, fuel burning per second in alpha, for tex.render_volume
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
