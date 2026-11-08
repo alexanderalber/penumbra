@@ -229,8 +229,14 @@ impl Operator for DmxOut {
             return Err(crate::waiting(cx));
         };
         if self.output.as_ref().is_none_or(|o| *o.target() != target) {
-            // The old one first, so a port it holds is free for the new one.
+            // The old one first, so a port it holds is free for the new one. Its thread may
+            // take a moment to end; the node waits for it on later cooks instead of blocking
+            // this one.
             self.output = None;
+            if hub.closing(&target) {
+                cx.waker().wake();
+                return Err(CookError::Pending);
+            }
             let waker = cx.waker();
             let out = hub
                 .output(cx.def().name.as_str(), target, Arc::new(move || waker.wake()))
@@ -338,9 +344,15 @@ impl Operator for DmxIn {
         let wanted: BTreeSet<u16> = (universe..=last_universe).collect();
 
         if self.input.as_ref().is_none_or(|i| i.listen() != listen) {
-            // The old one first, so a port it holds is free for the new one.
+            // The old one first, so a port it holds is free for the new one. Its thread may
+            // take a moment to end; the node waits for it on later cooks instead of blocking
+            // this one.
             self.input = None;
             self.last = None;
+            if hub.closing(&listen) {
+                cx.waker().wake();
+                return Err(CookError::Pending);
+            }
             let waker = cx.waker();
             let i = hub
                 .input(cx.def().name.as_str(), listen, Arc::new(move || waker.wake()))

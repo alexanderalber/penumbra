@@ -244,6 +244,20 @@ impl Inputs {
         }
     }
 
+    /// Whether a listener on `listen` that was stopped is still ending; it holds the port
+    /// until it does. A caller that must not block waits for this to be false before
+    /// [`Inputs::input`]. Threads that ended are joined here.
+    pub fn closing(&self, listen: &Listen) -> bool {
+        let mut stopping = lock(&self.inner.stopping);
+        let (done, running): (Vec<_>, Vec<_>) = stopping.drain(..).partition(|(_, h)| h.is_finished());
+        *stopping = running;
+        drop(stopping);
+        for (_, h) in done {
+            h.join().ok();
+        }
+        lock(&self.inner.stopping).iter().any(|(l, _)| l == listen)
+    }
+
     /// An input on `listen`, starting the listener's thread if it is the first. `label` names
     /// the reader in the status (a node path); `wake` is called when one of its universes
     /// changes or the listener opens or fails. Ask for the universes with [`Input::want`].

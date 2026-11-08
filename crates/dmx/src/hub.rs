@@ -217,6 +217,21 @@ impl Hub {
         *lock(&self.inner.config) = config;
     }
 
+    /// Whether a link to `target` that was stopped is still ending. Its thread holds the port
+    /// until it does (it looks at its stop flag at least every 50 ms, but a write to a stuck
+    /// serial port takes up to 250 ms), so a caller that must not block waits for this to be
+    /// false before [`Hub::output`]. Threads that ended are joined here.
+    pub fn closing(&self, target: &Target) -> bool {
+        let mut stopping = lock(&self.inner.stopping);
+        let (done, running): (Vec<_>, Vec<_>) = stopping.drain(..).partition(|(_, h)| h.is_finished());
+        *stopping = running;
+        drop(stopping);
+        for (_, h) in done {
+            h.join().ok();
+        }
+        lock(&self.inner.stopping).iter().any(|(t, _)| t == target)
+    }
+
     /// An output to `target`, starting the link's thread if it is the first. `label` names the
     /// writer in the status (a node path); `wake` is called when the link opens, closes or fails.
     pub fn output(
@@ -787,6 +802,26 @@ mod tests {
         while r.recv(&mut buf).is_ok() {}
         r.set_read_timeout(Some(Duration::from_millis(150))).unwrap();
         assert!(r.recv(&mut buf).is_err(), "a stopped link still sends");
+        hub.shutdown();
+    }
+
+    #[test]
+    fn a_stopped_link_is_closing_until_its_thread_ends() {
+        let hub = Hub::new();
+        let (_r, to) = receiver();
+        let target = Target::Ddp { to };
+        assert!(!hub.closing(&target));
+        let out = hub.output("/x", target.clone(), nothing()).unwrap();
+        out.set(0, &[1; 3], 60.0);
+        drop(out);
+        // Asking never blocks; the thread ends within its stop check.
+        let start = Instant::now();
+        while hub.closing(&target) {
+            assert!(start.elapsed() < Duration::from_secs(2), "the link never ended");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(lock(&hub.inner.stopping).is_empty(), "the ended thread is joined");
+        hub.output("/x", target, nothing()).unwrap();
         hub.shutdown();
     }
 
