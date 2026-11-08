@@ -89,7 +89,12 @@ fn candidates(
         }
         let middle = (upper.max.y + lower.min.y) / 2.0;
         for &k in shifts {
-            list.push((around(a, b, right, middle + k * TRACK * zoom, left, margin), 1.3));
+            let d = k * TRACK * zoom;
+            list.push((around(a, b, right, middle + d, left, margin), 1.3));
+            // The same loop close to the two ports: inside the gap it passes neither node, so
+            // it need not reach past their far sides.
+            let (near_a, near_b) = (a.x + margin + d.abs(), b.x - margin - d.abs());
+            list.push((around(a, b, near_a, middle + d, near_b, margin), 1.1));
         }
     }
     list
@@ -717,6 +722,28 @@ mod tests {
         let m = measure(&nodes, &wires);
         assert_eq!(m.overlap, 0.0, "{:?}", m.overlaps);
         assert_eq!(m.crossings, 0);
+    }
+
+    #[test]
+    fn a_backward_wire_through_a_gap_stays_near_its_ports() {
+        // A node below and slightly left of the node it feeds, whose input sits just left of
+        // the source's output. A third node feeds the input above from the left.
+        let source = Rect::from_min_size(pos2(220.0, 171.0), vec2(150.0, 104.4));
+        let target = Rect::from_min_size(pos2(340.0, 0.0), vec2(150.0, 104.4));
+        let left = Rect::from_min_size(pos2(9.0, 95.0), vec2(150.0, 108.0));
+        let nodes = [source, target, left];
+        let (a, b) = (pos2(370.0, 233.2), pos2(340.0, 76.3));
+        let wires =
+            [ends(pos2(159.0, 159.1), pos2(340.0, 48.2), left, target, 1), ends(a, b, source, target, 2)];
+        dump(&nodes, &wires);
+        let m = measure(&nodes, &wires);
+        assert_eq!(m.through_nodes, 0.0);
+        assert_eq!(m.crossings, 0, "{:?}", m.crossings_at);
+        let routes = route_all(&wires, &nodes);
+        let line = flatten(routes.get(1).map_or(&[], Vec::as_slice));
+        let (min, max) = line.iter().fold((f32::MAX, f32::MIN), |(l, h), p| (l.min(p.x), h.max(p.x)));
+        assert!(max <= a.x + 45.0, "reaches out to {max}");
+        assert!(min >= b.x - 45.0, "reaches back to {min}");
     }
 
     #[test]
