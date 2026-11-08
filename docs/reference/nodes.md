@@ -2627,7 +2627,7 @@ Inputs:
 - `chan1` (chan)
 - `table0` (table)
 - `table1` (table)
-- `tex0` (tex): A picture for cx.pictures[0], read back to the CPU before every call; at most 2048 x 2048 pixels, so shrink larger ones first
+- `tex0` (tex): A picture for cx.pictures[0] (read-only), read back to the CPU whenever the node before it makes a new one; at most 2048 x 2048 pixels, so shrink larger ones first
 - `tex1` (tex): A picture for cx.pictures[1], as tex0
 
 Outputs:

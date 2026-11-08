@@ -2098,7 +2098,7 @@ def cook(cx):
 </code></pre>
 <h3 id="scripts-pictures-and-meshes">Pictures and meshes</h3>
 <p>Pictures and meshes are numpy arrays. numpy must be installed in the Python penumbra uses (<a class="ref" href="#script.info"><code>script.info</code></a> names it): <code>python -m pip install numpy</code> with that Python. Without numpy, a script that uses them shows an error that says so; scripts without arrays still run.</p>
-<p><strong>Out.</strong> <code>cx.picture = array</code> puts a picture on the <code>picture</code> output. <code>cx.mesh = dict(...)</code> puts a mesh on the <code>mesh</code> output. Both outputs keep the last picture or mesh until the script sets another, so a script may update them only now and then. The script's work for an output is skipped while nothing reads it.</p>
+<p><strong>Out.</strong> <code>cx.picture = array</code> puts a picture on the <code>picture</code> output. <code>cx.mesh = dict(...)</code> puts a mesh on the <code>mesh</code> output. Both outputs keep the last picture or mesh until the script sets another, so a script may update them only now and then. While nothing reads an output, the array the script sets for it is ignored: not checked, not turned into a picture or mesh. The script itself still runs.</p>
 <table>
 <thead><tr><th></th><th></th></tr></thead>
 <tbody>
@@ -2109,8 +2109,8 @@ def cook(cx):
 <tr><td><code>cx.mesh[&quot;uvs&quot;]</code></td><td>optional, shape <code>(n, 2)</code>: texture coordinates, 0 to 1, origin at the top left</td></tr>
 </tbody>
 </table>
-<p><strong>In.</strong> A picture wired to <code>tex0</code> or <code>tex1</code> arrives as <code>cx.pictures[0]</code> or <code>cx.pictures[1]</code>: a float32 array of shape <code>(height, width, 4)</code>, RGBA. The script may change it in place and put it out again. The node reads the picture back from the GPU before each call. For 512 by 512 pixels that adds about 4 milliseconds, most of it waiting for the GPU to draw the picture. Inputs are limited to 2048 by 2048 pixels: shrink a larger picture with <a class="ref" href="#tex.resolution"><code>tex.resolution</code></a> or <a class="ref" href="#tex.fit"><code>tex.fit</code></a> first.</p>
-<p><strong>Colour.</strong> The node's <code>values</code> param says what the numbers mean. With <code>color</code> (the default), <code>uint8</code> is sRGB like a PNG, floats are linear light, and alpha is straight (not multiplied in). Pictures in come as linear floats with straight alpha. With <code>data</code>, every number is taken as stored, for maps such as heights, positions or masks.</p>
+<p><strong>In.</strong> A picture wired to <code>tex0</code> or <code>tex1</code> arrives as <code>cx.pictures[0]</code> or <code>cx.pictures[1]</code>: a float32 array of shape <code>(height, width, 4)</code>, RGBA. The array is read-only; <code>p.copy()</code> gives one to change and put out again. The node reads a picture back from the GPU when the node before it made a new one. For 512 by 512 pixels that adds about 4 milliseconds per new picture, most of it waiting for the GPU to draw it. An unchanged picture costs nothing. Inputs are limited to 2048 by 2048 pixels: shrink a larger picture with <a class="ref" href="#tex.resolution"><code>tex.resolution</code></a> or <a class="ref" href="#tex.fit"><code>tex.fit</code></a> first.</p>
+<p><strong>Colour.</strong> The node's <code>values</code> param says what the numbers mean. With <code>color</code> (the default), <code>uint8</code> is sRGB like a PNG, floats are linear light, and alpha is straight (not multiplied in). Pictures in come as linear floats with straight alpha; where alpha is 0, their colour is 0. With <code>data</code>, every number is taken as stored, for maps such as heights, positions or masks, and colour where alpha is 0 stays.</p>
 <p><strong>Limits.</strong> A picture out has at most 8192 pixels on a side and 8.4 million pixels (4K UHD fits). A mesh has at most 1 048 576 vertices and 2 097 152 triangles. A wrong shape or type, a NaN position or an index past the last vertex is an error on the node.</p>
 <p>A picture of rings and a wavy sheet:</p>
 <pre><code class="lang-python">import numpy as np
@@ -5775,7 +5775,7 @@ def cook(cx):
 <li><code>chan1</code> <span class="kind">chan</span></li>
 <li><code>table0</code> <span class="kind">table</span></li>
 <li><code>table1</code> <span class="kind">table</span></li>
-<li><code>tex0</code> <span class="kind">tex</span>: A picture for cx.pictures[0], read back to the CPU before every call; at most 2048 x 2048 pixels, so shrink larger ones first</li>
+<li><code>tex0</code> <span class="kind">tex</span>: A picture for cx.pictures[0] (read-only), read back to the CPU whenever the node before it makes a new one; at most 2048 x 2048 pixels, so shrink larger ones first</li>
 <li><code>tex1</code> <span class="kind">tex</span>: A picture for cx.pictures[1], as tex0</li>
 </ul>
 <h4>Outputs</h4>

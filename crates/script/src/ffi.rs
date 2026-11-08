@@ -88,7 +88,9 @@ impl Library {
             let abi = *host.get::<AbiFn>(b"pn_pyhost_abi\0").map_err(sym("pn_pyhost_abi"))?;
             let found = abi();
             if found != ABI {
-                return Err(format!("{shown} speaks interface {found}, expected {ABI}"));
+                return Err(format!(
+                    "{shown} speaks interface {found}, expected {ABI}: it is from another version of penumbra; rebuild or reinstall penumbra"
+                ));
             }
             let init = *host.get::<InitFn>(b"pn_pyhost_init\0").map_err(sym("pn_pyhost_init"))?;
             let request = *host.get::<RequestFn>(b"pn_pyhost_request\0").map_err(sym("pn_pyhost_request"))?;

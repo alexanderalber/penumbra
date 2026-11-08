@@ -7,9 +7,10 @@
 //! `timeout`; one stopped by the watchdog stays stopped until its code or `timeout` changes.
 //!
 //! Pictures and meshes are numpy arrays on the Python side. A picture input is read back from
-//! the GPU before the call (the cook waits a few milliseconds for it, else the node cooks again
-//! once it is there, as `tex.blob_track` does); the `picture` and `mesh` outputs are made only
-//! while something reads them, and hold the last one the script set.
+//! the GPU when its source made a new one, before the call (the cook waits a few milliseconds
+//! for it, else the node cooks again once it is there, as `tex.blob_track` does). Python keeps
+//! the array, so an unchanged picture crosses once. The `picture` and `mesh` outputs are made
+//! only while something reads them, and hold the last one the script set.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -26,7 +27,7 @@ use penumbra_graph::{
     NodeTypes, Operator,
 };
 use penumbra_mesh::{Material, Mesh, Range, Vertex};
-use penumbra_script::{Call, InPicture, Load, Loaded, OutMesh, OutPicture, Samples, ScriptError};
+use penumbra_script::{Call, InPicture, Load, Loaded, OutMesh, OutPicture, PictureArg, Samples, ScriptError};
 
 /// The node's own params; a script's `PARAMS` may not reuse these names.
 const FIXED: &[&str] = &["file", "code", "cook", "timeout", "values"];
@@ -61,7 +62,7 @@ pub const DEFAULT_CODE: &str = r#"# cook(cx) runs when an input or a param chang
 # if the script mentions `time` or `frame` (the node's `cook` param decides otherwise).
 # In:  cx.chans[0], cx.chans[1]   channels (name -> list of samples) or None
 #      cx.tables[0], cx.tables[1] rows of text cells, or None
-#      cx.pictures[0], cx.pictures[1] numpy arrays (height, width, 4), or None
+#      cx.pictures[0], cx.pictures[1] read-only numpy arrays (height, width, 4), or None
 #      cx.params (the values of PARAMS), cx.time, cx.frame, cx.rate
 # Out: cx.out[name] = a number or a list, cx.table.append([cells]), cx.warn(text)
 #      cx.picture = an array, cx.mesh = dict(positions=..., indices=...) (numpy)
@@ -114,7 +115,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .input("table1", DataKind::Table)
         .input("tex0", DataKind::Tex)
         .input("tex1", DataKind::Tex)
-        .describe_input("tex0", "A picture for cx.pictures[0], read back to the CPU before every call; at most 2048 x 2048 pixels, so shrink larger ones first")
+        .describe_input("tex0", "A picture for cx.pictures[0] (read-only), read back to the CPU whenever the node before it makes a new one; at most 2048 x 2048 pixels, so shrink larger ones first")
         .describe_input("tex1", "A picture for cx.pictures[1], as tex0")
         .output("out", DataKind::Chan)
         .output("table", DataKind::Table)
@@ -150,11 +151,13 @@ struct Script {
     /// The `cook` param as last seen: `Some(true)` every frame, `Some(false)` on change, `None`
     /// as the code says.
     every_frame: Option<bool>,
-    /// The picture inputs as last read back, and whether as data.
-    pictures: [Option<InPicture>; PICTURES],
-    read_as_data: bool,
-    /// The readback in flight, which inputs it holds, and when it started.
-    pending: Option<(PendingRead, Vec<usize>, Instant)>,
+    /// The picture inputs as last read back.
+    pictures: [Option<ReadPicture>; PICTURES],
+    /// The generation the next picture read back gets.
+    next_generation: u64,
+    /// The generation of each input the Python side holds.
+    sent: [Option<u64>; PICTURES],
+    pending: Option<Pending>,
     pool: ReadPool,
     /// The `picture` output's textures, the last picture made, and the empty picture shown
     /// before the script sets one.
@@ -163,8 +166,24 @@ struct Script {
     blank: Option<Tex>,
     /// The last mesh made.
     mesh: Option<(Geo, Arc<Model>)>,
-    /// A call has produced outputs: while a readback is on its way, they stay.
-    made: bool,
+    /// What the last call showed, its warnings or its error: shown again while a readback is
+    /// on its way.
+    last: Option<Result<Vec<String>, String>>,
+}
+
+/// A picture input as read back: what the script gets, the input's result it was read from,
+/// and whether it was read as data.
+struct ReadPicture {
+    picture: InPicture,
+    source: Data,
+    data: bool,
+}
+
+/// A readback in flight: the inputs it holds, with the results they had, and when it started.
+struct Pending {
+    read: PendingRead,
+    inputs: Vec<(usize, Data)>,
+    started: Instant,
 }
 
 impl Script {
@@ -179,82 +198,112 @@ impl Script {
             stopped: None,
             every_frame: None,
             pictures: [None, None],
-            read_as_data: false,
+            next_generation: 1,
+            sent: [None; PICTURES],
             pending: None,
             pool: ReadPool::default(),
             ring: TexRing::new(),
             picture: None,
             blank: None,
             mesh: None,
-            made: false,
+            last: None,
         }
     }
 
-    fn has_picture(&self, i: usize) -> bool {
-        self.pictures.get(i).is_some_and(Option::is_some)
+    /// Whether input `i` holds a read of `source` in the current mode.
+    fn fresh(&self, i: usize, source: &Data, data: bool) -> bool {
+        self.pictures.get(i).and_then(Option::as_ref).is_some_and(|r| r.source.same(source) && r.data == data)
     }
 
-    /// Makes `self.pictures` hold the connected picture inputs, read back for this cook. `false`
-    /// while a readback is still on its way (the node is woken when it arrives).
+    /// Takes the finished readback into `self.pictures`, each with a new generation.
+    fn take_read(&mut self, data: bool) -> Result<(), CookError> {
+        let Some(pending) = self.pending.take() else { return Ok(()) };
+        let mut result = Ok(());
+        for (k, (i, source)) in pending.inputs.iter().enumerate() {
+            match picture_of(&pending.read, k, data, self.next_generation) {
+                Ok(picture) => {
+                    self.next_generation += 1;
+                    if let Some(slot) = self.pictures.get_mut(*i) {
+                        *slot = Some(ReadPicture { picture, source: source.clone(), data });
+                    }
+                }
+                Err(e) => result = Err(e),
+            }
+        }
+        self.pool = pending.read.recycle();
+        result.map_err(CookError::failed)
+    }
+
+    /// Makes `self.pictures` hold the connected picture inputs as they are now. `false` while a
+    /// readback is still on its way (its waker brings the node back). An input counts as
+    /// changed when its upstream node made a new result, whatever happens on the other inputs.
     fn read_pictures(&mut self, cx: &CookContext<'_>, data: bool) -> Result<bool, CookError> {
-        let connected: Vec<usize> =
-            (0..PICTURES).filter(|i| cx.input_as::<Tex>(TEX0 + i).is_some()).collect();
+        let current: Vec<(usize, Data)> = (0..PICTURES)
+            .filter_map(|i| cx.input(TEX0 + i).filter(|d| d.get::<Tex>().is_some()).map(|d| (i, d.clone())))
+            .collect();
         for (i, p) in self.pictures.iter_mut().enumerate() {
-            if !connected.contains(&i) {
+            if !current.iter().any(|(k, _)| *k == i) {
                 *p = None;
             }
         }
-        if connected.is_empty() {
+        if current.is_empty() {
             self.pending = None;
+            self.pool.clear();
             return Ok(true);
         }
         let gpu = crate::gpu(cx)?;
-        if self.pending.as_ref().is_some_and(|(_, _, started)| started.elapsed() > STALE) {
+        if self.pending.as_ref().is_some_and(|p| p.started.elapsed() > STALE) {
             self.pending = None;
         }
-        let have = connected.iter().all(|i| self.has_picture(*i)) && self.read_as_data == data;
-        if self.pending.is_none() && (!have || cx.inputs_changed() || cx.first_cook()) {
-            let mut textures = Vec::with_capacity(connected.len());
-            for i in &connected {
-                let Some(tex) = cx.input_as::<Tex>(TEX0 + i) else { continue };
-                let (w, h) = tex.size();
-                if u64::from(w) * u64::from(h) > MAX_IN_PIXELS {
-                    return Err(CookError::failed(format!(
-                        "tex{i}: {w} x {h} pixels is more than a script reads (2048 x 2048); shrink it first, with tex.resolution or tex.fit"
-                    )));
+        let exact = cx.exact_frames();
+        let wait = if exact { STALE } else { WAIT };
+        let mut waited = false;
+        if let Some(p) = &self.pending {
+            // A readback of results since replaced is only waited for while every frame counts.
+            let current_read = p.inputs.iter().all(|(i, d)| current.iter().any(|(k, c)| k == i && c.same(d)));
+            let state = if current_read || exact {
+                waited = true;
+                p.read.wait(gpu, wait)
+            } else {
+                p.read.state()
+            };
+            match state {
+                ReadState::Ready => self.take_read(data)?,
+                ReadState::Failed => {
+                    self.pending = None;
+                    return Err(CookError::failed("the GPU could not read the input picture back"));
                 }
-                textures.push(tex);
+                ReadState::Waiting => return Ok(false),
             }
-            let waker = cx.waker();
-            let read =
-                gpu.read_async_notify(&textures, &mut self.pool, Some(Arc::new(move || waker.wake())))?;
-            self.pending = Some((read, connected.clone(), Instant::now()));
         }
-        let Some((read, _, _)) = &self.pending else { return Ok(have) };
-        let wait = if cx.exact_frames() { STALE } else { WAIT };
-        match read.wait(gpu, wait) {
+        let stale: Vec<(usize, Data)> =
+            current.iter().filter(|(i, d)| !self.fresh(*i, d, data)).cloned().collect();
+        if stale.is_empty() {
+            return Ok(true);
+        }
+        let mut textures = Vec::with_capacity(stale.len());
+        for (i, d) in &stale {
+            let Some(tex) = d.get::<Tex>() else { continue };
+            let (w, h) = tex.size();
+            if u64::from(w) * u64::from(h) > MAX_IN_PIXELS {
+                return Err(CookError::failed(format!(
+                    "tex{i}: {w} x {h} pixels is more than a script reads (2048 x 2048); shrink it first, with tex.resolution or tex.fit"
+                )));
+            }
+            textures.push(tex);
+        }
+        let waker = cx.waker();
+        let read = gpu.read_async_notify(&textures, &mut self.pool, Some(Arc::new(move || waker.wake())))?;
+        self.pending = Some(Pending { read, inputs: stale, started: Instant::now() });
+        // One wait per cook outside exact frames: a second one would hold up the frame twice.
+        if waited && !exact {
+            return Ok(false);
+        }
+        let Some(p) = &self.pending else { return Ok(false) };
+        match p.read.wait(gpu, wait) {
             ReadState::Ready => {
-                let Some((read, inputs, _)) = self.pending.take() else { return Ok(have) };
-                let mut result = Ok(());
-                for (k, i) in inputs.iter().enumerate() {
-                    match picture_of(&read, k, data) {
-                        Ok(p) => {
-                            if let Some(slot) = self.pictures.get_mut(*i) {
-                                *slot = Some(p);
-                            }
-                        }
-                        Err(e) => result = Err(e),
-                    }
-                }
-                self.pool = read.recycle();
-                result.map_err(CookError::failed)?;
-                self.read_as_data = data;
-                if inputs == connected {
-                    return Ok(true);
-                }
-                // An input was connected while the readback was on its way: read again, now
-                // all of them (this readback's waker has fired already).
-                self.read_pictures(cx, data)
+                self.take_read(data)?;
+                Ok(current.iter().all(|(i, d)| self.fresh(*i, d, data)))
             }
             ReadState::Failed => {
                 self.pending = None;
@@ -264,12 +313,96 @@ impl Script {
         }
     }
 
+    /// Calls the script and makes the outputs; warnings go to `warnings`. Calls again with every
+    /// picture's bytes when Python no longer holds one it was only named.
+    #[allow(clippy::too_many_arguments)]
+    fn run(
+        &mut self,
+        cx: &CookContext<'_>,
+        time: Option<(f64, i64)>,
+        params: &BTreeMap<String, Value>,
+        timeout: f64,
+        data: bool,
+        warnings: &mut Vec<String>,
+    ) -> Result<Cooked, CookError> {
+        let host = penumbra_script::host();
+        let name = cx.def().name.to_string();
+        let mut resent = false;
+        let result = loop {
+            let sent = self.sent;
+            let pictures = self
+                .pictures
+                .iter()
+                .enumerate()
+                .map(|(i, r)| {
+                    r.as_ref().map(|r| PictureArg {
+                        picture: &r.picture,
+                        send: sent.get(i).copied().flatten() != Some(r.picture.generation),
+                    })
+                })
+                .collect();
+            let call = Call {
+                key: self.key,
+                time,
+                rate: cx.rate().as_f64(),
+                params,
+                chans: vec![cx.input_as::<Chans>(0), cx.input_as::<Chans>(1)],
+                tables: vec![cx.input_as::<Table>(2), cx.input_as::<Table>(3)],
+                pictures,
+                want_picture: cx.output_wanted(PICTURE),
+                want_mesh: cx.output_wanted(MESH),
+            };
+            let waker = cx.waker();
+            let r = host.call(&name, &call, Duration::from_secs_f64(timeout), Box::new(move || waker.wake()));
+            match r {
+                Err(ScriptError::Resend) if !resent => {
+                    resent = true;
+                    self.sent = [None; PICTURES];
+                }
+                r => break r,
+            }
+        };
+        // What Python holds now: the pictures of a call that went through; after a failure,
+        // nothing for sure.
+        self.sent = match &result {
+            Ok(_) => std::array::from_fn(|i| {
+                self.pictures.get(i).and_then(Option::as_ref).map(|r| r.picture.generation)
+            }),
+            Err(_) => [None; PICTURES],
+        };
+        match result {
+            Ok(out) => {
+                warnings.extend(out.warnings);
+                if !out.printed.is_empty() {
+                    log::info!("{name}: {}", out.printed.trim_end());
+                }
+                let picture = self.picture_output(cx, out.picture, data, warnings)?;
+                let mesh = self.mesh_output(cx, out.mesh, warnings)?;
+                Ok(Cooked::Outputs(vec![
+                    Data::new(DataKind::Chan, out.chans),
+                    Data::new(DataKind::Table, out.table),
+                    picture,
+                    mesh,
+                ]))
+            }
+            // Something else runs in Python right now; the waker brings this node back.
+            Err(ScriptError::Busy) => Err(CookError::Pending),
+            Err(e @ (ScriptError::Timeout(_) | ScriptError::Hung(_))) => {
+                let message = format!("{e}; the node stays stopped until the script or `timeout` changes");
+                self.stopped = Some((message.clone(), timeout));
+                Err(CookError::failed(message))
+            }
+            Err(e) => Err(CookError::failed(e.to_string())),
+        }
+    }
+
     /// The `picture` output: `made` uploaded if the script set one, else the last picture.
     fn picture_output(
         &mut self,
         cx: &CookContext<'_>,
         made: Option<OutPicture>,
         data: bool,
+        warnings: &mut Vec<String>,
     ) -> Result<Data, CookError> {
         if !cx.output_wanted(PICTURE) {
             return Ok(Data::skipped(DataKind::Tex));
@@ -284,7 +417,7 @@ impl Script {
         if let Some(t) = &self.picture {
             return Ok(Data::new(DataKind::Tex, t.clone()));
         }
-        cx.warn("cook(cx) set no cx.picture yet; the `picture` output is empty");
+        warnings.push("cook(cx) set no cx.picture yet; the `picture` output is empty".into());
         let blank = match &self.blank {
             Some(t) => t.clone(),
             None => {
@@ -297,7 +430,12 @@ impl Script {
     }
 
     /// The `mesh` output: `made` uploaded if the script set one, else the last mesh.
-    fn mesh_output(&mut self, cx: &CookContext<'_>, made: Option<OutMesh>) -> Result<Data, CookError> {
+    fn mesh_output(
+        &mut self,
+        cx: &CookContext<'_>,
+        made: Option<OutMesh>,
+        warnings: &mut Vec<String>,
+    ) -> Result<Data, CookError> {
         if !cx.output_wanted(MESH) {
             return Ok(Data::skipped(DataKind::Geo));
         }
@@ -311,7 +449,7 @@ impl Script {
         match &self.mesh {
             Some((geo, _)) => Ok(Data::new(DataKind::Geo, geo.clone())),
             None => {
-                cx.warn("cook(cx) set no cx.mesh yet; the `mesh` output is empty");
+                warnings.push("cook(cx) set no cx.mesh yet; the `mesh` output is empty".into());
                 Ok(Data::new(DataKind::Geo, Geo::default()))
             }
         }
@@ -447,49 +585,29 @@ impl Operator for Script {
         });
         let data = cx.text("values")? == "data";
         if !self.read_pictures(cx, data)? {
-            // The readback's waker brings the node back.
-            return if self.made { Ok(Cooked::Unchanged) } else { Err(CookError::Pending) };
-        }
-        let call = Call {
-            key: self.key,
-            time,
-            rate: cx.rate().as_f64(),
-            params: &params,
-            chans: vec![cx.input_as::<Chans>(0), cx.input_as::<Chans>(1)],
-            tables: vec![cx.input_as::<Table>(2), cx.input_as::<Table>(3)],
-            pictures: self.pictures.iter().map(Option::as_ref).collect(),
-            want_picture: cx.output_wanted(PICTURE),
-            want_mesh: cx.output_wanted(MESH),
-        };
-        let waker = cx.waker();
-        let name = cx.def().name.to_string();
-        match host.call(&name, &call, Duration::from_secs_f64(timeout), Box::new(move || waker.wake())) {
-            Ok(out) => {
-                for w in out.warnings {
-                    cx.warn(w);
+            // While the readback is on its way the node shows what the last call showed.
+            return match &self.last {
+                Some(Ok(warnings)) => {
+                    for w in warnings {
+                        cx.warn(w.clone());
+                    }
+                    Ok(Cooked::Unchanged)
                 }
-                if !out.printed.is_empty() {
-                    log::info!("{name}: {}", out.printed.trim_end());
-                }
-                let picture = self.picture_output(cx, out.picture, data)?;
-                let mesh = self.mesh_output(cx, out.mesh)?;
-                self.made = true;
-                Ok(Cooked::Outputs(vec![
-                    Data::new(DataKind::Chan, out.chans),
-                    Data::new(DataKind::Table, out.table),
-                    picture,
-                    mesh,
-                ]))
-            }
-            // Something else runs in Python right now; the waker brings this node back.
-            Err(ScriptError::Busy) => Err(CookError::Pending),
-            Err(e @ (ScriptError::Timeout(_) | ScriptError::Hung(_))) => {
-                let message = format!("{e}; the node stays stopped until the script or `timeout` changes");
-                self.stopped = Some((message.clone(), timeout));
-                Err(CookError::failed(message))
-            }
-            Err(e) => Err(CookError::failed(e.to_string())),
+                Some(Err(e)) => Err(CookError::failed(e.clone())),
+                None => Err(CookError::Pending),
+            };
         }
+        let mut warnings = Vec::new();
+        let result = self.run(cx, time, &params, timeout, data, &mut warnings);
+        for w in &warnings {
+            cx.warn(w.clone());
+        }
+        match &result {
+            Ok(_) => self.last = Some(Ok(warnings)),
+            Err(CookError::Failed(e)) => self.last = Some(Err(e.clone())),
+            Err(CookError::Pending) => {}
+        }
+        result
     }
 
     fn job_status(&self) -> Option<JobStatus> {
@@ -503,6 +621,7 @@ impl Operator for Script {
 
     fn trim(&mut self) {
         self.ring.trim();
+        self.pool.clear();
     }
 
     fn time_dependent(&self) -> Option<bool> {
@@ -514,11 +633,12 @@ impl Operator for Script {
     }
 }
 
-/// Readback `index` as a script sees it: float32 RGBA, linear with straight alpha (colour where
-/// alpha is 0 is lost), or as stored for `data`.
-fn picture_of(read: &PendingRead, index: usize, data: bool) -> Result<InPicture, String> {
+/// Readback `index` as a script sees it: float32 RGBA as little-endian bytes, linear with
+/// straight alpha (colour where alpha is 0 is lost), or as stored for `data`.
+fn picture_of(read: &PendingRead, index: usize, data: bool, generation: u64) -> Result<InPicture, String> {
     let (w, h) = read.size(index).ok_or("nothing was read back")?;
-    let mut rgba = Vec::with_capacity(w as usize * h as usize * 4);
+    let mut bytes = vec![0u8; w as usize * h as usize * 16];
+    let mut rows_out = bytes.chunks_exact_mut((w as usize * 16).max(1));
     let mut floats = vec![0f32; w as usize * 4];
     let mut halves = Vec::with_capacity(w as usize * 4);
     read.rows(index, |row: &[u8]| -> Result<(), String> {
@@ -535,84 +655,88 @@ fn picture_of(read: &PendingRead, index: usize, data: bool) -> Result<InPicture,
                 }
             }
         }
-        rgba.extend_from_slice(&floats);
+        let dst = rows_out.next().ok_or("the readback has too many rows")?;
+        for (d, v) in dst.as_chunks_mut::<4>().0.iter_mut().zip(&floats) {
+            *d = v.to_le_bytes();
+        }
         Ok(())
     })
     .map_err(|e| match e {
         penumbra_gpu::RowsError::Gpu(e) => e.to_string(),
         penumbra_gpu::RowsError::Sink(e) => e,
     })?;
-    if rgba.len() != w as usize * h as usize * 4 {
+    if bytes.len() != w as usize * h as usize * 16 {
         return Err("the readback has the wrong size".into());
     }
-    Ok(InPicture { width: w, height: h, rgba })
+    Ok(InPicture { width: w, height: h, generation, bytes })
 }
+
+/// Largest half float; brighter values are clipped there rather than becoming infinite.
+const HALF_MAX: f32 = 65504.0;
 
 /// A script's picture as the texture's bytes: little-endian half floats, RGBA, linear and
 /// premultiplied (as stored for `data`). Grey fills red, green and blue; a missing alpha is 1.
+/// One pass, a row at a time.
 fn rgba16f(p: &OutPicture, data: bool) -> Vec<u8> {
     if let Samples::U8(s) = &p.samples
         && let Some(bytes) = rgba16f_u8(s, p.channels, data)
     {
         return bytes;
     }
-    let pixels = p.width as usize * p.height as usize;
-    let mut floats = vec![0f32; pixels * 4];
-    let out = floats.as_chunks_mut::<4>().0;
+    let (w, h) = (p.width as usize, p.height as usize);
+    let channels = usize::from(p.channels).max(1);
     let colour: [f32; 256] = std::array::from_fn(|i| {
         let v = i as f32 / 255.0;
         if data { v } else { penumbra_gpu::readback::srgb_to_linear(v) }
     });
-    // Alpha is never sRGB-encoded.
-    let alpha: [f32; 256] = std::array::from_fn(|i| i as f32 / 255.0);
-    let c = |v: u8| colour.get(usize::from(v)).copied().unwrap_or(0.0);
-    let a = |v: u8| alpha.get(usize::from(v)).copied().unwrap_or(0.0);
-    match (&p.samples, p.channels) {
-        (Samples::U8(s), 4) => {
-            for (px, s) in out.iter_mut().zip(s.as_chunks::<4>().0) {
-                *px = [c(s[0]), c(s[1]), c(s[2]), a(s[3])];
+    if w == 0 || h == 0 {
+        return Vec::new();
+    }
+    let mut out = vec![0u8; w * h * 8];
+    let mut values = vec![0f32; w * channels];
+    let mut row = vec![0f32; w * 4];
+    let mut halves = vec![f16::ZERO; w * 4];
+    for (y, dst) in out.chunks_exact_mut(w * 8).enumerate() {
+        // The row's samples as floats: 8-bit colour through sRGB, alpha (the fourth) linear.
+        match &p.samples {
+            Samples::U8(s) => {
+                let src = s.get(y * w * channels..(y + 1) * w * channels).unwrap_or_default();
+                for (k, (v, b)) in values.iter_mut().zip(src).enumerate() {
+                    *v = if channels == 4 && k % 4 == 3 {
+                        f32::from(*b) / 255.0
+                    } else {
+                        colour.get(usize::from(*b)).copied().unwrap_or(0.0)
+                    };
+                }
+            }
+            Samples::F32(s) => {
+                let src = s.get(y * w * channels * 4..(y + 1) * w * channels * 4).unwrap_or_default();
+                for (v, b) in values.iter_mut().zip(src.as_chunks::<4>().0) {
+                    *v = f32::from_le_bytes(*b);
+                }
             }
         }
-        (Samples::U8(s), 3) => {
-            for (px, s) in out.iter_mut().zip(s.as_chunks::<3>().0) {
-                *px = [c(s[0]), c(s[1]), c(s[2]), 1.0];
+        let px = row.as_chunks_mut::<4>().0;
+        match channels {
+            4 => px.iter_mut().zip(values.as_chunks::<4>().0).for_each(|(o, v)| *o = *v),
+            3 => px.iter_mut().zip(values.as_chunks::<3>().0).for_each(|(o, v)| *o = [v[0], v[1], v[2], 1.0]),
+            _ => px.iter_mut().zip(&values).for_each(|(o, g)| *o = [*g, *g, *g, 1.0]),
+        }
+        for o in px.iter_mut() {
+            if !data {
+                let a = o[3].clamp(0.0, 1.0);
+                *o = [o[0] * a, o[1] * a, o[2] * a, a];
+            }
+            for v in o.iter_mut() {
+                *v = v.clamp(-HALF_MAX, HALF_MAX);
             }
         }
-        (Samples::U8(s), _) => {
-            for (px, s) in out.iter_mut().zip(s) {
-                let g = c(*s);
-                *px = [g, g, g, 1.0];
-            }
-        }
-        (Samples::F32(s), 4) => {
-            for (px, s) in out.iter_mut().zip(s.as_chunks::<4>().0) {
-                *px = *s;
-            }
-        }
-        (Samples::F32(s), 3) => {
-            for (px, s) in out.iter_mut().zip(s.as_chunks::<3>().0) {
-                *px = [s[0], s[1], s[2], 1.0];
-            }
-        }
-        (Samples::F32(s), _) => {
-            for (px, s) in out.iter_mut().zip(s) {
-                *px = [*s, *s, *s, 1.0];
-            }
+        halves.convert_from_f32_slice(&row);
+        for (b, h) in dst.as_chunks_mut::<2>().0.iter_mut().zip(&halves) {
+            *b = h.to_le_bytes();
         }
     }
-    if !data {
-        for px in out.iter_mut() {
-            let a = px[3].clamp(0.0, 1.0);
-            *px = [px[0] * a, px[1] * a, px[2] * a, a];
-        }
-    }
-    let mut halves = vec![f16::ZERO; floats.len()];
-    halves.convert_from_f32_slice(&floats);
-    let mut bytes = vec![0u8; halves.len() * 2];
-    for (b, h) in bytes.as_chunks_mut::<2>().0.iter_mut().zip(&halves) {
-        *b = h.to_le_bytes();
-    }
-    bytes
+    out
 }
 
 /// [`rgba16f`] for 8-bit samples without transparency (or as data): half floats looked up
@@ -865,10 +989,14 @@ mod tests {
         // Grey and RGB fill in; floats are linear, alpha clamped to 0..1 for colour.
         let v = halves(&rgba16f(&pic(1, Samples::U8(vec![255, 0])), false));
         assert!(near(&v, &[1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0]), "{v:?}");
-        let v = halves(&rgba16f(&pic(3, Samples::F32(vec![0.5, 2.0, 0.0, 0.25, 0.0, 0.0])), false));
+        let f32s = |v: &[f32]| Samples::F32(v.iter().flat_map(|x| x.to_le_bytes()).collect());
+        let v = halves(&rgba16f(&pic(3, f32s(&[0.5, 2.0, 0.0, 0.25, 0.0, 0.0])), false));
         assert!(near(&v, &[0.5, 2.0, 0.0, 1.0, 0.25, 0.0, 0.0, 1.0]), "{v:?}");
-        let v = halves(&rgba16f(&pic(4, Samples::F32(vec![1.0, 1.0, 1.0, 2.0, 1.0, 0.0, 0.0, 0.5])), false));
+        let v = halves(&rgba16f(&pic(4, f32s(&[1.0, 1.0, 1.0, 2.0, 1.0, 0.0, 0.0, 0.5])), false));
         assert!(near(&v, &[1.0, 1.0, 1.0, 1.0, 0.5, 0.0, 0.0, 0.5]), "{v:?}");
+        // Brighter than half floats reach: clipped, not infinite (which the upload makes 0).
+        let v = halves(&rgba16f(&pic(1, f32s(&[1e6, -1e6])), true));
+        assert_eq!(v, [65504.0, 65504.0, 65504.0, 1.0, -65504.0, -65504.0, -65504.0, 1.0]);
     }
 
     #[test]
@@ -967,6 +1095,22 @@ def cook(cx):
             (px[0] - 1.0).abs() < 1e-3 && (px[1] - 1.0).abs() < 1e-3 && px[2] == 0.0 && px[3] == 1.0,
             "{px:?}"
         );
+        // A new input picture reaches the script: green 0.5 from the constant.
+        f.apply(&[set("/c.color", Value::Vec4([0.0, 0.5, 0.0, 1.0]))]);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            f.clock.advance(1);
+            f.cooker.cook_showing(&f.net, f.clock.now(), &[id], &[], &shown);
+            let t = f.cooker.output(Port { node: id, output: 2 }).and_then(|d| d.get::<Tex>().cloned());
+            if let Some(t) = t
+                && let Some(px) = gpu.read(&t).ok().and_then(|p| p.get(0, 0))
+                && (px[1] - 128.0 / 255.0).abs() < 1e-2
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the new input did not arrive");
+            std::thread::sleep(Duration::from_millis(5));
+        }
         let mesh = &geo.items[0].model.mesh;
         assert_eq!(mesh.triangle_count(), 1);
         assert_eq!(mesh.vertices[0].normal, [0.0, 0.0, 1.0], "a triangle's own normal");

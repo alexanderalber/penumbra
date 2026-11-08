@@ -61,6 +61,9 @@ pub enum ScriptError {
     Timeout(Duration),
     /// The script raised an exception or produced something unusable.
     Script(String),
+    /// The call named an input picture the Python side no longer holds (only by generation,
+    /// without its bytes); call again with every picture's bytes.
+    Resend,
 }
 
 impl std::fmt::Display for ScriptError {
@@ -73,6 +76,7 @@ impl std::fmt::Display for ScriptError {
                 write!(f, "stopped after {} ms (the node's timeout)", limit.as_millis())
             }
             ScriptError::Script(e) => write!(f, "{e}"),
+            ScriptError::Resend => write!(f, "Python lost an input picture; it is sent again"),
         }
     }
 }
@@ -537,7 +541,13 @@ impl Host {
 
 /// The error a failed reply stands for.
 fn failure(reply: protocol::Reply, limit: Duration) -> ScriptError {
-    if reply.timeout { ScriptError::Timeout(limit) } else { ScriptError::Script(reply.error) }
+    if reply.timeout {
+        ScriptError::Timeout(limit)
+    } else if reply.resend {
+        ScriptError::Resend
+    } else {
+        ScriptError::Script(reply.error)
+    }
 }
 
 fn python_thread(shared: &Arc<Shared>, install: &Install, rx: &Receiver<Work>) {

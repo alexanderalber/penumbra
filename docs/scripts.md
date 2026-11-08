@@ -76,8 +76,9 @@ script that uses them shows an error that says so; scripts without arrays still 
 
 **Out.** `cx.picture = array` puts a picture on the `picture` output. `cx.mesh = dict(...)` puts
 a mesh on the `mesh` output. Both outputs keep the last picture or mesh until the script sets
-another, so a script may update them only now and then. The script's work for an output is
-skipped while nothing reads it.
+another, so a script may update them only now and then. While nothing reads an output, the
+array the script sets for it is ignored: not checked, not turned into a picture or mesh. The
+script itself still runs.
 
 | | |
 |---|---|
@@ -88,15 +89,17 @@ skipped while nothing reads it.
 | `cx.mesh["uvs"]` | optional, shape `(n, 2)`: texture coordinates, 0 to 1, origin at the top left |
 
 **In.** A picture wired to `tex0` or `tex1` arrives as `cx.pictures[0]` or `cx.pictures[1]`: a
-float32 array of shape `(height, width, 4)`, RGBA. The script may change it in place and put it
-out again. The node reads the picture back from the GPU before each call. For 512 by 512 pixels
-that adds about 4 milliseconds, most of it waiting for the GPU to draw the picture. Inputs are limited to 2048 by 2048 pixels: shrink a larger
-picture with `tex.resolution` or `tex.fit` first.
+float32 array of shape `(height, width, 4)`, RGBA. The array is read-only; `p.copy()` gives one
+to change and put out again. The node reads a picture back from the GPU when the node before it
+made a new one. For 512 by 512 pixels that adds about 4 milliseconds per new picture, most of it
+waiting for the GPU to draw it. An unchanged picture costs nothing. Inputs are limited to 2048
+by 2048 pixels: shrink a larger picture with `tex.resolution` or `tex.fit` first.
 
 **Colour.** The node's `values` param says what the numbers mean. With `color` (the default),
 `uint8` is sRGB like a PNG, floats are linear light, and alpha is straight (not multiplied in).
-Pictures in come as linear floats with straight alpha. With `data`, every number is taken as
-stored, for maps such as heights, positions or masks.
+Pictures in come as linear floats with straight alpha; where alpha is 0, their colour is 0.
+With `data`, every number is taken as stored, for maps such as heights, positions or masks, and
+colour where alpha is 0 stays.
 
 **Limits.** A picture out has at most 8192 pixels on a side and 8.4 million pixels (4K UHD
 fits). A mesh has at most 1 048 576 vertices and 2 097 152 triangles. A wrong shape or type, a

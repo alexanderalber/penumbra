@@ -6,7 +6,7 @@ mod no_numpy {
     use std::collections::BTreeMap;
     use std::time::{Duration, Instant};
 
-    use penumbra_script::{Call, CallOutput, InPicture, Load, ScriptError, host};
+    use penumbra_script::{Call, CallOutput, InPicture, Load, PictureArg, ScriptError, host};
 
     fn load(key: u64, source: &str) -> Result<penumbra_script::Loaded, ScriptError> {
         host().load(&Load { key, generation: key, source, label: "test.py", folder: None }, &|| false)
@@ -50,9 +50,14 @@ mod no_numpy {
         assert!(e.contains("-m pip install numpy"), "{e}");
         // A picture input needs numpy too; a script that uses neither still runs.
         load(3, "def cook(cx):\n    cx.out['ok'] = 1\n").unwrap();
-        let pic = InPicture { width: 1, height: 1, rgba: vec![0.0; 4] };
-        let e =
-            call(&Call { key: 3, pictures: vec![Some(&pic), None], ..base.clone() }).unwrap_err().to_string();
+        let pic = InPicture { width: 1, height: 1, generation: 1, bytes: vec![0; 16] };
+        let e = call(&Call {
+            key: 3,
+            pictures: vec![Some(PictureArg { picture: &pic, send: true }), None],
+            ..base.clone()
+        })
+        .unwrap_err()
+        .to_string();
         assert!(e.contains("numpy is not installed"), "{e}");
         assert_eq!(call(&Call { key: 3, ..base.clone() }).unwrap().chans.value(None), Some(1.0));
     }

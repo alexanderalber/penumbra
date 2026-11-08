@@ -192,10 +192,11 @@ def cook(cx):
         // Pictures and meshes, when numpy is there.
         let has_numpy = load(20, "import numpy\ndef cook(cx):\n    pass\n");
         match has_numpy {
-            Err(e) => {
-                assert!(e.to_string().contains("pip install numpy"), "{e}");
+            // Only a missing numpy skips; any other failure fails the test.
+            Err(e) if e.to_string().contains("numpy is not installed") => {
                 eprintln!("no numpy, pictures and meshes skipped: {e}");
             }
+            Err(e) => panic!("loading numpy failed: {e}"),
             Ok(_) => pictures_and_meshes(&base, limit),
         }
 
@@ -235,15 +236,21 @@ def cook(cx):
     }
 
     fn pictures_and_meshes(base: &Call<'_>, limit: Duration) {
-        use penumbra_script::{InPicture, Samples};
+        use penumbra_script::{InPicture, PictureArg, Samples};
         let wants = Call { want_picture: true, want_mesh: true, ..base.clone() };
         let src = r#"
 import numpy as np
 def cook(cx):
     p = cx.pictures[0]
     if p is not None:
-        p[..., 0] += 1.0
-        cx.picture = p
+        try:
+            p[0, 0, 0] = 9.0
+            cx.warn("writable")
+        except ValueError:
+            pass
+        q = p.copy()
+        q[..., 0] += 1.0
+        cx.picture = q
         cx.out["w"] = p.shape[1]
         return
     img = np.zeros((2, 3, 4), np.uint8)
@@ -267,13 +274,28 @@ def cook(cx):
         let out = call(21, base, limit).unwrap();
         assert_eq!((out.picture, out.mesh), (None, None));
 
-        // A picture in, changed in place and put out again (float32 stays float32).
-        let pic = InPicture { width: 2, height: 1, rgba: vec![0.5, 0.0, 0.0, 1.0, 0.25, 0.0, 0.0, 1.0] };
-        let with_picture = Call { pictures: vec![Some(&pic), None], ..wants.clone() };
-        let out = call(21, &with_picture, limit).unwrap();
+        // A picture in (read-only), copied, changed and put out again (float32 stays float32).
+        let f32s = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        let pic = InPicture {
+            width: 2,
+            height: 1,
+            generation: 7,
+            bytes: f32s(&[0.5, 0.0, 0.0, 1.0, 0.25, 0.0, 0.0, 1.0]),
+        };
+        let arg = |send| vec![Some(PictureArg { picture: &pic, send }), None];
+        let out = call(21, &Call { pictures: arg(true), ..wants.clone() }, limit).unwrap();
         assert_eq!(out.chans.value(Some("w")), Some(2.0));
-        let p = out.picture.unwrap();
-        assert_eq!(p.samples, Samples::F32(vec![1.5, 0.0, 0.0, 1.0, 1.25, 0.0, 0.0, 1.0]));
+        assert!(out.warnings.is_empty(), "the array must be read-only: {:?}", out.warnings);
+        let expected = Samples::F32(f32s(&[1.5, 0.0, 0.0, 1.0, 1.25, 0.0, 0.0, 1.0]));
+        assert_eq!(out.picture.unwrap().samples, expected);
+        // Named again by generation alone: Python kept it.
+        let out = call(21, &Call { pictures: arg(false), ..wants.clone() }, limit).unwrap();
+        assert_eq!(out.picture.unwrap().samples, expected);
+        // A generation Python does not hold asks for the bytes again.
+        let other = InPicture { generation: 8, ..pic.clone() };
+        let named = vec![Some(PictureArg { picture: &other, send: false }), None];
+        let e = call(21, &Call { pictures: named, ..wants.clone() }, limit).unwrap_err();
+        assert_eq!(e, ScriptError::Resend);
 
         // Malformed arrays are errors naming what is wrong.
         let bad = |code: &str| {

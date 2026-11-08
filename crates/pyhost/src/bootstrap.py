@@ -71,8 +71,8 @@ class Chans(dict):
 
 class Cx:
     """What `cook(cx)` sees. Inputs: `chans[0]`, `chans[1]` (Chans or None), `tables[0]`,
-    `tables[1]` (lists of rows of strings, or None), `pictures[0]`, `pictures[1]` (numpy arrays
-    of shape (height, width, 4), float32, or None), `params` (the values of PARAMS), `rate` (show
+    `tables[1]` (lists of rows of strings, or None), `pictures[0]`, `pictures[1]` (read-only numpy
+    arrays of shape (height, width, 4), float32, or None), `params` (the values of PARAMS), `rate` (show
     frames per second), `time` (seconds) and `frame` (show frame number). Outputs: `out`
     (channel name -> number or list of numbers), `out_rate` (samples per second of `out`; None
     for the show rate), `table` (list of rows), `picture` (an array of shape (height, width),
@@ -99,7 +99,8 @@ class Cx:
     def __init__(self, req, blob):
         self.chans = [_chans(c) for c in req.get("chans", [])]
         self.tables = [None if t is None else [list(r) for r in t] for t in req.get("tables", [])]
-        self.pictures = [_picture_in(p, blob) for p in req.get("pictures", [])]
+        key = req.get("key")
+        self.pictures = [_picture_in(key, i, p, blob) for i, p in enumerate(req.get("pictures", []))]
         self.params = dict(req.get("params", {}))
         self.rate = req.get("rate", 60.0)
         self._time = req.get("time")
@@ -156,15 +157,32 @@ def _numpy():
     return numpy
 
 
-def _picture_in(p, blob):
-    """An input picture: a writable float32 array of shape (height, width, 4) over its part of
-    the request's bytes."""
+# (node key, input) -> (generation, array): the last picture each input was sent, so an
+# unchanged picture crosses only once. Read-only, since the next call hands out the same array.
+_pictures = {}
+
+
+class _Resend(Exception):
+    """A call named a picture generation that is not in `_pictures`."""
+
+
+def _picture_in(key, i, p, blob):
+    """An input picture: a read-only float32 array of shape (height, width, 4), over its part of
+    the request's bytes or kept from an earlier call."""
     if p is None:
+        _pictures.pop((key, i), None)
         return None
+    w, h, generation, offset = p["width"], p["height"], p["generation"], p.get("offset")
+    if offset is None:
+        kept = _pictures.get((key, i))
+        if kept is None or kept[0] != generation:
+            raise _Resend()
+        return kept[1]
     np = _numpy()
-    w, h, offset = p["width"], p["height"], p["offset"]
-    a = np.frombuffer(blob, dtype="<f4", count=w * h * 4, offset=offset)
-    return a.reshape(h, w, 4)
+    a = np.frombuffer(blob, dtype="<f4", count=w * h * 4, offset=offset).reshape(h, w, 4)
+    a.flags.writeable = False
+    _pictures[(key, i)] = (generation, a)
+    return a
 
 
 def _out_picture(cx, parts):
@@ -446,6 +464,9 @@ def _call(req, blob, parts):
         except Timeout:
             del parts[:]
             return {"ok": False, "timeout": True, "error": "stopped", "printed": cap.text()}
+        except _Resend:
+            del parts[:]
+            return {"ok": False, "resend": True, "error": "an input picture is missing", "printed": cap.text()}
         except BaseException as e:
             del parts[:]
             return {"ok": False, "error": _describe(e, label), "printed": cap.text()}
@@ -471,6 +492,8 @@ def handle(text, blob=None):
         for key in req.get("drops", ()):
             _modules.pop(key, None)
             _generations.pop(key, None)
+            for k in [k for k in _pictures if k[0] == key]:
+                del _pictures[k]
         op = req.get("op")
         parts = []
         if op == "call":

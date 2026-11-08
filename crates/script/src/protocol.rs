@@ -27,15 +27,27 @@ pub const MAX_MESH_TRIANGLES: usize = 1 << 21;
 pub struct InPicture {
     pub width: u32,
     pub height: u32,
-    /// `width * height * 4` samples.
-    pub rgba: Vec<f32>,
+    /// Changes with every new picture. The bootstrap keeps the array of the last generation it
+    /// was sent per node and input, so an unchanged picture crosses only once.
+    pub generation: u64,
+    /// `width * height * 4` samples as little-endian float32 bytes.
+    pub bytes: Vec<u8>,
+}
+
+/// An input picture of a call, and whether its bytes go along (`false`: the bootstrap has
+/// this generation already).
+#[derive(Clone, Copy, Debug)]
+pub struct PictureArg<'a> {
+    pub picture: &'a InPicture,
+    pub send: bool,
 }
 
 /// The samples of a picture a script put out, as the array held them.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Samples {
     U8(Vec<u8>),
-    F32(Vec<f32>),
+    /// Little-endian float32 bytes.
+    F32(Vec<u8>),
 }
 
 /// The picture a script put out (`cx.picture`), checked: `width * height * channels` samples,
@@ -95,7 +107,7 @@ pub struct Call<'a> {
     pub params: &'a BTreeMap<String, Value>,
     pub chans: Vec<Option<&'a Chans>>,
     pub tables: Vec<Option<&'a Table>>,
-    pub pictures: Vec<Option<&'a InPicture>>,
+    pub pictures: Vec<Option<PictureArg<'a>>>,
     /// Whether anything reads the picture and the mesh: the bootstrap leaves out what nobody
     /// reads.
     pub want_picture: bool,
@@ -210,8 +222,10 @@ struct CallJson<'a> {
 struct PictureInJson {
     width: u32,
     height: u32,
-    /// Byte offset into the block; `width * height * 4` float32 samples.
-    offset: usize,
+    generation: u64,
+    /// Byte offset into the block of `width * height * 4` float32 samples; `None` when the
+    /// bootstrap has this generation already.
+    offset: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -228,6 +242,9 @@ pub(crate) struct Reply {
     pub ok: bool,
     pub error: String,
     pub timeout: bool,
+    /// A call named an input picture by generation that the bootstrap does not hold: send it
+    /// again with its bytes.
+    pub resend: bool,
     pub printed: String,
     // load
     params: Vec<ParamJson>,
@@ -289,30 +306,26 @@ pub(crate) fn load_json(load: &Load<'_>) -> Result<String, String> {
 
 /// The request's JSON, and the binary block holding the input pictures.
 pub(crate) fn call_request(call: &Call<'_>) -> Result<(String, Vec<u8>), String> {
-    let total: usize = call.pictures.iter().flatten().map(|p| p.rgba.len() * 4).sum();
-    let mut blob = vec![0u8; total];
-    let mut at = 0;
+    let total: usize = call.pictures.iter().flatten().filter(|a| a.send).map(|a| a.picture.bytes.len()).sum();
+    let mut blob = Vec::with_capacity(total);
     let mut pictures = Vec::with_capacity(call.pictures.len());
-    for p in &call.pictures {
-        pictures.push(match p {
-            Some(p) => {
-                let expected = u64::from(p.width) * u64::from(p.height) * 4;
-                if p.rgba.len() as u64 != expected {
+    for a in &call.pictures {
+        pictures.push(match a {
+            Some(PictureArg { picture: p, send }) => {
+                let expected = u64::from(p.width) * u64::from(p.height) * 16;
+                if p.bytes.len() as u64 != expected {
                     return Err(format!(
-                        "an input picture of {} x {} has {} samples",
+                        "an input picture of {} x {} has {} bytes",
                         p.width,
                         p.height,
-                        p.rgba.len()
+                        p.bytes.len()
                     ));
                 }
-                let offset = at;
-                let end = at + p.rgba.len() * 4;
-                let dst = blob.get_mut(at..end).unwrap_or_default();
-                for (d, v) in dst.as_chunks_mut::<4>().0.iter_mut().zip(&p.rgba) {
-                    *d = v.to_le_bytes();
+                let offset = send.then_some(blob.len());
+                if *send {
+                    blob.extend_from_slice(&p.bytes);
                 }
-                at = end;
-                Some(PictureInJson { width: p.width, height: p.height, offset })
+                Some(PictureInJson { width: p.width, height: p.height, generation: p.generation, offset })
             }
             None => None,
         });
@@ -392,7 +405,7 @@ fn picture(p: PictureJson, frame: &Frame) -> Result<OutPicture, String> {
     let count = pixels * u64::from(p.channels);
     let samples = match p.dtype.as_str() {
         "u8" if bytes.len() as u64 == count => Samples::U8(bytes.to_vec()),
-        "f32" if bytes.len() as u64 == count * 4 => Samples::F32(floats(bytes)),
+        "f32" if bytes.len() as u64 == count * 4 => Samples::F32(bytes.to_vec()),
         "u8" | "f32" => {
             return Err(format!("cx.picture: {} bytes for {w} x {h} x {}", bytes.len(), p.channels));
         }
@@ -432,6 +445,12 @@ fn mesh(m: MeshJson, frame: &Frame) -> Result<OutMesh, String> {
             let bytes = frame.part(part).ok_or("cx.mesh[\"indices\"]: the array is missing")?;
             if bytes.len() % 12 != 0 {
                 return Err(format!("cx.mesh[\"indices\"]: {} bytes is not whole triangles", bytes.len()));
+            }
+            if bytes.len() / 12 > MAX_MESH_TRIANGLES {
+                return Err(format!(
+                    "cx.mesh: {} triangles is too many (at most {MAX_MESH_TRIANGLES})",
+                    bytes.len() / 12
+                ));
             }
             let words: Vec<u32> = bytes.as_chunks::<4>().0.iter().map(|b| u32::from_le_bytes(*b)).collect();
             let tris = words.as_chunks::<3>().0.to_vec();
@@ -493,7 +512,14 @@ mod tests {
                 .unwrap();
         let table = Table::new(vec![vec!["a".into(), "b".into()]]).unwrap();
         let params = BTreeMap::from([("gain".to_string(), Value::Float(0.5))]);
-        let picture = InPicture { width: 2, height: 1, rgba: vec![0.0, 0.25, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0] };
+        let rgba = [0.0f32, 0.25, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0];
+        let picture = InPicture {
+            width: 2,
+            height: 1,
+            generation: 5,
+            bytes: rgba.iter().flat_map(|v| v.to_le_bytes()).collect(),
+        };
+        let old = InPicture { generation: 4, ..picture.clone() };
         let (text, blob) = call_request(&Call {
             key: 7,
             time: Some((1.5, 90)),
@@ -501,7 +527,10 @@ mod tests {
             params: &params,
             chans: vec![Some(&chans), None],
             tables: vec![None, Some(&table)],
-            pictures: vec![None, Some(&picture)],
+            pictures: vec![
+                Some(PictureArg { picture: &old, send: false }),
+                Some(PictureArg { picture: &picture, send: true }),
+            ],
             want_picture: true,
             want_mesh: false,
         })
@@ -509,7 +538,8 @@ mod tests {
         assert_eq!(blob.len(), 32);
         assert_eq!(blob[4..8], 0.25f32.to_le_bytes());
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert!(v["pictures"][0].is_null());
+        assert!(v["pictures"][0]["offset"].is_null());
+        assert_eq!(v["pictures"][0]["generation"].as_u64(), Some(4));
         assert_eq!(
             (v["pictures"][1]["width"].as_u64(), v["pictures"][1]["offset"].as_u64()),
             (Some(2), Some(0))
@@ -613,7 +643,7 @@ mod tests {
             })
         );
         let out = reply_with(&pic(1, 1, 1, "f32"), &[&f32s(&[0.5])]).unwrap();
-        assert_eq!(out.picture.unwrap().samples, Samples::F32(vec![0.5]));
+        assert_eq!(out.picture.unwrap().samples, Samples::F32(f32s(&[0.5])));
         let err = |json: &str, parts: &[&[u8]]| reply_with(json, parts).unwrap_err();
         assert!(err(&pic(2, 1, 3, "u8"), &[&[1, 2, 3]]).contains("3 bytes for 2 x 1 x 3"));
         assert!(err(&pic(1, 1, 2, "u8"), &[&[1, 2]]).contains("give 1, 3 or 4"));
