@@ -724,7 +724,7 @@ Inputs:
 
 Outputs:
 
-- `out` (tex): The smoke in its colour over transparent black, premultiplied
+- `out` (tex): The smoke in its colour over transparent black, premultiplied, with what the Debug params draw on top
 - `density` (tex): How much the smoke covers, as grey on black: white where nothing shows through. Opaque, so tex.lookup reads the cover rather than the colour
 
 | param | type | default | range | meaning |
@@ -740,6 +740,9 @@ Outputs:
 | `glow` | float | `0` | 0 to 4 (soft) | How brightly hot smoke glows, on top of `color`: in the palette's colour at its temperature. 0: no glow |
 | `hot` | float | `2` | 0.1 to 10 (soft) | Temperature that glows in the palette's right end; cold smoke takes its left end |
 | `quality` *(more)* | float | `1` | 0.25 to 4 (soft) | Steps per cell along each ray. More shows less banding and costs more |
+| `show_emitters` *(Debug)* | bool | `false` |  | Draws the outline of every emitter over the picture, in orange |
+| `show_obstacles` *(Debug)* | bool | `false` |  | Draws the outline of every obstacle over the picture, in cyan |
+| `show_grid` *(Debug)* | bool | `false` |  | Draws the box and its cells on the box's far sides. Where cells would be under 4 pixels, only every 2nd, 4th or 8th line shows |
 
 ### tex.remap
 
@@ -2408,7 +2411,7 @@ Outputs: `out` (view).
 
 ## vol
 
-[vol.emitter](#volemitter), [vol.null](#volnull), [vol.smoke](#volsmoke)
+[vol.emitter](#volemitter), [vol.null](#volnull), [vol.obstacle](#volobstacle), [vol.smoke](#volsmoke)
 
 ### vol.emitter
 
@@ -2442,6 +2445,23 @@ Inputs:
 
 Outputs: `out` (vol).
 
+### vol.obstacle
+
+A still body for vol.smoke: the smoke flows around it
+
+Inputs: none.
+
+Outputs:
+
+- `out` (table): One row under a row of column names: x, y, z, type, size_x, size_y, size_z, radius
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `position` | vec3 | `[0, 0, 0]` | m | Centre of the obstacle in space, in the same metres as the box of vol.smoke |
+| `type` | sphere \| box | `"sphere"` |  | Shape of the obstacle; sphere: a ball of `radius`; box: a box of `size` |
+| `size` | vec3 | `[0.5, 0.5, 0.5]` | 0 to 10000 m | Size of the box obstacle along x, y and z. Thinner than a cell of the smoke, it can do nothing |
+| `radius` | float | `0.3` | 0.01 to 1 m (soft) | Radius of the sphere obstacle; 0: off |
+
 ### vol.smoke
 
 Smoke in a box in space: emitters blow hot smoke in, it rises, swirls and fades. tex.raymarch draws it
@@ -2451,6 +2471,7 @@ Follows the show clock: cooks again whenever time moves. Keeps state from frame 
 Inputs:
 
 - `emitter0 .. emitter63` (table): Where the smoke comes from: vol.emitter, or any table whose first row names columns x, y and more (see vol.emitter's output). With nothing wired the box stays empty. Any number, up to 64: each one wired adds a free slot below it
+- `obstacle0 .. obstacle63` (table): What the smoke flows around: vol.obstacle, or any table whose first row names columns x, y and more (see vol.obstacle's output). Inside an obstacle there is no smoke. Any number, up to 64: each one wired adds a free slot below it
 
 Outputs:
 

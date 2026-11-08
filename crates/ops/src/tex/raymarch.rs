@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use penumbra_core::{Curve, Error, ParamSpec, Unit, Value};
-use penumbra_gpu::{Compute, Dispatch, Gpu, Medium, Out, TexRing};
+use penumbra_gpu::{Compute, DataBlock, Dispatch, Gpu, Medium, Out, TexRing};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDef, NodeDesc, NodeTypes, Operator,
 };
@@ -20,6 +20,9 @@ const SOURCE: &str = include_str!("raymarch.wgsl");
 
 /// Most steps per cell.
 const MAX_QUALITY: f64 = 8.0;
+
+/// Most shapes drawn over the picture.
+const MAX_SHAPES: usize = 128;
 
 fn desc() -> NodeDesc {
     NodeDesc::new(KIND, "Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, thin smoke lets through")
@@ -79,6 +82,20 @@ fn desc() -> NodeDesc {
                 .more()
                 .doc("Steps per cell along each ray. More shows less banding and costs more"),
         )
+        .param(
+            ParamSpec::bool("show_emitters", false)
+                .group("Debug")
+                .doc("Draws the outline of every emitter over the picture, in orange"),
+        )
+        .param(
+            ParamSpec::bool("show_obstacles", false)
+                .group("Debug")
+                .doc("Draws the outline of every obstacle over the picture, in cyan"),
+        )
+        .param(ParamSpec::bool("show_grid", false).group("Debug").doc(
+            "Draws the box and its cells on the box's far sides. Where cells would be under 4 pixels, \
+             only every 2nd, 4th or 8th line shows",
+        ))
         .input("in", DataKind::Vol)
         .describe_input("in", "The volume: its red is the density, its green the temperature")
         .input("palette", DataKind::Tex)
@@ -88,7 +105,11 @@ fn desc() -> NodeDesc {
              Unwired: black over red, orange and yellow to white",
         )
         .output("out", DataKind::Tex)
-        .describe_output("out", "The smoke in its colour over transparent black, premultiplied")
+        .describe_output(
+            "out",
+            "The smoke in its colour over transparent black, premultiplied, with what the Debug params \
+             draw on top",
+        )
         .output("density", DataKind::Tex)
         .describe_output(
             "density",
@@ -108,6 +129,10 @@ fn params() -> Vec<ParamSpec> {
     p.push(ParamSpec::vec2("view", [1.0; 2]));
     p.push(ParamSpec::color("color", [1.0; 4]));
     p.push(ParamSpec::int("palette", 0));
+    p.push(ParamSpec::int("shapes", 0));
+    p.push(ParamSpec::int("grid", 0));
+    p.push(ParamSpec::float("line", 0.0));
+    p.push(ParamSpec::vec3("cell", [0.0; 3]));
     p
 }
 
@@ -155,15 +180,32 @@ pub(crate) fn extent(size: [f64; 3], axes: [[f64; 3]; 3]) -> [f64; 2] {
     [x * 2.0, y * 2.0]
 }
 
+/// The vectors of `raymarch.wgsl`'s shapes, two each, those `emitters` and `obstacles` ask for.
+/// Positions count from the box's centre.
+fn shape_vectors(medium: &Medium, emitters: bool, obstacles: bool) -> Vec<[f32; 4]> {
+    let [cx, cy, cz] = medium.center;
+    let wanted = medium.shapes.iter().filter(|s| if s.solid { obstacles } else { emitters });
+    let mut out = Vec::new();
+    for s in wanted.take(MAX_SHAPES) {
+        let kind = f32::from(u8::from(s.is_box)) + 2.0 * f32::from(u8::from(s.solid));
+        out.push([s.center[0] - cx, s.center[1] - cy, s.center[2] - cz, kind]);
+        out.push([s.half[0], s.half[1], s.half[2], s.radius]);
+    }
+    out
+}
+
 #[derive(Default)]
 struct Raymarch {
     out_ring: TexRing,
     density_ring: TexRing,
+    /// The shapes for the shader, made when the first is drawn.
+    shapes: Option<DataBlock>,
 }
 
 impl Operator for Raymarch {
     fn gpu_bytes(&self) -> u64 {
         penumbra_gpu::unique_bytes(self.out_ring.iter().chain(self.density_ring.iter()))
+            + self.shapes.as_ref().map_or(0, DataBlock::bytes)
     }
 
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
@@ -195,7 +237,15 @@ impl Operator for Raymarch {
         if palette.is_none() && cx.def().inputs.get(1).is_some_and(Option::is_some) && !cx.input_stuck(1) {
             return Err(waiting(cx));
         }
+        let shape_data = shape_vectors(medium, cx.bool("show_emitters")?, cx.bool("show_obstacles")?);
+        let grid = cx.bool("show_grid")?;
+        let [nx, ny, nz] = cells.map(|c| f64::from(c.max(1)));
+        let cell = [size[0] / nx, size[1] / ny, size[2] / nz];
         let values: Vec<(&str, Value)> = vec![
+            ("shapes", Value::Int((shape_data.len() / 2) as i64)),
+            ("grid", Value::Int(i64::from(grid))),
+            ("line", Value::Float(view_height / f64::from(height.max(1)))),
+            ("cell", Value::Vec3(cell)),
             ("far", Value::Float(center[2] + diagonal + 1.0)),
             ("thickness", Value::Float(cx.float("thickness")?.max(0.0))),
             ("step", Value::Float(step.max(1e-6))),
@@ -238,6 +288,29 @@ impl Operator for Raymarch {
         } else {
             Data::skipped(DataKind::Tex)
         };
+        // A picture of its own, so the density output stays the smoke's alone.
+        if grid || !shape_data.is_empty() {
+            let block = match &self.shapes {
+                Some(b) => b.clone(),
+                None => {
+                    let b = DataBlock::new(gpu, MAX_SHAPES * 2, KIND)?;
+                    self.shapes = Some(b.clone());
+                    b
+                }
+            };
+            block.write(gpu, &shape_data)?;
+            let marked = self.out_ring.next_storage(gpu, width, height, KIND)?;
+            let input = Dispatch {
+                volumes: &[],
+                pictures: &[Some(&out)],
+                data: Some(&block),
+                seconds: 0.0,
+                frame: 0,
+                param: &param,
+            };
+            program.run(gpu, "overlay", Out::Picture(&marked), &input)?;
+            return Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, marked), density]));
+        }
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, out), density]))
     }
 

@@ -5,8 +5,10 @@
 //! (`expansion`), and smoke, temperature and fuel carried by the result, burnt, cooled, faded and
 //! emitted.
 //!
-//! The emitters come as tables on the `emitter` inputs (see [`super::emitter`]). Their numbers
-//! reach the shader exactly, in a [`DataBlock`].
+//! The emitters come as tables on the `emitter` inputs (see [`super::emitter`]), the obstacles
+//! on the `obstacle` inputs (see [`super::obstacle`]). Their numbers reach the shader exactly, in
+//! a [`DataBlock`]. Obstacles are drawn into a volume of solid cells whenever they change, so the
+//! many pressure steps read one cell instead of going through every shape.
 //!
 //! The parameter names follow NVIDIA Flow's where they mean the same, so a TouchDesigner setup
 //! carries over by name. Time steps follow the show clock as `tex.fluid`'s do. A new grid size
@@ -19,13 +21,16 @@ use std::sync::Arc;
 use penumbra_core::{Curve, Error, ParamSpec, Tick, Unit, Value};
 use penumbra_gpu::compute::{atlas_size, check_size, unique_volume_bytes};
 use penumbra_gpu::{
-    Batch, Compute, DataBlock, Dispatch, Gpu, Medium, Out, Step, Tex, TexRing, Volume, VolumeRing,
+    Batch, Compute, DataBlock, Dispatch, Gpu, Medium, MediumShape, Out, Step, Tex, TexRing, Volume,
+    VolumeRing,
 };
 use penumbra_graph::{
-    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator, StateItem,
+    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, MAX_RUN, NodeDesc, NodeTypes, Operator,
+    StateItem,
 };
 
 use super::emitter::{self, Emitter, MAX_EMITTERS};
+use super::obstacle::MAX_OBSTACLES;
 use crate::on_gpu;
 use crate::tex::fluid::step;
 
@@ -55,6 +60,13 @@ fn desc() -> NodeDesc {
             1,
             "Where the smoke comes from: vol.emitter, or any table whose first row names columns x, y \
              and more (see vol.emitter's output). With nothing wired the box stays empty",
+        )
+        .input_run(
+            "obstacle",
+            DataKind::Table,
+            1,
+            "What the smoke flows around: vol.obstacle, or any table whose first row names columns x, y \
+             and more (see vol.obstacle's output). Inside an obstacle there is no smoke",
         )
         .param(ParamSpec::vec3("center", [0.0, 0.0, 0.0]).unit(Unit::Metres).doc("Centre of the box the smoke lives in"))
         .param(
@@ -274,6 +286,7 @@ fn program_params() -> Vec<ParamSpec> {
     }
     params.push(ParamSpec::int("edges", 0));
     params.push(ParamSpec::int("emitters", 0));
+    params.push(ParamSpec::int("obstacles", 0));
     params.push(ParamSpec::int("inflow", 0));
     params.push(ParamSpec::int("sharp", 0));
     params
@@ -339,6 +352,29 @@ fn emitter_vectors(emitters: &[Emitter], corner: [f64; 3], dt: f64) -> Vec<[f32;
     out
 }
 
+/// The vectors of `smoke.wgsl`'s obstacles, two each, for a box with its lower corner at `corner`.
+fn obstacle_vectors(obstacles: &[Emitter], corner: [f64; 3]) -> Vec<[f32; 4]> {
+    let mut out = Vec::with_capacity(obstacles.len() * 2);
+    for o in obstacles {
+        let at = [o.position[0] - corner[0], o.position[1] - corner[1], o.position[2] - corner[2]];
+        let half = o.size.map(|s| s * 0.5);
+        out.push([at[0] as f32, at[1] as f32, at[2] as f32, if o.is_box { 1.0 } else { 0.0 }]);
+        out.push([half[0] as f32, half[1] as f32, half[2] as f32, o.radius as f32]);
+    }
+    out
+}
+
+/// `e` as the volume reports it, for drawing.
+fn shape_of(e: &Emitter, solid: bool) -> MediumShape {
+    MediumShape {
+        center: e.position.map(|v| v as f32),
+        half: e.size.map(|s| (s * 0.5) as f32),
+        radius: e.radius as f32,
+        is_box: e.is_box,
+        solid,
+    }
+}
+
 /// A [`Value::Vec3`] param as numbers; zeros when it is something else.
 fn vec3(cx: &CookContext<'_>, name: &str) -> [f64; 3] {
     match cx.param(name) {
@@ -370,6 +406,10 @@ struct Smoke {
     emitters: Option<DataBlock>,
     /// What `emitters` holds, to write only what changed.
     written: Vec<[f32; 4]>,
+    /// The solid cells, 1 in red inside an obstacle.
+    solid: Option<Volume>,
+    /// The cell size and obstacle vectors `solid` was drawn from.
+    solid_of: Option<(f64, Vec<[f32; 4]>)>,
 }
 
 impl Smoke {
@@ -392,7 +432,7 @@ impl Operator for Smoke {
             &self.scratch_ring,
         ];
         let volumes = rings.into_iter().flat_map(VolumeRing::iter);
-        let kept = [&self.velocity, &self.fields, &self.pressure].into_iter().flatten();
+        let kept = [&self.velocity, &self.fields, &self.pressure, &self.solid].into_iter().flatten();
         let atlases = self.atlases.iter().chain(self.restored.iter()).flat_map(|(_, a, b)| [a, b]);
         let atlases = atlases.chain(self.velocity_atlases.iter()).chain(self.fields_atlases.iter());
         unique_volume_bytes(volumes.chain(kept))
@@ -416,7 +456,8 @@ impl Operator for Smoke {
         check_size(gpu, cells)?;
         let dt = step(now, self.last, period) * cx.float("speed")?.max(0.0);
         // Before the early return, so a bad table warns on a still show too.
-        let sources = emitter::from_inputs(cx);
+        let sources = emitter::from_run(cx, 0, "emitter", "emitters", MAX_EMITTERS);
+        let obstacles = emitter::from_run(cx, MAX_RUN, "obstacle", "obstacles", MAX_OBSTACLES);
         let kept = self.velocity.as_ref().is_some_and(|v| v.size() == cells);
         // A table that changed does not count here: with no time passing, emitters do nothing.
         if dt == 0.0 && kept && self.restored.is_none() && !reset && !cx.params_changed() && !cx.first_cook()
@@ -458,11 +499,13 @@ impl Operator for Smoke {
         // Positions in the shader count from the box's lower corner.
         let corner =
             [center[0] - box_size[0] * 0.5, center[1] - box_size[1] * 0.5, center[2] - box_size[2] * 0.5];
-        let emit_data = emitter_vectors(&sources, corner, dt);
+        let solid_data = obstacle_vectors(&obstacles, corner);
+        let mut emit_data = emitter_vectors(&sources, corner, dt);
+        emit_data.extend_from_slice(&solid_data);
         let block = match &self.emitters {
             Some(b) => b.clone(),
             None => {
-                let b = DataBlock::new(gpu, MAX_EMITTERS * 4, KIND)?;
+                let b = DataBlock::new(gpu, MAX_EMITTERS * 4 + MAX_OBSTACLES * 2, KIND)?;
                 self.emitters = Some(b.clone());
                 self.written.clear();
                 b
@@ -472,6 +515,20 @@ impl Operator for Smoke {
             block.write(gpu, &emit_data)?;
             self.written = emit_data;
         }
+        // No obstacle: no volume, and the shader reads none.
+        let solid = if solid_data.is_empty() {
+            self.solid = None;
+            self.solid_of = None;
+            None
+        } else {
+            if !self.solid.as_ref().is_some_and(|s| s.size() == cells) {
+                self.solid = Some(Volume::new(gpu, cells, KIND)?);
+                self.solid_of = None;
+            }
+            self.solid.clone()
+        };
+        let drawn = self.solid_of.as_ref().is_some_and(|(of_h, of)| *of_h == h && *of == solid_data);
+        let draw_solid = solid.is_some() && !drawn;
         let previous_pressure = self.pressure.take().filter(|p| p.size() == cells);
         let edges = i64::from(cx.text("edges")? == "walls");
         let vort = cx.float("vorticity_strength")?.max(0.0);
@@ -481,6 +538,7 @@ impl Operator for Smoke {
             ("h", Value::Float(h)),
             ("box", Value::Vec3(box_size)),
             ("emitters", Value::Int(sources.len().min(MAX_EMITTERS) as i64)),
+            ("obstacles", Value::Int(obstacles.len().min(MAX_OBSTACLES) as i64)),
             ("lift", Value::Vec3(lift)),
             ("vel_keep", Value::Float(keep_share(cx.float("velocity_damping")?, dt))),
             ("vel_fade", Value::Float(cx.float("velocity_fade")?.max(0.0) * dt)),
@@ -556,15 +614,17 @@ impl Operator for Smoke {
             Some([a, b]) => (Some(a), Some(b)),
             None => (None, None),
         };
-        let inputs_curl = [Some(&velocity)];
-        let inputs_forces = [Some(&velocity), Some(&fields), curl.as_ref()];
+        let solid = solid.as_ref();
+        let inputs_curl = [Some(&velocity), None, None, solid];
+        let inputs_forces = [Some(&velocity), Some(&fields), curl.as_ref(), solid];
         let inputs_ahead = [Some(&forced), Some(&forced)];
-        let inputs_divergence = [Some(&advected), previous_pressure.as_ref(), Some(&fields)];
-        let inputs_jacobi = [[Some(first)], [Some(second)]];
-        let inputs_project = [Some(&advected), Some(last)];
+        let inputs_divergence = [Some(&advected), previous_pressure.as_ref(), Some(&fields), solid];
+        let inputs_jacobi = [[Some(first), None, None, solid], [Some(second), None, None, solid]];
+        let inputs_project = [Some(&advected), Some(last), None, solid];
         let inputs_fields_ahead = [Some(&fields), Some(&projected)];
         let inputs_fields_back = [ahead, Some(&projected)];
         let inputs_fields = [Some(&fields), Some(&projected), ahead, behind];
+        let drawing = dispatch(&[], &block, &plain);
         let curling = dispatch(&inputs_curl, &block, &plain);
         let forces = dispatch(&inputs_forces, &block, &plain);
         let carry_ahead = dispatch(&inputs_ahead, &block, &plain);
@@ -576,7 +636,10 @@ impl Operator for Smoke {
         let fields_carry_back = dispatch(&inputs_fields_back, &block, &fields_back);
         let carry = dispatch(&inputs_fields, &block, &fields_final);
         let step = |entry, out, input| Step { entry, out: Out::Volume(out), input };
-        let mut steps = Vec::with_capacity(iterations as usize + 10);
+        let mut steps = Vec::with_capacity(iterations as usize + 11);
+        if let (Some(s), true) = (solid, draw_solid) {
+            steps.push(step("solid", s, &drawing));
+        }
         if let Some(c) = &curl {
             steps.push(step("curl", c, &curling));
         }
@@ -603,6 +666,9 @@ impl Operator for Smoke {
         let mut batch = Batch::new(gpu, KIND);
         program.encode_steps(&mut batch, &steps)?;
         batch.submit();
+        if draw_solid {
+            self.solid_of = Some((h, solid_data));
+        }
         let pressure = last.clone();
         drop(steps);
         drop((velocity, fields, previous_pressure, advected, curl, scratch));
@@ -621,8 +687,17 @@ impl Operator for Smoke {
         self.velocity = Some(projected);
         self.fields = Some(carried.clone());
         self.pressure = Some(pressure);
-        let medium =
-            Medium { volume: carried, center: center.map(|c| c as f32), size: box_size.map(|s| s as f32) };
+        let shapes = sources
+            .iter()
+            .map(|e| shape_of(e, false))
+            .chain(obstacles.iter().map(|o| shape_of(o, true)))
+            .collect();
+        let medium = Medium {
+            volume: carried,
+            center: center.map(|c| c as f32),
+            size: box_size.map(|s| s as f32),
+            shapes,
+        };
         if reset {
             self.clear();
         }

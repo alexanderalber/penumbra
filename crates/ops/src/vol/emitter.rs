@@ -19,7 +19,7 @@ const MAX_ROWS: usize = 4096;
 const MAX_POSITION: f64 = 1e6;
 
 /// Most metres of a box emitter's size and of a sphere's radius.
-const MAX_SIZE: f64 = 1e4;
+pub(crate) const MAX_SIZE: f64 = 1e4;
 
 /// Most metres per second and most of smoke, fuel and correction.
 const MAX_AMOUNT: f64 = 1000.0;
@@ -202,7 +202,7 @@ pub(crate) fn from_table(table: &Table, room: usize) -> Result<Vec<Emitter>, Str
     let col = |name: &str| header.iter().position(|h| h.trim().eq_ignore_ascii_case(name));
     let [x, y, z, kind, sx, sy, sz, radius, vx, vy, vz, smoke, temp, fuel, rate] = COLUMNS.map(col);
     let (Some(x), Some(y)) = (x, y) else {
-        return Err("the emitter table needs columns x and y in its first row".into());
+        return Err("the table needs columns x and y in its first row".into());
     };
     let value = |row: &[String], c: Option<usize>, default: f64| -> Option<f64> {
         match c {
@@ -254,19 +254,26 @@ pub(crate) fn from_table(table: &Table, room: usize) -> Result<Vec<Emitter>, Str
     Ok(out)
 }
 
-/// The emitters on a node's run of table inputs, in order, at most [`MAX_EMITTERS`]. Warns about
-/// a table without the required columns and about emitters beyond the limit.
-pub(crate) fn from_inputs(cx: &CookContext<'_>) -> Vec<Emitter> {
+/// The rows on a node's run of table inputs from index `first`, named `prefix0` and on, in order,
+/// at most `limit`. Warns about a table without the required columns and about `noun` beyond the
+/// limit.
+pub(crate) fn from_run(
+    cx: &CookContext<'_>,
+    first: usize,
+    prefix: &str,
+    noun: &str,
+    limit: usize,
+) -> Vec<Emitter> {
     let mut all = Vec::new();
     for i in 0..MAX_RUN {
-        let Some(table) = cx.input_as::<Table>(i) else { continue };
-        match from_table(table, MAX_EMITTERS + 1 - all.len()) {
+        let Some(table) = cx.input_as::<Table>(first + i) else { continue };
+        match from_table(table, limit + 1 - all.len()) {
             Ok(found) => all.extend(found),
-            Err(e) => cx.warn(format!("`emitter{i}`: {e}")),
+            Err(e) => cx.warn(format!("`{prefix}{i}`: {e}")),
         }
-        if all.len() > MAX_EMITTERS {
-            cx.warn(format!("more than {MAX_EMITTERS} emitters: the rest are left out"));
-            all.truncate(MAX_EMITTERS);
+        if all.len() > limit {
+            cx.warn(format!("more than {limit} {noun}: the rest are left out"));
+            all.truncate(limit);
             break;
         }
     }

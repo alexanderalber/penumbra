@@ -8,6 +8,25 @@ Keep an emitter at least 1 m from the open box edge behind it. Closer than that,
 through the edge as a straight jet and leaves straight streaks. An emitter that moves and holds a
 lot of `fuel` leaves thin streaks where it has been. Low `fuel` with a `correction_rate` of 2 keeps the rim clean, `advection: smooth` removes the streaks.
 
+## Obstacles
+
+Wire a `vol.obstacle` into each `obstacle` input, 64 obstacles at most over all inputs. Smoke flows
+around an obstacle and none stays inside it. An emitter inside an obstacle makes nothing.
+
+`tex.raymarch` does not draw obstacles. You see them as the shape the smoke leaves out, so draw the
+body yourself if it should show.
+
+Obstacles stand still in the simulation. Bind `position` to move one anyway: the smoke in its new
+place disappears and it pushes nothing along.
+
+A body is made of whole cells of the smoke's grid, so a round one has small steps at low
+`resolution`. Thinner than one cell, it can fall between the cells and do nothing.
+
+An obstacle input also reads a table, with the same place and shape columns as an emitter table.
+
+To see what the smoke is given, turn on `show_emitters`, `show_obstacles` and `show_grid` on
+`tex.raymarch`. They draw over its `out` picture and leave its `density` output alone.
+
 ## Emitters from a table
 
 Any table can be an emitter input, one emitter per row. Its first row names the columns. `x` and `y`

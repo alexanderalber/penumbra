@@ -565,3 +565,150 @@ fn a_table_row_and_a_vol_emitter_make_the_same_smoke() {
     }
     assert_eq!(a.data, b.data);
 }
+
+/// Input of `vol.smoke` the first `obstacle` table goes to.
+const FIRST_OBSTACLE: u32 = penumbra_graph::MAX_RUN as u32;
+
+/// A jet blowing right from the left of the box, with `obstacles` as csv tables on its inputs.
+fn jet_at(obstacles: &[&str], params: &[(&str, Value)], frames: usize) -> (Rig, Pixels) {
+    let mut all = vec![
+        ("emitter_position", Value::Vec3([-0.6, 0.0, 0.0])),
+        ("linear_velocity", Value::Vec3([3.0, 0.0, 0.0])),
+        ("buoyancy", Value::Float(0.0)),
+    ];
+    all.extend(params.iter().cloned());
+    let mut rig = smoke_rig(&all);
+    let mut ops = Vec::new();
+    for (i, text) in obstacles.iter().enumerate() {
+        let path = format!("/o{i}");
+        ops.push(create(&path, "table.text", &[("text", (*text).into()), ("format", "csv".into())]));
+        ops.push(connect(&path, "/smoke", FIRST_OBSTACLE + i as u32));
+    }
+    rig.edit(&ops);
+    let mut px = frame(&mut rig);
+    for _ in 0..frames {
+        px = frame(&mut rig);
+        assert!(finite(&px));
+    }
+    (rig, px)
+}
+
+#[test]
+fn a_wall_across_the_box_holds_the_smoke_back() {
+    if gpu().is_none() {
+        return;
+    }
+    let (_, open) = jet_at(&[], &[], 40);
+    let (rig, walled) = jet_at(&["x,y,z,type,size_x,size_y,size_z\n0,0,0,box,0.3,2,2\n"], &[], 40);
+    let s = rig.cooker.status(rig.id("/smoke")).unwrap();
+    assert!(s.error.is_none() && s.warning.is_none(), "{s:?}");
+    let (open_behind, behind) = (band(&open, 0.62, 1.0), band(&walled, 0.62, 1.0));
+    assert!(open_behind > 1.0, "{open_behind}");
+    assert!(behind < open_behind / 20.0, "{behind} behind the wall, {open_behind} without it");
+    // Inside the wall there is no smoke.
+    assert!(band(&walled, 0.46, 0.54) < 1e-3);
+}
+
+#[test]
+fn smoke_flows_around_a_ball_in_its_way() {
+    if gpu().is_none() {
+        return;
+    }
+    // A jet no wider than the ball is turned aside: the plume is far wider in front of the ball.
+    let (_, open) = jet_at(&[], &[], 120);
+    let ball = r"x,y,z,radius
+0,0,0,0.2
+";
+    let (_, blocked) = jet_at(&[ball], &[], 120);
+    let (wide, narrow) = (height_at(&blocked, 0.36), height_at(&open, 0.36));
+    assert!(wide > narrow, "{wide} against {narrow}");
+    // A jet wider than the ball goes past it on all sides.
+    let (_, past) = jet_at(&[ball], &[("emitter_radius", Value::Float(0.4))], 120);
+    assert!(band(&past, 0.7, 1.0) > 0.5, "{}", band(&past, 0.7, 1.0));
+}
+
+#[test]
+fn an_obstacle_outside_the_box_changes_nothing() {
+    if gpu().is_none() {
+        return;
+    }
+    let (_, none) = jet_at(&[], &[], 12);
+    let (_, far) = jet_at(&["x,y,z,radius\n50,0,0,0.3\n"], &[], 12);
+    assert_eq!(none.data, far.data);
+}
+
+#[test]
+fn bad_obstacle_tables_warn_and_the_smoke_goes_on() {
+    if gpu().is_none() {
+        return;
+    }
+    let (rig, px) = jet_at(&["a,b\n1,2\n"], &[], 5);
+    assert!(cover(&px).0 > 0.5);
+    let s = rig.cooker.status(rig.id("/smoke")).unwrap();
+    assert!(s.error.is_none(), "{s:?}");
+    assert!(s.warning.clone().unwrap_or_default().contains("obstacle0"), "{s:?}");
+    let (_, huge) = jet_at(&["x,y,z,radius\n1e300,-1e300,0,1e300\nnan,0,0,0.3\n"], &[], 5);
+    assert!(finite(&huge));
+}
+
+#[test]
+fn the_debug_params_draw_over_the_picture_and_leave_the_density_alone() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut rig = smoke_rig(&[("buoyancy", Value::Float(0.0))]);
+    rig.edit(&[
+        create("/d", "tex.null", &[]),
+        Op::Connect { from: "/march".parse().unwrap(), output: 1, to: "/d".parse().unwrap(), input: 0 },
+        create(
+            "/o",
+            "vol.obstacle",
+            &[("position", Value::Vec3([0.5, 0.2, 0.0])), ("radius", Value::Float(0.2))],
+        ),
+        connect("/o", "/smoke", FIRST_OBSTACLE),
+    ]);
+    for _ in 0..6 {
+        frame(&mut rig);
+    }
+    rig.edit(&[set("/smoke.speed", Value::Float(0.0))]);
+    let read = |rig: &mut Rig| {
+        rig.clock.advance(1);
+        rig.cook("/d");
+        let out = rig.gpu.read(&rig.tex("/march").unwrap()).unwrap();
+        let density = rig.gpu.read(&rig.tex("/d").unwrap()).unwrap();
+        (out, density)
+    };
+    let (plain, plain_density) = read(&mut rig);
+    let changed = |a: &Pixels, b: &Pixels| a.data.iter().zip(&b.data).filter(|(x, y)| x != y).count();
+    // 48 x 24 pixels at 1.05 m high: the ball at 0.5, 0.2 lies right of the middle, its rim 4.6
+    // pixels from its centre.
+    let rim_x = 24 + ((0.5 + 0.2) / 1.05 * 24.0) as u32;
+    let rim_y = 12 - (0.2 / 1.05 * 24.0) as u32;
+
+    rig.edit(&[set("/march.show_obstacles", true.into())]);
+    let (shapes, density) = read(&mut rig);
+    assert_eq!(density.data, plain_density.data);
+    assert!(changed(&plain, &shapes) > 5);
+    let [r, g, b, _] = shapes.get(rim_x, rim_y).unwrap();
+    assert!(b > r && g > r, "{r} {g} {b}");
+    // The emitters' outlines are off, so the left half of the picture stays as it was.
+    let left = |p: &Pixels| {
+        (0..12)
+            .flat_map(|y| (0..20).map(move |x| (x, y)))
+            .map(|(x, y)| p.get(x, y).unwrap())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(left(&plain), left(&shapes));
+
+    rig.edit(&[set("/march.show_obstacles", false.into()), set("/march.show_grid", true.into())]);
+    let (grid, density) = read(&mut rig);
+    assert_eq!(density.data, plain_density.data);
+    assert!(changed(&plain, &grid) > 200, "{}", changed(&plain, &grid));
+
+    rig.edit(&[set("/march.show_grid", false.into()), set("/march.show_emitters", true.into())]);
+    let (emitters, _) = read(&mut rig);
+    assert!(changed(&plain, &emitters) > 5);
+    rig.edit(&[set("/march.show_emitters", false.into())]);
+    let (again, _) = read(&mut rig);
+    assert_eq!(again.data, plain.data);
+}

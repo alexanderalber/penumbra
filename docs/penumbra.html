@@ -330,7 +330,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong><code>table</code></strong>: text tables, typed in or read from a file, for scripts and OSC. <a class="ref" href="#table.file"><code>table.file</code></a> reads a CSV, TSV or text file and reloads it when the file changes. <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a> turns a table of numbers into channels, a channel per column (or row), named by its first cell. A param bound to a channel follows the last value in that column (or row). <a class="ref" href="#out.table"><code>out.table</code></a> writes a table to a CSV or TSV file. With <code>file</code> empty it writes <code>export/&lt;node name&gt;.csv</code> in the project folder. In mode <code>changes</code> it writes whenever the table differs from what the file holds; in mode <code>manual</code> it writes only on <a class="ref" href="#table_out.write"><code>table_out.write</code></a>. <code>overwrite</code> on replaces the file in place, for a program that keeps reading it; off, every write gets a new name with <code>_2</code>, <code>_3</code>, ...
 </li>
-<li><strong><code>vol</code></strong>: volumes, such as smoke. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> simulates smoke in a box: emitters blow hot smoke in, the smoke rises against <code>gravity</code>, swirls and fades. <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a> is one emitter; wire several into the <code>emitter</code> inputs of <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a>, 64 at most, later ones acting on what earlier ones left. Any table with columns x and y (see <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a>'s output) gives one emitter per row, so a computed table can move or multiply them. With no emitter the box stays empty. Fuel in the smoke burns once it is hot enough: it heats, makes more smoke and swells, so a jet of it widens like a flame. <a class="ref" href="#tex.raymarch"><code>tex.raymarch</code></a> draws a volume as a picture, seen from the front through the whole box. Hot smoke glows with <code>glow</code>, in the colours of a palette picture on its <code>palette</code> input. Its <code>density</code> output shows how much smoke covers each pixel, as grey, for <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a>. Burning smoke is dense: a <code>thickness</code> well below 1 lets the eye see into it. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> keeps its smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean the same; how strongly a number acts was matched by eye to one Flow scene.
+<li><strong><code>vol</code></strong>: volumes, such as smoke. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> simulates smoke in a box: emitters blow hot smoke in, the smoke rises against <code>gravity</code>, swirls and fades. <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a> is one emitter; wire several into the <code>emitter</code> inputs of <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a>, 64 at most, later ones acting on what earlier ones left. Any table with columns x and y (see <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a>'s output) gives one emitter per row, so a computed table can move or multiply them. With no emitter the box stays empty. Fuel in the smoke burns once it is hot enough: it heats, makes more smoke and swells, so a jet of it widens like a flame. A <a class="ref" href="#vol.obstacle"><code>vol.obstacle</code></a> on the <code>obstacle</code> inputs is a still sphere or box the smoke flows around. <a class="ref" href="#tex.raymarch"><code>tex.raymarch</code></a> draws a volume as a picture, seen from the front through the whole box. Hot smoke glows with <code>glow</code>, in the colours of a palette picture on its <code>palette</code> input. Its <code>density</code> output shows how much smoke covers each pixel, as grey, for <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a>. Burning smoke is dense: a <code>thickness</code> well below 1 lets the eye see into it. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> keeps its smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean the same; how strongly a number acts was matched by eye to one Flow scene.
 </li>
 <li><strong><code>geo</code></strong>, <strong><code>mat</code></strong>, <strong><code>light</code></strong>, <strong><code>view</code></strong>: a 3D scene. Geometry from files or primitives, transformed and merged; materials put on it with <a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a>; lights and a <a class="ref" href="#view.camera"><code>view.camera</code></a> wired into a <a class="ref" href="#tex.render"><code>tex.render</code></a>, which makes a picture of it all (a render needs its camera; the camera is perspective, orthographic or calibrated). <a class="ref" href="#light.projector"><code>light.projector</code></a> throws a picture through a camera onto the geometry: a virtual projector, for trying a mapping on a model of the room. Coordinates are metres, z up. <a class="ref" href="#geo.file"><code>geo.file</code></a> reads OBJ, STL, glTF and FBX. FBX works from file version 7.0 on, binary or ASCII. Binary is the default of Blender, Maya, 3ds Max and Unity. An FBX 6 file gives an error: export it again as FBX 2011 or later. Each FBX model becomes a part with its name, placed as in the file, in metres and z up. Materials bring their diffuse colour and texture, embedded or from a file beside the FBX. Animated models play: each part moves as its model does in the file. A skinned character bends with its bones: each vertex follows the bones that weigh on it, blended by the weights (linear blend skinning). <code>take</code> picks the animation (the <code>takes</code> output lists them), <code>play</code>, <code>speed</code> and <code>loop</code> work as for a video, and with <code>play</code> off a channel bound to <code>time</code> drives it. Posing runs on the CPU and costs about 20 ns per vertex and frame. A file whose skin asks for dual quaternion blending is blended linearly, with a warning; twisting joints then thin out a little. Blend shapes, cameras and lights are not read. <a class="ref" href="#out.mesh"><code>out.mesh</code></a> writes geometry to an OBJ, STL or glb file, every model where it stands in the scene. Each part stays a part: an OBJ object or a glTF node. Only glb keeps material colours; textures are not written. File, <code>overwrite</code> and the modes <code>changes</code> and <code>manual</code> work as for <a class="ref" href="#out.table"><code>out.table</code></a>; the command is <a class="ref" href="#mesh_out.write"><code>mesh_out.write</code></a>. Copies from <a class="ref" href="#geo.tex_instance"><code>geo.tex_instance</code></a> are read back from the GPU and written one by one (<code>instances</code> on <code>expand</code>). For copies that move every frame, use mode <code>manual</code>: in mode <code>changes</code> such an input is written every frame. With <code>instances</code> on <code>skip</code> each model is written once, without its copies. A file holds at most 4 Mi triangles and 256 MiB; over that the node shows an error and writes nothing.
 </li>
@@ -3075,7 +3075,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </ul>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">tex</span>: The smoke in its colour over transparent black, premultiplied</li>
+<li><code>out</code> <span class="kind">tex</span>: The smoke in its colour over transparent black, premultiplied, with what the Debug params draw on top</li>
 <li><code>density</code> <span class="kind">tex</span>: How much the smoke covers, as grey on black: white where nothing shows through. Opaque, so tex.lookup reads the cover rather than the colour</li>
 </ul>
 <h4>Params</h4>
@@ -3094,6 +3094,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
 <tr><td><code>quality</code></td><td>float</td><td><code>1</code></td><td>0.25 to 4 (soft)</td><td>Steps per cell along each ray. More shows less banding and costs more</td></tr>
+<tr class="section"><th colspan="5">Debug</th></tr>
+<tr><td><code>show_emitters</code></td><td>bool</td><td><code>false</code></td><td></td><td>Draws the outline of every emitter over the picture, in orange</td></tr>
+<tr><td><code>show_obstacles</code></td><td>bool</td><td><code>false</code></td><td></td><td>Draws the outline of every obstacle over the picture, in cyan</td></tr>
+<tr><td><code>show_grid</code></td><td>bool</td><td><code>false</code></td><td></td><td>Draws the box and its cells on the box's far sides. Where cells would be under 4 pixels, only every 2nd, 4th or 8th line shows</td></tr>
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
@@ -5329,7 +5333,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-vol">
 <h3>vol</h3>
-<p class="kinds"><a href="#vol.emitter">vol.emitter</a> <a href="#vol.null">vol.null</a> <a href="#vol.smoke">vol.smoke</a></p>
+<p class="kinds"><a href="#vol.emitter">vol.emitter</a> <a href="#vol.null">vol.null</a> <a href="#vol.obstacle">vol.obstacle</a> <a href="#vol.smoke">vol.smoke</a></p>
 <details class="entry node" id="vol.emitter"><summary><code class="name">vol.emitter</code><span class="sum">An emitter for vol.smoke: a place in the box that blows smoke, heat and fuel in</span></summary>
 <div class="body">
 <p>An emitter for vol.smoke: a place in the box that blows smoke, heat and fuel in</p>
@@ -5368,6 +5372,27 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <li><code>out</code> <span class="kind">vol</span></li>
 </ul>
 </div></details>
+<details class="entry node" id="vol.obstacle"><summary><code class="name">vol.obstacle</code><span class="sum">A still body for vol.smoke: the smoke flows around it</span></summary>
+<div class="body">
+<p>A still body for vol.smoke: the smoke flows around it</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">table</span>: One row under a row of column names: x, y, z, type, size_x, size_y, size_z, radius</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>position</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>m</td><td>Centre of the obstacle in space, in the same metres as the box of vol.smoke</td></tr>
+<tr><td><code>type</code></td><td>sphere | box</td><td><code>&quot;sphere&quot;</code></td><td></td><td>Shape of the obstacle<ul><li><code>sphere</code>: a ball of <code>radius</code></li><li><code>box</code>: a box of <code>size</code></li></ul></td></tr>
+<tr><td><code>size</code></td><td>vec3</td><td><code>[0.5, 0.5, 0.5]</code></td><td>0 to 10000 m</td><td>Size of the box obstacle along x, y and z. Thinner than a cell of the smoke, it can do nothing</td></tr>
+<tr><td><code>radius</code></td><td>float</td><td><code>0.3</code></td><td>0.01 to 1 m (soft)</td><td>Radius of the sphere obstacle; 0: off</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
 <details class="entry node" id="vol.smoke"><summary><code class="name">vol.smoke</code><span class="sum">Smoke in a box in space: emitters blow hot smoke in, it rises, swirls and fades. tex.raymarch draws it</span></summary>
 <div class="body">
 <p>Smoke in a box in space: emitters blow hot smoke in, it rises, swirls and fades. tex.raymarch draws it</p>
@@ -5375,6 +5400,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h4>Inputs</h4>
 <ul>
 <li><code>emitter0 .. emitter63</code> <span class="kind">table</span>: Where the smoke comes from: vol.emitter, or any table whose first row names columns x, y and more (see vol.emitter's output). With nothing wired the box stays empty Any number, up to 64: each one wired adds a free slot below it.</li>
+<li><code>obstacle0 .. obstacle63</code> <span class="kind">table</span>: What the smoke flows around: vol.obstacle, or any table whose first row names columns x, y and more (see vol.obstacle's output). Inside an obstacle there is no smoke Any number, up to 64: each one wired adds a free slot below it.</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -5421,6 +5447,13 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="vol.smoke-smoke-with-several-emitters">Smoke with several emitters</h5>
 <p>Wire a <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a> into each <code>emitter</code> input, 64 emitters at most over all inputs. Inputs are applied in order, and a later emitter acts on what the earlier ones left where they overlap. The shipped example <code>smoke</code> has three, one of them moving: its <code>position</code> x is bound to a <a class="ref" href="#chan.lfo"><code>chan.lfo</code></a>.</p>
 <p>Keep an emitter at least 1 m from the open box edge behind it. Closer than that, air comes in through the edge as a straight jet and leaves straight streaks. An emitter that moves and holds a lot of <code>fuel</code> leaves thin streaks where it has been. Low <code>fuel</code> with a <code>correction_rate</code> of 2 keeps the rim clean, <code>advection: smooth</code> removes the streaks.</p>
+<h5 id="vol.smoke-obstacles">Obstacles</h5>
+<p>Wire a <a class="ref" href="#vol.obstacle"><code>vol.obstacle</code></a> into each <code>obstacle</code> input, 64 obstacles at most over all inputs. Smoke flows around an obstacle and none stays inside it. An emitter inside an obstacle makes nothing.</p>
+<p><a class="ref" href="#tex.raymarch"><code>tex.raymarch</code></a> does not draw obstacles. You see them as the shape the smoke leaves out, so draw the body yourself if it should show.</p>
+<p>Obstacles stand still in the simulation. Bind <code>position</code> to move one anyway: the smoke in its new place disappears and it pushes nothing along.</p>
+<p>A body is made of whole cells of the smoke's grid, so a round one has small steps at low <code>resolution</code>. Thinner than one cell, it can fall between the cells and do nothing.</p>
+<p>An obstacle input also reads a table, with the same place and shape columns as an emitter table.</p>
+<p>To see what the smoke is given, turn on <code>show_emitters</code>, <code>show_obstacles</code> and <code>show_grid</code> on <a class="ref" href="#tex.raymarch"><code>tex.raymarch</code></a>. They draw over its <code>out</code> picture and leave its <code>density</code> output alone.</p>
 <h5 id="vol.smoke-emitters-from-a-table">Emitters from a table</h5>
 <p>Any table can be an emitter input, one emitter per row. Its first row names the columns. <code>x</code> and <code>y</code> are required, every other column is optional:</p>
 <table>

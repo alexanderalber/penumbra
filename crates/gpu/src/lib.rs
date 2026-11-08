@@ -44,7 +44,7 @@ use penumbra_core::{Error, lock};
 
 pub use canvas::{Canvas, Paint};
 pub use compute::{
-    Compute, DataBlock, Dispatch, Medium, Out, Step, Target, VOLUME_FORMAT, Volume, VolumeRing,
+    Compute, DataBlock, Dispatch, Medium, MediumShape, Out, Step, Target, VOLUME_FORMAT, Volume, VolumeRing,
 };
 pub use deferred::{Deferral, Done};
 pub use geo::{Geo, Mat};

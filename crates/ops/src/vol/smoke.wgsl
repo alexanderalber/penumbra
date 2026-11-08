@@ -34,6 +34,49 @@ fn emitter(i: i32, id: vec3u) -> f32 {
     return clamp((shape.w - length(d)) / h + 0.5, 0.0, 1.0);
 }
 
+// Obstacles: `params.obstacles` of them in `pn_data` after the emitters, two vectors each, the
+// first two of an emitter's. A cell is solid when its centre lies inside one.
+fn in_obstacle(id: vec3u) -> bool {
+    let first = params.emitters * 4;
+    for (var i = 0; i < params.obstacles; i++) {
+        let at = pn_data[first + i * 2];
+        let shape = pn_data[first + i * 2 + 1];
+        let d = cell_position(id) - at.xyz;
+        if (at.w >= 0.5) {
+            if (all(abs(d) < shape.xyz)) {
+                return true;
+            }
+        } else if (length(d) < shape.w) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Marks the solid cells in red.
+@compute @workgroup_size(4, 4, 4)
+fn solid(@builtin(global_invocation_id) id: vec3u) {
+    if (any(id >= pn.size)) {
+        return;
+    }
+    textureStore(vol_out, id, vec4f(select(0.0, 1.0, in_obstacle(id)), 0.0, 0.0, 0.0));
+}
+
+// Whether cell `c` is solid. vol3 the solid cells, in every step that calls this.
+fn is_solid(c: vec3i) -> bool {
+    return params.obstacles > 0 && all(c >= vec3i(0)) && all(c < vec3i(pn.size))
+        && textureLoad(vol3, c, 0).r > 0.5;
+}
+
+// Whether one of the six neighbours of `c` is solid.
+fn beside_solid(c: vec3i) -> bool {
+    let x = vec3i(1, 0, 0);
+    let y = vec3i(0, 1, 0);
+    let z = vec3i(0, 0, 1);
+    return is_solid(c + x) || is_solid(c - x) || is_solid(c + y) || is_solid(c - y) || is_solid(c + z)
+        || is_solid(c - z);
+}
+
 // Damping and fade together: each component loses `1 - keep` of itself or `fade`, whichever is
 // more, and never more than it has. So damping slows what is strong, fade ends what is weak.
 fn damped(v: vec4f, keep: f32, fade: f32) -> vec4f {
@@ -67,6 +110,10 @@ fn curl(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     let c = vec3i(id);
+    if (is_solid(c)) {
+        textureStore(vol_out, id, vec4f(0.0));
+        return;
+    }
     let x = vec3i(1, 0, 0);
     let y = vec3i(0, 1, 0);
     let z = vec3i(0, 0, 1);
@@ -107,12 +154,17 @@ fn forces(@builtin(global_invocation_id) id: vec3u) {
     if (any(id >= pn.size)) {
         return;
     }
+    if (is_solid(vec3i(id))) {
+        textureStore(vol_out, id, vec4f(0.0));
+        return;
+    }
     var v = clean(textureLoad(vol0, id, 0)).xyz;
     let f = clean(textureLoad(vol1, id, 0));
     v += params.lift * f.g * params.dt;
     // Not at the box's edge: there the curl's neighbours are missing, and an open edge with
     // smoke flowing out spun up there until the whole box blew empty.
-    if (params.vort > 0.0 && inner(vec3i(id))) {
+    // Likewise beside an obstacle, where the still surface makes a curl the push would feed.
+    if (params.vort > 0.0 && inner(vec3i(id)) && !beside_solid(vec3i(id))) {
         // How much of the strength acts here, 0 to 1.
         let mask = clamp(params.vort_constant + params.vort_velocity * length(v) + params.vort_smoke * f.r
             + params.vort_temp * f.g + params.vort_fuel * f.b, 0.0, 1.0);
@@ -176,7 +228,8 @@ fn sharpened(start: texture_3d<f32>, ahead: texture_3d<f32>, back: texture_3d<f3
     return clamp(corrected, low, high);
 }
 
-// Velocity at cell `c`, also outside the box: walls stand still, open edges continue the edge.
+// Velocity at cell `c`, also outside the box: walls and obstacles stand still, open edges continue
+// the edge.
 fn velocity_at(c: vec3i) -> vec3f {
     let n = vec3i(pn.size);
     if (any(c < vec3i(0)) || any(c >= n)) {
@@ -184,6 +237,9 @@ fn velocity_at(c: vec3i) -> vec3f {
             return vec3f(0.0);
         }
         return textureLoad(vol0, clamp(c, vec3i(0), n - 1), 0).xyz;
+    }
+    if (is_solid(c)) {
+        return vec3f(0.0);
     }
     return textureLoad(vol0, c, 0).xyz;
 }
@@ -211,6 +267,10 @@ fn divergence(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     let c = vec3i(id);
+    if (is_solid(c)) {
+        textureStore(vol_out, id, vec4f(0.0));
+        return;
+    }
     let x = vec3i(1, 0, 0);
     let y = vec3i(0, 1, 0);
     let z = vec3i(0, 0, 1);
@@ -227,11 +287,14 @@ fn divergence(@builtin(global_invocation_id) id: vec3u) {
 }
 
 // Pressure at cell `c`; outside the box 0 at open edges (the fluid leaves freely), the cell's
-// own at walls (no push through them).
+// own at walls and obstacles (no push through them).
 fn pressure_at(c: vec3i, own: f32) -> f32 {
     let n = vec3i(pn.size);
     if (any(c < vec3i(0)) || any(c >= n)) {
         return select(0.0, own, params.edges == 1);
+    }
+    if (is_solid(c)) {
+        return own;
     }
     return textureLoad(vol0, c, 0).r;
 }
@@ -243,6 +306,10 @@ fn jacobi(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     let c = vec3i(id);
+    if (is_solid(c)) {
+        textureStore(vol_out, id, vec4f(0.0));
+        return;
+    }
     let here = textureLoad(vol0, id, 0);
     let x = vec3i(1, 0, 0);
     let y = vec3i(0, 1, 0);
@@ -258,6 +325,9 @@ fn pressure_of(c: vec3i, own: f32) -> f32 {
     if (any(c < vec3i(0)) || any(c >= n)) {
         return select(0.0, own, params.edges == 1);
     }
+    if (is_solid(c)) {
+        return own;
+    }
     return textureLoad(vol1, c, 0).r;
 }
 
@@ -269,6 +339,10 @@ fn project(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     let c = vec3i(id);
+    if (is_solid(c)) {
+        textureStore(vol_out, id, vec4f(0.0));
+        return;
+    }
     let own = textureLoad(vol1, id, 0).r;
     let x = vec3i(1, 0, 0);
     let y = vec3i(0, 1, 0);
@@ -287,6 +361,13 @@ fn project(@builtin(global_invocation_id) id: vec3u) {
         v = select(v, min(v, vec3f(0.0)), high);
         v = select(v, max(v, vec3f(0.0)), low);
     }
+    // Nothing into an obstacle either.
+    if (params.obstacles > 0) {
+        let into_high = vec3<bool>(is_solid(c + x), is_solid(c + y), is_solid(c + z));
+        let into_low = vec3<bool>(is_solid(c - x), is_solid(c - y), is_solid(c - z));
+        v = select(v, min(v, vec3f(0.0)), into_high);
+        v = select(v, max(v, vec3f(0.0)), into_low);
+    }
     textureStore(vol_out, id, clean(vec4f(limited(v), 0.0)));
 }
 
@@ -297,6 +378,11 @@ fn project(@builtin(global_invocation_id) id: vec3u) {
 @compute @workgroup_size(4, 4, 4)
 fn advect_fields(@builtin(global_invocation_id) id: vec3u) {
     if (any(id >= pn.size)) {
+        return;
+    }
+    // By the shapes: with sharp advection vol3 is taken. An emitter inside an obstacle makes nothing.
+    if (in_obstacle(id)) {
+        textureStore(vol_out, id, vec4f(0.0));
         return;
     }
     let v = textureLoad(vol1, id, 0).xyz;

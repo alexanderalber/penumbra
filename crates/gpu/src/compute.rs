@@ -138,6 +138,20 @@ impl Volume {
     }
 }
 
+/// A shape that made a volume what it is, for drawing it over a picture of the volume.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MediumShape {
+    /// Its centre in the world, in metres.
+    pub center: [f32; 3],
+    /// Half its size along x, y and z, for a box.
+    pub half: [f32; 3],
+    /// Its radius, for a sphere.
+    pub radius: f32,
+    pub is_box: bool,
+    /// An obstacle; an emitter when false.
+    pub solid: bool,
+}
+
 /// A volume as it flows between nodes (`vol` data): the cells and the box they fill, in metres.
 /// Channel use by convention: red the smoke's density, green its temperature, blue the fuel,
 /// alpha free.
@@ -147,6 +161,8 @@ pub struct Medium {
     /// The box's centre and its size along x, y and z.
     pub center: [f32; 3],
     pub size: [f32; 3],
+    /// What the simulation was given, for drawing it.
+    pub shapes: Arc<[MediumShape]>,
 }
 
 /// Whether a volume of `size` can be made on `gpu`, with the reason when not.

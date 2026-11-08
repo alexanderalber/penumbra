@@ -1,14 +1,16 @@
 //! `vol` nodes: volumes, grids of cells filling a box in space ([`penumbra_gpu::Medium`]). A
-//! simulation makes one (`vol.smoke`, fed by `vol.emitter`), `tex.raymarch` draws it.
+//! simulation makes one (`vol.smoke`, fed by `vol.emitter` and shaped by `vol.obstacle`), `tex.raymarch` draws it.
 
 use penumbra_core::Error;
 use penumbra_graph::{DataKind, FnNodeType, NodeDesc, NodeTypes, Operator};
 
 pub(crate) mod emitter;
+pub(crate) mod obstacle;
 pub(crate) mod smoke;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     emitter::register(types)?;
+    obstacle::register(types)?;
     smoke::register(types)?;
     types.register(FnNodeType::new(
         NodeDesc::new("vol.null", "Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes")
