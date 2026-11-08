@@ -87,8 +87,9 @@ pub struct PenumbraApp {
     viewer: Viewer,
     /// The viewer's window of its own: separate zoom, output choice and editors.
     window_viewer: Viewer,
-    /// Whether the viewer's window was shown last frame; if not, this frame creates its surface.
-    window_viewer_shown: bool,
+    /// The root pass the viewer's window was last shown in: a window not shown in the pass before
+    /// is gone (egui closes a viewport a pass leaves out), so this pass creates its surface anew.
+    window_viewer_pass: Option<u64>,
     /// The viewer's panel and its picture area last frame, for the height of its header rows.
     viewer_frame: Option<(Rect, Rect)>,
     changes: Changes,
@@ -151,8 +152,19 @@ pub struct PenumbraApp {
     starts_fresh: bool,
     /// The `?` buttons may open the browser ([`crate::control::Bridge::allow_browser`]).
     browser: bool,
-    /// Face templates being made off the UI thread; each sends what to show when done.
-    face_jobs: Vec<Receiver<String>>,
+    /// Work done off the UI thread (face templates, traces): what it is, and the channel that
+    /// sends what to show when it is done.
+    jobs: Vec<(Job, Receiver<String>)>,
+    /// Screenshots are encoded and written off the UI thread (the window), or before the next
+    /// frame (headless runs, whose recordings count the frames a request takes).
+    shots_off_thread: bool,
+}
+
+/// What a job off the UI thread does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Job {
+    FaceTemplate,
+    Trace,
 }
 
 /// Resizing the window once more so egui-wgpu reconfigures a surface whose last configure
@@ -169,6 +181,7 @@ impl PenumbraApp {
         // Where the window was last time, if that is known and still on a display; else
         // maximised, by command once the window exists: as a creation flag, Windows left the
         // window at its inner size, in the corner and without a frame.
+        let shots_off_thread = options.window.is_some();
         let place = options
             .window
             .map(|file| crate::window_place::Keeper::new(file, &penumbra_system::pointer::monitors()));
@@ -213,7 +226,7 @@ impl PenumbraApp {
             params: ParamPanel::default(),
             viewer: Viewer::default(),
             window_viewer: Viewer::default(),
-            window_viewer_shown: false,
+            window_viewer_pass: None,
             viewer_frame: None,
             changes: Changes::default(),
             auto: automation::Registry::default(),
@@ -251,7 +264,8 @@ impl PenumbraApp {
             flown: Instant::now(),
             starts_fresh: penumbra_engine::projects::starts_fresh(engine.session().dir()),
             browser: options.bridge.as_ref().is_some_and(|b| b.browser()),
-            face_jobs: Vec::new(),
+            jobs: Vec::new(),
+            shots_off_thread,
             engine,
         }
     }
@@ -309,6 +323,12 @@ impl PenumbraApp {
         self.auto.find(id).is_some()
     }
 
+    /// Where the element with automation id `id` was drawn in the last frame.
+    #[cfg(test)]
+    pub(crate) fn element(&self, id: &str) -> Option<Rect> {
+        self.auto.find(id).map(automation::Element::rect)
+    }
+
     fn selected(&self) -> Option<NodeId> {
         match self.editor.selection().iter().copied().collect::<Vec<_>>().as_slice() {
             [only] => Some(*only),
@@ -317,9 +337,9 @@ impl PenumbraApp {
     }
 
     fn apply(&mut self, actions: Vec<Action>, now: Instant) {
-        // Face templates made since: their message.
+        // Jobs done off the UI thread since: their message.
         let mut done = Vec::new();
-        self.face_jobs.retain(|rx| match rx.try_recv() {
+        self.jobs.retain(|(_, rx)| match rx.try_recv() {
             Ok(text) => {
                 done.push(text);
                 false
@@ -481,28 +501,26 @@ impl PenumbraApp {
                 Action::Trace { node, from } => {
                     let net = self.engine.session().doc().snapshot();
                     match net.path_of(node) {
+                        // Cooking the source, reading it back and tracing take up to seconds:
+                        // off the UI thread, which gets the message when the edit is made.
+                        Some(_) if self.jobs.iter().any(|(job, _)| *job == Job::Trace) => {
+                            Err(penumbra_core::Error::new("a trace is still running"))
+                        }
                         Some(path) => {
-                            let args = penumbra_engine::shapes::TraceArgs::new(path, &from);
-                            penumbra_engine::shapes::trace_into(&self.engine, Actor::User, &args, now)
-                                .map(|r| {
-                                    let text = r
-                                        .get("message")
-                                        .and_then(|m| m.as_str())
-                                        .unwrap_or("traced")
-                                        .to_string();
-                                    let warnings: Vec<&str> = r
-                                        .get("warnings")
-                                        .and_then(|w| w.as_array())
-                                        .map(|w| w.iter().filter_map(|v| v.as_str()).collect())
-                                        .unwrap_or_default();
-                                    let text = if warnings.is_empty() {
-                                        text
-                                    } else {
-                                        format!("{text}; {}", warnings.join("; "))
-                                    };
-                                    self.message = Some((text, now));
-                                })
-                                .map_err(|e| penumbra_core::Error::new(e.0))
+                            let engine = self.engine.clone();
+                            let args = penumbra_engine::shapes::TraceArgs::new(path.clone(), &from);
+                            let started = format!("tracing {from} into {path}...");
+                            self.spawn_job(Job::Trace, "trace", started, now, move || {
+                                match penumbra_engine::shapes::trace_into(
+                                    &engine,
+                                    Actor::User,
+                                    &args,
+                                    Instant::now(),
+                                ) {
+                                    Ok(r) => trace_message(&r),
+                                    Err(e) => format!("cannot trace {path}: {}", e.0),
+                                }
+                            })
                         }
                         None => Err(penumbra_core::Error::new("the node is gone")),
                     }
@@ -520,28 +538,18 @@ impl PenumbraApp {
                 }
                 Action::FaceTemplate { scene, face } => {
                     let dir = self.engine.session().dir().to_path_buf();
-                    let (tx, rx) = std::sync::mpsc::channel();
                     let args = penumbra_engine::scan_faces::TemplateArgs::one(&scene, &face);
-                    let name = face.clone();
-                    let spawned = std::thread::Builder::new().name("face template".into()).spawn(move || {
-                        let text = match penumbra_engine::scan_faces::template(&dir, &args) {
+                    let started = format!("making the template of {face}...");
+                    self.spawn_job(Job::FaceTemplate, "face template", started, now, move || {
+                        match penumbra_engine::scan_faces::template(&dir, &args) {
                             Ok(r) => r
                                 .get("message")
                                 .and_then(|m| m.as_str())
                                 .unwrap_or("template made")
                                 .to_string(),
-                            Err(e) => format!("no template for {name}: {}", e.0),
-                        };
-                        tx.send(text).ok();
-                    });
-                    match spawned {
-                        Ok(_) => {
-                            self.face_jobs.push(rx);
-                            self.message = Some((format!("making the template of {face}..."), now));
-                            Ok(())
+                            Err(e) => format!("no template for {face}: {}", e.0),
                         }
-                        Err(e) => Err(penumbra_core::Error::new(format!("cannot start the template: {e}"))),
-                    }
+                    })
                 }
                 Action::CancelScan => {
                     if self.engine.scans().cancel() {
@@ -581,6 +589,30 @@ impl PenumbraApp {
                 log::warn!("{e}");
                 self.message = Some((e.0, now));
             }
+        }
+    }
+
+    /// Runs `work` on a thread of its own; the status bar shows `started` now and what `work`
+    /// returns when it is done.
+    fn spawn_job(
+        &mut self,
+        job: Job,
+        name: &str,
+        started: String,
+        now: Instant,
+        work: impl FnOnce() -> String + Send + 'static,
+    ) -> Result<(), penumbra_core::Error> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new().name(name.into()).spawn(move || {
+            tx.send(work()).ok();
+        });
+        match spawned {
+            Ok(_) => {
+                self.jobs.push((job, rx));
+                self.message = Some((started, now));
+                Ok(())
+            }
+            Err(e) => Err(penumbra_core::Error::new(format!("cannot start the {name}: {e}"))),
         }
     }
 
@@ -951,7 +983,11 @@ impl PenumbraApp {
 
         if status.locked {
             // Show mode: no network, no viewer, no thumbnails, so the editor asks the cook
-            // thread for nothing and draws little next to the outputs.
+            // thread for nothing and draws little next to the outputs. What the pointer held in
+            // the editor when the show began is let go: the editor sees no release while hidden.
+            if let Some(node) = self.editor.let_go(&mut self.layout) {
+                actions.push(Action::PressButton { node, down: false });
+            }
             self.show_screen(ui, &session, &net, &view, now, &mut actions);
             self.apply(actions, now);
             self.engine.set_view(ViewRequest::default());
@@ -1356,10 +1392,11 @@ impl PenumbraApp {
         background: Color32,
         actions: &mut Vec<Action>,
     ) {
-        let opening = !std::mem::replace(&mut self.window_viewer_shown, false);
+        // Shown in the pass before or not: a frame that skipped the window (show mode) closed it.
+        let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
+        let opening = self.window_viewer_pass.is_none_or(|last| last.saturating_add(1) != pass);
         // A window opened again is a new window, not a resize of the last one.
-        let closed = self.viewer.window.is_none_or(|id| net.node(id).is_none());
-        if closed && let Some(last) = self.sizes.get_mut(1) {
+        if opening && let Some(last) = self.sizes.get_mut(1) {
             *last = None;
         }
         let Some(id) = self.viewer.window else { return };
@@ -1367,7 +1404,7 @@ impl PenumbraApp {
             self.viewer.window = None;
             return;
         }
-        self.window_viewer_shown = true;
+        self.window_viewer_pass = Some(pass);
         let session = self.engine.session().clone();
         let doc = session.doc();
         let new_group = || doc.new_group();
@@ -1677,6 +1714,16 @@ impl PenumbraApp {
         ctx.request_repaint();
     }
 
+    /// Closing the editor window (its close button, Alt+F4) would end the show; in show mode it
+    /// stays open and says how to close it.
+    fn keep_open_in_show(&mut self, ctx: &egui::Context) {
+        if self.engine.show_on() && ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::CancelClose);
+            let text = "the show is on: Unlock it before closing penumbra";
+            self.message = Some((text.to_string(), Instant::now()));
+        }
+    }
+
     fn screenshots(&mut self, ctx: &egui::Context) {
         if self.shots.is_empty() {
             return;
@@ -1706,7 +1753,19 @@ impl PenumbraApp {
         for (token, image) in arrived {
             if let Some(i) = self.shots.iter().position(|s| s.token == token) {
                 let shot = self.shots.remove(i);
-                shot.reply.send(save_png(&shot.file, &image)).ok();
+                if !self.shots_off_thread {
+                    shot.reply.send(save_png(&shot.file, &image)).ok();
+                    continue;
+                }
+                // Encoding a large window takes a frame or more. The reply still waits for the
+                // file to be written.
+                let reply = shot.reply.clone();
+                let spawned = std::thread::Builder::new().name("screenshot".into()).spawn(move || {
+                    shot.reply.send(save_png(&shot.file, &image)).ok();
+                });
+                if let Err(e) = spawned {
+                    reply.send(Err(format!("cannot start writing the screenshot: {e}"))).ok();
+                }
             }
         }
         self.shots.retain(|s| {
@@ -1719,6 +1778,17 @@ impl PenumbraApp {
         });
         ctx.request_repaint();
     }
+}
+
+/// What the status bar says after a trace: its message, then its warnings.
+fn trace_message(r: &serde_json::Value) -> String {
+    let text = r.get("message").and_then(|m| m.as_str()).unwrap_or("traced").to_string();
+    let warnings: Vec<&str> = r
+        .get("warnings")
+        .and_then(|w| w.as_array())
+        .map(|w| w.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    if warnings.is_empty() { text } else { format!("{text}; {}", warnings.join("; ")) }
 }
 
 /// The free view the engine drew for `node` at `output`: the main viewer's request comes
@@ -1845,6 +1915,7 @@ impl eframe::App for PenumbraApp {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.keep_open_in_show(ctx);
         self.drain_requests(ctx);
         if self.synthetic.is_empty() {
             for w in self.input_waiters.drain(..) {

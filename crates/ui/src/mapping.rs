@@ -388,10 +388,11 @@ impl MapEditor {
             if response.clicked() {
                 self.selected = pointer.and_then(nearest);
             }
-            // Arrow keys move the selected handle by projector pixels while over the viewer;
-            // the nudges in a row are one undo step.
+            // Arrow keys move the selected handle by projector pixels while over the viewer and
+            // no text field takes them; the nudges in a row are one undo step.
             if let Some(handle) = self.selected
                 && response.hovered()
+                && !ui.memory(|m| m.focused().is_some())
             {
                 let (dx, dy) = ui.input_mut(arrow_nudge);
                 if dx != 0.0 || dy != 0.0 {

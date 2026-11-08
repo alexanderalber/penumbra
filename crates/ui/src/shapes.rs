@@ -66,6 +66,14 @@ struct Drag {
     /// The shape as it was and the surface point where the button went down.
     original: Shape,
     from: [f64; 2],
+    /// The line the drag expects at `index`: the one it wrote last, or the original's; none for
+    /// a new box not written yet. Another line there means the list changed under the drag.
+    expect: Option<String>,
+}
+
+/// A shape as a line of the shapes text, for comparing what stands at an index.
+fn line_of(shape: &Shape) -> String {
+    shapes::to_text(std::slice::from_ref(shape))
 }
 
 pub struct ShapeEditor {
@@ -475,13 +483,20 @@ impl ShapeEditor {
                 Some((grab, index, original)) => {
                     self.selected = Some(index);
                     self.tag = original.tag.clone();
-                    self.drag = Some(Drag { grab, group: (input.new_group)(), index, original, from });
+                    let expect = (grab != Grab::Create).then(|| line_of(&original));
+                    let group = (input.new_group)();
+                    self.drag = Some(Drag { grab, group, index, original, from, expect });
                 }
                 None if self.tool == Tool::Select => self.selected = None,
                 None => {}
             }
         }
-        if let Some(drag) = &self.drag
+        // An edit from elsewhere (undo, Claude, the file) moved or removed the shape being
+        // dragged: the drag ends rather than write over another shape.
+        if self.drag.as_ref().is_some_and(|d| list.get(d.index).map(line_of) != d.expect) {
+            self.drag = None;
+        }
+        if let Some(drag) = &mut self.drag
             && let Some(at) = pointer
             && response.dragged_by(egui::PointerButton::Primary)
         {
@@ -518,6 +533,7 @@ impl ShapeEditor {
             // A box only once the pointer has really moved: a click is not a shape.
             let moved = origin.is_some_and(|o| o.distance(at) >= MIN_DRAG);
             if drag.grab != Grab::Create || moved {
+                drag.expect = Some(line_of(&s));
                 Self::edit(actions, input.replace(drag.index, &[s]), label, Some(drag.group));
             }
         }
@@ -617,6 +633,25 @@ impl ShapeEditor {
             Self::edit(actions, input.replace(list.len(), &[shape]), "new shape", None);
         } else if close {
             self.drawing.clear();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A drag compares the line it wrote with the line read back from the text: they must be the
+    /// same, or every drag would end after its first move.
+    #[test]
+    fn a_written_shape_reads_back_as_the_same_line() {
+        let mut s = Shape { tag: "a".into(), geom: Geom::Rect([0.1, 0.2, 0.3, 0.4]), repeat: None };
+        s.move_by([1.0 / 3.0, -2.0 / 7.0]);
+        for shape in [s.clone(), Shape { geom: Geom::Ellipse([0.123456789, 0.5, 0.25, 1e-7]), ..s }] {
+            let text = shapes::replace("# a comment\n", usize::MAX, std::slice::from_ref(&shape));
+            let back = shapes::parse(&text).unwrap();
+            assert_eq!(back.len(), 1);
+            assert_eq!(line_of(&back[0]), line_of(&shape), "{text}");
         }
     }
 }

@@ -484,6 +484,12 @@ impl Layout {
         (!ops.is_empty()).then_some(ops)
     }
 
+    /// The drag ends without an edit: the nodes go back to where the network has them.
+    pub fn cancel_move(&mut self) {
+        self.moving = None;
+        self.dragged.clear();
+    }
+
     /// The places given to nodes without a position since the last call, for the document
     /// (`Session::place_unplaced`): written outside the history, so the project opens the same
     /// the next time.
@@ -883,6 +889,28 @@ mod tests {
         assert!(layout.end_move(&moved).is_some());
         layout.sync(&moved);
         assert_eq!(layout.get(a), Some((a_was + vec2(102.5, -30.0)).round()));
+    }
+
+    #[test]
+    fn a_cancelled_drag_makes_no_edit_and_puts_the_nodes_back() {
+        let net = chain();
+        let a = net.resolve(&"/a".parse().unwrap()).unwrap();
+        let mut layout = Layout::load(None);
+        layout.sync(&net);
+        let net = with_placed(&net, &layout.take_placed());
+        layout.sync(&net);
+        let was = layout.get(a);
+        layout.begin_move([a]);
+        layout.drag_by(vec2(300.0, 0.0));
+        layout.sync(&net);
+        assert_ne!(layout.get(a), was, "shown while dragging");
+        layout.cancel_move();
+        layout.sync(&net);
+        assert_eq!(layout.get(a), was);
+        assert_eq!(layout.end_move(&net), None, "the drag is over");
+        layout.drag_by(vec2(300.0, 0.0));
+        layout.sync(&net);
+        assert_eq!(layout.get(a), was, "later moves do nothing");
     }
 
     #[test]

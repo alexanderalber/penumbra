@@ -88,6 +88,33 @@ fn setup(software: bool) -> egui_wgpu::WgpuSetup {
     egui_wgpu::WgpuSetup::CreateNew(setup)
 }
 
+/// A headless app on the software adapter without a script or control channel, for tests that
+/// feed it input of their own. The guard keeps other software runs out while it lives.
+#[cfg(test)]
+pub(crate) fn software_app(engine: Arc<Engine>) -> (std::sync::MutexGuard<'static, ()>, Harness<'static>) {
+    let guard = penumbra_core::lock(&SOFTWARE_RUN);
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .with_max_steps(4)
+        .with_step_dt(1.0 / 60.0)
+        .wgpu_setup(setup(true))
+        .build_eframe(|cc| {
+            PenumbraApp::new(
+                cc,
+                engine,
+                AppOptions {
+                    control: Err("headless".into()),
+                    requests: None,
+                    bridge: None,
+                    spacenav: false,
+                    window: None,
+                },
+            )
+        });
+    step_for(&mut harness, Duration::from_millis(300));
+    (guard, harness)
+}
+
 /// Runs `script` against `engine` in a headless app. Returns the method and the reply envelope
 /// (`{"ok", "result" | "error"}`) of every request; a failing request does not stop the script.
 pub fn run(engine: Arc<Engine>, script: &str, options: &Options) -> Result<Vec<(String, Json)>, String> {

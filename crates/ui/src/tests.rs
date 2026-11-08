@@ -496,6 +496,99 @@ fn draw_move_repeat_and_delete_shapes_in_the_viewer() {
     engine.shutdown();
 }
 
+/// The name field follows the node's name while it does not have the focus: after an undo of a
+/// rename, focusing the field and leaving it renames nothing.
+#[test]
+fn the_name_field_follows_an_undone_rename() {
+    let dir = ScratchDir::unborn("ui-rename");
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let content = penumbra_project::parse(PROJECT, &types).unwrap();
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
+    let engine = Engine::start(session).unwrap();
+    let script = [
+        json!({"method": "ui.select", "params": {"paths": ["/level1"]}}),
+        json!({"wait_for": "param.name"}),
+        json!({"method": "ui.click", "params": {"id": "param.name"}}),
+        json!({"method": "ui.key", "params": {"key": "A", "ctrl": true}}),
+        json!({"method": "ui.type", "params": {"text": "renamed"}}),
+        json!({"method": "ui.key", "params": {"key": "Enter"}}),
+        json!({"wait": 0.3}),
+        json!({"method": "node.info", "params": {"path": "/renamed"}}),
+        json!({"method": "ui.click", "params": {"id": "button.undo"}}),
+        json!({"wait": 0.3}),
+        json!({"method": "ui.click", "params": {"id": "param.name"}}),
+        json!({"wait": 0.2}),
+        json!({"method": "ui.key", "params": {"key": "Escape"}}),
+        json!({"wait": 0.3}),
+        json!({"method": "node.info", "params": {"path": "/level1"}}),
+    ];
+    let script: Vec<String> = script.iter().map(Json::to_string).collect();
+    let options = headless::Options { size: [1200.0, 800.0], pixels_per_point: 1.0, software: true };
+    let replies = headless::run(
+        engine.clone(),
+        &script.join(
+            "
+",
+        ),
+        &options,
+    )
+    .unwrap();
+    for (m, r) in &replies {
+        eprintln!("{m}: {}", r.to_string().chars().take(300).collect::<String>());
+    }
+    reply(&replies, "node.info", 0);
+    reply(&replies, "node.info", 1);
+    engine.shutdown();
+}
+
+/// The trace button cooks the source, reads it back and traces it off the UI thread; the
+/// shapes arrive as one edit, and the status bar says what was traced.
+#[test]
+fn the_trace_button_writes_the_outlines() {
+    let dir = ScratchDir::unborn("ui-trace");
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let content = penumbra_project::parse("(version: 1, nodes: {})", &types).unwrap();
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
+    let engine = Engine::start(session).unwrap();
+    let create = |path: &str, kind: &str, params: Json| json!({"method": "node.create", "params": {"path": path, "kind": kind, "params": params}});
+    let script = [
+        create("/mask", "tex.constant", json!({"color": [1, 1, 1, 1], "width": 64, "height": 36})),
+        create("/s", "tex.shapes", json!({"width": 64, "height": 36})),
+        json!({"method": "ui.select", "params": {"paths": ["/s"]}}),
+        json!({"wait_for": "param.trace_from"}),
+        json!({"method": "ui.click", "params": {"id": "param.trace_from"}}),
+        json!({"method": "ui.type", "params": {"text": "mask"}}),
+        json!({"method": "ui.key", "params": {"key": "Enter"}}),
+        json!({"method": "ui.click", "params": {"id": "param.trace"}}),
+        json!({"wait": 3.0}),
+        json!({"method": "node.info", "params": {"path": "/s"}}),
+        json!({"method": "history.list", "params": {"limit": 10}}),
+    ];
+    let script: Vec<String> = script.iter().map(Json::to_string).collect();
+    let options = headless::Options { size: [1200.0, 800.0], pixels_per_point: 1.0, software: true };
+    let replies = headless::run(
+        engine.clone(),
+        &script.join(
+            "
+",
+        ),
+        &options,
+    )
+    .unwrap();
+    for (m, r) in &replies {
+        eprintln!("{m}: {}", r.to_string().chars().take(400).collect::<String>());
+    }
+    let info = reply(&replies, "node.info", 0);
+    let shapes = info["params"].as_array().unwrap().iter().find(|p| p["name"] == "shapes").unwrap();
+    let text = shapes["value"].as_str().unwrap();
+    let traced = penumbra_ops::shapes::parse(text).unwrap();
+    assert_eq!(traced.len(), 1, "the whole picture is one outline: {text}");
+    assert_eq!(traced[0].tag, "trace");
+    let history = reply(&replies, "history.list", 0).to_string();
+    assert!(history.contains("trace /mask"), "{history}");
+    engine.shutdown();
+}
+
 #[test]
 fn any_node_opens_in_the_viewer_window() {
     let dir = ScratchDir::unborn("ui-window");

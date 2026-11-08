@@ -108,3 +108,78 @@ fn a_button_with_a_label_has_no_caption_above_its_face() {
     assert_eq!(crate::show_screen::caption("/stage/a/go", "stage/a/GO", &button("GO")), "stage/a");
     assert_eq!(crate::show_screen::caption("/s", "speed", &slider), "speed");
 }
+
+/// Closing the editor window would end the show: in show mode the close is refused and the
+/// status bar says why; out of it the window closes as usual.
+#[test]
+fn the_editor_window_stays_open_in_show_mode() {
+    let dir = ScratchDir::unborn("ui-show-close");
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let content = penumbra_project::parse(PROJECT, &types).unwrap();
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
+    let engine = Engine::start(session).unwrap();
+    engine.set_show(true).unwrap();
+    let (_guard, mut harness) = headless::software_app(engine.clone());
+    let close = |harness: &mut egui_kittest::Harness<'_, crate::app::PenumbraApp>| {
+        let root = harness.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default();
+        root.events.push(egui::ViewportEvent::Close);
+        harness.step();
+        harness
+            .output()
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .is_some_and(|v| v.commands.contains(&egui::ViewportCommand::CancelClose))
+    };
+    assert!(close(&mut harness), "refused in show mode");
+    harness.step();
+    use egui_kittest::kittest::Queryable;
+    assert!(harness.query_by_label_contains("Unlock it before closing").is_some(), "and says why");
+    engine.set_show(false).unwrap();
+    harness.step();
+    assert!(!close(&mut harness), "closes as usual out of show mode");
+    drop(harness);
+    engine.shutdown();
+}
+
+/// A momentary button held down on its node in the editor when show mode begins: the editor is
+/// no longer drawn and never sees the release, so the button is let go as the show begins.
+#[test]
+fn a_button_held_in_the_editor_is_let_go_when_the_show_begins() {
+    let dir = ScratchDir::unborn("ui-show-held");
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let content = penumbra_project::parse(PROJECT, &types).unwrap();
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
+    let engine = Engine::start(session).unwrap();
+    let b = engine.session().doc().snapshot().resolve(&"/b".parse().unwrap()).unwrap();
+    let (_guard, mut harness) = headless::software_app(engine.clone());
+    let mut at = None;
+    for _ in 0..120 {
+        harness.step();
+        at = harness.state().element("control./b").map(|r| r.center());
+        if at.is_some() {
+            break;
+        }
+    }
+    let at = at.expect("the button's control in the editor");
+    let input = |harness: &mut egui_kittest::Harness<'_, crate::app::PenumbraApp>, e: egui::Event| {
+        harness.input_mut().events.push(e);
+        harness.step();
+    };
+    input(&mut harness, egui::Event::PointerMoved(at));
+    let press = egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    };
+    input(&mut harness, press);
+    harness.step();
+    assert!(engine.buttons().view(b).held, "held while the pointer is down");
+    engine.set_show(true).unwrap();
+    for _ in 0..3 {
+        harness.step();
+    }
+    assert!(!engine.buttons().view(b).held, "let go when the show begins");
+    drop(harness);
+    engine.shutdown();
+}

@@ -22,6 +22,7 @@ use penumbra_core::{
 use penumbra_graph::{Bind, Data, DataKind, Network, NodeDef, NodeStatus, NodeTypes, Op};
 
 use crate::icons::{self, Icon};
+use crate::listing::Listing;
 use crate::{Action, automation, theme};
 
 pub struct Inputs<'a> {
@@ -64,30 +65,69 @@ pub struct Inputs<'a> {
     pub show_rate: Option<f64>,
 }
 
+/// A text field's buffer, committed on Enter or when focus leaves, and the value it started from:
+/// the param's value when the field took the focus. Only a buffer typed into is committed, so a
+/// field that merely loses the focus does not write back a value changed meanwhile elsewhere
+/// (undo, Claude, the viewer's editors).
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Typed {
+    text: String,
+    start: String,
+}
+
+impl Typed {
+    fn new(current: &str) -> Self {
+        Self { text: current.to_string(), start: current.to_string() }
+    }
+
+    /// After the field `r` was drawn with `current` as the param's value: the text to commit when
+    /// the focus left with something typed. Without the focus the buffer follows the value; with
+    /// it, too, while nothing has been typed yet.
+    fn settle(&mut self, r: &egui::Response, current: &str) -> Option<String> {
+        self.follow(r.has_focus(), r.lost_focus(), current)
+    }
+
+    /// [`Typed::settle`] for a field that has the focus (`focused`) or lost it this frame (`lost`).
+    fn follow(&mut self, focused: bool, lost: bool, current: &str) -> Option<String> {
+        if lost {
+            let typed = self.text != self.start && self.text != current;
+            return typed.then(|| self.text.clone());
+        }
+        let untouched = self.text == self.start;
+        if (!focused || untouched) && (self.text != current || self.start != current) {
+            *self = Self::new(current);
+        }
+        None
+    }
+}
+
 #[derive(Default)]
 pub struct ParamPanel {
     /// The widget being dragged or typed into and its history group.
     group: Option<(egui::Id, GroupId)>,
     group_seen: bool,
     /// Text being typed into, by param path, committed on Enter or when focus leaves.
-    buffers: HashMap<String, String>,
-    rename: Option<(NodeId, String)>,
+    fields: HashMap<String, Typed>,
+    /// The node of the name field and what it holds.
+    rename: Option<(NodeId, Typed)>,
+    /// The source a `tex.shapes`' trace row names, by node path.
+    trace_from: HashMap<String, String>,
     /// Files offered for a file param, listed when its menu opens.
-    files: Option<(String, Vec<String>)>,
+    files: Listing<Vec<String>>,
     /// Audio inputs offered for a `audio.device_in`'s `device`, listed when its menu opens
     /// (listing takes some milliseconds, too long for every frame).
-    audio_inputs: Option<(String, Result<Vec<penumbra_audio::DeviceInfo>, String>)>,
+    audio_inputs: Listing<Result<Vec<penumbra_audio::DeviceInfo>, String>>,
     /// Cameras offered for a `tex.video_in`'s `device` or `mode`, listed when the menu opens
     /// (listing opens every camera briefly).
-    cameras: Option<(String, Result<Vec<penumbra_camera::DeviceInfo>, String>)>,
+    cameras: Listing<Result<Vec<penumbra_camera::DeviceInfo>, String>>,
     /// Spout senders offered for a `tex.spout_in`'s `sender`, listed when the menu opens.
-    spout_senders: Option<(String, Vec<penumbra_spout::Listing>)>,
+    spout_senders: Listing<Vec<penumbra_spout::Listing>>,
     /// Monitors and windows offered for a `tex.screen_in`'s `display` or `window`, listed when
     /// the menu opens.
-    screen_sources: Option<(String, penumbra_screen::Sources)>,
+    screen_sources: Listing<penumbra_screen::Sources>,
     /// MIDI devices offered for a `chan.midi_in`'s or `chan.midi_out`'s `device`, listed when
     /// the menu opens.
-    midi_ports: Option<(String, penumbra_midi::Ports)>,
+    midi_ports: Listing<penumbra_midi::Ports>,
     /// The faces of the scene a `tex.face_content` names, listed when its face menu opens.
     faces: Option<(String, Result<Vec<FaceOffer>, String>)>,
     /// Actions a widget asked for that are not edits of the param (a face's template).
@@ -137,27 +177,25 @@ impl ParamPanel {
 
         // Name (rename on Enter), kind, summary, status.
         ui.horizontal(|ui| {
-            let editing = self.rename.as_ref().is_some_and(|(id, _)| *id == input.node);
-            if !editing {
-                self.rename = Some((input.node, node.name.to_string()));
+            // A name typed for the node shown before, left by selecting another node: committed
+            // as focus leaving the field commits it.
+            if let Some((old, typed)) = self.rename.take_if(|(id, _)| *id != input.node)
+                && typed.text != typed.start
+                && let Some(was) = input.net.node(old).filter(|n| typed.text != n.name.as_str())
+                && let Some(old_path) = input.net.path_of(was.id)
+            {
+                actions.push(rename_action(input, &old_path, &typed.text));
             }
-            if let Some((_, text)) = self.rename.as_mut() {
-                let r = ui.add_enabled(
-                    input.can_edit,
-                    egui::TextEdit::singleline(text).font(egui::TextStyle::Heading).desired_width(160.0),
-                );
-                auto.add("param.name", r.rect, "name");
-                if r.lost_focus() && text.as_str() != node.name.as_str() {
-                    match text.parse() {
-                        // The same ops as node.rename: expose lines and node references follow.
-                        Ok(name) => match penumbra_graph::rename(input.net, input.types, &path, &name) {
-                            Ok(ops) => actions.push(Action::edit(ops)),
-                            Err(e) => actions.push(Action::Message(format!("{e}"))),
-                        },
-                        Err(e) => actions.push(Action::Message(format!("{e}"))),
-                    }
-                    self.rename = None;
-                }
+            let (_, typed) = self.rename.get_or_insert_with(|| (input.node, Typed::new(node.name.as_str())));
+            let r = ui.add_enabled(
+                input.can_edit,
+                egui::TextEdit::singleline(&mut typed.text)
+                    .font(egui::TextStyle::Heading)
+                    .desired_width(160.0),
+            );
+            auto.add("param.name", r.rect, "name");
+            if let Some(text) = typed.settle(&r, node.name.as_str()) {
+                actions.push(rename_action(input, &path, &text));
             }
             ui.label(RichText::new(&node.kind).color(theme::TEXT_WEAK));
             // Not an edit, so allowed while Claude edits too.
@@ -266,7 +304,7 @@ impl ParamPanel {
             crate::model_map::params_row(ui, input.net, input.types, node.id, input.can_edit, auto, actions);
         }
         if node.kind == penumbra_ops::tex::shapes::SHAPES {
-            let from = self.buffers.entry(format!("{path}#trace")).or_default();
+            let from = self.trace_from.entry(path.to_string()).or_default();
             trace_row(ui, input, node, from, auto, actions);
         }
         ui.separator();
@@ -448,16 +486,13 @@ impl ParamPanel {
         let key = param.to_string();
         let current =
             node.params.get(spec.name.as_str()).unwrap_or(&spec.default).as_str().unwrap_or("").to_string();
-        let buffer = self.buffers.entry(key.clone()).or_insert_with(|| current.clone());
+        let field = self.fields.entry(key.clone()).or_insert_with(|| Typed::new(&current));
         // A fixed width: in the grid's first column the box would shrink to its text.
-        let r = ui.add_sized([100.0, ui.spacing().interact_size.y], egui::TextEdit::singleline(buffer));
+        let r =
+            ui.add_sized([100.0, ui.spacing().interact_size.y], egui::TextEdit::singleline(&mut field.text));
         auto.add(format!("param.{key}"), r.rect, spec.name.clone());
-        if !r.has_focus() && !r.lost_focus() && *buffer != current {
-            buffer.clone_from(&current);
-        }
-        if r.lost_focus() && *buffer != current {
-            actions
-                .push(Action::edit(vec![Op::Set { param, value: Value::Text(buffer.trim().to_string()) }]));
+        if let Some(text) = field.settle(&r, &current) {
+            actions.push(Action::edit(vec![Op::Set { param, value: Value::Text(text.trim().to_string()) }]));
         }
         Some(r)
     }
@@ -950,20 +985,18 @@ impl ParamPanel {
                                 r.on_hover_text("no palette");
                             }
                         }
-                        let buffer = self.buffers.entry(key.to_string()).or_insert_with(|| current.clone());
+                        let field =
+                            self.fields.entry(key.to_string()).or_insert_with(|| Typed::new(&current));
                         let width = ui.available_width();
                         let r = ui.add_enabled(
                             !whole_bound,
-                            egui::TextEdit::singleline(buffer)
+                            egui::TextEdit::singleline(&mut field.text)
                                 .desired_width(width)
                                 .hint_text("a name or hex colours"),
                         );
                         track(&r);
-                        if !r.has_focus() && !r.lost_focus() && *buffer != current {
-                            buffer.clone_from(&current);
-                        }
-                        if r.lost_focus() && *buffer != current {
-                            *new = Some(Value::Text(buffer.clone()));
+                        if let Some(text) = field.settle(&r, &current) {
+                            *new = Some(Value::Text(text));
                         }
                     });
                 });
@@ -1037,7 +1070,7 @@ impl ParamPanel {
                     if spec.node_ref {
                         node_menu(ui, input, node, key, auto, new);
                     }
-                    let buffer = self.buffers.entry(key.to_string()).or_insert_with(|| current.clone());
+                    let field = self.fields.entry(key.to_string()).or_insert_with(|| Typed::new(&current));
                     let width = ui.available_width();
                     // A bound text shows what the binding gives and is not edited here.
                     ui.add_enabled_ui(!whole_bound, |ui| {
@@ -1050,7 +1083,7 @@ impl ParamPanel {
                                 .auto_shrink([false, true])
                                 .show(ui, |ui| {
                                     ui.add(
-                                        egui::TextEdit::multiline(buffer)
+                                        egui::TextEdit::multiline(&mut field.text)
                                             .code_editor()
                                             .desired_rows(multiline_rows(spec))
                                             .desired_width(width),
@@ -1058,16 +1091,13 @@ impl ParamPanel {
                                 })
                                 .inner
                         } else if node.kind == penumbra_ops::audio::AUDIO_IN && spec.name == "device" {
-                            audio_device_box(ui, buffer, width, input.audio, &current)
+                            audio_device_box(ui, &mut field.text, width, input.audio, &current)
                         } else {
-                            ui.add(egui::TextEdit::singleline(buffer).desired_width(width))
+                            ui.add(egui::TextEdit::singleline(&mut field.text).desired_width(width))
                         };
-                        if !r.has_focus() && !r.lost_focus() && *buffer != current {
-                            // Changed elsewhere (undo, Claude): show the new value.
-                            buffer.clone_from(&current);
-                        }
-                        if r.lost_focus() && *buffer != current {
-                            *new = Some(Value::Text(buffer.clone()));
+                        // Changed elsewhere (undo, Claude) shows the new value.
+                        if let Some(text) = field.settle(&r, &current) {
+                            *new = Some(Value::Text(text));
                         }
                     });
                 });
@@ -1085,10 +1115,10 @@ impl ParamPanel {
     ) {
         let Some(dir) = dir else { return };
         let r = ui.menu_button("\u{2026}", |ui| {
-            if self.files.as_ref().is_none_or(|(k, _)| k != key) {
-                self.files = Some((key.to_string(), list_files(dir, extensions)));
-            }
-            let files = self.files.as_ref().map(|(_, f)| f.as_slice()).unwrap_or(&[]);
+            let (dir, extensions) = (dir.to_path_buf(), extensions.to_vec());
+            let Some(files) = self.files.get(ui, key, "files", move || list_files(&dir, &extensions)) else {
+                return;
+            };
             if files.is_empty() {
                 ui.label(RichText::new("no matching files in the project directory").color(theme::TEXT_WEAK));
             }
@@ -1099,8 +1129,8 @@ impl ParamPanel {
                 }
             }
         });
-        if r.inner.is_none() && self.files.as_ref().is_some_and(|(k, _)| k == key) {
-            self.files = None;
+        if r.inner.is_none() {
+            self.files.closed(key);
         }
     }
 
@@ -1115,14 +1145,6 @@ impl ParamPanel {
         new: &mut Option<Value>,
     ) {
         let r = ui.menu_button("\u{2026}", |ui| {
-            if self.audio_inputs.as_ref().is_none_or(|(k, _)| k != key) {
-                let list = if outputs {
-                    penumbra_audio::playback::output_devices()
-                } else {
-                    penumbra_audio::capture::devices()
-                };
-                self.audio_inputs = Some((key.to_string(), list));
-            }
             let label = if outputs { "the system's default output" } else { "the system's default input" };
             let r = ui.button(label).on_hover_text("Leaves `device` empty");
             auto.add("device.default", r.rect, if outputs { "default output" } else { "default input" });
@@ -1130,7 +1152,15 @@ impl ParamPanel {
                 *new = Some(Value::Text(String::new()));
                 ui.close();
             }
-            match self.audio_inputs.as_ref().map(|(_, l)| l) {
+            let name = if outputs { "audio outputs" } else { "audio inputs" };
+            let list = self.audio_inputs.get(ui, key, name, move || {
+                if outputs {
+                    penumbra_audio::playback::output_devices()
+                } else {
+                    penumbra_audio::capture::devices()
+                }
+            });
+            match list {
                 Some(Ok(list)) if list.is_empty() => {
                     let text = if outputs { "no audio outputs found" } else { "no audio inputs found" };
                     ui.label(RichText::new(text).color(theme::TEXT_WEAK));
@@ -1163,8 +1193,8 @@ impl ParamPanel {
             r.response.rect,
             if outputs { "audio outputs" } else { "audio inputs" },
         );
-        if r.inner.is_none() && self.audio_inputs.as_ref().is_some_and(|(k, _)| k == key) {
-            self.audio_inputs = None;
+        if r.inner.is_none() {
+            self.audio_inputs.closed(key);
         }
     }
 
@@ -1248,19 +1278,20 @@ impl ParamPanel {
         new: &mut Option<Value>,
     ) {
         let r = ui.menu_button("\u{2026}", |ui| {
-            if self.spout_senders.as_ref().is_none_or(|(k, _)| k != key) {
-                self.spout_senders = Some((key.to_string(), penumbra_spout::senders()));
-            }
             let r = ui.button("the active sender").on_hover_text("Leaves `sender` empty");
             auto.add("sender.default", r.rect, "active sender");
             if r.clicked() {
                 *new = Some(Value::Text(String::new()));
                 ui.close();
             }
-            let list = self.spout_senders.as_ref().map(|(_, l)| l.as_slice()).unwrap_or(&[]);
             if !penumbra_spout::SUPPORTED {
                 ui.label(RichText::new("Spout exists only on Windows").color(theme::TEXT_WEAK));
-            } else if list.is_empty() {
+                return;
+            }
+            let Some(list) = self.spout_senders.get(ui, key, "Spout senders", penumbra_spout::senders) else {
+                return;
+            };
+            if list.is_empty() {
                 ui.label(RichText::new("no Spout senders running").color(theme::TEXT_WEAK));
             }
             for (i, s) in list.iter().enumerate() {
@@ -1273,8 +1304,8 @@ impl ParamPanel {
             }
         });
         auto.add(format!("param.{key}.menu"), r.response.rect, "Spout senders");
-        if r.inner.is_none() && self.spout_senders.as_ref().is_some_and(|(k, _)| k == key) {
-            self.spout_senders = None;
+        if r.inner.is_none() {
+            self.spout_senders.closed(key);
         }
     }
 
@@ -1289,10 +1320,10 @@ impl ParamPanel {
         new: &mut Option<Value>,
     ) {
         let r = ui.menu_button("\u{2026}", |ui| {
-            if self.screen_sources.as_ref().is_none_or(|(k, _)| k != key) {
-                self.screen_sources = Some((key.to_string(), penumbra_screen::sources()));
-            }
-            let Some((_, sources)) = self.screen_sources.as_ref() else { return };
+            let name = if windows { "windows" } else { "monitors" };
+            let Some(sources) = self.screen_sources.get(ui, key, name, penumbra_screen::sources) else {
+                return;
+            };
             if let Some(e) = &sources.error {
                 ui.colored_label(theme::WARNING, e);
                 return;
@@ -1331,8 +1362,8 @@ impl ParamPanel {
         });
         let label = if windows { "windows" } else { "monitors" };
         auto.add(format!("param.{key}.menu"), r.response.rect, label);
-        if r.inner.is_none() && self.screen_sources.as_ref().is_some_and(|(k, _)| k == key) {
-            self.screen_sources = None;
+        if r.inner.is_none() {
+            self.screen_sources.closed(key);
         }
     }
 
@@ -1347,9 +1378,6 @@ impl ParamPanel {
         new: &mut Option<Value>,
     ) {
         let r = ui.menu_button("\u{2026}", |ui| {
-            if self.midi_ports.as_ref().is_none_or(|(k, _)| k != key) {
-                self.midi_ports = Some((key.to_string(), penumbra_midi::hub::list()));
-            }
             if !outputs {
                 let r = ui.button("every MIDI input").on_hover_text("Leaves `device` empty");
                 auto.add("midi.all", r.rect, "every input");
@@ -1358,7 +1386,9 @@ impl ParamPanel {
                     ui.close();
                 }
             }
-            let Some((_, ports)) = self.midi_ports.as_ref() else { return };
+            let Some(ports) = self.midi_ports.get(ui, key, "MIDI devices", penumbra_midi::hub::list) else {
+                return;
+            };
             if let Some(e) = &ports.error {
                 ui.colored_label(theme::WARNING, e);
             }
@@ -1381,8 +1411,8 @@ impl ParamPanel {
             r.response.rect,
             if outputs { "MIDI outputs" } else { "MIDI inputs" },
         );
-        if r.inner.is_none() && self.midi_ports.as_ref().is_some_and(|(k, _)| k == key) {
-            self.midi_ports = None;
+        if r.inner.is_none() {
+            self.midi_ports.closed(key);
         }
     }
 
@@ -1401,17 +1431,6 @@ impl ParamPanel {
         new: &mut Option<Value>,
     ) {
         let r = ui.menu_button("\u{2026}", |ui| {
-            if self.cameras.as_ref().is_none_or(|(k, _)| k != key) {
-                self.cameras = Some((key.to_string(), hub.devices()));
-            }
-            let list = match self.cameras.as_ref().map(|(_, l)| l) {
-                Some(Ok(list)) => list,
-                Some(Err(e)) => {
-                    ui.colored_label(theme::WARNING, e);
-                    return;
-                }
-                None => return,
-            };
             let mut pick = |ui: &mut Ui, id: String, text: String, value: String, hover: &str| {
                 let r = ui.button(text).on_hover_text(hover);
                 auto.add(id, r.rect, value.clone());
@@ -1420,7 +1439,15 @@ impl ParamPanel {
                     ui.close();
                 }
             };
-            if !modes {
+            if modes {
+                pick(
+                    ui,
+                    "mode.best".into(),
+                    "auto".into(),
+                    String::new(),
+                    "Leaves `mode` empty: the largest size, then the highest rate",
+                );
+            } else {
                 pick(
                     ui,
                     "camera.first".into(),
@@ -1428,6 +1455,17 @@ impl ParamPanel {
                     String::new(),
                     "Leaves `device` empty",
                 );
+            }
+            let hub = hub.clone();
+            let list = match self.cameras.get(ui, key, "cameras", move || hub.devices()) {
+                Some(Ok(list)) => list,
+                Some(Err(e)) => {
+                    ui.colored_label(theme::WARNING, e);
+                    return;
+                }
+                None => return,
+            };
+            if !modes {
                 if list.is_empty() {
                     ui.label(RichText::new("no cameras found").color(theme::TEXT_WEAK));
                 }
@@ -1436,13 +1474,6 @@ impl ParamPanel {
                 }
                 return;
             }
-            pick(
-                ui,
-                "mode.best".into(),
-                "auto".into(),
-                String::new(),
-                "Leaves `mode` empty: the largest size, then the highest rate",
-            );
             let Some(cam) = camera_for(list, device) else {
                 ui.label(RichText::new("no camera matches `device`").color(theme::TEXT_WEAK));
                 return;
@@ -1463,8 +1494,8 @@ impl ParamPanel {
             r.response.rect,
             if modes { "camera modes" } else { "cameras" },
         );
-        if r.inner.is_none() && self.cameras.as_ref().is_some_and(|(k, _)| k == key) {
-            self.cameras = None;
+        if r.inner.is_none() {
+            self.cameras.closed(key);
         }
     }
 }
@@ -2465,19 +2496,37 @@ fn vector(c: &[f64]) -> Option<Value> {
     })
 }
 
-/// Files under `dir` (two levels deep, at most 500) with one of `extensions`, as relative paths
-/// with forward slashes.
+/// The rename of the node at `path` to `text`: the same ops as `node.rename`, so expose lines and
+/// node references follow; a message when the name is not allowed.
+fn rename_action(input: &Inputs<'_>, path: &penumbra_core::NodePath, text: &str) -> Action {
+    let renamed = text.parse().map_err(|e: penumbra_core::Error| e.to_string()).and_then(|name| {
+        penumbra_graph::rename(input.net, input.types, path, &name).map_err(|e| e.to_string())
+    });
+    match renamed {
+        Ok(ops) => Action::edit(ops),
+        Err(e) => Action::Message(e),
+    }
+}
+
+/// Files under `dir` (two levels deep, at most [`MAX_FILES`]) with one of `extensions`, as
+/// relative paths with forward slashes. At most [`MAX_VISITED`] entries are looked at: a project
+/// folder holding a large library offers what was found by then.
 fn list_files(dir: &Path, extensions: &[String]) -> Vec<String> {
     let mut out = Vec::new();
+    let mut visited = 0usize;
     let mut stack = vec![(dir.to_path_buf(), 0)];
-    while let Some((d, depth)) = stack.pop() {
+    'dirs: while let Some((d, depth)) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&d) else { continue };
         for e in entries.flatten() {
-            if out.len() >= 500 {
-                break;
+            visited += 1;
+            if out.len() >= MAX_FILES || visited > MAX_VISITED {
+                break 'dirs;
             }
+            // The entry's type comes with the listing, without asking the file system again. A
+            // link to a folder is not followed.
+            let Ok(kind) = e.file_type() else { continue };
             let p = e.path();
-            if p.is_dir() {
+            if kind.is_dir() {
                 if depth < 2 {
                     stack.push((p, depth + 1));
                 }
@@ -2495,6 +2544,11 @@ fn list_files(dir: &Path, extensions: &[String]) -> Vec<String> {
     out.sort();
     out
 }
+
+/// The most files a file param's menu offers.
+const MAX_FILES: usize = 500;
+/// The most directory entries the file menu looks at.
+const MAX_VISITED: usize = 20_000;
 
 /// Params of a node as a map, for `ui.state`.
 pub fn values(net: &Network, types: &NodeTypes, id: NodeId) -> BTreeMap<String, Value> {
@@ -3015,6 +3069,44 @@ fn ndi_link(ui: &mut Ui, key: &str, auto: &mut automation::Registry) {
 mod tests {
     use super::*;
     use penumbra_core::NodePath;
+
+    #[test]
+    fn the_file_menu_lists_matching_files_two_folders_deep() {
+        let dir = penumbra_core::scratch::ScratchDir::new("ui-list-files").unwrap();
+        let root = dir.path();
+        for f in ["a.png", "b.txt", "sub/c.PNG", "sub/x/d.png", "sub/x/y/e.png", "f.png.tmp"] {
+            let p = root.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"").unwrap();
+        }
+        assert_eq!(list_files(root, &["png".to_string()]), ["a.png", "sub/c.PNG", "sub/x/d.png"]);
+        assert_eq!(list_files(root, &[]).len(), 4, "every file but the temporary one");
+    }
+
+    #[test]
+    fn a_text_field_commits_only_what_was_typed() {
+        // Focus taken and left without typing, while the value changed elsewhere: nothing to
+        // write back.
+        let mut t = Typed::new("a");
+        assert_eq!(t.follow(true, false, "a"), None);
+        assert_eq!(t.follow(false, true, "b"), None, "the value changed while focused, nothing typed");
+        assert_eq!(t.follow(false, false, "b"), None);
+        assert_eq!(t, Typed::new("b"), "follows the value without the focus");
+        // Focused and untouched: still follows.
+        assert_eq!(t.follow(true, false, "c"), None);
+        assert_eq!(t, Typed::new("c"));
+        // Typed: kept while focused, committed when the focus leaves.
+        t.text = "typed".into();
+        assert_eq!(t.follow(true, false, "d"), None);
+        assert_eq!(t.text, "typed", "what is typed stays while focused");
+        assert_eq!(t.follow(false, true, "d"), Some("typed".into()));
+        assert_eq!(t.follow(false, false, "typed"), None);
+        assert_eq!(t, Typed::new("typed"));
+        // Typed back to the value it started from: nothing to commit.
+        t.text = "x".into();
+        t.text = "typed".into();
+        assert_eq!(t.follow(false, true, "typed"), None);
+    }
 
     fn set(p: &str, v: impl Into<Value>) -> Op {
         Op::Set { param: ParamPath::parse(p).unwrap(), value: v.into() }

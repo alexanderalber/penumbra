@@ -1475,6 +1475,17 @@ impl Editor {
         Some((resp, Shown { control, line, pressed, hovered, active }))
     }
 
+    /// Lets go of whatever the pointer holds on the canvas, for when the editor stops being drawn
+    /// while the button may still be down (show mode begins): a drag of nodes, wires or a box
+    /// ends without an edit, and the momentary button pressed on a node body is returned, to be
+    /// let go in the engine.
+    pub fn let_go(&mut self, layout: &mut Layout) -> Option<NodeId> {
+        self.drag = Drag::None;
+        layout.cancel_move();
+        let press = self.body_press.take()?;
+        (press.what == node_controls::Pressed::Button).then_some(press.node)
+    }
+
     /// The primary button went up: a momentary button held from a node body is let go, a
     /// slider's drag ends (its next drag is a new undo step).
     fn end_body_press(&mut self, ui: &Ui, actions: &mut Vec<Action>) {
@@ -3130,6 +3141,22 @@ fn help_rect(node: Rect, zoom: f32) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn letting_go_returns_a_held_button_once_and_ends_a_drag() {
+        let mut editor = Editor::default();
+        let mut layout = Layout::load(None);
+        editor.drag = Drag::Nodes;
+        editor.body_press =
+            Some(node_controls::Press { node: NodeId(7), what: node_controls::Pressed::Button });
+        assert_eq!(editor.let_go(&mut layout), Some(NodeId(7)));
+        assert!(matches!(editor.drag, Drag::None));
+        assert_eq!(editor.let_go(&mut layout), None, "released once");
+        editor.body_press =
+            Some(node_controls::Press { node: NodeId(8), what: node_controls::Pressed::Toggle });
+        assert_eq!(editor.let_go(&mut layout), None, "a toggle switched on its click");
+        assert!(editor.body_press.is_none());
+    }
 
     /// Two nodes with a third between them, so the careful route differs from the quick one
     /// only by where the routing runs; what counts is that it arrives without blocking.
