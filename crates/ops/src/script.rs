@@ -263,7 +263,7 @@ impl Script {
             let current_read = p.inputs.iter().all(|(i, d)| current.iter().any(|(k, c)| k == i && c.same(d)));
             let state = if current_read || exact {
                 waited = true;
-                p.read.wait(gpu, wait)
+                crate::readback::wait(cx, gpu, &p.read, wait)
             } else {
                 p.read.state()
             };
@@ -300,7 +300,7 @@ impl Script {
             return Ok(false);
         }
         let Some(p) = &self.pending else { return Ok(false) };
-        match p.read.wait(gpu, wait) {
+        match crate::readback::wait(cx, gpu, &p.read, wait) {
             ReadState::Ready => {
                 self.take_read(data)?;
                 Ok(current.iter().all(|(i, d)| self.fresh(*i, d, data)))

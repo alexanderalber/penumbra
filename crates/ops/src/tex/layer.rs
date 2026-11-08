@@ -57,6 +57,8 @@ struct Layer {
     watch: Option<FileWatch>,
     /// What the job in flight or the last result was asked for.
     asked: Option<(PathBuf, String, bool)>,
+    /// The file changed on disk since it was last read.
+    reread: bool,
 }
 
 impl Operator for Layer {
@@ -76,10 +78,14 @@ impl Operator for Layer {
         if moved {
             self.watch = Some(cx.watch_file(&path));
         }
-        let changed = self.watch.as_ref().is_some_and(FileWatch::take_changed);
+        self.reread |= self.watch.as_ref().is_some_and(FileWatch::take_changed);
         let key = (path.clone(), layer.clone(), placed);
-        if moved || changed || self.asked.as_ref() != Some(&key) {
+        // One job in flight; a newer key waits for it rather than replacing it. Replacing
+        // dropped every result while `layer` kept changing, so nothing showed. The job's end
+        // cooks the node again, which starts the next one.
+        if (self.reread || self.asked.as_ref() != Some(&key)) && !self.slot.busy() {
             self.asked = Some(key);
+            let changed = std::mem::take(&mut self.reread);
             let gpu = gpu.clone();
             // The parsed file is reused unless the file changed or another one is named.
             let keep = self.slot.latest().filter(|r| !changed && r.path == path).map(|r| r.source.clone());

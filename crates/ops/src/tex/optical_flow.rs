@@ -135,6 +135,9 @@ struct OpticalFlow {
     out: TexRing,
     /// The previous input frame's pyramid.
     previous: Option<Vec<Tex>>,
+    /// The pyramid the last flow was measured against, so a param change on a still input
+    /// measures the same two frames again instead of the frame against itself.
+    before: Option<Vec<Tex>>,
     /// The last result and the input frame it was measured on.
     last: Option<Tex>,
     input: Option<Data>,
@@ -144,7 +147,11 @@ impl Operator for OpticalFlow {
     fn gpu_bytes(&self) -> u64 {
         let rings = self.values.iter().chain(&self.flows).chain([&self.smoothed, &self.out]);
         penumbra_gpu::unique_bytes(
-            rings.flat_map(TexRing::iter).chain(self.previous.iter().flatten()).chain(&self.last),
+            rings
+                .flat_map(TexRing::iter)
+                .chain(self.previous.iter().flatten())
+                .chain(self.before.iter().flatten())
+                .chain(&self.last),
         )
     }
 
@@ -153,8 +160,10 @@ impl Operator for OpticalFlow {
         let pass = self.pass.get(gpu, pass)?;
         let data = cx.input(0).ok_or_else(|| waiting(cx))?;
         let src = data.get::<Tex>().ok_or_else(|| CookError::failed("not a texture"))?;
-        if let (Some(last), Some(input)) = (&self.last, &self.input)
-            && input.same(data)
+        let again = self.last.is_some() && self.input.as_ref().is_some_and(|i| i.same(data));
+        if again
+            && !cx.params_changed()
+            && let Some(last) = &self.last
         {
             return Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, last.clone())]));
         }
@@ -193,7 +202,8 @@ impl Operator for OpticalFlow {
 
         // Coarse to fine against the previous frame's pyramid; on the first frame (or after a
         // change of size) there is nothing to compare with, and the motion is none.
-        let previous = self.previous.take().filter(|p| {
+        let previous = if again { self.before.take() } else { self.previous.take() };
+        let previous = previous.filter(|p| {
             p.len() == pyramid.len() && p.iter().zip(&pyramid).all(|(a, b)| a.size() == b.size())
         });
         let mut flow: Option<Tex> = None;
@@ -221,6 +231,7 @@ impl Operator for OpticalFlow {
         batch.submit();
 
         self.previous = Some(pyramid);
+        self.before = previous;
         self.last = Some(out.clone());
         self.input = Some(data.clone());
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, out)]))

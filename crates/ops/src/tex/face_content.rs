@@ -165,6 +165,8 @@ struct FaceContent {
     /// The uv map and the template's aspect.
     slot: AsyncSlot<(Tex, Option<f64>)>,
     watch: Option<FileWatch>,
+    /// The face's `face.json`, whose aspect the picture takes.
+    template: Option<FileWatch>,
     pass: PassCell,
     ring: TexRing,
 }
@@ -193,32 +195,44 @@ impl Operator for FaceContent {
         };
         let folder = cx.resolve_path(scene)?.join(FACES_FOLDER).join(face.folder());
         let path = folder.join(&file_name);
+        let json = folder.join("face.json");
         let moved = self.watch.as_ref().is_none_or(|w| w.path() != path);
         if moved {
             self.watch = Some(cx.watch_file(&path));
         }
-        if !path.exists() {
-            return Err(CookError::failed(format!(
+        if self.template.as_ref().is_none_or(|w| w.path() != json) {
+            self.template = Some(cx.watch_file(&json));
+        }
+        // Both are taken, so neither change is left for a later cook.
+        let changed = self.watch.as_ref().is_some_and(FileWatch::take_changed);
+        let retemplated = self.template.as_ref().is_some_and(FileWatch::take_changed);
+        if moved || changed || retemplated {
+            let gpu = gpu.clone();
+            let label = path.display().to_string();
+            let p = path.clone();
+            // Looked for on the job's thread, not the cook's: a slow drive must not hold up
+            // the frame. The file appearing later is a change the watch reports.
+            let missing = format!(
                 "no template for `{}` in {}/{FACES_FOLDER} yet ({file_name} missing): pick the face from the \
                  menu beside `face`, or run scan.face_template",
                 face_text.trim(),
                 scene
-            )));
-        }
-        let changed = self.watch.as_ref().is_some_and(FileWatch::take_changed);
-        if moved || changed {
-            let gpu = gpu.clone();
-            let label = path.display().to_string();
-            let p = path.clone();
-            let json = folder.join("face.json");
+            );
             self.slot.start(cx.spawn(move |_job| {
+                if !p.exists() {
+                    return Err(missing);
+                }
                 let picture =
                     penumbra_gpu::image::decode_file_picture(&p, gpu.max_texture_size()).map_err(|e| e.0)?;
                 let tex = gpu.upload_picture(&picture, &label).map_err(|e| e.0)?;
                 Ok((tex, template_aspect(&json)))
             }));
         }
-        if let Some(e) = self.slot.error() {
+        // While a new job runs, the last one's error (another face, a file not there yet) is
+        // not the answer.
+        if let Some(e) = self.slot.error()
+            && !self.slot.busy()
+        {
             return Err(CookError::failed(e));
         }
         let Some((uv, template)) = self.slot.latest().cloned() else { return Err(CookError::Pending) };

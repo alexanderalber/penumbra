@@ -21,6 +21,7 @@ pub mod note;
 pub mod osc;
 pub mod out;
 pub mod palette;
+pub mod readback;
 pub mod res;
 pub mod script;
 pub mod seek;

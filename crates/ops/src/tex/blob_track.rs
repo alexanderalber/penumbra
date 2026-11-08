@@ -248,6 +248,9 @@ struct BlobTrack {
     /// The blob id in each slot of `chans`.
     slots: Vec<Option<u64>>,
     outputs: Option<Vec<Data>>,
+    /// A param changed since the last frame was taken: the same frame is analysed again, so
+    /// a still picture shows the change too.
+    redo: bool,
     pass: PassCell,
 }
 
@@ -263,6 +266,7 @@ impl BlobTrack {
             last_frame: None,
             slots: Vec::new(),
             outputs: None,
+            redo: false,
             pass: PassCell::default(),
         }
     }
@@ -299,11 +303,15 @@ impl Operator for BlobTrack {
         if self.pending.as_ref().is_some_and(|(_, started)| started.elapsed() > STALE) {
             self.pending = None;
         }
-        if (cx.inputs_changed() || cx.first_cook() || self.outputs.is_none()) && self.pending.is_none() {
+        self.redo |= cx.params_changed();
+        if (cx.inputs_changed() || cx.first_cook() || self.outputs.is_none() || self.redo)
+            && self.pending.is_none()
+        {
+            self.redo = false;
             self.start(cx, gpu, src)?;
         }
         let ready = match &self.pending {
-            Some((read, _)) => read.wait(gpu, wait_for(cx)),
+            Some((read, _)) => crate::readback::wait(cx, gpu, read, wait_for(cx)),
             None => ReadState::Waiting,
         };
         match ready {
@@ -318,6 +326,10 @@ impl Operator for BlobTrack {
                     }
                     let outputs = self.analyse(cx, gpu, &image, arrived)?;
                     self.outputs = Some(outputs.clone());
+                    if self.redo {
+                        // A param changed while this frame was read back: once more.
+                        cx.waker().wake();
+                    }
                     return Ok(Cooked::Outputs(outputs));
                 }
             }
@@ -327,10 +339,10 @@ impl Operator for BlobTrack {
             }
             ReadState::Waiting => {}
         }
-        match (&self.outputs, cx.params_changed()) {
-            // A param changed without a new frame: the next frame shows it.
-            (Some(_), _) => Ok(Cooked::Unchanged),
-            (None, _) => Err(CookError::Pending),
+        match &self.outputs {
+            // The readback in flight wakes the node when it arrives.
+            Some(_) => Ok(Cooked::Unchanged),
+            None => Err(CookError::Pending),
         }
     }
 

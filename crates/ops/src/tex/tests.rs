@@ -4042,3 +4042,53 @@ fn blend_weight_splits_small_features_off() {
     let warning = rig.cooker.status(id).and_then(|s| s.warning.clone()).unwrap_or_default();
     assert!(warning.contains("detail weight"), "{warning}");
 }
+
+#[test]
+fn blob_track_follows_a_param_change_on_a_still_picture() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create(
+            "/c",
+            "tex.constant",
+            &[
+                ("width", Value::Int(64)),
+                ("height", Value::Int(64)),
+                ("color", Value::Vec4([0.5, 0.5, 0.5, 1.0])),
+            ],
+        ),
+        create(
+            "/b",
+            "tex.blob_track",
+            &[
+                ("detect", "bright".into()),
+                ("threshold", Value::Float(0.3)),
+                ("max_area", Value::Float(100.0)),
+                ("size", Value::Int(64)),
+            ],
+        ),
+        connect("/c", "/b", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let blobs = |rig: &mut Rig| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            rig.clock.advance(1);
+            rig.gpu.poll();
+            rig.cook("/b");
+            let out = rig.cooker.output(Port { node: rig.id("/b"), output: 1 });
+            if let Some(t) = out.and_then(|d| d.get::<penumbra_core::Table>()) {
+                return t.num_rows().saturating_sub(1);
+            }
+            assert!(Instant::now() < deadline, "no blobs table");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    assert_eq!(blobs(&mut rig), 1, "the grey picture is one bright blob");
+    // The picture stays; only the threshold moves above it.
+    rig.edit(&[set("/b.threshold", Value::Float(0.9))]);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while blobs(&mut rig) != 0 {
+        assert!(Instant::now() < deadline, "the threshold change never showed");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}

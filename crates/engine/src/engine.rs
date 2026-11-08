@@ -488,6 +488,9 @@ impl CookState {
         // reads back or uploads: a submission per pass cost more CPU time than the pass.
         let gpu = self.gpu.clone();
         let deferral = gpu.as_ref().map(Gpu::defer);
+        if let Some(w) = self.cooker.resource::<penumbra_ops::readback::ReadWaits>() {
+            w.refill();
+        }
         self.last = self.cooker.cook_showing(&net, self.clock.now(), &wanted, &request.thumbnails, &shown);
         drop(deferral);
         let t_cook = Instant::now();
@@ -855,6 +858,7 @@ impl Engine {
             hub.provide(&mut cooker);
         }
         cooker.provide(penumbra_ops::tex::blob_track::BlobTracks::new());
+        cooker.provide(penumbra_ops::readback::ReadWaits::new());
         cooker.provide(penumbra_ops::tex::video_file::VideoRestarts::new());
         cooker.provide(penumbra_ops::seek::Seeks::new());
         cooker.provide(penumbra_ops::audio::instrument::Presses::new());

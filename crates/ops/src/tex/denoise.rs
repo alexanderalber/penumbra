@@ -103,8 +103,11 @@ impl Operator for Denoise {
         if reset {
             self.last = None;
         }
+        // A param change on a still input blends the same frame in again with the new
+        // settings; without one the same frame gives the same result.
         if let (Some(last), Some(input)) = (&self.last, &self.input)
             && input.same(data)
+            && !cx.params_changed()
         {
             return Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, last.clone())]));
         }

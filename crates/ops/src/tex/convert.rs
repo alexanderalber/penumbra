@@ -312,7 +312,7 @@ impl Operator for FromTex {
             self.start(cx, gpu, src)?;
         }
         let ready = match &self.pending {
-            Some((read, _, _)) => read.wait(gpu, wait_for(cx)),
+            Some((read, _, _)) => crate::readback::wait(cx, gpu, read, wait_for(cx)),
             None => ReadState::Waiting,
         };
         match ready {
