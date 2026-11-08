@@ -766,7 +766,7 @@ impl ParamPanel {
             ParamKind::Int => {
                 let mut i = value.as_i64().unwrap_or(0);
                 let mut dv = egui::DragValue::new(&mut i).speed(0.1);
-                if let Some(r) = spec.range {
+                if let Some(r) = spec.hard_limit().or(spec.range) {
                     dv = dv.range(r.min as i64..=r.max as i64).clamp_existing_to_range(r.hard);
                 }
                 let dv = with_specials(dv, spec, input.show_rate);
@@ -1546,7 +1546,10 @@ fn help_facts(help: &penumbra_core::ParamHelp) -> Vec<(&'static str, String)> {
     let default = if help.default.is_empty() { "empty".to_string() } else { help.default.clone() };
     facts.push(("default", default));
     if !help.range.is_empty() {
-        let how = if help.clamped {
+        let held = format!("the slider's; values are held within {}", help.limit);
+        let how = if !help.limit.is_empty() {
+            held.as_str()
+        } else if help.clamped {
             "values outside are clamped"
         } else {
             "the slider's; typed values outside are kept"
@@ -1806,7 +1809,7 @@ fn float_drag<'a>(
         // every frame.
         dv = dv.fixed_decimals(3);
     }
-    if let Some(r) = spec.range.filter(|r| r.hard) {
+    if let Some(r) = spec.hard_limit() {
         dv = dv.range(r.min..=r.max);
     }
     with_specials(dv, spec, show_rate)

@@ -107,7 +107,12 @@ pub struct ParamSpec {
     pub name: String,
     pub kind: ParamKind,
     pub default: Value,
+    /// The slider's range; a hard one also clamps, unless [`ParamSpec::limit`] says otherwise.
     pub range: Option<Range>,
+    /// Hard bounds apart from the slider's range ([`ParamSpec::clamp`] with
+    /// [`ParamSpec::range`]): every value is held within them, the slider spans `range`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<Range>,
     pub unit: Unit,
     pub curve: Curve,
     /// The section of the param panel it sits in: empty for the main rows, which are always
@@ -238,6 +243,10 @@ pub struct ParamHelp {
     pub range: String,
     /// Whether values outside the range are clamped (else the range is only the slider's).
     pub clamped: bool,
+    /// Hard bounds that differ from the slider's range, with the unit (`0 to 512 px`); empty
+    /// when there are none or `range` is them.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub limit: String,
     /// The unit's symbol (`s`, `px`, `%`, ...); empty for plain numbers.
     pub unit: String,
     /// How the slider maps to values: `linear`, `log` (equal steps are equal ratios) or `power`
@@ -272,6 +281,7 @@ impl ParamSpec {
             kind,
             default,
             range: None,
+            limit: None,
             unit: Unit::None,
             curve: Curve::Linear,
             group: String::new(),
@@ -343,16 +353,43 @@ impl ParamSpec {
         )
     }
 
-    /// Slider range; values outside it can still be typed.
+    /// Slider range; values outside it can still be typed, within a [`ParamSpec::clamp`]
+    /// given as well.
     pub fn range(mut self, min: f64, max: f64) -> Self {
         self.range = Some(Range { min, max, hard: false });
         self
     }
 
-    /// Range that clamps every value.
+    /// Bounds that clamp every value. Alone they are the slider's range too; with a
+    /// [`ParamSpec::range`] (in either order) the slider spans that one and values are still
+    /// held within these.
     pub fn clamp(mut self, min: f64, max: f64) -> Self {
-        self.range = Some(Range { min, max, hard: true });
+        let hard = Range { min, max, hard: true };
+        self.limit = Some(hard);
+        if self.range.is_none_or(|r| r.hard) {
+            self.range = Some(hard);
+        }
         self
+    }
+
+    /// The bounds every value is held within: the [`ParamSpec::clamp`], else a hard range;
+    /// `None` when values are free.
+    pub fn hard_limit(&self) -> Option<Range> {
+        self.limit.or(self.range.filter(|r| r.hard))
+    }
+
+    /// [`ParamSpec::hard_limit`] with the unit, when it differs from the slider's range; empty
+    /// otherwise.
+    pub fn limit_label(&self) -> String {
+        match (self.hard_limit(), self.range) {
+            (Some(l), Some(r)) if l.min == r.min && l.max == r.max => String::new(),
+            (Some(l), _) => {
+                let unit = self.unit.symbol();
+                let gap = if self.unit == Unit::Degrees || unit.is_empty() { "" } else { " " };
+                format!("{} to {}{gap}{unit}", l.min, l.max)
+            }
+            (None, _) => String::new(),
+        }
     }
 
     pub fn unit(mut self, unit: Unit) -> Self {
@@ -582,7 +619,8 @@ impl ParamSpec {
             type_label,
             default: self.default_label().unwrap_or_default(),
             range: if self.range.is_some() { self.range_label() } else { String::new() },
-            clamped: self.range.is_some_and(|r| r.hard),
+            clamped: self.hard_limit().is_some(),
+            limit: self.limit_label(),
             unit: self.unit.symbol().to_string(),
             curve: match self.curve {
                 Curve::Linear => "linear",
@@ -727,6 +765,12 @@ impl ParamSpec {
     pub fn validate_spec(&self) -> Result<(), Error> {
         let ctx = || format!("param `{}`", self.name);
         Name::new(&self.name).map_err(|e| e.context(ctx()))?;
+        if let Some(l) = self.limit
+            && !(l.min.is_finite() && l.max.is_finite() && l.min < l.max)
+        {
+            return Err(Error::new(format!("clamp {}..{} must be finite with min < max", l.min, l.max))
+                .context(ctx()));
+        }
         if let Some(r) = self.range {
             if !(r.min.is_finite() && r.max.is_finite() && r.min < r.max) {
                 return Err(Error::new(format!("range {}..{} must be finite with min < max", r.min, r.max))
@@ -827,9 +871,10 @@ impl ParamSpec {
                 value
             ))
         };
-        let clamp = |x: f64| match self.range {
-            Some(r) if r.hard => x.clamp(r.min, r.max),
-            _ => x,
+        let limit = self.hard_limit();
+        let clamp = |x: f64| match limit {
+            Some(r) => x.clamp(r.min, r.max),
+            None => x,
         };
         let finite = |xs: &[f64]| {
             if xs.iter().all(|x| x.is_finite()) {
@@ -912,10 +957,10 @@ impl ParamSpec {
     }
 
     fn clamp_int(&self, i: i64) -> i64 {
-        match self.range {
+        match self.hard_limit() {
             // `as` saturates; the bounds come from a validated spec.
-            Some(r) if r.hard => i.clamp(r.min.ceil() as i64, r.max.floor() as i64),
-            _ => i,
+            Some(r) => i.clamp(r.min.ceil() as i64, r.max.floor() as i64),
+            None => i,
         }
     }
 
@@ -987,6 +1032,29 @@ mod tests {
 
         let soft = ParamSpec::float("x", 0.5).range(0.0, 1.0);
         assert_eq!(soft.check(&Value::Float(7.0)).unwrap(), Value::Float(7.0));
+
+        // A clamp and a slider range together, in either order: the slider spans the range,
+        // values are held within the clamp.
+        for both in [
+            ParamSpec::float("s", 8.0).clamp(0.0, 512.0).range(0.0, 100.0),
+            ParamSpec::float("s", 8.0).range(0.0, 100.0).clamp(0.0, 512.0),
+        ] {
+            assert_eq!(both.check(&Value::Float(300.0)).unwrap(), Value::Float(300.0));
+            assert_eq!(both.check(&Value::Float(1e9)).unwrap(), Value::Float(512.0));
+            assert_eq!(both.check(&Value::Float(-1.0)).unwrap(), Value::Float(0.0));
+            assert_eq!(both.from_slider(1.0), Some(100.0));
+            let h = both.help();
+            assert!(h.clamped);
+            assert_eq!((h.range.as_str(), h.limit.as_str()), ("0 to 100", "0 to 512"));
+        }
+        let n = ParamSpec::int("n", 4).clamp(3.0, 64.0).range(3.0, 12.0);
+        assert_eq!(n.check(&Value::Int(1000)).unwrap(), Value::Int(64));
+        assert_eq!(n.check(&Value::Int(20)).unwrap(), Value::Int(20));
+        // A clamp alone is the slider's range too, and no separate limit to show.
+        let alone = ParamSpec::float("a", 0.5).clamp(0.0, 1.0);
+        assert_eq!(alone.from_slider(1.0), Some(1.0));
+        assert_eq!(alone.help().limit, "");
+        assert!(ParamSpec::float("x", 1.0).clamp(2.0, 1.0).range(0.0, 3.0).validate_spec().is_err());
 
         let i = ParamSpec::int("n", 3).clamp(1.0, 8.0);
         assert_eq!(i.check(&Value::Float(4.0)).unwrap(), Value::Int(4));

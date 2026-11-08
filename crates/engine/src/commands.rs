@@ -557,7 +557,7 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
             let explicit = node.params.get(spec.name.as_str());
             instance.push(json!({
                 "name": spec.name, "kind": spec.kind, "value": explicit.unwrap_or(&spec.default),
-                "default": spec.default, "range": spec.range, "unit": spec.unit, "doc": spec.doc,
+                "default": spec.default, "range": spec.range, "limit": spec.limit, "unit": spec.unit, "doc": spec.doc,
             }));
         }
         for (name, value) in &node.params {

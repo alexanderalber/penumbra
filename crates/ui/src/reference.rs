@@ -93,7 +93,11 @@ fn cell(text: &str) -> String {
 }
 
 fn param_range(spec: &ParamSpec) -> String {
+    let limit = spec.limit_label();
     match spec.range {
+        Some(r) if !r.hard && !limit.is_empty() => {
+            format!("{} (soft, held within {limit})", spec.range_label())
+        }
         Some(r) if !r.hard => format!("{} (soft)", spec.range_label()),
         _ => spec.range_label(),
     }

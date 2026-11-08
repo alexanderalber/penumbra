@@ -34,7 +34,13 @@ fn desc(kind: &str) -> NodeDesc {
         )
     };
     NodeDesc::new(kind, summary)
-        .param(ParamSpec::vec2("size", [2.0, 2.0]).range(0.0, 32.0).unit(Unit::Pixels).doc(size_doc))
+        .param(
+            ParamSpec::vec2("size", [2.0, 2.0])
+                .clamp(0.0, MAX_RADIUS)
+                .range(0.0, 32.0)
+                .unit(Unit::Pixels)
+                .doc(size_doc),
+        )
         .param(super::extend("hold").more().doc(extend_doc))
         .input("in", DataKind::Tex)
         .output("out", DataKind::Tex)

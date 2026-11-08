@@ -29,7 +29,7 @@ Outputs: `out` (tex).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `mode` | smooth \| detail | `"smooth"` |  | How the picture is weighted; smooth: all of it by the blend weight (as a tex.composite multiply); detail: large features by the blend weight, features smaller than size by the detail weight, so they come from one projector only |
-| `size` | float | `8` | 1 to 32 px (soft) | In detail mode, where small features end: the blur radius that separates them, in projector pixels; a little more than the projectors disagree by |
+| `size` | float | `8` | 1 to 32 px (soft, held within 0.5 to 128 px) | In detail mode, where small features end: the blur radius that separates them, in projector pixels; a little more than the projectors disagree by |
 
 ### tex.blob_track
 
@@ -51,18 +51,18 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `detect` | background \| bright | `"background"` |  | What counts as part of a blob; background: what differs from the empty scene (the `background` input where connected, else learned: `blob_track.learn`); bright: whatever is brighter than `threshold` |
-| `threshold` | float | `0.1` | 0 to 0.5 (soft) | Difference to the background (in any channel), or brightness, from which a pixel counts |
-| `adapt` | float | `30` | 0 to 300 s (soft) | How soon a lasting change (light, a moved chair) becomes background; someone standing still fades ten times slower; 0: never |
-| `min_area` | float | `0.1` | 0 to 5 % (soft) | Smaller blobs are ignored (of the picture's area) |
-| `max_area` | float | `50` | 1 to 100 % (soft) | Larger blobs are ignored (the whole room changing is not a blob) |
-| `max_blobs` | int | `16` | 1 to 32 (soft) | Most blobs reported; with more found, the largest are kept |
+| `threshold` | float | `0.1` | 0 to 0.5 (soft, held within 0 to 1) | Difference to the background (in any channel), or brightness, from which a pixel counts |
+| `adapt` | float | `30` | 0 to 300 s (soft, held within 0 to 3600 s) | How soon a lasting change (light, a moved chair) becomes background; someone standing still fades ten times slower; 0: never |
+| `min_area` | float | `0.1` | 0 to 5 % (soft, held within 0 to 100 %) | Smaller blobs are ignored (of the picture's area) |
+| `max_area` | float | `50` | 1 to 100 % (soft, held within 0 to 100 %) | Larger blobs are ignored (the whole room changing is not a blob) |
+| `max_blobs` | int | `16` | 1 to 32 (soft, held within 1 to 256) | Most blobs reported; with more found, the largest are kept |
 | `show` | overlay \| mask \| difference \| background | `"overlay"` |  | What `out` shows; overlay: the picture with the blobs marked; mask: the pixels counted, white on black; difference: the difference to the background (the threshold is mid grey); background: the learned background |
-| `size` *(more)* | int | `320` | 64 to 960 px (soft) | Width the input is analysed at; more finds smaller things and costs more |
-| `open` *(more)* | int | `1` | 0 to 6 px (soft) | Removes specks and lines thinner than twice this (at the analysed size) |
-| `close` *(more)* | int | `2` | 0 to 6 px (soft) | Fills holes and joins parts closer than twice this |
-| `reach` *(more)* | float | `0.15` | 0 to 0.5 (soft) | How far a blob may jump between frames and keep its id, as a share of the width. Measured from where the blob's speed puts it |
-| `hold` *(more)* | float | `0.5` | 0 to 5 s (soft) | A blob gone for less keeps its id when it comes back |
-| `slots` *(more)* | int | `4` | 0 to 8 (soft) | Blobs in `chans`, each as id, x, y, area with the slot's number (id 0: empty) |
+| `size` *(more)* | int | `320` | 64 to 960 px (soft, held within 16 to 1920 px) | Width the input is analysed at; more finds smaller things and costs more |
+| `open` *(more)* | int | `1` | 0 to 6 px (soft, held within 0 to 16 px) | Removes specks and lines thinner than twice this (at the analysed size) |
+| `close` *(more)* | int | `2` | 0 to 6 px (soft, held within 0 to 16 px) | Fills holes and joins parts closer than twice this |
+| `reach` *(more)* | float | `0.15` | 0 to 0.5 (soft, held within 0 to 2) | How far a blob may jump between frames and keep its id, as a share of the width. Measured from where the blob's speed puts it |
+| `hold` *(more)* | float | `0.5` | 0 to 5 s (soft, held within 0 to 60 s) | A blob gone for less keeps its id when it comes back |
+| `slots` *(more)* | int | `4` | 0 to 8 (soft, held within 0 to 32) | Blobs in `chans`, each as id, x, y, area with the slot's number (id 0: empty) |
 
 ### tex.blur
 
@@ -76,7 +76,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `size` | float | `8` | 0 to 100 px (soft) | Blur radius in pixels (three standard deviations of the Gaussian); below 0.5 leaves the input as it is |
+| `size` | float | `8` | 0 to 100 px (soft, held within 0 to 512 px) | Blur radius in pixels (three standard deviations of the Gaussian); below 0.5 leaves the input as it is |
 | `direction` | both \| horizontal \| vertical | `"both"` |  | Which way the picture is smeared; both: in every direction, a round blur; horizontal: only left and right, as motion across; vertical: only up and down |
 | `extend` *(more)* | hold \| zero \| repeat \| mirror | `"hold"` |  | What the blur reads beyond the input's edges; hold keeps the edges from darkening; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
@@ -94,8 +94,8 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `length` | int | `30` | 1 to 240 f (soft) | Frames kept (at most 2 GiB of them) |
-| `index` | int | `0` | 0 to 239 f (soft) | How many frames back the output is; 0 is the newest |
+| `length` | int | `30` | 1 to 240 f (soft, held within 1 to 1000 f) | Frames kept (at most 2 GiB of them) |
+| `index` | int | `0` | 0 to 239 f (soft, held within 0 to 999 f) | How many frames back the output is; 0 is the newest |
 | `record` | bool | `true` |  | Take new frames; off holds what is kept |
 | `persist` *(more)* | bool | `true` |  | While not recording, keep the held frames in the state snapshots, so they survive a restart |
 
@@ -186,7 +186,7 @@ Outputs: `out` (tex).
 | `interval` | float | `0.05` | 0.005 to 0.25 (soft) | Step in the channel's value from one line to the next |
 | `offset` | float | `0` | 0 to 0.25 (soft) | Value of one of the lines; the others lie whole intervals above and below |
 | `thickness` | float | `1.5` | 0.5 to 8 px (soft) | Width of the lines in pixels, the same on steep and gentle slopes |
-| `smooth` | float | `0` | 0 to 16 px (soft) | Smooths a noisy height map so the lines come out calm, without islands. Radius in pixels, like tex.blur's size. Under mode over the picture itself stays sharp; 0: off |
+| `smooth` | float | `0` | 0 to 16 px (soft, held within 0 to 64 px) | Smooths a noisy height map so the lines come out calm, without islands. Radius in pixels, like tex.blur's size. Under mode over the picture itself stays sharp; 0: off |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the lines |
 | `channel` | luminance \| red \| green \| blue \| alpha | `"luminance"` |  | Channel the lines follow, on straight colour (a height map: any of the colours); luminance: the brightness as the eye weighs it (Rec. 709); red: the red channel only; green: the green channel only; blue: the blue channel only; alpha: the opacity |
 | `range` *(more)* | vec2 | `[0, 1]` |  | Only values strictly between these get a line: a map clipped at 0 or 1 gets none around its flat parts |
@@ -221,9 +221,9 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `frames` | float | `8` | 1 to 64 (soft) | About how many frames are averaged where the picture is still, for brightness noise; more is calmer; 1: off |
-| `color_frames` | float | `8` | 1 to 64 (soft) | The same for colour noise (coloured speckles) |
-| `motion` | float | `0.06` | 0 to 0.3 (soft) | Change above which a pixel counts as moving and shows the new frame at once. Raise it when the noise still flickers, lower it when moving things leave trails. Measured on the square root of the values, so it means about the same in dark and bright parts |
+| `frames` | float | `8` | 1 to 64 (soft, held within 1 to 256) | About how many frames are averaged where the picture is still, for brightness noise; more is calmer; 1: off |
+| `color_frames` | float | `8` | 1 to 64 (soft, held within 1 to 256) | The same for colour noise (coloured speckles) |
+| `motion` | float | `0.06` | 0 to 0.3 (soft, held within 0 to 1) | Change above which a pixel counts as moving and shows the new frame at once. Raise it when the noise still flickers, lower it when moving things leave trails. Measured on the square root of the values, so it means about the same in dark and bright parts |
 | `spatial` | float | `0.5` | 0 to 1 (soft) | Smooths the brightness of moving parts, where the average cannot help. Edges stronger than `motion` are kept; 0: off |
 | `color_spatial` | float | `0.5` | 0 to 1 (soft) | The same for the colour; the eye forgives soft colour more than soft brightness |
 | `reset` *(more)* | bool | `false` |  | Forget the average, while on |
@@ -240,7 +240,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `size` | vec2 | `[2, 2]` | 0 to 32 px (soft) | How far bright parts grow, in pixels across and down, at most 256: each pixel takes the largest value within this distance. 0 on one side leaves that direction as it is. A fraction such as 1.5 takes the outermost pixel in by half |
+| `size` | vec2 | `[2, 2]` | 0 to 32 px (soft, held within 0 to 256 px) | How far bright parts grow, in pixels across and down, at most 256: each pixel takes the largest value within this distance. 0 on one side leaves that direction as it is. A fraction such as 1.5 takes the outermost pixel in by half |
 | `extend` *(more)* | hold \| zero \| repeat \| mirror | `"hold"` |  | What the dilate reads beyond the input's edges; hold keeps the edges as they are; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
 ### tex.displace
@@ -291,7 +291,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `size` | vec2 | `[2, 2]` | 0 to 32 px (soft) | How far bright parts shrink, in pixels across and down, at most 256: each pixel takes the smallest value within this distance. 0 on one side leaves that direction as it is. A fraction such as 1.5 takes the outermost pixel in by half |
+| `size` | vec2 | `[2, 2]` | 0 to 32 px (soft, held within 0 to 256 px) | How far bright parts shrink, in pixels across and down, at most 256: each pixel takes the smallest value within this distance. 0 on one side leaves that direction as it is. A fraction such as 1.5 takes the outermost pixel in by half |
 | `extend` *(more)* | hold \| zero \| repeat \| mirror | `"hold"` |  | What the erode reads beyond the input's edges; hold keeps shapes that touch the edge from shrinking away from it; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
 ### tex.face_content
@@ -310,7 +310,7 @@ Outputs:
 |---|---|---|---|---|
 | `face` | text |  |  | The face: a region's name, `region 3`, or `face 7` (scan.faces lists them). The menu beside it picks one and makes its template when there is none yet |
 | `scene` | text | `"scene"` |  | The folder scan.scene wrote, relative to the project. The faces' templates are in its faces folder |
-| `projector` | int | `-1` (camera) | -1 to 3 (soft) | Where the picture is made: camera, the camera's picture, to compose with other content made there; 0, 1, ...: that projector's own pixels (the order of scan.scene's scans), sharper than the camera's picture remapped; -1: camera |
+| `projector` | int | `-1` (camera) | -1 to 3 (soft, held within -1 to 15) | Where the picture is made: camera, the camera's picture, to compose with other content made there; 0, 1, ...: that projector's own pixels (the order of scan.scene's scans), sharper than the camera's picture remapped; -1: camera |
 | `fit` | stretch \| contain \| cover | `"stretch"` |  | How the picture fills the face when its aspect differs from the face's; stretch: fills the face exactly, distorted if the aspect differs; contain: whole and undistorted, with empty bands at two sides; cover: fills the face undistorted, cut off at two sides |
 | `objects` | bool | `false` |  | Also over objects standing in front of the face (a pumpkin on a lid). Off: on the face only |
 | `aspect` *(more)* | float | `0` (template) | 0 to 100 | The face's width over its height, for contain and cover: template, as the face's template says; 0: template |
@@ -393,21 +393,21 @@ Outputs:
 | `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
-| `force` | float | `4` | 0 to 20 (soft) | How strongly motion (the force input and the splats) pushes the fluid. Per second, this many times the motion's speed is added to the fluid's speed |
-| `velocity_fade` | float | `2` | 0.05 to 30 s (soft) | Time in which the fluid loses half its speed; longer keeps it swirling |
-| `dye_fade` | float | `3` | 0.05 to 60 s (soft) | Time in which the dye loses half its strength |
+| `force` | float | `4` | 0 to 20 (soft, held within 0 to 1000) | How strongly motion (the force input and the splats) pushes the fluid. Per second, this many times the motion's speed is added to the fluid's speed |
+| `velocity_fade` | float | `2` | 0.05 to 30 s (soft, held within 0 to 3600 s) | Time in which the fluid loses half its speed; longer keeps it swirling |
+| `dye_fade` | float | `3` | 0.05 to 60 s (soft, held within 0 to 3600 s) | Time in which the dye loses half its strength |
 | `inject` | moving \| everywhere | `"moving"` |  | Where dye comes in; moving: where the force input or a splat moves, the faster the more; the dye input's colours, or `color` while the dye input is unwired; everywhere: the dye input everywhere, splats whether they move or not |
-| `amount` | float | `4` | 0 to 30 (soft) | How fast the dye takes on the poured colour, per second, where the fluid moves fast. At 4, about two thirds in a quarter of a second. Pouring paints over, so the dye never gets brighter than the poured colour |
+| `amount` | float | `4` | 0 to 30 (soft, held within 0 to 1000) | How fast the dye takes on the poured colour, per second, where the fluid moves fast. At 4, about two thirds in a quarter of a second. Pouring paints over, so the dye never gets brighter than the poured colour |
 | `color` | colour | `[0.35, 0.7, 1, 1]` |  | Colour of the dye while the dye input is unwired, and of splats without r, g, b columns. The colour's alpha slows the pouring |
-| `vorticity` | float | `0.3` | 0 to 2 (soft) | Brings back the small swirls the coarse grid smooths away; 0: off |
+| `vorticity` | float | `0.3` | 0 to 2 (soft, held within 0 to 100) | Brings back the small swirls the coarse grid smooths away; 0: off |
 | `splat_motion` | push \| set | `"push"` |  | What a splat's vx and vy do to the fluid under it; push: add to its speed every frame, times `force`: a stirring hand; set: become its speed, whatever `force` says: a nozzle that blows at a steady speed |
-| `expansion` | float | `0` | 0 to 10 (soft) | How fast the fluid swells inside the splats, per second: burning gas that pushes out to all sides and puffs up. Needs `edges` open, so the swollen fluid has somewhere to go; 0: off |
-| `buoyancy` | float | `0` | 0 to 10 (soft) | How strongly dye pulls the fluid along `buoyancy_direction`, like hot smoke rising. In image heights per second squared where the dye is at full strength, less where it is thinner; 0: off |
+| `expansion` | float | `0` | 0 to 10 (soft, held within 0 to 100) | How fast the fluid swells inside the splats, per second: burning gas that pushes out to all sides and puffs up. Needs `edges` open, so the swollen fluid has somewhere to go; 0: off |
+| `buoyancy` | float | `0` | 0 to 10 (soft, held within -100 to 100) | How strongly dye pulls the fluid along `buoyancy_direction`, like hot smoke rising. In image heights per second squared where the dye is at full strength, less where it is thinner; 0: off |
 | `buoyancy_direction` | vec2 | `[0, -1]` | -1 to 1 | The way dye rises: x right, y down, so 0, -1 is up the picture. Only its direction counts |
-| `viscosity` *(more)* | float | `0` | 0 to 0.01 (soft) | Thickness, honey instead of smoke: neighbouring parts take on each other's motion. In image heights squared per second; 0: off, costs nothing |
-| `size` *(more)* | int | `256` | 64 to 512 px (soft) | Width of the simulation grid; the height follows the picture's shape. More gives finer swirls and costs more. The dye keeps the output's size |
-| `iterations` *(more)* | int | `20` | 4 to 60 (soft) | Steps that keep the fluid from being squeezed together. Fewer cost less and let the fluid bulge and leak |
-| `splat_radius` *(more)* | float | `0.05` | 0.005 to 0.3 (soft) | Radius of a splat from the table without a radius column, in image heights |
+| `viscosity` *(more)* | float | `0` | 0 to 0.01 (soft, held within 0 to 1) | Thickness, honey instead of smoke: neighbouring parts take on each other's motion. In image heights squared per second; 0: off, costs nothing |
+| `size` *(more)* | int | `256` | 64 to 512 px (soft, held within 16 to 1024 px) | Width of the simulation grid; the height follows the picture's shape. More gives finer swirls and costs more. The dye keeps the output's size |
+| `iterations` *(more)* | int | `20` | 4 to 60 (soft, held within 1 to 80) | Steps that keep the fluid from being squeezed together. Fewer cost less and let the fluid bulge and leak |
+| `splat_radius` *(more)* | float | `0.05` | 0.005 to 0.3 (soft, held within 0.0001 to 10) | Radius of a splat from the table without a radius column, in image heights |
 | `edges` *(more)* | walls \| open | `"walls"` |  | What the picture's edges are to the fluid; walls: the fluid turns along them; open: the fluid flows out, with the dye |
 | `reset` | bool | `false` |  | Starts over from a still fluid without dye, every frame while on |
 | `persist` *(more)* | bool | `true` |  | Keep velocity and dye in the state snapshots, so a restart carries on from them |
@@ -676,11 +676,11 @@ Outputs: `out` (tex).
 | `colors` | bool | `false` |  | Show the motion as colours: direction as hue, speed as brightness. For looking at the motion; nodes that use the motion want this off |
 | `confidence` *(more)* | bool | `false` |  | Blue says how well the motion is pinned down, 0 to 1: high where there is texture (moving or not), low on a plain wall. Off: blue is 0, and a still picture is black |
 | `fill` | int | `4` | 0 to 6 (soft) | Rounds of filling in. Motion found at edges and texture spreads into plain parts of the same thing (skin, a shirt) and stops at edges. Each round reaches twice as far; 0: off |
-| `threshold` | float | `0.25` | 0 to 4 px (soft) | Slower motion than this fades out, so camera noise does not shimmer. In pixels per frame at the analysed size; below half of it nothing is left |
-| `size` *(more)* | int | `320` | 64 to 960 px (soft) | Width the input is analysed at, and the output's; more sees finer motion and costs more |
-| `levels` *(more)* | int | `4` | 1 to 6 (soft) | Pyramid levels, each half the size of the one before; each one doubles the fastest motion followed |
-| `iterations` *(more)* | int | `3` | 1 to 6 (soft) | Refining steps per level; more is more exact and costs more |
-| `window` *(more)* | int | `3` | 1 to 6 px (soft) | Radius of the neighbourhood each pixel's motion is judged from; more is smoother and steadier, less keeps small moving things apart |
+| `threshold` | float | `0.25` | 0 to 4 px (soft, held within 0 to 16 px) | Slower motion than this fades out, so camera noise does not shimmer. In pixels per frame at the analysed size; below half of it nothing is left |
+| `size` *(more)* | int | `320` | 64 to 960 px (soft, held within 16 to 1920 px) | Width the input is analysed at, and the output's; more sees finer motion and costs more |
+| `levels` *(more)* | int | `4` | 1 to 6 (soft, held within 1 to 8) | Pyramid levels, each half the size of the one before; each one doubles the fastest motion followed |
+| `iterations` *(more)* | int | `3` | 1 to 6 (soft, held within 1 to 10) | Refining steps per level; more is more exact and costs more |
+| `window` *(more)* | int | `3` | 1 to 6 px (soft, held within 1 to 8 px) | Radius of the neighbourhood each pixel's motion is judged from; more is smoother and steadier, less keeps small moving things apart |
 
 ### tex.primitive
 
@@ -699,12 +699,12 @@ Outputs: `out` (tex).
 | `center` | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | Where the shape's centre sits, in image sizes: 0, 0 is the top left, 0.5, 0.5 the centre |
 | `size` | vec2 | `[0.5, 0.5]` | 0 to 2 (soft) | Width and height of the shape in image heights: 1, 1 is a square as tall as the picture |
 | `rotate` | float | `0` | -180 to 180° (soft) | Turn around the centre, counter-clockwise on screen |
-| `sides` | int | `6` | 3 to 12 (soft) | Corners of the polygon. The corners lie on the ellipse that size describes. Does something only with shape polygon. |
-| `corner` | float | `0` | 0 to 0.5 (soft) | Radius of the rounded corners, in image heights; at most half the shorter side takes effect. Does something only with shape rectangle. |
+| `sides` | int | `6` | 3 to 12 (soft, held within 3 to 64) | Corners of the polygon. The corners lie on the ellipse that size describes. Does something only with shape polygon. |
+| `corner` | float | `0` | 0 to 0.5 (soft, held within 0 to 1) | Radius of the rounded corners, in image heights; at most half the shorter side takes effect. Does something only with shape rectangle. |
 | `fill` | colour | `[1, 1, 1, 1]` |  | Colour inside the shape, linear RGBA with straight alpha |
-| `border` | float | `0` | 0 to 50 px (soft) | Width of the border, in pixels, inside the shape's edge; 0 draws none |
+| `border` | float | `0` | 0 to 50 px (soft, held within 0 to 10000 px) | Width of the border, in pixels, inside the shape's edge; 0 draws none |
 | `border_color` | colour | `[0, 0, 0, 1]` |  | Colour of the border |
-| `softness` | float | `0` | 0 to 100 px (soft) | How many pixels the edges fade over; 0 gives a crisp edge, smoothed over one pixel |
+| `softness` | float | `0` | 0 to 100 px (soft, held within 0 to 10000 px) | How many pixels the edges fade over; 0 gives a crisp edge, smoothed over one pixel |
 | `background` | colour | `[0, 0, 0, 0]` |  | Colour around the shape; the default is transparent, for a composite over something else |
 
 ### tex.quantize
@@ -719,8 +719,8 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `levels` | int | `4` | 2 to 32 (soft) | Values per channel, black and white included |
-| `block` | int | `1` | 1 to 64 px (soft) | Side of the square blocks that take one colour; 1 keeps every pixel |
+| `levels` | int | `4` | 2 to 32 (soft, held within 2 to 256) | Values per channel, black and white included |
+| `block` | int | `1` | 1 to 64 px (soft, held within 1 to 1024 px) | Side of the square blocks that take one colour; 1 keeps every pixel |
 | `dither` | none \| ordered | `"none"` |  | How values between two levels are shown; none: each snaps to the nearest level: hard bands; ordered: a 4 x 4 Bayer pattern per block mixes the two levels, so gradients survive few levels |
 | `space` *(more)* | perceptual \| linear | `"perceptual"` |  | Where the levels are evenly spaced; perceptual: to the eye (on the sRGB curve): even steps from black to white; linear: in linear light: most levels look bright, few dark |
 | `alpha` *(more)* | bool | `false` |  | Snap alpha to the levels too; off keeps the input's alpha, so soft edges stay soft |
@@ -783,10 +783,10 @@ Outputs:
 | `background` | colour | `[0, 0, 0, 0]` |  | Colour where no geometry is drawn; the default is transparent black |
 | `antialias` | bool | `true` |  | Four samples per pixel for smooth edges; off is faster and shows stair steps |
 | `cull` *(more)* | bool | `false` |  | Leave out faces turned away (counter-clockwise is the front) |
-| `shadow_size` *(more)* | int | `2048` | 256 to 4096 (soft) | Texels across each light's shadow map; more gives sharper shadows and takes more memory |
+| `shadow_size` *(more)* | int | `2048` | 256 to 4096 (soft, held within 64 to 8192) | Texels across each light's shadow map; more gives sharper shadows and takes more memory |
 | `ao` *(occlusion)* | bool | `false` |  | Ambient occlusion: less ambient and environment light in creases and where objects meet; direct light and unlit surfaces stay as they are |
-| `ao_radius` *(occlusion)* | float | `0.5` | 0.01 to 2 m (soft) | How far around a point geometry darkens it |
-| `ao_strength` *(occlusion)* | float | `1` | 0 to 3 (soft) | How much of the hidden ambient light is taken away: 1 as estimated, 0.3 at most 30 %, above 1 darker |
+| `ao_radius` *(occlusion)* | float | `0.5` | 0.01 to 2 m (soft, held within 0.001 to 1000 m) | How far around a point geometry darkens it |
+| `ao_strength` *(occlusion)* | float | `1` | 0 to 3 (soft, held within 0 to 8) | How much of the hidden ambient light is taken away: 1 as estimated, 0.3 at most 30 %, above 1 darker |
 
 ### tex.render_volume
 
@@ -808,13 +808,13 @@ Outputs:
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 | `rotate` | vec3 | `[0, 0, 0]` | -36000 to 36000° | Turns the volume about its centre: about x, then y, then z |
-| `view_height` | float | `0` | 0 to 10 m (soft) | How high a slice of the world the picture shows; 0: as much as the whole box needs |
+| `view_height` | float | `0` | 0 to 10 m (soft, held within 0 to 100000 m) | How high a slice of the world the picture shows; 0: as much as the whole box needs |
 | `pan` | vec2 | `[0, 0]` | m | Moves the view across: the picture's centre this far right and up of the box's centre |
-| `thickness` | float | `4` | 0 to 20 (soft) | How much light smoke of density 1 takes away per metre: at 4, a metre of it lets about 2 % through |
+| `thickness` | float | `4` | 0 to 20 (soft, held within 0 to 100000) | How much light smoke of density 1 takes away per metre: at 4, a metre of it lets about 2 % through |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the smoke; its alpha thins it |
-| `glow` | float | `0` | 0 to 4 (soft) | How brightly hot smoke glows, on top of `color`: in the palette's colour at its temperature. 0: no glow |
-| `hot` | float | `2` | 0.1 to 10 (soft) | Temperature that glows in the palette's right end; cold smoke takes its left end |
-| `quality` *(more)* | float | `1` | 0.25 to 4 (soft) | Steps per cell along each ray. More shows less banding and costs more |
+| `glow` | float | `0` | 0 to 4 (soft, held within 0 to 10000) | How brightly hot smoke glows, on top of `color`: in the palette's colour at its temperature. 0: no glow |
+| `hot` | float | `2` | 0.1 to 10 (soft, held within 0.000001 to 100000) | Temperature that glows in the palette's right end; cold smoke takes its left end |
+| `quality` *(more)* | float | `1` | 0.25 to 4 (soft, held within 0.05 to 8) | Steps per cell along each ray. More shows less banding and costs more |
 | `show_emitters` *(Debug)* | bool | `false` |  | Draws the outline of every emitter over the picture, in orange |
 | `show_obstacles` *(Debug)* | bool | `false` |  | Draws the outline of every obstacle over the picture, in cyan |
 | `show_grid` *(Debug)* | bool | `false` |  | Draws the box and its cells on the box's far sides. Where cells would be under 4 pixels, only every 2nd, 4th or 8th line shows |
@@ -832,7 +832,7 @@ Outputs: `out` (tex).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `mode` | multiply \| custom | `"multiply"` |  | How the output size is set; multiply: the input's size times multiply; custom: width and height (under more), whatever the input |
-| `multiply` | float | `0.5` | 0.125 to 4 (soft) | Factor on the input's width and height: 0.5 halves both. Does something only with mode multiply. |
+| `multiply` | float | `0.5` | 0.125 to 4 (soft, held within 0.001 to 16) | Factor on the input's width and height: 0.5 halves both. Does something only with mode multiply. |
 | `sampling` | linear \| cubic \| nearest | `"linear"` |  | How pixels are computed from the input when it is scaled; linear: soft and even: blends neighbours growing, averages shrinking; cubic: sharper: edges stay crisp growing and shrinking, with a faint halo at hard ones; nearest: each pixel takes one input pixel: blocky growing, flickers shrinking |
 | `width` *(more)* | int | `1920` | 1 to 16384 px | Width of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` *(more)* | int | `1080` | 1 to 16384 px | Height of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on |
@@ -857,10 +857,10 @@ Outputs:
 | `folder` | text | `"scan"` |  | Where scans go, relative to the project. Inside, the projector's scan is the folder named after the projector's path |
 | `mapper` | text |  |  | The tex.mapper feeding the projector. When every tex.scan of a run names its mapper, the run lines the mappers up (scan.align) |
 | `smooth` | bool | `true` |  | proj_to_cam is the map smoothed within the decoded area, for clean remapped edges. The run's blend writes the smoothed map. Off: the map as decoded |
-| `settle` *(more)* | float | `0.05` | 0 to 0.5 (soft) | Seconds waited past the measured light-to-camera latency before a picture is taken |
+| `settle` *(more)* | float | `0.05` | 0 to 0.5 (soft, held within 0 to 10) | Seconds waited past the measured light-to-camera latency before a picture is taken |
 | `level` *(more)* | float | `1` | 0.05 to 1 | Brightness of the lit stripes; lower it only if the camera clips even with its exposure turned down |
 | `second_level` *(more)* | float | `0` | 0 to 1 | A second pass at this brightness, merged per camera pixel with the first, the surer decode winning: a dimmer one decodes where the first clips (white surfaces, highlights). 0: one pass |
-| `fill` *(more)* | int | `32` | 0 to 128 (soft) | Projector pixels the decode fills in from measured neighbours |
+| `fill` *(more)* | int | `32` | 0 to 128 (soft, held within 0 to 1024) | Projector pixels the decode fills in from measured neighbours |
 | `coding` *(more)* | gray_phase \| gray | `"gray_phase"` |  | How the scan tells the projector's pixels apart; gray_phase: Gray-code stripes down to 8 pixels, then 8 sines across and 8 down: 54 pictures, good to a tenth of a pixel where the camera sees the sines; gray: Gray-code stripes alone: 46 pictures at 1080p, good to about a projector pixel |
 | `gamma` *(more)* | float | `2.2` | 1 to 3 | The projector's response to its signal (light = signal ^ gamma), so its sines stay sines; measure it or leave 2.2. Does something only with coding gray_phase. |
 
@@ -877,7 +877,7 @@ Outputs: `out` (tex).
 | `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `true` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
-| `pattern` | int | `0` | 0 to 45 (soft) | Which picture: 0 white, 1 black, then each column bit (coarsest first) followed by its inverse, then the row bits the same way. Past the last: black. scan.patterns lists them |
+| `pattern` | int | `0` | 0 to 45 (soft, held within 0 to 1000) | Which picture: 0 white, 1 black, then each column bit (coarsest first) followed by its inverse, then the row bits the same way. Past the last: black. scan.patterns lists them |
 | `level` *(more)* | float | `1` | 0 to 1 (soft) | Brightness of the lit stripes; lower it only if the camera clips even with its exposure turned down |
 
 ### tex.select
@@ -908,8 +908,8 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `width` *(more)* | int | `1920` | 64 to 3840 (soft) | Width of the black or white made while no picture is shown to take the size from |
-| `height` *(more)* | int | `1080` | 64 to 2160 (soft) | Height of the black or white made while no picture is shown to take the size from |
+| `width` *(more)* | int | `1920` | 64 to 3840 (soft, held within 1 to 16384) | Width of the black or white made while no picture is shown to take the size from |
+| `height` *(more)* | int | `1080` | 64 to 2160 (soft, held within 1 to 16384) | Height of the black or white made while no picture is shown to take the size from |
 
 ### tex.shader
 
@@ -954,9 +954,9 @@ Outputs: `out` (tex).
 | `stagger` | float | `0` | 0 to 1 (soft) | Phase added per shape id, in cycles: 0.1 makes shapes follow one another in table order. Does something only with mode pulse, chase or ripple. |
 | `scatter` | float | `1` | 0 to 1 (soft) | Random phase per shape, in cycles: 0 all in step, 1 all out of step. Does something only with mode pulse, chase or ripple. |
 | `depth` | float | `1` | 0 to 1 (soft) | Pulse: how far the shape fades; 0 not at all, 1 to nothing. Does something only with mode pulse. |
-| `segments` | float | `2` | 1 to 12 (soft) | Chase: lit segments per outline. Does something only with mode chase. |
-| `line` | float | `6` | 0.5 to 32 px (soft) | Chase: width of the line on the edge, in pixels of the id input. Does something only with mode chase. |
-| `spacing` | float | `24` | 2 to 200 px (soft) | Ripple: distance between rings, in pixels of the id input. Does something only with mode ripple. |
+| `segments` | float | `2` | 1 to 12 (soft, held within 0 to 1000) | Chase: lit segments per outline. Does something only with mode chase. |
+| `line` | float | `6` | 0.5 to 32 px (soft, held within 0 to 1000 px) | Chase: width of the line on the edge, in pixels of the id input. Does something only with mode chase. |
+| `spacing` | float | `24` | 2 to 200 px (soft, held within 0.01 to 100000 px) | Ripple: distance between rings, in pixels of the id input. Does something only with mode ripple. |
 | `duty` | float | `0.3` | 0 to 1 (soft) | Chase and ripple: lit part of each segment or ring. Does something only with mode chase or ripple. |
 | `softness` *(more)* | float | `0.3` | 0 to 1 (soft) | Chase and ripple: how soft the ends of segments and rings are; 0 hard. Does something only with mode chase or ripple. |
 
@@ -984,14 +984,14 @@ Outputs:
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 | `shapes` | text |  |  | One per line: `tag rect x,y w,h`, `tag ellipse x,y w,h` or `tag poly x,y x,y ...`, optionally `repeat CxR dx,dy`; surface coordinates, 0 to 1 from the top left (draw them in the viewer) |
 | `tag` | text |  |  | Tags in the mask and the distance field, separated by spaces; empty: all |
-| `outline` *(more)* | float | `2` | 0.5 to 8 px (soft) | Width of the lines in the outline output, in surface pixels |
+| `outline` *(more)* | float | `2` | 0.5 to 8 px (soft, held within 0 to 64 px) | Width of the lines in the outline output, in surface pixels |
 | `trace_tag` *(trace)* | text | `"trace"` |  | Tag of the shapes traced from the `trace` input (one word: letters, digits, `_`) |
 | `trace_channel` *(trace)* | auto \| red \| green \| blue \| alpha \| luma | `"auto"` |  | The channel of the `trace` input that is traced; auto: alpha when the picture has transparent pixels, else luma; red: the red channel (label pictures often keep their labels there); green: the green channel; blue: the blue channel; alpha: the alpha channel; luma: the brightness (Rec. 709 weights on the linear values) |
 | `trace_threshold` *(trace)* | float | `0.5` | 0 to 1 (soft) | Inside a shape is above this value (below with `trace_invert`); not used with `trace_labels` |
 | `trace_invert` *(trace)* | bool | `false` |  | Inside is below the threshold: dark objects on a bright wall |
 | `trace_labels` *(trace)* | bool | `false` |  | A label picture: every value above 0 is a region of its own (one shape per label), 0 is the background; the threshold is not used |
-| `trace_tolerance` *(trace)* | float | `1` | 0 to 8 px (soft) | How far a traced line may stray from the pixel edges to save points, in pixels of the picture |
-| `trace_min_area` *(trace)* | float | `64` | 0 to 10000 (soft) | Regions of fewer pixels of the picture are specks and dropped; holes in regions are filled |
+| `trace_tolerance` *(trace)* | float | `1` | 0 to 8 px (soft, held within 0 to 1000 px) | How far a traced line may stray from the pixel edges to save points, in pixels of the picture |
+| `trace_min_area` *(trace)* | float | `64` | 0 to 10000 (soft, held within 0 to 1000000000000) | Regions of fewer pixels of the picture are specks and dropped; holes in regions are filled |
 
 ### tex.slope
 
@@ -1051,7 +1051,7 @@ Outputs: `out` (tex).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `text` | text | `"Text"` |  | What is written. Line breaks are kept; align sets how the lines line up. Bind it to a table cell, or to a channel with a format like `{.1} m` |
-| `size` | float | `100` | 4 to 500 px (soft) | Font size in pixels of the output picture (the font's em, a little more than a capital's height) |
+| `size` | float | `100` | 4 to 500 px (soft, held within 1 to 2000 px) | Font size in pixels of the output picture (the font's em, a little more than a capital's height) |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the text, linear RGBA with straight alpha; the rest is transparent |
 | `position` | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | Where the text's anchor sits, in image sizes; 0, 0 is the top left |
 | `align` | center \| left \| right | `"center"` |  | How the lines line up with each other, and which point of the block sits at position; center: centred; the block's centre at position; left: flush left; the block's left edge at position; right: flush right; the block's right edge at position |
@@ -1110,14 +1110,14 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `length` | int | `120` | 1 to 1800 f (soft) | How far back white reaches, in input frames (a camera at 30 fps: 600 are 20 s) |
-| `offset` | float | `0` | 0 to 600 f (soft) | Frames back added everywhere; without a map, the delay of the whole picture |
+| `length` | int | `120` | 1 to 1800 f (soft, held within 1 to 131072 f) | How far back white reaches, in input frames (a camera at 30 fps: 600 are 20 s) |
+| `offset` | float | `0` | 0 to 600 f (soft, held within 0 to 131072 f) | Frames back added everywhere; without a map, the delay of the whole picture |
 | `blend` | bool | `true` |  | Mixes the two frames nearest to the map's value. Off takes the nearer frame alone: sharper, but a smooth map shows steps |
-| `scale` | float | `1` | 0.1 to 1 (soft) | Resolution of the kept frames relative to the input; 0.5 needs a quarter of the memory |
+| `scale` | float | `1` | 0.1 to 1 (soft, held within 0.05 to 1) | Resolution of the kept frames relative to the input; 0.5 needs a quarter of the memory |
 | `precision` | 16bit \| 8bit | `"16bit"` |  | How the kept frames are stored; 16bit: as they come; 8bit: in half the memory, with values above 1 clipped |
-| `step` | int | `1` | 1 to 8 (soft) | Keeps only every n-th input frame: n times the length in the same memory. Between kept frames the picture is blended, and fast motion smears |
+| `step` | int | `1` | 1 to 8 (soft, held within 1 to 16) | Keeps only every n-th input frame: n times the length in the same memory. Between kept frames the picture is blended, and fast motion smears |
 | `record` | bool | `true` |  | Take new frames; off holds what is kept |
-| `budget` *(more)* | float | `0` (automatic) | 0 to 20 (soft) | Most GPU memory the kept frames take, in GiB; automatic: half of what the GPU grants penumbra. Over the budget or over what the GPU has free, fewer frames are kept, with a warning; 0: automatic |
+| `budget` *(more)* | float | `0` (automatic) | 0 to 20 (soft, held within 0 to 64) | Most GPU memory the kept frames take, in GiB; automatic: half of what the GPU grants penumbra. Over the budget or over what the GPU has free, fewer frames are kept, with a warning; 0: automatic |
 
 ### tex.transform
 
@@ -1155,10 +1155,10 @@ Outputs:
 |---|---|---|---|---|
 | `file` | file (mp4, m4v, mov, mkv, webm, mxf, ts, m2ts, mts, mpg, mpeg, m2v, gif) |  |  | MP4, MOV, MKV, WebM, MXF, MPEG (H.264, HEVC, ProRes, DNxHR, VP9, AV1, HAP) or GIF |
 | `play` | bool | `true` |  | Off holds the current frame. Does something only while position is not bound. |
-| `speed` | float | `1` | 0 to 4 (soft) | Playback rate; every frame is still decoded, so high speeds cost CPU. Does something only while position is not bound. |
+| `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | Playback rate; every frame is still decoded, so high speeds cost CPU. Does something only while position is not bound. |
 | `loop` | bool | `true` |  | Off stops on the last frame |
-| `position` | float | `0` | 0 to 60 s (soft) | Where the clip is. Bind a channel to scrub: the clip follows it and ignores play and speed. Set by hand, the clip jumps there and plays on |
-| `start` *(more)* | float | `0` | 0 to 60 s (soft) | Where playback begins when the file is loaded and where a restart goes. A change jumps there at once. Does something only while position is not bound. |
+| `position` | float | `0` | 0 to 60 s (soft, held within 0 to 10000000 s) | Where the clip is. Bind a channel to scrub: the clip follows it and ignores play and speed. Set by hand, the clip jumps there and plays on |
+| `start` *(more)* | float | `0` | 0 to 60 s (soft, held within 0 to 10000000 s) | Where playback begins when the file is loaded and where a restart goes. A change jumps there at once. Does something only while position is not bound. |
 | `restart` | bool | `false` |  | Turning on starts the clip over from `start`; bind a channel to cue it. Does something only while position is not bound. |
 | `restart_on_show` | bool | `false` |  | Starts over whenever the clip comes back into use, such as a switch or sequence picking it. Does something only while position is not bound. |
 
@@ -1200,10 +1200,10 @@ Outputs: `out` (chan).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `detect` | rms \| peak | `"rms"` |  | What loudness means; rms: the power, averaged over about attack: loudness as heard. A sine at -20 dBFS reads -23 dB; peak: the waveform's crests, as a peak meter: a sine at -20 dBFS reads -20 dB |
-| `attack` | float | `0.01` | 0.001 to 5 s (soft) | Seconds the value takes to get about two thirds of the way up when the sound gets louder. Shorter catches every hit |
-| `release` | float | `0.2` | 0.001 to 5 s (soft) | Seconds the value takes to fall to about a third when the sound gets quieter. Longer holds hits for the eye |
+| `attack` | float | `0.01` | 0.001 to 5 s (soft, held within 0 to 60 s) | Seconds the value takes to get about two thirds of the way up when the sound gets louder. Shorter catches every hit |
+| `release` | float | `0.2` | 0.001 to 5 s (soft, held within 0 to 60 s) | Seconds the value takes to fall to about a third when the sound gets quieter. Longer holds hits for the eye |
 | `unit` | linear \| db \| level | `"linear"` |  | What number a channel gives; linear: the amplitude: 1 is full scale, a sine at -20 dBFS reads 0.1. 0 below floor; db: dBFS: 0 is full scale, -20 a tenth of it. Never below floor; level: 0 at floor to 1 at full scale, even in dB: ready to drive a param |
-| `floor` | float | `-60` | -120 to -20 dB (soft) | Quieter than this counts as silence: 0 in linear and level, the floor itself in db |
+| `floor` | float | `-60` | -120 to -20 dB (soft, held within -200 to -1 dB) | Quieter than this counts as silence: 0 in linear and level, the floor itself in db |
 
 ### chan.audio_spectrum
 
@@ -1223,15 +1223,15 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `channel` | text |  |  | The channel to listen to, e.g. `ch1`; empty: all mixed |
-| `bands` | int | `32` | 4 to 128 (soft) | How many bands the spectrum has: samples of out, pixels across texture |
-| `min` | float | `30` | 20 to 1000 Hz (soft) | Where the lowest band starts, in Hz |
-| `max` | float | `16000` | 1000 to 20000 Hz (soft) | Where the highest band ends, in Hz. Above half the sample rate the spectrum ends there |
+| `bands` | int | `32` | 4 to 128 (soft, held within 4 to 512) | How many bands the spectrum has: samples of out, pixels across texture |
+| `min` | float | `30` | 20 to 1000 Hz (soft, held within 1 to 96000 Hz) | Where the lowest band starts, in Hz |
+| `max` | float | `16000` | 1000 to 20000 Hz (soft, held within 1 to 96000 Hz) | Where the highest band ends, in Hz. Above half the sample rate the spectrum ends there |
 | `spacing` | log \| linear | `"log"` |  | How the bands share the range from min to max; log: every band the same share of an octave, as the ear hears: more bands for bass and mids; linear: every band the same width in Hz: the highs take most of the bands |
-| `attack` | float | `0` | 0.001 to 5 s (soft) | Seconds a band takes to get about two thirds of the way up when it gets louder. 0 follows at once |
-| `release` | float | `0.2` | 0.001 to 5 s (soft) | Seconds a band takes to fall to about a third when it gets quieter. Longer lets bars sink slowly |
+| `attack` | float | `0` | 0.001 to 5 s (soft, held within 0 to 60 s) | Seconds a band takes to get about two thirds of the way up when it gets louder. 0 follows at once |
+| `release` | float | `0.2` | 0.001 to 5 s (soft, held within 0 to 60 s) | Seconds a band takes to fall to about a third when it gets quieter. Longer lets bars sink slowly |
 | `unit` | level \| linear \| db | `"level"` |  | What number a band gives; level: 0 at floor to 1 at full scale, even in dB: ready to drive a param; linear: the amplitude: 1 is full scale, a sine at -20 dBFS reads 0.1. 0 below floor; db: dBFS: 0 is full scale, -20 a tenth of it. Never below floor |
-| `floor` | float | `-60` | -120 to -20 dB (soft) | Quieter than this counts as silence: 0 in linear and level, the floor itself in db |
-| `history` *(texture)* | int | `1` | 1 to 512 (soft) | Rows of texture: 1 is the spectrum now; more keep that many blocks of the past below it, newest at the top, as a scrolling spectrogram |
+| `floor` | float | `-60` | -120 to -20 dB (soft, held within -200 to -1 dB) | Quieter than this counts as silence: 0 in linear and level, the floor itself in db |
+| `history` *(texture)* | int | `1` | 1 to 512 (soft, held within 1 to 2048) | Rows of texture: 1 is the spectrum now; more keep that many blocks of the past below it, newest at the top, as a scrolling spectrogram |
 
 ### chan.beat_analysis
 
@@ -1253,17 +1253,17 @@ Outputs:
 |---|---|---|---|---|
 | `channel` | text |  |  | The channel to analyse, e.g. `ch1`; empty: all mixed |
 | `offset` | float | `0` | -200 to 200 (soft) | Milliseconds to move beat and bar ahead by, to make up for the projector's delay |
-| `beats_per_bar` | int | `4` | 2 to 8 (soft) | Beats in one bar (4 for 4/4, 3 for a waltz): how often bar and bar_beat come round |
+| `beats_per_bar` | int | `4` | 2 to 8 (soft, held within 1 to 64) | Beats in one bar (4 for 4/4, 3 for a waltz): how often bar and bar_beat come round |
 | `sensitivity` | float | `0.5` | 0 to 1 | How readily an onset or kick counts: higher finds quieter ones |
-| `min_bpm` *(more)* | float | `70` | 40 to 200 (soft) | The slowest tempo considered, in beats per minute. Keep min_bpm and max_bpm less than an octave apart: then a half or double tempo cannot be taken |
-| `max_bpm` *(more)* | float | `180` | 80 to 300 (soft) | The fastest tempo considered, in beats per minute; see min_bpm |
+| `min_bpm` *(more)* | float | `70` | 40 to 200 (soft, held within 20 to 400) | The slowest tempo considered, in beats per minute. Keep min_bpm and max_bpm less than an octave apart: then a half or double tempo cannot be taken |
+| `max_bpm` *(more)* | float | `180` | 80 to 300 (soft, held within 20 to 400) | The fastest tempo considered, in beats per minute; see min_bpm |
 | `superflux` *(more)* | bool | `false` |  | Finds the beat in a noisy room: the onsets ignore the slow wobble of broadband noise. Costs a little in clean sound and in reverb, so leave it off unless the room is loud |
 | `normalize` | bool | `true` |  | A quiet input still spans 0 to 1: levels and spectrum are measured against their range over the last 4 seconds. Off: level and bands are the raw RMS, full scale is 1 |
-| `floor` *(levels)* | float | `-60` | -90 to -20 dB (soft) | Quieter than this counts as silence: with normalize, levels and spectrum read 0, and a low band quieter than this gives no kick. Set it above the room's noise, so a silent room reads 0 |
+| `floor` *(levels)* | float | `-60` | -90 to -20 dB (soft, held within -120 to 0 dB) | Quieter than this counts as silence: with normalize, levels and spectrum read 0, and a low band quieter than this gives no kick. Set it above the room's noise, so a silent room reads 0 |
 | `trim` *(levels)* | float | `0` | -24 to 24 dB | Makes the sound louder or quieter for the analysis only. Lift a quiet microphone until it is above floor. The rms and peak channels still show the sound as it comes in |
-| `low` *(levels)* | float | `150` | 40 to 500 Hz (soft) | Where the low band ends: the low channel is the level below this frequency |
-| `high` *(levels)* | float | `2500` | 1000 to 8000 Hz (soft) | Where the high band starts: the high channel is the level above this frequency. The mid channel covers the band between low and high |
-| `bands` *(levels)* | int | `32` | 4 to 128 (soft) | Bands of the spectrum output, log-spaced from 30 Hz to 16 kHz: its samples per frame |
+| `low` *(levels)* | float | `150` | 40 to 500 Hz (soft, held within 20 to 20000 Hz) | Where the low band ends: the low channel is the level below this frequency |
+| `high` *(levels)* | float | `2500` | 1000 to 8000 Hz (soft, held within 20 to 20000 Hz) | Where the high band starts: the high channel is the level above this frequency. The mid channel covers the band between low and high |
+| `bands` *(levels)* | int | `32` | 4 to 128 (soft, held within 1 to 512) | Bands of the spectrum output, log-spaced from 30 Hz to 16 kHz: its samples per frame |
 | `width` *(meters)* | int | `1920` | 1 to 16384 px | Width of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` *(meters)* | int | `1080` | 1 to 16384 px | Height of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(meters)* | bool | `false` |  | res.optimize leaves the width and height of the meters output alone |
@@ -1285,11 +1285,11 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `offset` | float | `0` | -200 to 200 (soft) | Milliseconds to move beat and bar ahead by, to make up for the projector's delay. Ticks come exactly this much early. Negative values move them later |
-| `travel_floor` | float | `80` | 0 to 300 (soft) | Slowest tempo travelled moves by, in beats per minute. A slower grid, or a long gap between beats, travels at this tempo. 0 sets no floor |
-| `travel_cap` | float | `180` | 0 to 300 (soft) | Fastest tempo travelled moves by, in beats per minute. A faster grid travels at this tempo. 0 sets no cap. A travel_floor above the cap wins |
+| `offset` | float | `0` | -200 to 200 (soft, held within -5000 to 5000) | Milliseconds to move beat and bar ahead by, to make up for the projector's delay. Ticks come exactly this much early. Negative values move them later |
+| `travel_floor` | float | `80` | 0 to 300 (soft, held within 0 to 1000) | Slowest tempo travelled moves by, in beats per minute. A slower grid, or a long gap between beats, travels at this tempo. 0 sets no floor |
+| `travel_cap` | float | `180` | 0 to 300 (soft, held within 0 to 1000) | Fastest tempo travelled moves by, in beats per minute. A faster grid travels at this tempo. 0 sets no cap. A travel_floor above the cap wins |
 | `run_on` | bool | `false` |  | With the file's loop off: seconds and travelled keep rising after the file's end, at the last tempo, so a world moved by them flies on in the silence. The other channels hold at the file's last moment. Off: seconds and travelled stop at the end too |
-| `span` *(overview)* | float | `60` | 10 to 600 s (soft) | Seconds the lower lane of the overview shows around the playhead, in the viewer and in the overview output |
+| `span` *(overview)* | float | `60` | 10 to 600 s (soft, held within 2 to 3600 s) | Seconds the lower lane of the overview shows around the playhead, in the viewer and in the overview output |
 | `width` *(overview)* | int | `1920` | 1 to 16384 px | Width of the overview output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` *(overview)* | int | `1080` | 1 to 16384 px | Height of the overview output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(overview)* | bool | `false` |  | res.optimize leaves the width and height of the overview output alone |
@@ -1327,8 +1327,8 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `run` | float | `1` | 0 to 1 (soft) | On from 0.5 up (with `equals` set: while it equals that number). Each time it turns on the clock starts over from 0; while it is off the clock stands at 0. Bind it to a key's gate, or to the piece channel with `equals` |
-| `equals` | int | `-1` (off) | -1 to 20 (soft) | When set, `run` is on while it equals this number: bind `run` to the channel that says which piece plays and set this to the piece's number. While off, `run` is on from 0.5 up; -1: off |
-| `length` | float | `10` | 0.1 to 120 s (soft) | How long one run (once) or one round (loop) takes; `fraction` is the time over it |
+| `equals` | int | `-1` (off) | -1 to 20 (soft, held within -1 to 1000000000) | When set, `run` is on while it equals this number: bind `run` to the channel that says which piece plays and set this to the piece's number. While off, `run` is on from 0.5 up; -1: off |
+| `length` | float | `10` | 0.1 to 120 s (soft, held within 0.001 to 1000000 s) | How long one run (once) or one round (loop) takes; `fraction` is the time over it |
 | `mode` | once \| loop \| free | `"once"` |  | What the clock does once `length` has passed; once: it stops at the end and holds there; loop: it starts over from 0, round after round; free: it runs on: seconds grow without end, fraction past 1 |
 
 ### chan.constant
@@ -1379,12 +1379,12 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `protocol` | art_net \| sacn | `"art_net"` |  | What the sender speaks; art_net: Art-Net, sent to this machine or as a broadcast; sacn: sACN (E1.31), to the universe's multicast group or to this machine |
-| `universe` | int | `1` | 0 to 16 (soft) | Universe of the first slot, as the protocol counts (Art-Net from 0, sACN from 1); channels past its end read on in the next |
+| `universe` | int | `1` | 0 to 16 (soft, held within 0 to 63999) | Universe of the first slot, as the protocol counts (Art-Net from 0, sACN from 1); channels past its end read on in the next |
 | `address` | int | `1` | 1 to 512 (soft) | DMX address (slot, from 1) that becomes ch1 |
-| `count` | int | `512` | 1 to 512 (soft) | Channels made: ch1 is slot `address`, ch2 the next and so on |
+| `count` | int | `512` | 1 to 512 (soft, held within 1 to 32768) | Channels made: ch1 is slot `address`, ch2 the next and so on |
 | `values` | unit \| byte | `"unit"` |  | What the channels hold; unit: 0 to 1, from 0 to 255; byte: 0 to 255, as the slots are |
 | `interface` *(more)* | text |  |  | IP address of this machine's network card to listen on; empty listens on all (sACN multicast then joins on the system's default one) |
-| `port` *(more)* | int | `0` (the protocol's port) | 1024 to 65535 (soft) | UDP port to listen on; 0 is the protocol's own (Art-Net 6454, sACN 5568); 0: the protocol's port |
+| `port` *(more)* | int | `0` (the protocol's port) | 1024 to 65535 (soft, held within 0 to 65535) | UDP port to listen on; 0 is the protocol's own (Art-Net 6454, sACN 5568); 0: the protocol's port |
 
 ### chan.envelope
 
@@ -1403,11 +1403,11 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `mode` | gate \| trigger | `"gate"` |  | What the input means; gate: on while above `threshold`: attack and decay, sustain while on, release when it drops; trigger: each rise above `threshold` starts the whole envelope: attack, decay, `hold` at sustain, release. For one-frame presses and beats |
-| `attack` | float | `0.05` | 0 to 5 s (soft) | Time from 0 to 1 after the gate opens; 0 jumps to 1 |
-| `decay` | float | `0.2` | 0 to 5 s (soft) | Time from 1 down to `sustain` |
+| `attack` | float | `0.05` | 0 to 5 s (soft, held within 0 to 3600 s) | Time from 0 to 1 after the gate opens; 0 jumps to 1 |
+| `decay` | float | `0.2` | 0 to 5 s (soft, held within 0 to 3600 s) | Time from 1 down to `sustain` |
 | `sustain` | float | `0.7` | 0 to 1 (soft) | The level held while the gate stays on (in trigger mode: for `hold`) |
-| `release` | float | `0.5` | 0 to 5 s (soft) | Time from the level at release down to 0 |
-| `hold` | float | `0` | 0 to 5 s (soft) | Trigger mode: how long the level stays at `sustain` before the release |
+| `release` | float | `0.5` | 0 to 5 s (soft, held within 0 to 3600 s) | Time from the level at release down to 0 |
+| `hold` | float | `0` | 0 to 5 s (soft, held within 0 to 3600 s) | Trigger mode: how long the level stays at `sustain` before the release |
 | `threshold` | float | `0.5` | 0 to 1 (soft) | The input counts as on above this value |
 
 ### chan.filter
@@ -1426,12 +1426,12 @@ Outputs: `out` (chan).
 |---|---|---|---|---|
 | `type` | first_order \| critical \| bessel \| butterworth \| gaussian \| box \| slew \| one_euro | `"first_order"` |  | How it smooths; first_order: a lag with its own times up and down: 63 % of a step after `rise` or `fall`; critical: starts and stops softer than first_order and never overshoots; a higher `order` is softer; bessel: keeps the shape of a movement best and overshoots by less than 1 %; butterworth: removes fast wiggle most cleanly and overshoots a step: 4 % at order 2, 11 % at order 4; gaussian: average over the last `window` seconds, the newest values count most; lags about a quarter of `window`; box: plain average over the last `window` seconds; lags half of `window`, and a wobble that repeats every `window` seconds vanishes; slew: moves at most `up` per second upwards and `down` per second downwards; one_euro: smooths strongly while the input rests and follows fast moves with little lag: for tracked positions. `rise` sets the smoothing at rest, `beta` how fast it follows |
 | `order` | int | `2` | 2 to 4 (soft) | Steepness of critical, bessel and butterworth: a higher order lets less wiggle through and starts slower |
-| `rise` | float | `0.2` | 0 to 5 s (soft) | Time to cover 63 % of a step up (first_order) or of any step (critical, bessel, butterworth); 0 follows at once. For one_euro the smoothing at rest |
-| `fall` | float | `0.2` | 0 to 5 s (soft) | Time to cover 63 % of a step down |
-| `window` | float | `0.5` | 0 to 5 s (soft) | How far back the average reaches; 0 follows at once |
-| `up` | float | `1` | 0 to 10 (soft) | Fastest rise, in units per second; 0: no limit |
-| `down` | float | `1` | 0 to 10 (soft) | Fastest fall, in units per second; 0: no limit |
-| `beta` | float | `1` | 0 to 10 (soft) | How much a fast move loosens the smoothing: 0 smooths like first_order, higher follows fast moves more closely. Depends on the units of the input |
+| `rise` | float | `0.2` | 0 to 5 s (soft, held within 0 to 3600 s) | Time to cover 63 % of a step up (first_order) or of any step (critical, bessel, butterworth); 0 follows at once. For one_euro the smoothing at rest |
+| `fall` | float | `0.2` | 0 to 5 s (soft, held within 0 to 3600 s) | Time to cover 63 % of a step down |
+| `window` | float | `0.5` | 0 to 5 s (soft, held within 0 to 60 s) | How far back the average reaches; 0 follows at once |
+| `up` | float | `1` | 0 to 10 (soft, held within 0 to 1000000000) | Fastest rise, in units per second; 0: no limit |
+| `down` | float | `1` | 0 to 10 (soft, held within 0 to 1000000000) | Fastest fall, in units per second; 0: no limit |
+| `beta` | float | `1` | 0 to 10 (soft, held within 0 to 1000000) | How much a fast move loosens the smoothing: 0 smooths like first_order, higher follows fast moves more closely. Depends on the units of the input |
 
 ### chan.from_table
 
@@ -1447,7 +1447,7 @@ Outputs: `out` (chan).
 |---|---|---|---|---|
 | `layout` | columns \| rows | `"columns"` |  | Which cells make up one channel; columns: each column is a channel, its samples read top to bottom; rows: each row is a channel, its samples read left to right |
 | `names` | bool | `true` |  | On, the first cell of each column (or row) is the channel's name; off, the channels are called chan0, chan1, ... and every cell is a value. On, a column of words alone (a label per row) makes no channel |
-| `row` | int | `-1` (all) | -1 to 20 (soft) | Only this row, counted from 0 under the names: one value per channel. Bind it to the step of a chan.sequence, and each cue reads its own row of a cue sheet. Past the last row: the last. With layout rows: this column. -1: all; -1: all |
+| `row` | int | `-1` (all) | -1 to 20 (soft, held within -1 to 1000000000) | Only this row, counted from 0 under the names: one value per channel. Bind it to the step of a chan.sequence, and each cue reads its own row of a cue sheet. Past the last row: the last. With layout rows: this column. -1: all; -1: all |
 
 ### chan.from_tex
 
@@ -1461,8 +1461,8 @@ Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `columns` | int | `1` | 1 to 256 (soft) | Samples per channel: the picture is averaged down to this many columns |
-| `rows` | int | `1` | 1 to 64 (soft) | Rows the picture is averaged down to. With more than one row, the channels are numbered by row from the top (r0, r1, ...) |
+| `columns` | int | `1` | 1 to 256 (soft, held within 1 to 4096) | Samples per channel: the picture is averaged down to this many columns |
+| `rows` | int | `1` | 1 to 64 (soft, held within 1 to 1024) | Rows the picture is averaged down to. With more than one row, the channels are numbered by row from the top (r0, r1, ...) |
 | `components` | rgba \| rgb \| red \| luminance | `"rgba"` |  | Which channels a row gives; values are linear and premultiplied, as the picture holds them; rgba: r, g, b and a; rgb: r, g and b; red: r only; luminance: lum, the brightness as the eye weighs it (Rec. 709) |
 
 ### chan.http_in
@@ -1481,13 +1481,13 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `port` | int | `8090` | 1024 to 65535 (soft) | TCP port to listen on. The page opens at `http://localhost:8090/` for the default; http.status names the address and the port it got; 0: any free port |
+| `port` | int | `8090` | 1024 to 65535 (soft, held within 0 to 65535) | TCP port to listen on. The page opens at `http://localhost:8090/` for the default; http.status names the address and the port it got; 0: any free port |
 | `bind` | localhost \| lan | `"localhost"` |  | Who may connect; localhost: this machine only; lan: other devices too (a phone on the same network); Windows may ask to allow it |
 | `addresses` | text | `"*"` |  | Space-separated OSC patterns of the addresses to keep as channels: `/1/* /xy`; `*` all; `^/ping` leaves an address out |
 | `params` | controls \| off \| all | `"controls"` |  | Which params the addresses may set (live, outside the undo history); controls: the value of a chan.slider or chan.button flagged `show`: `/fader/value 0.5`; off: no param: the messages make channels only; all: any param the address names, as chan.osc_in's `params`: `/scene/speed 0.5` |
 | `folder` | text | `"www"` |  | Folder in the project whose files the page and its scripts come from; / opens its index.html. Empty: no files |
 | `page` | bool | `true` |  | Without an index.html in `folder`, / opens a built-in page with every control flagged `show`, as on the show screen. Off: / answers 404 then |
-| `rate` | float | `30` | 1 to 60 Hz (soft) | State messages per second to each WebSocket client, at most (only when something changed) |
+| `rate` | float | `30` | 1 to 60 Hz (soft, held within 1 to 120 Hz) | State messages per second to each WebSocket client, at most (only when something changed) |
 | `table` | text |  |  | The address whose table the `table` output holds: `/cues`. Empty: the table that came last |
 
 ### chan.integrator
@@ -1582,7 +1582,7 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `device` | text |  |  | Part of the device's name, any case, e.g. `easy control` (the … menu lists them); empty: every MIDI input |
-| `beats_per_bar` | int | `4` | 2 to 8 (soft) | Beats in one bar of the MIDI clock: how often bar and bar_beat come round |
+| `beats_per_bar` | int | `4` | 2 to 8 (soft, held within 1 to 64) | Beats in one bar of the MIDI clock: how often bar and bar_beat come round |
 | `pairs` *(more)* | bool | `false` |  | 14-bit controls: control changes 32 to 63 make the controls 0 to 31 finer instead of being controls of their own. Only for a device that sends such pairs |
 
 ### chan.midi_out
@@ -1601,7 +1601,7 @@ Outputs: none.
 |---|---|---|---|---|
 | `device` | text |  |  | Part of the output's name, any case, e.g. `easy control` (the … menu lists them) |
 | `channel` | int | `1` | 1 to 16 | MIDI channel for channels named without one: cc_7, note_36 |
-| `rate` *(more)* | float | `60` | 1 to 120 Hz (soft) | Sends per second at most |
+| `rate` *(more)* | float | `60` | 1 to 120 Hz (soft, held within 1 to 1000 Hz) | Sends per second at most |
 
 ### chan.mouse_in
 
@@ -1662,7 +1662,7 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `port` | int | `8000` | 1024 to 65535 (soft) | UDP port to listen on; osc.status says which port it got; 0: any free port |
+| `port` | int | `8000` | 1024 to 65535 (soft, held within 0 to 65535) | UDP port to listen on; osc.status says which port it got; 0: any free port |
 | `lan` | bool | `false` |  | Also take OSC from other devices (phones, other computers): listens on every network interface. Off: this machine only |
 | `addresses` | text | `"*"` |  | Space-separated OSC patterns of the addresses to keep as channels: `/1/* /xy`; `*` all; `^/ping` leaves an address out |
 | `triggers` | text |  |  | Space-separated OSC patterns of addresses that are presses, such as a desk's GO: `/go`. Their channel is 1 for one frame per press, then 0. A press is a message without a number or with 0.5 or more, so `/go 1` and `/go` count and `/go 0` does not. A sender that also sends `/go 0` presses again only after its next `/go 0`, so a held button that is sent again counts once. Two presses within one frame come out one after the other |
@@ -1684,8 +1684,8 @@ Outputs: none.
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `host` | text | `"127.0.0.1"` |  | IP address to send to, or localhost; names are not looked up |
-| `port` | int | `9000` | 1024 to 65535 (soft) | UDP port the receiver listens on (TouchOSC and many apps use 9000) |
-| `rate` | float | `30` | 1 to 120 Hz (soft) | Sends per second at most |
+| `port` | int | `9000` | 1024 to 65535 (soft, held within 1 to 65535) | UDP port the receiver listens on (TouchOSC and many apps use 9000) |
+| `rate` | float | `30` | 1 to 120 Hz (soft, held within 0.1 to 1000 Hz) | Sends per second at most |
 | `send` | changes \| always | `"changes"` |  | Which channels each send carries; changes: only what changed, plus everything once a second; always: everything, each time |
 | `prefix` | text |  |  | Put before every channel's address: `/show` sends /show/x |
 | `bundle` *(more)* | bool | `true` |  | Several messages per packet as a bundle; off sends one packet per message |
@@ -1735,11 +1735,11 @@ Outputs:
 | `steps` | text |  |  | One step per line: piece, seconds, transition into the next step, its length. E.g. `faces 10 fade 2`. Seconds `hold`: the step stays until `go`, then its transition plays. Transitions: cut, fade (cross-fade over the step's last seconds), black (fade out to black, the next cuts in), flash (cut to white, which fades into the next step over its first seconds). # starts a comment. The last step's transition leads into the black the show ends in |
 | `file` | file (json, txt) |  |  | Read the steps from this file instead (relative to the project directory; saving it reloads): lines as in `steps`, or JSON {"lead_in": s, "steps": [{"piece", "duration" (seconds or "hold"), "transition", "length"}]}, whose lead_in then wins over the param |
 | `names` | text |  |  | The pieces in input order, separated by spaces: piece k is input in<k> of a tex.sequence and has a channel run_<name>. Steps naming another piece are left out. Empty: the pieces in the order the steps first name them |
-| `lead_in` | float | `1` | 0 to 10 s (soft) | Black before the first step, so its piece starts over when the show starts |
+| `lead_in` | float | `1` | 0 to 10 s (soft, held within 0 to 1000000 s) | Black before the first step, so its piece starts over when the show starts |
 | `run` | float | `1` | 0 to 1 (soft) | On from 0.5 up (with `equals` set: while it equals that number). Each time it turns on the show starts from its beginning; while it is off it shows black and every run gate is 0 |
-| `equals` | int | `-1` (off) | -1 to 20 (soft) | When set, `run` is on while it equals this number: bind `run` to the channel that says which piece plays and set this to the show's own number. While off, `run` is on from 0.5 up; -1: off |
+| `equals` | int | `-1` (off) | -1 to 20 (soft, held within -1 to 1000000000) | When set, `run` is on while it equals this number: bind `run` to the channel that says which piece plays and set this to the show's own number. While off, `run` is on from 0.5 up; -1: off |
 | `go` | float | `0` | 0 to 1 (soft) | Each time it rises past 0.5 the step on screen moves on: a holding step starts its transition, a timed one cuts its time short. Ignored while a transition plays. Bind it to a key's gate, or to an OSC address listed under `triggers` on a chan.osc_in |
-| `clock` | float | `-1` (own) | -1 to 600 s (soft) | The show's seconds, set from outside. Bind it to `seconds` of a chan.beat_grid, and the show stands where the music stands, also after a seek or a loop. `hold`, `go` and the restart when `run` turns on do nothing then. beats.cues writes steps for this and binds it. -1 (own): the show runs on its own clock from the moment `run` turns on; -1: own |
+| `clock` | float | `-1` (own) | -1 to 600 s (soft, held within -1 to 1000000000 s) | The show's seconds, set from outside. Bind it to `seconds` of a chan.beat_grid, and the show stands where the music stands, also after a seek or a loop. `hold`, `go` and the restart when `run` turns on do nothing then. beats.cues writes steps for this and binds it. -1 (own): the show runs on its own clock from the moment `run` turns on; -1: own |
 | `mode` | once \| loop | `"once"` |  | What the show does after its last step; once: it ends in black and stays there; loop: it starts over from its lead-in, round after round |
 
 ### chan.slider
@@ -1789,8 +1789,8 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `length` | float | `5` | 0.1 to 60 s (soft) | How far back the trail reaches once it is full; older values drop off its start |
-| `rate` | float | `60` | 1 to 240 Hz (soft) | Samples taken per second of show time, whatever the frame rate; length times rate is the number of samples of a full trail |
+| `length` | float | `5` | 0.1 to 60 s (soft, held within 0.01 to 3600 s) | How far back the trail reaches once it is full; older values drop off its start |
+| `rate` | float | `60` | 1 to 240 Hz (soft, held within 0.1 to 1000 Hz) | Samples taken per second of show time, whatever the frame rate; length times rate is the number of samples of a full trail |
 | `active` | bool | `true` |  | Records while on. Off holds the trail as it is; recording resumes from the moment active is on again |
 
 ## audio
@@ -1816,17 +1816,17 @@ Outputs: `out` (audio).
 | `preset` | drone \| pad \| noise \| water \| rain | `"drone"` |  | The sound. A change crossfades in 20 ms; drone: a steady soft tone: two sines that beat slowly and a quiet fifth; brightness adds the octave; pad: three slightly detuned saws through a gentle low-pass: warm and wide; brightness opens the filter; noise: rushing noise like wind; brightness moves it from a low rumble to a high hiss. Ignores key, scale and note; water: running water: rumble, gurgle, splash and hiss that each swell at random, with small bubbles; brightness moves it from a deep river to a bright trickle. Ignores key, scale and note; rain: rain: a soft rush with droplets ticking in it; density goes from a few drops to a downpour, brightness from distant and dull to close and crisp. Ignores key, scale and note |
 | `key` | C \| C# \| D \| D# \| E \| F \| F# \| G \| G# \| A \| A# \| B | `"C"` |  | The root note of the scale: note 0 plays it; C: the root is C, 261.6 Hz in octave 4; C#: the root is C#, 277.2 Hz in octave 4; D: the root is D, 293.7 Hz in octave 4; D#: the root is D#, 311.1 Hz in octave 4; E: the root is E, 329.6 Hz in octave 4; F: the root is F, 349.2 Hz in octave 4; F#: the root is F#, 370.0 Hz in octave 4; G: the root is G, 392.0 Hz in octave 4; G#: the root is G#, 415.3 Hz in octave 4; A: the root is A, 440.0 Hz in octave 4; A#: the root is A#, 466.2 Hz in octave 4; B: the root is B, 493.9 Hz in octave 4. Does something only with preset drone or pad. |
 | `scale` | major_pentatonic \| minor_pentatonic \| major \| minor \| chromatic \| off | `"major_pentatonic"` |  | The notes that can be played. With a scale, every note fits with every other; major_pentatonic: five notes per octave (C D E G A in C): any notes together sound fine; minor_pentatonic: five notes per octave (C Eb F G Bb in C): darker, bluesy; major: seven notes per octave, the white keys from C in C; minor: seven notes per octave, the white keys from A in A; chromatic: all twelve semitones; off: free pitch: note moves smoothly between the notes, as a theremin. spread counts semitones. Does something only with preset drone or pad. |
-| `octave` | int | `4` | 0 to 8 (soft) | The octave of the root that note 0 plays: 4 is the octave of middle C, where A is 440 Hz. Does something only with preset drone or pad. |
-| `note` | float | `0` | 0 to 1 (soft) | Which note sounds: 0 is the root, 1 is range octaves higher. Rounded to the nearest note of the scale; a change glides there over glide. Bind it to a tracked position to play by moving. Does something only with preset drone or pad. |
-| `range` *(more)* | float | `2` | 0 to 4 (soft) | Octaves that note 0 to 1 spans. Does something only with preset drone or pad. |
-| `spread` *(more)* | int | `1` | 0 to 7 (soft) | Notes of the scale between neighbouring gate channels: with 1, channel 0 holds the root, channel 1 the next note up, and so on. Does something only with preset drone or pad. |
+| `octave` | int | `4` | 0 to 8 (soft, held within -1 to 9) | The octave of the root that note 0 plays: 4 is the octave of middle C, where A is 440 Hz. Does something only with preset drone or pad. |
+| `note` | float | `0` | 0 to 1 (soft, held within -10 to 10) | Which note sounds: 0 is the root, 1 is range octaves higher. Rounded to the nearest note of the scale; a change glides there over glide. Bind it to a tracked position to play by moving. Does something only with preset drone or pad. |
+| `range` *(more)* | float | `2` | 0 to 4 (soft, held within 0 to 10) | Octaves that note 0 to 1 spans. Does something only with preset drone or pad. |
+| `spread` *(more)* | int | `1` | 0 to 7 (soft, held within -128 to 128) | Notes of the scale between neighbouring gate channels: with 1, channel 0 holds the root, channel 1 the next note up, and so on. Does something only with preset drone or pad. |
 | `brightness` | float | `0.5` | 0 to 1 | 0 is dark and soft, 1 bright. Follows the param smoothly over glide |
 | `swarm` | float | `0` | 0 to 1 | 0 holds every tone on its note. Above 0 each tone becomes eight voices whose pitches wander slowly at random around the note: a chorus at 0.2, a moving cloud up to half an octave either side at 1. Back at 0 every voice glides onto its note. Follows the param smoothly over glide. Does something only with preset drone or pad. |
 | `density` | float | `0.5` | 0 to 1 | How hard it rains: 0 is a few drops a second, 0.5 about 90, 1 about 600 over a louder rush. Follows the param smoothly over glide. Does something only with preset rain. |
-| `level` | float | `-12` | -60 to 0 dB (soft) | The volume, in dB: at 0 one tone peaks near full scale, -6 is half the amplitude. Follows the param smoothly over glide |
-| `glide` *(more)* | float | `0.1` | 0.005 to 20 s (soft) | Seconds that pitch, brightness, swarm, density and level take to get 90% of the way to a new value. At least 5 ms |
-| `attack` | float | `0.1` | 0.005 to 20 s (soft) | Seconds a tone takes to fade in when its gate opens. At least 5 ms |
-| `release` | float | `0.5` | 0.005 to 20 s (soft) | Seconds a tone takes to fade out when its gate closes. At least 5 ms. Does something only while gate is wired. |
+| `level` | float | `-12` | -60 to 0 dB (soft, held within -100 to 24 dB) | The volume, in dB: at 0 one tone peaks near full scale, -6 is half the amplitude. Follows the param smoothly over glide |
+| `glide` *(more)* | float | `0.1` | 0.005 to 20 s (soft, held within 0 to 60 s) | Seconds that pitch, brightness, swarm, density and level take to get 90% of the way to a new value. At least 5 ms |
+| `attack` | float | `0.1` | 0.005 to 20 s (soft, held within 0 to 60 s) | Seconds a tone takes to fade in when its gate opens. At least 5 ms |
+| `release` | float | `0.5` | 0.005 to 20 s (soft, held within 0 to 60 s) | Seconds a tone takes to fade out when its gate closes. At least 5 ms. Does something only while gate is wired. |
 | `threshold` *(more)* | float | `0` | -1 to 1 (soft) | A gate channel above this value sounds its tone. 0 suits pulses from 0 to 1 and waves around 0. Does something only while gate is wired. |
 | `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made. out.audio nodes on one device need the same rate; audio.mix converts between rates |
 | `name` | text | `"ch1"` |  | Name of the channel it makes, as other nodes see it |
@@ -1861,10 +1861,10 @@ Outputs:
 | `file` | file (wav, wave, flac, mp3, ogg, oga, m4a, mp4, mov, aac) |  |  | WAV, FLAC, MP3, Ogg Vorbis, or the AAC sound of an MP4, MOV or M4A |
 | `play` | bool | `true` |  | Off fades the sound out and holds the place; on plays on from there. Does something only while position is not bound. |
 | `wait_for_grid` | bool | `false` |  | On: the file starts when the analysis of its beats ends, so the first open of a file plays from its start with the grid ready. While a chan.beat_grid analyses this file the playhead holds; a file analysed before plays at once. Does something only while position is not bound. |
-| `speed` | float | `1` | 0 to 4 (soft) | Playback rate, as on tape: 2 plays twice as fast and an octave higher, 0.5 half as fast and an octave lower. Does something only while position is not bound. |
+| `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | Playback rate, as on tape: 2 plays twice as fast and an octave higher, 0.5 half as fast and an octave lower. Does something only while position is not bound. |
 | `loop` | bool | `true` |  | Off plays the file once and then stays silent |
-| `position` | float | `0` | 0 to 60 s (soft) | Where the file is. Bind a channel to scrub: the sound follows it like a tape moved by hand, ignoring play and speed, silent while it stands or moves faster than 4 times real time. Set by hand, the file jumps there and plays on |
-| `start` *(more)* | float | `0` | 0 to 60 s (soft) | Where playback begins when the file is loaded and where a restart goes. A change jumps there at once. Does something only while position is not bound. |
+| `position` | float | `0` | 0 to 60 s (soft, held within 0 to 10000000 s) | Where the file is. Bind a channel to scrub: the sound follows it like a tape moved by hand, ignoring play and speed, silent while it stands or moves faster than 4 times real time. Set by hand, the file jumps there and plays on |
+| `start` *(more)* | float | `0` | 0 to 60 s (soft, held within 0 to 10000000 s) | Where playback begins when the file is loaded and where a restart goes. A change jumps there at once. Does something only while position is not bound. |
 | `restart` | bool | `false` |  | Turning on starts the file over from `start`; bind a channel to cue it. The play button does the same. Does something only while position is not bound. |
 | `restart_on_show` | bool | `false` |  | Starts over whenever the sound comes back into use, such as a switch or sequence picking it. Does something only while position is not bound. |
 | `channels` *(more)* | file \| mono \| stereo | `"file"` |  | Which channels come out; file: as many as the file has: mono stays mono; mono: one, the mean of all the file's channels; stereo: two: a mono file on both, else the file's first two |
@@ -1908,16 +1908,16 @@ Outputs: `out` (audio).
 | `preset` | pluck \| mallet \| bell \| kick \| hat | `"pluck"` |  | The sound. Changing it leaves notes already sounding as they are; pluck: a plucked string: a bright attack, faded to a tenth after decay seconds; mallet: a marimba-like wooden bar: short and round; bell: a struck bell: metallic overtones, rings about 8 times as long as decay; kick: a bass drum: a sine falling from about 300 Hz to 45 Hz in 150 ms. Ignores key, scale and note; hat: a hi-hat: a short burst of high noise, about a fifth of decay. Ignores key, scale and note |
 | `key` | C \| C# \| D \| D# \| E \| F \| F# \| G \| G# \| A \| A# \| B | `"C"` |  | The root note of the scale: note 0 plays it; C: the root is C, 261.6 Hz in octave 4; C#: the root is C#, 277.2 Hz in octave 4; D: the root is D, 293.7 Hz in octave 4; D#: the root is D#, 311.1 Hz in octave 4; E: the root is E, 329.6 Hz in octave 4; F: the root is F, 349.2 Hz in octave 4; F#: the root is F#, 370.0 Hz in octave 4; G: the root is G, 392.0 Hz in octave 4; G#: the root is G#, 415.3 Hz in octave 4; A: the root is A, 440.0 Hz in octave 4; A#: the root is A#, 466.2 Hz in octave 4; B: the root is B, 493.9 Hz in octave 4. Does something only with preset pluck, mallet or bell. |
 | `scale` | major_pentatonic \| minor_pentatonic \| major \| minor \| chromatic \| off | `"major_pentatonic"` |  | The notes that can be played. With a scale, every note fits with every other; major_pentatonic: five notes per octave (C D E G A in C): any notes together sound fine; minor_pentatonic: five notes per octave (C Eb F G Bb in C): darker, bluesy; major: seven notes per octave, the white keys from C in C; minor: seven notes per octave, the white keys from A in A; chromatic: all twelve semitones; off: free pitch: note moves smoothly between the notes, as a theremin. spread counts semitones. Does something only with preset pluck, mallet or bell. |
-| `octave` | int | `4` | 0 to 8 (soft) | The octave of the root that note 0 plays: 4 is the octave of middle C, where A is 440 Hz. Does something only with preset pluck, mallet or bell. |
-| `note` | float | `0` | 0 to 1 (soft) | Which note plays: 0 is the root, 1 is range octaves higher. Rounded to the nearest note of the scale. Read when a note starts. Does something only with preset pluck, mallet or bell. |
-| `range` *(more)* | float | `2` | 0 to 4 (soft) | Octaves that note 0 to 1 spans. Does something only with preset pluck, mallet or bell. |
-| `spread` *(more)* | int | `1` | 0 to 7 (soft) | Notes of the scale between neighbouring play channels: with 1, channel 0 plays the root, channel 1 the next note up, and so on. Does something only with preset pluck, mallet or bell. |
+| `octave` | int | `4` | 0 to 8 (soft, held within -1 to 9) | The octave of the root that note 0 plays: 4 is the octave of middle C, where A is 440 Hz. Does something only with preset pluck, mallet or bell. |
+| `note` | float | `0` | 0 to 1 (soft, held within -10 to 10) | Which note plays: 0 is the root, 1 is range octaves higher. Rounded to the nearest note of the scale. Read when a note starts. Does something only with preset pluck, mallet or bell. |
+| `range` *(more)* | float | `2` | 0 to 4 (soft, held within 0 to 10) | Octaves that note 0 to 1 spans. Does something only with preset pluck, mallet or bell. |
+| `spread` *(more)* | int | `1` | 0 to 7 (soft, held within -128 to 128) | Notes of the scale between neighbouring play channels: with 1, channel 0 plays the root, channel 1 the next note up, and so on. Does something only with preset pluck, mallet or bell. |
 | `brightness` | float | `0.5` | 0 to 1 | 0 is dull and soft, 1 bright and sharp. For kick: how high the drop starts. Read when a note starts |
-| `decay` | float | `0.3` | 0.005 to 20 s (soft) | How long a note rings: seconds until a pluck has faded to a tenth. Each preset scales it, see preset |
-| `level` | float | `-12` | -60 to 0 dB (soft) | The volume, in dB: at 0 one note peaks near full scale, -6 is half the amplitude. A change glides across one frame |
+| `decay` | float | `0.3` | 0.005 to 20 s (soft, held within 0 to 60 s) | How long a note rings: seconds until a pluck has faded to a tenth. Each preset scales it, see preset |
+| `level` | float | `-12` | -60 to 0 dB (soft, held within -100 to 24 dB) | The volume, in dB: at 0 one note peaks near full scale, -6 is half the amplitude. A change glides across one frame |
 | `trigger` | up \| down \| both | `"up"` |  | Which crossings of threshold by a play channel start a note; up: the value rises above threshold: a pulse from 0 to 1 plays once; down: the value falls to threshold or below; both: either way: a swinging value plays at every pass, as a pendulum at the bottom. Does something only while play is wired. |
 | `threshold` *(more)* | float | `0` | -1 to 1 (soft) | The value a play channel must cross to start a note. 0 suits pulses from 0 to 1 and waves around 0. Does something only while play is wired. |
-| `voices` *(more)* | int | `32` | 1 to 64 (soft) | Most notes sounding at once. One more fades out the oldest in 5 ms |
+| `voices` *(more)* | int | `32` | 1 to 64 (soft, held within 1 to 128) | Most notes sounding at once. One more fades out the oldest in 5 ms |
 | `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made. out.audio nodes on one device need the same rate; audio.mix converts between rates |
 | `name` | text | `"ch1"` |  | Name of the channel it makes, as other nodes see it |
 
@@ -1969,7 +1969,7 @@ Outputs: `out` (audio).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `shape` | sine \| saw \| square \| triangle \| noise | `"sine"` |  | The form of the wave, from -1 to 1 before amplitude; sine: a pure tone; saw: rising evenly from -1 to 1, then jumping back: bright and buzzing; square: 1 for the first half of each wave, -1 for the second: hollow; triangle: straight up and straight down: softer than the square; noise: white noise, the same for one seed on every machine |
-| `frequency` | float | `440` | 20 to 20000 Hz (soft) | Waves per second: 440 Hz is the A above middle C. A change glides across one frame. Does something only with shape sine, saw, square or triangle. |
+| `frequency` | float | `440` | 20 to 20000 Hz (soft, held within 0 to 96000 Hz) | Waves per second: 440 Hz is the A above middle C. A change glides across one frame. Does something only with shape sine, saw, square or triangle. |
 | `amplitude` | float | `0.25` | 0 to 1 (soft) | The peak of the wave; 1 is full scale. A change glides across one frame |
 | `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made. out.audio nodes on one device need the same rate; audio.mix converts between rates |
 | `seed` *(more)* | int | `0` | 0 to 100 (soft) | Picks another noise of the same character. Does something only with shape noise. |
@@ -2049,11 +2049,11 @@ Outputs:
 | `normals` | file \| smooth | `"file"` |  | Which way each corner faces, for the shading; file: as the file has them (flat where it has none, as STL); smooth: averaged over each corner's faces, for faceted or voxel meshes |
 | `rings` *(more)* | int | `1` | 1 to 16 | smooth: rings of faces averaged around each corner; 3 to 6 for voxel or marching-cubes meshes |
 | `crease` *(more)* | float | `180` | 0 to 180° | smooth: edges sharper than this stay hard; 180 smooths everything |
-| `take` | int | `0` | 0 to 10 (soft) | Which animation of an FBX file plays: 0 is the first. The `takes` output lists them |
+| `take` | int | `0` | 0 to 10 (soft, held within 0 to 1000000) | Which animation of an FBX file plays: 0 is the first. The `takes` output lists them |
 | `play` | bool | `true` |  | Off holds the animation at `time` |
-| `speed` | float | `1` | 0 to 4 (soft) | Playback rate of the animation: 2 plays twice as fast |
+| `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | Playback rate of the animation: 2 plays twice as fast |
 | `loop` | bool | `true` |  | Off stops the animation on its last frame |
-| `time` | float | `0` | 0 to 60 s (soft) | Seconds into the animation, added to the seconds played. With `play` off, bind a channel here to drive the animation |
+| `time` | float | `0` | 0 to 60 s (soft, held within -10000000 to 10000000 s) | Seconds into the animation, added to the seconds played. With `play` off, bind a channel here to drive the animation |
 
 ### geo.instance
 
@@ -2103,8 +2103,8 @@ Outputs: `out` (geo).
 |---|---|---|---|---|
 | `shape` | box \| sphere \| plane | `"box"` |  | Which shape, centred on the origin; size sets its measures; box: a cuboid of size x by y by z; sphere: a ball as wide as size x; plane: an upright rectangle facing -y, size x wide and size z high |
 | `size` | vec3 | `[1, 1, 1]` | 0 to 10 (soft) | Box: x, y, z; sphere: the diameter is x; plane (upright, facing -y): x wide, z high |
-| `segments` *(more)* | int | `48` | 3 to 128 (soft) | Steps around the sphere (half as many from pole to pole); more is rounder and costs more |
-| `cells` | int | `1` | 1 to 128 (soft) | Plane: quads along each side; with mat.wireframe a grid of lines (a floor to fly over) |
+| `segments` *(more)* | int | `48` | 3 to 128 (soft, held within 3 to 1024) | Steps around the sphere (half as many from pole to pole); more is rounder and costs more |
+| `cells` | int | `1` | 1 to 128 (soft, held within 1 to 1024) | Plane: quads along each side; with mat.wireframe a grid of lines (a floor to fly over) |
 
 ### geo.tex_instance
 
@@ -2122,7 +2122,7 @@ Outputs: `out` (geo).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `extent` *(more)* | float | `10` | 0.1 to 1000 (soft) | Half the side of a box around the origin that holds every copy. Framing and shadow maps use this box, since the positions stay on the GPU |
+| `extent` *(more)* | float | `10` | 0.1 to 1000 (soft, held within 0 to 1000000) | Half the side of a box around the origin that holds every copy. Framing and shadow maps use this box, since the positions stay on the GPU |
 
 ### geo.text
 
@@ -2256,7 +2256,7 @@ Outputs: `out` (mat).
 |---|---|---|---|---|
 | `color` | colour | `[1, 1, 1, 1]` |  | Linear RGBA, straight alpha; replaces the file's colour; times the texture input |
 | `specular` | colour | `[0.5, 0.5, 0.5, 1]` |  | The highlight's colour; alpha is unused |
-| `shininess` | float | `32` | 1 to 512 (soft) | Higher: a smaller, sharper highlight |
+| `shininess` | float | `32` | 1 to 512 (soft, held within 1 to 4096) | Higher: a smaller, sharper highlight |
 | `emit` *(more)* | colour | `[0, 0, 0, 1]` |  | Light the surface gives off by itself; alpha is unused |
 
 ### mat.wireframe
@@ -2272,7 +2272,7 @@ Outputs: `out` (mat).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `color` | colour | `[1, 1, 1, 1]` |  | The lines' colour: linear RGBA, straight alpha; times the texture input |
-| `line_width` | float | `1.5` | 0.5 to 8 px (soft) | The lines' width in pixels of the render |
+| `line_width` | float | `1.5` | 0.5 to 8 px (soft, held within 0.1 to 64 px) | The lines' width in pixels of the render |
 | `edges` | polygons \| triangles | `"polygons"` |  | Which edges get a line; polygons: only the outlines of the file's polygons (OBJ faces); in a mesh of plain triangles, diagonals across flat faces are left out too; triangles: every edge |
 | `faces` | open \| filled \| hidden | `"open"` |  | What the faces between the lines show; open: nothing: the lines behind show through; filled: the fill colour, hiding what lies behind; hidden: the lines as filled faces would leave them, but the faces are see-through |
 | `fill` | colour | `[0, 0, 0, 1]` |  | The faces' colour where `faces` is filled: linear RGBA, straight alpha |
@@ -2293,7 +2293,7 @@ Outputs: `out` (light).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
-| `intensity` | float | `0.2` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
+| `intensity` | float | `0.2` | 0 to 4 (soft, held within 0 to 10000) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
 
 ### light.directional
 
@@ -2308,9 +2308,9 @@ Outputs: `out` (light).
 | `position` | vec3 | `[-2, -3, 4]` | -10 to 10 (soft) | Where the light shines from; only the direction to the target counts |
 | `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | The point the light shines at, in metres (z up) |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
-| `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
+| `intensity` | float | `1` | 0 to 4 (soft, held within 0 to 10000) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
 | `shadows` | bool | `false` |  | What stands in the light's way casts a shadow |
-| `bias` *(more)* | float | `1` | 0 to 4 (soft) | Shadow offset, times the usual. Raise it against stripes on lit surfaces, lower it against light leaking where objects touch |
+| `bias` *(more)* | float | `1` | 0 to 4 (soft, held within 0 to 20) | Shadow offset, times the usual. Raise it against stripes on lit surfaces, lower it against light leaking where objects touch |
 
 ### light.environment
 
@@ -2325,9 +2325,9 @@ Outputs: `out` (light).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
-| `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
+| `intensity` | float | `1` | 0 to 4 (soft, held within 0 to 10000) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
 | `turn` | float | `0` | -180 to 180° (soft) | About z, counter-clockwise seen from above; at 0 the picture's middle looks along +x, as in Blender |
-| `size` *(more)* | int | `1024` | 128 to 2048 (soft) | Texels across the baked reflections: sharper mirrors, more memory and a longer bake |
+| `size` *(more)* | int | `1024` | 128 to 2048 (soft, held within 16 to 4096) | Texels across the baked reflections: sharper mirrors, more memory and a longer bake |
 
 ### light.merge
 
@@ -2361,7 +2361,7 @@ Outputs: `out` (light).
 |---|---|---|---|---|
 | `position` | vec3 | `[1.5, -2.5, 2.5]` | -10 to 10 (soft) | Where the light is, in metres (z up) |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
-| `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
+| `intensity` | float | `1` | 0 to 4 (soft, held within 0 to 10000) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
 | `falloff` *(more)* | none \| inverse square | `"none"` |  | How the light weakens with distance; none: as bright at any distance; inverse square: as bright as colour and intensity say at 1 m, a quarter of that at 2 m |
 
 ### light.projector
@@ -2378,10 +2378,10 @@ Outputs: `out` (light).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
-| `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
+| `intensity` | float | `1` | 0 to 4 (soft, held within 0 to 10000) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
 | `shadows` | bool | `true` |  | What stands in the light's way casts a shadow |
 | `falloff` *(more)* | none \| inverse square | `"none"` |  | How the light weakens with distance; none: as bright at any distance; inverse square: as bright as colour and intensity say at 1 m, a quarter of that at 2 m |
-| `bias` *(more)* | float | `1` | 0 to 4 (soft) | Shadow offset, times the usual. Raise it against stripes on lit surfaces, lower it against light leaking where objects touch |
+| `bias` *(more)* | float | `1` | 0 to 4 (soft, held within 0 to 20) | Shadow offset, times the usual. Raise it against stripes on lit surfaces, lower it against light leaking where objects touch |
 
 ### light.spot
 
@@ -2395,13 +2395,13 @@ Outputs: `out` (light).
 |---|---|---|---|---|
 | `position` | vec3 | `[0, -3, 3]` | -10 to 10 (soft) | Where the light is, in metres (z up) |
 | `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | The point the light shines at, in metres (z up) |
-| `angle` | float | `45` | 5 to 120° (soft) | The whole cone, edge to edge |
+| `angle` | float | `45` | 5 to 120° (soft, held within 1 to 179°) | The whole cone, edge to edge |
 | `softness` | float | `0.2` | 0 to 1 | How much of the cone fades towards its edge; 0 is a hard edge |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
-| `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
+| `intensity` | float | `1` | 0 to 4 (soft, held within 0 to 10000) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
 | `shadows` | bool | `false` |  | What stands in the light's way casts a shadow |
 | `falloff` *(more)* | none \| inverse square | `"none"` |  | How the light weakens with distance; none: as bright at any distance; inverse square: as bright as colour and intensity say at 1 m, a quarter of that at 2 m |
-| `bias` *(more)* | float | `1` | 0 to 4 (soft) | Shadow offset, times the usual. Raise it against stripes on lit surfaces, lower it against light leaking where objects touch |
+| `bias` *(more)* | float | `1` | 0 to 4 (soft, held within 0 to 20) | Shadow offset, times the usual. Raise it against stripes on lit surfaces, lower it against light leaking where objects touch |
 
 ## view
 
@@ -2420,9 +2420,9 @@ Outputs: `out` (view).
 | `position` | vec3 | `[2.4, -3.2, 1.6]` | -10 to 10 (soft) | Where the camera is, in metres (z up) |
 | `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | The point the camera looks at, in metres. The target stays in the picture's centre unless shift moves it |
 | `projection` | perspective \| orthographic | `"perspective"` |  | How the scene is flattened into the picture; a calibration is always perspective; perspective: rays from one point, farther things smaller (fov sets the angle); orthographic: parallel rays, sizes kept at any distance (size sets the height seen) |
-| `fov` | float | `40` | 5 to 120° (soft) | Vertical field of view (perspective): smaller zooms in, larger sees more |
-| `size` | float | `2` | 0.1 to 20 m (soft) | How much the picture sees from bottom to top (orthographic); the width follows the picture's aspect |
-| `roll` | float | `0` | -180 to 180° (soft) | Turn about the view axis; positive tilts the picture's top to the right |
+| `fov` | float | `40` | 5 to 120° (soft, held within 1 to 170°) | Vertical field of view (perspective): smaller zooms in, larger sees more |
+| `size` | float | `2` | 0.1 to 20 m (soft, held within 0.0001 to 100000 m) | How much the picture sees from bottom to top (orthographic); the width follows the picture's aspect |
+| `roll` | float | `0` | -180 to 180° (soft, held within -360 to 360°) | Turn about the view axis; positive tilts the picture's top to the right |
 | `shift` *(more)* | vec2 | `[0, 0]` | -1 to 1 (soft) | Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height |
 | `calibration` *(more)* | text |  |  | A camera calibration as JSON (the `camera` that calib.solve returns). When set, the calibration replaces position, target, projection, fov, size, roll and shift |
 | `points` *(more)* | text |  |  | The point pairs this camera is fitted to, as JSON. The calib.points commands edit it and calib.points.solve turns it into the calibration; the camera itself does not read it |
@@ -2458,12 +2458,12 @@ Outputs:
 | `position` | vec3 | `[-1.5, 0, 0]` | m | Centre of the emitter in space, in the same metres as the box of vol.smoke |
 | `type` | sphere \| box | `"sphere"` |  | Shape of the emitter; sphere: a ball of `radius`; box: a box of `size` |
 | `size` | vec3 | `[0.5, 0.5, 0.5]` | 0 to 10000 m | Size of the box emitter along x, y and z |
-| `radius` | float | `0.3` | 0.01 to 1 m (soft) | Radius of the sphere emitter; 0: off |
+| `radius` | float | `0.3` | 0.01 to 1 m (soft, held within 0 to 10000 m) | Radius of the sphere emitter; 0: off |
 | `linear_velocity` | vec3 | `[0, 0.8, 0]` | -1000 to 1000 | Speed the emitter blows at, in metres per second along x, y and z |
-| `smoke` | float | `0.5` | 0 to 2 (soft) | Density of the smoke the emitter makes |
-| `temp` | float | `2` | 0 to 5 (soft) | Temperature the emitter heats towards: hotter rises faster (`buoyancy` of vol.smoke). The smoke itself stays between -1 and 1, so above 1 it only heats up faster |
-| `fuel` | float | `1` | 0 to 5 (soft) | Fuel the emitter blows in with the smoke. Fuel hotter than `ignition_temp` of vol.smoke burns: it heats, makes smoke and swells. 0: smoke without fire |
-| `correction_rate` | float | `0.5` | 0 to 10 (soft) | How fast the emitter takes the cells inside it to its own velocity, smoke, temperature and fuel, as a share per second: 0.5 goes half of the way in a second. 60 or more sets them every frame |
+| `smoke` | float | `0.5` | 0 to 2 (soft, held within 0 to 1000) | Density of the smoke the emitter makes |
+| `temp` | float | `2` | 0 to 5 (soft, held within -1000 to 1000) | Temperature the emitter heats towards: hotter rises faster (`buoyancy` of vol.smoke). The smoke itself stays between -1 and 1, so above 1 it only heats up faster |
+| `fuel` | float | `1` | 0 to 5 (soft, held within 0 to 1000) | Fuel the emitter blows in with the smoke. Fuel hotter than `ignition_temp` of vol.smoke burns: it heats, makes smoke and swells. 0: smoke without fire |
+| `correction_rate` | float | `0.5` | 0 to 10 (soft, held within 0 to 1000) | How fast the emitter takes the cells inside it to its own velocity, smoke, temperature and fuel, as a share per second: 0.5 goes half of the way in a second. 60 or more sets them every frame |
 
 ### vol.null
 
@@ -2490,7 +2490,7 @@ Outputs:
 | `position` | vec3 | `[0, 0, 0]` | m | Centre of the obstacle in space, in the same metres as the box of vol.smoke |
 | `type` | sphere \| box | `"sphere"` |  | Shape of the obstacle; sphere: a ball of `radius`; box: a box of `size` |
 | `size` | vec3 | `[0.5, 0.5, 0.5]` | 0 to 10000 m | Size of the box obstacle along x, y and z. Thinner than a cell of the smoke, it can do nothing |
-| `radius` | float | `0.3` | 0.01 to 1 m (soft) | Radius of the sphere obstacle; 0: off |
+| `radius` | float | `0.3` | 0.01 to 1 m (soft, held within 0 to 10000 m) | Radius of the sphere obstacle; 0: off |
 
 ### vol.smoke
 
@@ -2511,28 +2511,28 @@ Outputs:
 |---|---|---|---|---|
 | `center` | vec3 | `[0, 0, 0]` | m | Centre of the box the smoke lives in |
 | `size` | vec3 | `[4, 1.5, 1.5]` | 0.001 to 10000 m | Size of the box along x, y and z. Smoke that leaves it is gone |
-| `resolution` | int | `128` | 32 to 256 (soft) | Cells along the box's longest side; the other sides get as many as cubic cells need. Doubling it costs about eight times as much. A change starts the smoke over |
+| `resolution` | int | `128` | 32 to 256 (soft, held within 4 to 512) | Cells along the box's longest side; the other sides get as many as cubic cells need. Doubling it costs about eight times as much. A change starts the smoke over |
 | `gravity` | vec3 | `[0, -1, 0]` | -1000 to 1000 | Which way is down and how strongly: hot smoke rises against it, times `buoyancy` |
-| `buoyancy` | float | `4` | 0 to 10 (soft) | How strongly temperature lifts the smoke against `gravity`, per degree |
-| `cooling_rate` | float | `1.5` | 0 to 5 (soft) | How fast the smoke cools, per second: at 1, to about a third in a second |
-| `velocity_damping` | float | `0.1` | 0 to 2 (soft) | Share of its speed the smoke loses per second. Fast smoke slows by this, slow smoke by `velocity_fade` |
-| `velocity_fade` | float | `0.1` | 0 to 2 (soft) | Speed the smoke loses per second along each axis, in metres per second, where that is more than `velocity_damping` takes |
-| `smoke_damping` | float | `0.1` | 0 to 2 (soft) | Share of its density the smoke loses per second. Dense smoke thins by this, thin smoke by `smoke_fade` |
-| `smoke_fade` | float | `0.4` | 0 to 2 (soft) | Density the smoke loses per second where that is more than `smoke_damping` takes: thin smoke vanishes |
-| `vorticity_strength` *(Vorticity)* | float | `10` | 0 to 40 (soft) | How strongly the smoke's eddies are kept spinning: more curls and billows. The grid smears small eddies out, this puts them back. 0: off, the cheapest |
-| `vorticity_from_velocity` *(Vorticity)* | float | `1` | 0 to 2 (soft) | How much faster smoke spins more: the strength grows with the speed times this |
-| `vorticity_from_smoke` *(Vorticity)* | float | `0` | 0 to 2 (soft) | How much denser smoke spins more |
-| `vorticity_from_temp` *(Vorticity)* | float | `0` | 0 to 2 (soft) | How much hotter smoke spins more |
-| `vorticity_from_fuel` *(Vorticity)* | float | `0` | 0 to 2 (soft) | How much smoke with more fuel spins more |
-| `vorticity_constant` *(Vorticity)* | float | `0` | 0 to 2 (soft) | Strength everywhere, whatever the smoke |
-| `ignition_temp` *(Burning)* | float | `0.1` | 0 to 2 (soft) | Temperature from which fuel burns. Temperatures run from -1 to 1 |
-| `burn_per_temp` *(Burning)* | float | `4` | 0 to 10 (soft) | How fast fuel burns per degree above `ignition_temp`, per second, fastest at temperature 1. 0: nothing burns |
-| `smoke_per_burn` *(Burning)* | float | `4` | 0 to 10 (soft) | Smoke that burning makes |
-| `temp_per_burn` *(Burning)* | float | `8` | 0 to 20 (soft) | Heat that burning makes. The smoke gets no hotter than 1 |
-| `fuel_per_burn` *(Burning)* | float | `1` | 0 to 4 (soft) | Fuel that burning uses up: less makes the fuel last longer |
-| `expansion` *(Burning)* | float | `4` | 0 to 10 (soft) | How much burning gas swells: the flame pushes out and widens |
-| `speed` | float | `1` | 0 to 4 (soft) | How fast the simulation runs against the show clock; 0 holds it |
-| `iterations` *(more)* | int | `30` | 4 to 100 (soft) | Steps that keep the smoke from being squeezed together. Fewer cost less and let it bulge and leak |
+| `buoyancy` | float | `4` | 0 to 10 (soft, held within -1000 to 1000) | How strongly temperature lifts the smoke against `gravity`, per degree |
+| `cooling_rate` | float | `1.5` | 0 to 5 (soft, held within 0 to 1000) | How fast the smoke cools, per second: at 1, to about a third in a second |
+| `velocity_damping` | float | `0.1` | 0 to 2 (soft, held within 0 to 1000) | Share of its speed the smoke loses per second. Fast smoke slows by this, slow smoke by `velocity_fade` |
+| `velocity_fade` | float | `0.1` | 0 to 2 (soft, held within 0 to 1000) | Speed the smoke loses per second along each axis, in metres per second, where that is more than `velocity_damping` takes |
+| `smoke_damping` | float | `0.1` | 0 to 2 (soft, held within 0 to 1000) | Share of its density the smoke loses per second. Dense smoke thins by this, thin smoke by `smoke_fade` |
+| `smoke_fade` | float | `0.4` | 0 to 2 (soft, held within 0 to 1000) | Density the smoke loses per second where that is more than `smoke_damping` takes: thin smoke vanishes |
+| `vorticity_strength` *(Vorticity)* | float | `10` | 0 to 40 (soft, held within 0 to 1000) | How strongly the smoke's eddies are kept spinning: more curls and billows. The grid smears small eddies out, this puts them back. 0: off, the cheapest |
+| `vorticity_from_velocity` *(Vorticity)* | float | `1` | 0 to 2 (soft, held within -1000 to 1000) | How much faster smoke spins more: the strength grows with the speed times this |
+| `vorticity_from_smoke` *(Vorticity)* | float | `0` | 0 to 2 (soft, held within -1000 to 1000) | How much denser smoke spins more |
+| `vorticity_from_temp` *(Vorticity)* | float | `0` | 0 to 2 (soft, held within -1000 to 1000) | How much hotter smoke spins more |
+| `vorticity_from_fuel` *(Vorticity)* | float | `0` | 0 to 2 (soft, held within -1000 to 1000) | How much smoke with more fuel spins more |
+| `vorticity_constant` *(Vorticity)* | float | `0` | 0 to 2 (soft, held within -1000 to 1000) | Strength everywhere, whatever the smoke |
+| `ignition_temp` *(Burning)* | float | `0.1` | 0 to 2 (soft, held within -1000 to 1000) | Temperature from which fuel burns. Temperatures run from -1 to 1 |
+| `burn_per_temp` *(Burning)* | float | `4` | 0 to 10 (soft, held within 0 to 1000) | How fast fuel burns per degree above `ignition_temp`, per second, fastest at temperature 1. 0: nothing burns |
+| `smoke_per_burn` *(Burning)* | float | `4` | 0 to 10 (soft, held within 0 to 1000) | Smoke that burning makes |
+| `temp_per_burn` *(Burning)* | float | `8` | 0 to 20 (soft, held within -1000 to 1000) | Heat that burning makes. The smoke gets no hotter than 1 |
+| `fuel_per_burn` *(Burning)* | float | `1` | 0 to 4 (soft, held within 0 to 1000) | Fuel that burning uses up: less makes the fuel last longer |
+| `expansion` *(Burning)* | float | `4` | 0 to 10 (soft, held within -1000 to 1000) | How much burning gas swells: the flame pushes out and widens |
+| `speed` | float | `1` | 0 to 4 (soft, held within 0 to 100) | How fast the simulation runs against the show clock; 0 holds it |
+| `iterations` *(more)* | int | `30` | 4 to 100 (soft, held within 1 to 200) | Steps that keep the smoke from being squeezed together. Fewer cost less and let it bulge and leak |
 | `advection` *(more)* | sharp \| smooth | `"sharp"` |  | How the smoke is carried from frame to frame; sharp: keeps the smoke's edges and small detail, costs two more steps a frame; smooth: smears them a little every frame, the cheapest |
 | `edges` *(more)* | open \| walls | `"open"` |  | What the box's sides are to the smoke; open: the smoke flows out and is gone; walls: the smoke turns along them |
 | `reset` | bool | `false` |  | Starts over from still, clear air, every frame while on |
@@ -2564,7 +2564,7 @@ Outputs:
 |---|---|---|---|---|
 | `file` | file (py) |  |  | A .py file used instead of `code`, relative to the project; reloads when saved |
 | `cook` | auto \| every frame \| on change | `"auto"` |  | When cook(cx) runs; auto: every frame if the code mentions `time` or `frame`, else as on change; every frame: every frame, for scripts that keep changing on their own; on change: only when an input or a param changes |
-| `timeout` | float | `0.1` | 0.01 to 1 s (soft) | A call running longer than this is stopped. The node then stays stopped until the script or `timeout` changes |
+| `timeout` | float | `0.1` | 0.01 to 1 s (soft, held within 0.001 to 10 s) | A call running longer than this is stopped. The node then stays stopped until the script or `timeout` changes |
 | `code` | text | an example script |  | The script while `file` is empty |
 
 ## out
@@ -2587,12 +2587,12 @@ Outputs: none.
 |---|---|---|---|---|
 | `device` | text |  |  | Part of the output's name (the menu beside it lists them), e.g. `Speakers`; empty: the system's default output. Several out.audio nodes on one device are added together |
 | `active` | bool | `true` |  | Off: plays nothing, and the device closes when no other node uses it |
-| `level` | float | `0` | -60 to 12 dB (soft) | The volume, in dB: 0 plays the sound as it comes, -6 at half the amplitude. A change glides across one frame. The limiter comes after it |
+| `level` | float | `0` | -60 to 12 dB (soft, held within -100 to 24 dB) | The volume, in dB: 0 plays the sound as it comes, -6 at half the amplitude. A change glides across one frame. The limiter comes after it |
 | `mute` | bool | `false` |  | Silence, faded across one frame; the device stays open. audio.mute mutes every output at once |
 | `reverb` | float | `0.2` | 0 to 1 (soft) | How much room the sound gets: 0 plays it dry, 0.2 a small room you just notice, 1 only the room. A mono sound gets stereo width from it |
 | `room` | float | `0.4` | 0 to 1 (soft) | The size of the room: how long the sound rings on. 0 dies away in 0.3 s, 0.4 in 0.85 s, 0.7 in 1.8 s, 1 in 4 s |
 | `damping` *(more)* | float | `0.5` | 0 to 1 (soft) | How much faster high tones die away in the room: 0 as fast as low ones, 0.5 in about half the time, 1 in a tenth. More sounds warmer and duller |
-| `latency` *(more)* | float | `50` | 20 to 200 (soft) | Milliseconds of sound queued ahead of the device, which adds its own buffer on top. Less answers faster; too little and late frames are heard as gaps (audio.status counts them as underruns) |
+| `latency` *(more)* | float | `50` | 20 to 200 (soft, held within 5 to 2000) | Milliseconds of sound queued ahead of the device, which adds its own buffer on top. Less answers faster; too little and late frames are heard as gaps (audio.status counts them as underruns) |
 
 ### out.audio_file
 
@@ -2628,10 +2628,10 @@ Outputs: none.
 | `protocol` | open_dmx \| art_net \| sacn \| ddp | `"open_dmx"` |  | How the slots leave this machine; open_dmx: an Enttec Open DMX USB on a serial port, one universe; art_net: Art-Net over UDP, to a node or as a broadcast; sacn: sACN (E1.31) over UDP, to each universe's multicast group or a host; ddp: DDP over UDP to a pixel controller such as WLED, no universes |
 | `port` | text |  |  | Serial port of the Open DMX USB, such as COM5 or /dev/ttyUSB0; empty takes the first FTDI FT232R plugged in (dmx.ports lists them) |
 | `host` | text |  |  | IP address to send to, optionally with :port. Empty broadcasts Art-Net and sends sACN to the multicast groups. DDP needs an address |
-| `universe` | int | `1` | 0 to 16 (soft) | Universe of the first slot, as the protocol counts (Art-Net from 0, sACN from 1); more than 512 slots spill into the next. Not used by the Open DMX USB and DDP |
+| `universe` | int | `1` | 0 to 16 (soft, held within 0 to 63999) | Universe of the first slot, as the protocol counts (Art-Net from 0, sACN from 1); more than 512 slots spill into the next. Not used by the Open DMX USB and DDP |
 | `address` | int | `1` | 1 to 512 (soft) | DMX address (slot, from 1) the first channel goes to; for DDP the byte, from 1 |
 | `values` | unit \| byte | `"unit"` |  | What the channel values mean; unit: 0 to 1, sent as 0 to 255; byte: 0 to 255, sent as they are (rounded) |
-| `rate` | float | `30` | 1 to 60 Hz (soft) | Frames per second, sent whether or not anything changed; the Open DMX USB manages about 35 |
+| `rate` | float | `30` | 1 to 60 Hz (soft, held within 0.5 to 1000 Hz) | Frames per second, sent whether or not anything changed; the Open DMX USB manages about 35 |
 
 ### out.mesh
 
@@ -2754,14 +2754,14 @@ Outputs: none.
 | `preset` | fast \| balanced \| best | `"fast"` |  | How hard the H.264 encoder works per frame: faster drops fewer frames of a busy picture, slower keeps more fine detail; fast: the fastest: Baseline profile, constant quality 23; files no larger than balanced's, fine detail a little softer; 20 to 45 % faster than balanced on busy pictures; balanced: High profile, constant quality 18, the encoder's quickest search; best: High profile, quality 18, a wider search: slightly smaller files, a third slower than balanced; for calm pictures, smaller sizes or lower rates |
 | `encoder` *(more)* | auto \| cpu \| gpu | `"auto"` |  | Where the H.264 is encoded: on the graphics card it keeps up with 1440p and 4K at 60 fps; auto: the graphics card's encoder when this machine has one (NVIDIA NVENC), else the CPU; the status says which and why; cpu: the CPU, with `threads` threads, as on every machine; gpu: the graphics card's encoder; without one the recording fails and says why |
 | `file` | text |  |  | The movie file, relative to the project; empty records to recordings/<node name>. A file that exists is never overwritten: the recording gets the next free name with _2, _3, ... |
-| `rate` | float | `0` (show rate) | 0 to 120 Hz (soft) | Frames per second of the file. Frames follow the show clock: a slower show makes frames last longer, a faster show leaves some out; 0: show rate |
+| `rate` | float | `0` (show rate) | 0 to 120 Hz (soft, held within 0 to 240 Hz) | Frames per second of the file. Frames follow the show clock: a slower show makes frames last longer, a faster show leaves some out; 0: show rate |
 | `size` | input \| fixed | `"input"` |  | The picture size of the file, fixed when the recording starts; input: the input's size when recording starts (rounded down to even); fixed: width x height; the input is scaled to it, aspect not kept |
-| `width` | int | `1920` | 16 to 3840 (soft) | Width of the file in pixels with `size` fixed (rounded down to even) |
-| `height` | int | `1080` | 16 to 2160 (soft) | Height of the file in pixels with `size` fixed (rounded down to even) |
-| `threads` *(more)* | int | `0` (automatic) | 0 to 16 (soft) | Encoder threads; automatic is all of this machine's logical cores but two. Fewer threads leave more to the rest of the show (video decoding, scripts) but drop frames of busy pictures sooner; 0: automatic |
+| `width` | int | `1920` | 16 to 3840 (soft, held within 16 to 8192) | Width of the file in pixels with `size` fixed (rounded down to even) |
+| `height` | int | `1080` | 16 to 2160 (soft, held within 16 to 8192) | Height of the file in pixels with `size` fixed (rounded down to even) |
+| `threads` *(more)* | int | `0` (automatic) | 0 to 16 (soft, held within 0 to 64) | Encoder threads; automatic is all of this machine's logical cores but two. Fewer threads leave more to the rest of the show (video decoding, scripts) but drop frames of busy pictures sooner; 0: automatic |
 | `loop` | off \| cut \| fade \| pingpong \| cut_fade | `"off"` |  | After recording stops, also write a loop of the file as <name>_loop: a movie a player can repeat without a jump. The node shows looping... until it is written; off: no loop; cut: keeps the stretch whose end looks most like its start, at least loop_min long; for content that comes back to similar pictures; fade: cross-fades the last loop_fade seconds into the start; works for any content, the fade may show as a soft double picture; pingpong: plays forward, then backward; seamless, motion reverses at both ends; cut_fade: cuts, then cross-fades over the seam that remains |
-| `loop_min` *(more)* | float | `5` | 1 to 60 s (soft) | Shortest loop `cut` may keep. A longer minimum repeats less often but may find a worse seam |
-| `loop_fade` *(more)* | float | `1` | 0.1 to 10 s (soft) | Length of the cross-fade at the seam. The loop gets this much shorter than the recording |
+| `loop_min` *(more)* | float | `5` | 1 to 60 s (soft, held within 0 to 3600 s) | Shortest loop `cut` may keep. A longer minimum repeats less often but may find a worse seam |
+| `loop_fade` *(more)* | float | `1` | 0.1 to 10 s (soft, held within 0 to 600 s) | Length of the cross-fade at the seam. The loop gets this much shorter than the recording |
 
 ## comp
 
