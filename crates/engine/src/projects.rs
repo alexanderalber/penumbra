@@ -346,13 +346,7 @@ pub fn remember(file: &Path, dir: &Path) -> Result<(), Error> {
     }
     let text =
         serde_json::to_string_pretty(&recent).map_err(|e| Error::new(format!("recent projects: {e}")))?;
-    let fail = |e: std::io::Error| Error::new(format!("cannot write {}: {e}", file.display()));
-    if let Some(parent) = file.parent() {
-        std::fs::create_dir_all(parent).map_err(fail)?;
-    }
-    let tmp = file.with_extension("json.tmp");
-    std::fs::write(&tmp, text).map_err(fail)?;
-    std::fs::rename(&tmp, file).map_err(fail)
+    crate::show::write_atomic(file, &text).map_err(|e| Error::new(format!("cannot write {}", e.0)))
 }
 
 /// What opening a project did, for the reply and the status bar.

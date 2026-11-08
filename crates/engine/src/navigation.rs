@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, Registry, args};
-use crate::commands::{cook_now, engine_commands, require};
+use crate::commands::{cook_now_in, engine_commands, require};
 use crate::engine::Engine;
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
@@ -46,7 +46,9 @@ fn view_free(e: &Engine, p: &Json) -> CmdResult<Json> {
     }
     let a: A = args(p)?;
     let gpu = e.gpu().ok_or("no GPU yet (the window opens it)")?.clone();
-    let net = e.session().doc().snapshot();
+    let (session, generation) = e.current();
+    let session_dir = session.dir().to_path_buf();
+    let net = session.doc().snapshot();
     let id = require(&net, &a.path)?;
     if !penumbra_ops::freeview::available(&net, e.types(), id, a.output) {
         return Err(format!("{} has no 3D scene to look around in (a tex.render or geometry)", a.path).into());
@@ -57,15 +59,14 @@ fn view_free(e: &Engine, p: &Json) -> CmdResult<Json> {
         return Err("`camera` needs finite numbers and an eye apart from the target".into());
     }
     // Cook it (a render then also publishes how it drew).
-    cook_now(e, id, a.output)?;
+    cook_now_in(e, &session, generation, id, a.output)?;
     let request = Request {
         node: id,
         output: a.output,
         camera: a.camera,
         size: (a.width.unwrap_or(960).clamp(16, 4096), a.height.unwrap_or(540).clamp(16, 4096)),
     };
-    let session = e.session().clone();
-    let drawn = e.on_cook(move |st| {
+    let drawn = e.on_cook_in(generation, move |st| {
         let net = session.doc().snapshot();
         let gpu = gpu.clone();
         FreeView::new().draw(&gpu, &net, &st.cooker, &st.renders, &request).map(|pic| (pic, gpu))
@@ -73,7 +74,9 @@ fn view_free(e: &Engine, p: &Json) -> CmdResult<Json> {
     let (picture, gpu) = drawn.map_err(|e| format!("{}: {}", a.path, e.0))?;
     let pixels = gpu.read(&picture.tex)?;
     let file = match a.file {
-        Some(f) => f,
+        Some(f) if f.is_absolute() => f,
+        // As `node.snapshot` does: beside the project, wherever the app was started from.
+        Some(f) => session_dir.join(f),
         None => {
             let name = a.path.to_string().trim_start_matches('/').replace('/', "_");
             std::env::temp_dir().join("penumbra").join("snapshots").join(format!("{name}_free.png"))

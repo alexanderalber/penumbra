@@ -13,17 +13,20 @@
 //! - **On the cook thread** a snapshot only collects handles ([`Cooker::kept`]) and records one
 //!   GPU copy per texture into buffers that map later ([`Gpu::read_async`]); the cook thread's
 //!   per-frame poll sees them arrive.
-//! - **On the writer thread** the mapped rows go into `latest.pnstate.tmp`, which is synced and
-//!   renamed over `latest.pnstate` after the old one became `previous.pnstate`. A crash
-//!   mid-write leaves the last good files untouched.
+//! - **On the writer thread** channels and tables are encoded and, with the mapped rows, go
+//!   into `latest.pnstate.tmp`, which is synced and renamed over `latest.pnstate` after the old
+//!   one became `previous.pnstate`. A crash mid-write leaves the last good files untouched; a
+//!   crash between the two renames leaves the new file as `latest.pnstate.tmp`, which reading
+//!   takes when there is no `latest.pnstate`.
 //! - **Reading** happens on the thread that asks (the startup restore thread, a command), and so
 //!   does the upload of the textures; the cook thread only hands the results to the operators.
 //!
 //! The file is hostile input when read: every count and size is checked against
 //! [`StateLimits`] before anything is allocated for it, a checksum covers the whole file, a file
-//! from another format version is refused. A file that does not read is moved aside to
+//! from another format version is refused. A file whose content is wrong is moved aside to
 //! `broken.pnstate` (so the next save cannot rotate it into `previous`) and the previous one is
-//! tried.
+//! tried. A file that cannot be opened or read now (another program holds it) stays where it
+//! is.
 //!
 //! Format (version 1, little endian): `PNSTATE\0`, `u32` version, `u32` manifest length, the
 //! manifest (JSON: which nodes, what kind of state, which items with their sizes), the items'
@@ -137,6 +140,8 @@ pub struct RestoreReport {
     pub skipped: Vec<(String, String)>,
     /// Files that did not read (moved aside to `broken.pnstate`), with the reason.
     pub broken: Vec<(String, String)>,
+    /// Files that could not be opened or read now, left where they are, with the reason.
+    pub unreadable: Vec<(String, String)>,
     /// Why nothing was restored, when nothing was.
     pub note: Option<String>,
     pub ms: f64,
@@ -636,25 +641,69 @@ pub fn encode(saved: &Saved) -> Result<Vec<u8>, Error> {
 
 /// Reads a state file from disk.
 pub fn read_path(path: &Path, limits: &StateLimits) -> Result<Saved, Error> {
-    let file = File::open(path).map_err(|e| Error::new(format!("{}: {e}", path.display())))?;
-    let len = file.metadata().map_err(|e| Error::new(format!("{}: {e}", path.display())))?.len();
-    read_file(BufReader::with_capacity(1 << 20, file), len, limits)
-        .map_err(|e| e.context(path.display().to_string()))
+    read_checked(path, limits).map_err(|f| match f {
+        ReadFailure::Io(e) | ReadFailure::Content(e) => e,
+    })
+}
+
+/// Why a state file did not read.
+enum ReadFailure {
+    /// Opening or reading failed. The file itself may be fine: another program may hold it
+    /// open (a virus scanner, a backup), and the next try may read it.
+    Io(Error),
+    /// The content is wrong: damaged, truncated, another format.
+    Content(Error),
+}
+
+/// Passes reads through and notes whether one failed.
+struct Watched<R> {
+    inner: R,
+    failed: bool,
+}
+
+impl<R: Read> Read for Watched<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let r = self.inner.read(buf);
+        if r.as_ref().is_err_and(|e| e.kind() != std::io::ErrorKind::Interrupted) {
+            self.failed = true;
+        }
+        r
+    }
+}
+
+fn read_checked(path: &Path, limits: &StateLimits) -> Result<Saved, ReadFailure> {
+    let io = |e: std::io::Error| ReadFailure::Io(Error::new(format!("{}: {e}", path.display())));
+    let file = File::open(path).map_err(io)?;
+    let len = file.metadata().map_err(io)?.len();
+    let mut source = Watched { inner: BufReader::with_capacity(1 << 20, file), failed: false };
+    read_file(&mut source, len, limits).map_err(|e| {
+        let e = e.context(path.display().to_string());
+        if source.failed { ReadFailure::Io(e) } else { ReadFailure::Content(e) }
+    })
 }
 
 // ---------------------------------------------------------------------------------------------
 // Saving: cook thread and writer thread
 
+/// An item of a snapshot on its way to the writer thread.
 enum ItemOut {
     /// Texture `index` of the readback.
     Tex(usize),
-    Blob(Vec<u8>),
+    /// Channels or a table: a handle, encoded as JSON on the writer thread.
+    Data(Data),
+    Bytes(Vec<u8>),
 }
+
+/// A node of a snapshot: its manifest entry (the lengths of channels and tables are filled in
+/// on the writer thread), its items and the bytes known so far.
+type JobNode = (NodeEntry, Vec<ItemOut>, u64);
 
 struct WriteJob {
     seq: u64,
-    manifest: Manifest,
-    items: Vec<Vec<ItemOut>>,
+    frame: i64,
+    unix_time: f64,
+    nodes: Vec<JobNode>,
+    limits: StateLimits,
     read: Option<PendingRead>,
     skipped: Vec<(String, String)>,
     collect: Duration,
@@ -902,108 +951,103 @@ fn collect(
     pool: &mut ReadPool,
 ) -> Result<WriteJob, Error> {
     let started = Instant::now();
-    let mut nodes: Vec<(NodeEntry, Vec<Item<'_>>, u64)> = Vec::new();
+    let mut nodes: Vec<JobNode> = Vec::new();
     let mut skipped = Vec::new();
     let mut kept = cooker.kept();
     if !net.switch(PERSIST_STATE) {
         kept.retain(|(_, k)| matches!(k, Kept::Outputs(_)));
     }
-    for (id, kept) in &kept {
-        let (Some(def), Some(path)) = (net.node(*id), net.path_of(*id)) else { continue };
+    for (id, kept) in kept {
+        let (Some(def), Some(path)) = (net.node(id), net.path_of(id)) else { continue };
         let path = path.to_string();
-        let (what, list): (What, Vec<Source<'_>>) = match kept {
-            Kept::Outputs(d) => (What::Outputs, d.iter().map(Source::Data).collect()),
-            Kept::State(s) => (
-                What::State,
-                s.iter()
-                    .map(|i| match i {
-                        StateItem::Data(d) => Source::Data(d),
-                        StateItem::Bytes(b) => Source::Bytes(b),
-                    })
-                    .collect(),
-            ),
+        let (what, list): (What, Vec<StateItem>) = match kept {
+            Kept::Outputs(d) => (What::Outputs, d.into_iter().map(StateItem::Data).collect()),
+            Kept::State(s) => (What::State, s),
         };
-        match items_of(&list, limits) {
+        match items_of(list, limits) {
             Ok(items) => {
                 let bytes = items.iter().map(|(e, _)| e.len()).sum();
-                let (entries, sources): (Vec<ItemEntry>, Vec<Item<'_>>) = items.into_iter().unzip();
-                nodes.push((
-                    NodeEntry { path, kind: def.kind.clone(), what, items: entries },
-                    sources,
-                    bytes,
-                ));
+                let (entries, items): (Vec<ItemEntry>, Vec<ItemOut>) = items.into_iter().unzip();
+                nodes.push((NodeEntry { path, kind: def.kind.clone(), what, items: entries }, items, bytes));
             }
             Err(why) => skipped.push((path, why)),
         }
     }
-    // Over the budget: leave out the largest nodes first.
-    let budget = limits.max_file_bytes.saturating_sub(limits.max_manifest_bytes.into()).saturating_sub(64);
-    let mut total: u64 = nodes.iter().map(|(_, _, b)| *b).sum();
-    if nodes.len() > limits.max_nodes || total > budget {
-        nodes.sort_by_key(|(_, _, b)| std::cmp::Reverse(*b));
-        while (total > budget || nodes.len() > limits.max_nodes) && !nodes.is_empty() {
-            let (entry, _, b) = nodes.remove(0);
-            total -= b;
-            skipped.push((entry.path, format!("{b} bytes would exceed the state budget")));
-        }
-        nodes.sort_by(|a, b| a.0.path.cmp(&b.0.path));
-    }
-    let mut textures: Vec<&Tex> = Vec::new();
-    let mut entries = Vec::with_capacity(nodes.len());
-    let mut items = Vec::with_capacity(nodes.len());
-    for (entry, sources, _) in nodes {
-        let mut out = Vec::with_capacity(sources.len());
-        for s in sources {
-            out.push(match s {
-                Item::Tex(t) => {
-                    textures.push(t);
-                    ItemOut::Tex(textures.len() - 1)
-                }
-                Item::Blob(b) => ItemOut::Blob(b),
-            });
-        }
-        entries.push(entry);
-        items.push(out);
-    }
+    // Channels and tables count once they are encoded, on the writer thread, which checks the
+    // budget again.
+    trim(&mut nodes, limits, &mut skipped);
+    let textures: Vec<&Tex> = nodes
+        .iter()
+        .flat_map(|(_, items, _)| items.iter())
+        .filter_map(|item| match item {
+            ItemOut::Data(d) => d.get::<Tex>(),
+            _ => None,
+        })
+        .collect();
     let read = if textures.is_empty() {
         None
     } else {
         let gpu = gpu.ok_or_else(|| Error::new("textures to keep but no GPU"))?;
         Some(gpu.read_async_reusing(&textures, pool)?)
     };
+    // The textures become their place in the readback, in the order they were listed.
+    let mut index = 0;
+    for (_, items, _) in &mut nodes {
+        for item in items.iter_mut() {
+            if matches!(item, ItemOut::Data(d) if d.get::<Tex>().is_some()) {
+                *item = ItemOut::Tex(index);
+                index += 1;
+            }
+        }
+    }
     let unix_time = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
-    let manifest = Manifest { app: format!("penumbra {}", crate::VERSION), frame, unix_time, nodes: entries };
-    Ok(WriteJob { seq, manifest, items, read, skipped, collect: started.elapsed(), gpu: Duration::ZERO })
+    Ok(WriteJob {
+        seq,
+        frame,
+        unix_time,
+        nodes,
+        limits: limits.clone(),
+        read,
+        skipped,
+        collect: started.elapsed(),
+        gpu: Duration::ZERO,
+    })
 }
 
-enum Source<'a> {
-    Data(&'a Data),
-    Bytes(&'a [u8]),
+/// Over the budget: leaves out the largest nodes first, keeping the rest in path order.
+fn trim<T>(nodes: &mut Vec<(NodeEntry, T, u64)>, limits: &StateLimits, skipped: &mut Vec<(String, String)>) {
+    let budget = limits.max_file_bytes.saturating_sub(limits.max_manifest_bytes.into()).saturating_sub(64);
+    let mut total: u64 = nodes.iter().map(|(_, _, b)| *b).fold(0, u64::saturating_add);
+    if nodes.len() <= limits.max_nodes && total <= budget {
+        return;
+    }
+    nodes.sort_by_key(|(_, _, b)| std::cmp::Reverse(*b));
+    while (total > budget || nodes.len() > limits.max_nodes) && !nodes.is_empty() {
+        let (entry, _, b) = nodes.remove(0);
+        total = total.saturating_sub(b);
+        skipped.push((entry.path, format!("{b} bytes would exceed the state budget")));
+    }
+    nodes.sort_by(|a, b| a.0.path.cmp(&b.0.path));
 }
 
-enum Item<'a> {
-    Tex(&'a Tex),
-    Blob(Vec<u8>),
-}
-
-fn items_of<'a>(list: &[Source<'a>], limits: &StateLimits) -> Result<Vec<(ItemEntry, Item<'a>)>, String> {
+/// The manifest entries and items of one node. Channels and tables get their length when the
+/// writer thread encodes them.
+fn items_of(list: Vec<StateItem>, limits: &StateLimits) -> Result<Vec<(ItemEntry, ItemOut)>, String> {
     let mut out = Vec::with_capacity(list.len());
     for s in list {
         let (entry, item) = match s {
-            Source::Data(d) => match d.kind() {
+            StateItem::Data(d) => match d.kind() {
                 DataKind::Tex => {
                     let t = d.get::<Tex>().ok_or("a texture output without a texture")?;
-                    (ItemEntry::Tex { width: t.width(), height: t.height() }, Item::Tex(t))
+                    (ItemEntry::Tex { width: t.width(), height: t.height() }, ItemOut::Data(d))
                 }
                 DataKind::Chan => {
-                    let c = d.get::<Chans>().ok_or("a channel output without channels")?;
-                    let b = chans_to_json(c).map_err(|e| e.0)?;
-                    (ItemEntry::Chan { len: b.len() as u64 }, Item::Blob(b))
+                    d.get::<Chans>().ok_or("a channel output without channels")?;
+                    (ItemEntry::Chan { len: 0 }, ItemOut::Data(d))
                 }
                 DataKind::Table => {
-                    let t = d.get::<Table>().ok_or("a table output without a table")?;
-                    let b = table_to_json(t).map_err(|e| e.0)?;
-                    (ItemEntry::Table { len: b.len() as u64 }, Item::Blob(b))
+                    d.get::<Table>().ok_or("a table output without a table")?;
+                    (ItemEntry::Table { len: 0 }, ItemOut::Data(d))
                 }
                 DataKind::Geo => return Err("geometry is not kept (it comes from its file again)".into()),
                 DataKind::Audio => return Err("audio is not kept (it streams, the next block is new)".into()),
@@ -1017,34 +1061,108 @@ fn items_of<'a>(list: &[Source<'a>], limits: &StateLimits) -> Result<Vec<(ItemEn
                     );
                 }
             },
-            Source::Bytes(b) => (ItemEntry::Bytes { len: b.len() as u64 }, Item::Blob(b.to_vec())),
+            StateItem::Bytes(b) => (ItemEntry::Bytes { len: b.len() as u64 }, ItemOut::Bytes(b)),
         };
-        if !matches!(entry, ItemEntry::Tex { .. }) && entry.len() > limits.max_blob_bytes {
-            return Err(format!("an item of {} bytes is over the budget", entry.len()));
-        }
+        check_blob(&entry, limits)?;
         out.push((entry, item));
     }
     Ok(out)
+}
+
+fn check_blob(entry: &ItemEntry, limits: &StateLimits) -> Result<(), String> {
+    if !matches!(entry, ItemEntry::Tex { .. }) && entry.len() > limits.max_blob_bytes {
+        return Err(format!("an item of {} bytes is over the budget", entry.len()));
+    }
+    Ok(())
+}
+
+/// What the writer puts into the file for one item.
+enum Payload {
+    /// Texture `index` of the readback.
+    Tex(usize),
+    Blob(Vec<u8>),
+}
+
+/// On the writer thread: encodes the channels and tables, leaves out the nodes that are then
+/// over a budget and makes the manifest.
+fn finish(
+    job_nodes: Vec<JobNode>,
+    job: &WriteJob,
+    skipped: &mut Vec<(String, String)>,
+) -> (Manifest, Vec<Vec<Payload>>) {
+    let mut nodes: Vec<(NodeEntry, Vec<Payload>, u64)> = Vec::with_capacity(job_nodes.len());
+    'nodes: for (mut entry, items, _) in job_nodes {
+        let mut payloads = Vec::with_capacity(items.len());
+        for (spec, item) in entry.items.iter_mut().zip(items) {
+            let payload = match item {
+                ItemOut::Tex(i) => Payload::Tex(i),
+                ItemOut::Bytes(b) => Payload::Blob(b),
+                ItemOut::Data(d) => {
+                    let encoded = match (d.get::<Chans>(), d.get::<Table>()) {
+                        (Some(c), _) => chans_to_json(c),
+                        (None, Some(t)) => table_to_json(t),
+                        (None, None) => Err(Error::new("neither channels nor a table")),
+                    };
+                    let b = match encoded {
+                        Ok(b) => b,
+                        Err(e) => {
+                            skipped.push((entry.path, e.0));
+                            continue 'nodes;
+                        }
+                    };
+                    match spec {
+                        ItemEntry::Chan { len } | ItemEntry::Table { len } | ItemEntry::Bytes { len } => {
+                            *len = b.len() as u64;
+                        }
+                        ItemEntry::Tex { .. } => {}
+                    }
+                    Payload::Blob(b)
+                }
+            };
+            if let Err(why) = check_blob(spec, &job.limits) {
+                skipped.push((entry.path, why));
+                continue 'nodes;
+            }
+            payloads.push(payload);
+        }
+        let bytes = entry.items.iter().map(ItemEntry::len).fold(0, u64::saturating_add);
+        nodes.push((entry, payloads, bytes));
+    }
+    trim(&mut nodes, &job.limits, skipped);
+    let (entries, payloads) = nodes.into_iter().map(|(e, p, _)| (e, p)).unzip();
+    let manifest = Manifest {
+        app: format!("penumbra {}", crate::VERSION),
+        frame: job.frame,
+        unix_time: job.unix_time,
+        nodes: entries,
+    };
+    (manifest, payloads)
 }
 
 fn writer(rx: &Receiver<WriteJob>, shared: &StateShared, dir: &Path, pool: &Mutex<ReadPool>) {
     while let Ok(mut job) = rx.recv() {
         let seq = job.seq;
         let started = Instant::now();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| write_job(&job, dir)));
+        let job_nodes = std::mem::take(&mut job.nodes);
+        let mut skipped = std::mem::take(&mut job.skipped);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (manifest, payloads) = finish(job_nodes, &job, &mut skipped);
+            let written = write_job(&manifest, &payloads, job.read.as_ref(), dir)?;
+            Ok::<_, Error>((written, manifest.nodes.into_iter().map(|n| n.path).collect::<Vec<_>>()))
+        }));
         let write = started.elapsed();
         if let Some(read) = job.read.take() {
             lock(pool).append(read.recycle());
         }
         match result {
-            Ok(Ok((file, bytes))) => {
+            Ok(Ok(((file, bytes), nodes))) => {
                 let report = SaveReport {
                     seq,
                     file: file.display().to_string(),
                     bytes,
-                    nodes: job.manifest.nodes.iter().map(|n| n.path.clone()).collect(),
-                    skipped: job.skipped.clone(),
-                    unix_time: job.manifest.unix_time,
+                    nodes,
+                    skipped,
+                    unix_time: job.unix_time,
                     collect_ms: job.collect.as_secs_f64() * 1000.0,
                     gpu_ms: job.gpu.as_secs_f64() * 1000.0,
                     write_ms: write.as_secs_f64() * 1000.0,
@@ -1061,9 +1179,14 @@ fn writer(rx: &Receiver<WriteJob>, shared: &StateShared, dir: &Path, pool: &Mute
     }
 }
 
-/// Writes the job to `latest.pnstate.tmp`, then rotates: `latest` becomes `previous`, the
+/// Writes the snapshot to `latest.pnstate.tmp`, then rotates: `latest` becomes `previous`, the
 /// temporary file becomes `latest`.
-fn write_job(job: &WriteJob, dir: &Path) -> Result<(PathBuf, u64), Error> {
+fn write_job(
+    manifest: &Manifest,
+    payloads: &[Vec<Payload>],
+    read: Option<&PendingRead>,
+    dir: &Path,
+) -> Result<(PathBuf, u64), Error> {
     let io = |what: &Path, e: std::io::Error| Error::new(format!("{}: {e}", what.display()));
     std::fs::create_dir_all(dir).map_err(|e| io(dir, e))?;
     let ignore = dir.join(".gitignore");
@@ -1074,11 +1197,11 @@ fn write_job(job: &WriteJob, dir: &Path) -> Result<(PathBuf, u64), Error> {
     }
     let tmp = dir.join(TMP);
     let file = File::create(&tmp).map_err(|e| io(&tmp, e))?;
-    let result = write_file(BufWriter::with_capacity(1 << 20, file), &job.manifest, |n, i, sink| {
-        match job.items.get(n).and_then(|v| v.get(i)) {
-            Some(ItemOut::Blob(b)) => sink(b).map_err(|e| Error::new(format!("writing: {e}"))),
-            Some(ItemOut::Tex(t)) => {
-                let read = job.read.as_ref().ok_or_else(|| Error::new("no readback"))?;
+    let result = write_file(BufWriter::with_capacity(1 << 20, file), manifest, |n, i, sink| {
+        match payloads.get(n).and_then(|v| v.get(i)) {
+            Some(Payload::Blob(b)) => sink(b).map_err(|e| Error::new(format!("writing: {e}"))),
+            Some(Payload::Tex(t)) => {
+                let read = read.ok_or_else(|| Error::new("no readback"))?;
                 read.rows(*t, |row| sink(row)).map_err(|e| match e {
                     RowsError::Gpu(e) => e,
                     RowsError::Sink(e) => Error::new(format!("writing: {e}")),
@@ -1108,8 +1231,9 @@ fn write_job(job: &WriteJob, dir: &Path) -> Result<(PathBuf, u64), Error> {
 // ---------------------------------------------------------------------------------------------
 // Restoring
 
-/// Reads the newest state file that reads (`file`, or `latest` then `previous` in `dir`),
-/// moving one that does not aside. Runs on the caller's thread.
+/// Reads the newest state file that reads (`file`, or `latest`, then the temporary file when
+/// there is no `latest`, then `previous` in `dir`), moving one whose content is wrong aside.
+/// Runs on the caller's thread.
 pub fn load(
     dir: &Path,
     file: Option<&Path>,
@@ -1128,25 +1252,54 @@ pub fn load(
             }
         };
     }
-    for name in [LATEST, PREVIOUS] {
+    let latest = dir.join(LATEST);
+    for name in [LATEST, TMP, PREVIOUS] {
         let path = dir.join(name);
-        if !path.exists() {
+        // The temporary file counts only without a `latest`: then a save stopped between its
+        // two renames, and the temporary file is the newest snapshot. Next to a `latest` it is
+        // a write in progress or one that failed.
+        if !path.exists() || (name == TMP && latest.exists()) {
             continue;
         }
-        match read_path(&path, limits) {
+        match read_checked(&path, limits) {
+            Ok(s) if name == TMP => {
+                // Back in the rotation, so the next save keeps it as `previous`.
+                let used = match std::fs::rename(&path, &latest) {
+                    Ok(()) => latest.clone(),
+                    Err(e) => {
+                        log::warn!("state: cannot rename {} to {}: {e}", path.display(), latest.display());
+                        path
+                    }
+                };
+                log::info!("state: the last save had not finished its renames; using {}", used.display());
+                report.file = Some(used.display().to_string());
+                return Some(s);
+            }
             Ok(s) => {
                 report.file = Some(path.display().to_string());
                 return Some(s);
             }
-            Err(e) => {
+            // An unfinished write: the next save writes over it.
+            Err(ReadFailure::Content(e) | ReadFailure::Io(e)) if name == TMP => {
+                log::info!("state: an unfinished save is not used: {e}");
+            }
+            Err(ReadFailure::Content(e)) => {
                 log::warn!("state: {e}");
                 report.broken.push((path.display().to_string(), e.0));
                 set_aside(&path, &dir.join(BROKEN));
             }
+            Err(ReadFailure::Io(e)) => {
+                log::warn!("state: {e}; the file stays where it is");
+                report.unreadable.push((path.display().to_string(), e.0));
+            }
         }
     }
     if report.broken.is_empty() {
-        report.note = Some("no saved state".into());
+        report.note = Some(if report.unreadable.is_empty() {
+            "no saved state".into()
+        } else {
+            "the saved state could not be read now (held by another program?)".into()
+        });
     }
     None
 }
@@ -1392,6 +1545,118 @@ mod tests {
         })
         .unwrap();
         assert!(read(&b).unwrap_err().0.contains("channels"));
+    }
+
+    #[test]
+    fn a_save_cut_off_between_its_renames_is_found() {
+        let scratch = penumbra_core::scratch::ScratchDir::unborn("state-tmp");
+        let dir = scratch.path().to_path_buf();
+        std::fs::create_dir_all(&dir).unwrap();
+        let newest = sample();
+        let older = Saved { frame: 1, ..sample() };
+        // `latest` became `previous`, then the app stopped before the temporary file was renamed.
+        std::fs::write(dir.join(PREVIOUS), encode(&older).unwrap()).unwrap();
+        std::fs::write(dir.join(TMP), encode(&newest).unwrap()).unwrap();
+        let mut report = RestoreReport::default();
+        let limits = StateLimits::default();
+        assert_eq!(load(&dir, None, &limits, &mut report), Some(newest.clone()));
+        assert!(report.file.as_deref().unwrap().ends_with(LATEST), "{report:?}");
+        assert!(dir.join(LATEST).exists() && !dir.join(TMP).exists(), "back in the rotation");
+        assert!(report.broken.is_empty());
+
+        // Next to a `latest`, a temporary file is a write in progress and is not read.
+        std::fs::write(dir.join(TMP), encode(&older).unwrap()).unwrap();
+        let mut report = RestoreReport::default();
+        assert_eq!(load(&dir, None, &limits, &mut report), Some(newest));
+
+        // An unfinished write without a `latest`: skipped, not set aside.
+        std::fs::remove_file(dir.join(LATEST)).unwrap();
+        let half = encode(&older).unwrap();
+        std::fs::write(dir.join(TMP), &half[..half.len() / 2]).unwrap();
+        let mut report = RestoreReport::default();
+        assert_eq!(load(&dir, None, &limits, &mut report), Some(older));
+        assert!(report.file.as_deref().unwrap().ends_with(PREVIOUS), "{report:?}");
+        assert!(report.broken.is_empty() && !dir.join(BROKEN).exists(), "{report:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_another_program_holds_is_left_in_place() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let scratch = penumbra_core::scratch::ScratchDir::unborn("state-held");
+        let dir = scratch.path().to_path_buf();
+        std::fs::create_dir_all(&dir).unwrap();
+        let older = Saved { frame: 1, ..sample() };
+        std::fs::write(dir.join(LATEST), encode(&sample()).unwrap()).unwrap();
+        std::fs::write(dir.join(PREVIOUS), encode(&older).unwrap()).unwrap();
+        // No sharing: opening it again fails with a sharing violation, as with a virus scanner.
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(dir.join(LATEST)).unwrap();
+        let mut report = RestoreReport::default();
+        assert_eq!(load(&dir, None, &StateLimits::default(), &mut report), Some(older));
+        drop(held);
+        assert_eq!(report.unreadable.len(), 1, "{report:?}");
+        assert!(report.broken.is_empty() && !dir.join(BROKEN).exists(), "{report:?}");
+        assert_eq!(read_path(&dir.join(LATEST), &StateLimits::default()).unwrap(), sample());
+    }
+
+    #[test]
+    fn channels_and_tables_are_encoded_on_the_writer_within_the_budget() {
+        let chans =
+            Chans::new(60.0, vec![Channel { name: Name::new("x").unwrap(), samples: vec![0.5; 100] }])
+                .unwrap();
+        let table = Table::new(vec![vec!["a".into()]]).unwrap();
+        let node = |path: &str, item: ItemOut, entry: ItemEntry| {
+            (
+                NodeEntry { path: path.into(), kind: "k".into(), what: What::Outputs, items: vec![entry] },
+                vec![item],
+                0,
+            )
+        };
+        let job = |limits: StateLimits| WriteJob {
+            seq: 1,
+            frame: 7,
+            unix_time: 2.0,
+            nodes: vec![
+                node(
+                    "/c",
+                    ItemOut::Data(Data::new(DataKind::Chan, chans.clone())),
+                    ItemEntry::Chan { len: 0 },
+                ),
+                node(
+                    "/t",
+                    ItemOut::Data(Data::new(DataKind::Table, table.clone())),
+                    ItemEntry::Table { len: 0 },
+                ),
+            ],
+            limits,
+            read: None,
+            skipped: vec![],
+            collect: Duration::ZERO,
+            gpu: Duration::ZERO,
+        };
+        let mut j = job(StateLimits::default());
+        let mut skipped = vec![];
+        let (manifest, payloads) = finish(std::mem::take(&mut j.nodes), &j, &mut skipped);
+        assert!(skipped.is_empty(), "{skipped:?}");
+        assert_eq!(
+            manifest.nodes[0].items,
+            [ItemEntry::Chan { len: chans_to_json(&chans).unwrap().len() as u64 }]
+        );
+        let bytes = write_file(Vec::new(), &manifest, |n, i, sink| match &payloads[n][i] {
+            Payload::Blob(b) => sink(b).map_err(|e| Error::new(e.to_string())),
+            Payload::Tex(_) => Err(Error::new("no texture here")),
+        })
+        .unwrap();
+        let back = read(&bytes).unwrap();
+        assert_eq!(back.nodes[0].items, [SavedItem::Chan(chans.clone())]);
+        assert_eq!(back.nodes[1].items, [SavedItem::Table(table.clone())]);
+
+        // Over the item budget once encoded: the node is left out, the rest is written.
+        let mut j = job(StateLimits { max_blob_bytes: 100, ..StateLimits::default() });
+        let mut skipped = vec![];
+        let (manifest, _) = finish(std::mem::take(&mut j.nodes), &j, &mut skipped);
+        assert_eq!(manifest.nodes.iter().map(|n| n.path.as_str()).collect::<Vec<_>>(), ["/t"]);
+        assert_eq!(skipped[0].0, "/c", "{skipped:?}");
     }
 
     #[test]

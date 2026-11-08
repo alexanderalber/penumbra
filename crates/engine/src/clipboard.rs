@@ -123,7 +123,8 @@ pub fn paste(e: &Engine, actor: Actor, text: Option<&str>, into: &NodePath) -> R
     };
     let types = e.types();
     let clip = clipboard::parse(&text, types)?;
-    let net = e.session().doc().snapshot();
+    let (session, generation) = e.current();
+    let net = session.doc().snapshot();
     let base = Content::from_network(&net)?;
     let pasted = clipboard::paste(&base, types, &clip, into)?;
     let ops = diff(&base, &pasted.content);
@@ -131,6 +132,9 @@ pub fn paste(e: &Engine, actor: Actor, text: Option<&str>, into: &NodePath) -> R
         [one] => format!("paste {one}"),
         many => format!("paste {} nodes into {into}", many.len()),
     };
+    if e.generation() != generation {
+        return Err("another project was opened meanwhile; nothing was pasted".into());
+    }
     let outcome = edit_as(e, actor, &ops, &label)?;
     // The copies of locked nodes hold what the originals held, when this run copied them.
     if let Some(c) = stored.filter(|c| c.text == text && !c.held.is_empty()) {
@@ -143,7 +147,7 @@ pub fn paste(e: &Engine, actor: Actor, text: Option<&str>, into: &NodePath) -> R
                 Some((new.clone(), after.resolve(new)?, outs))
             })
             .collect();
-        let results = e.on_cook(move |st| {
+        let results = e.on_cook_in(generation, move |st| {
             // Bring the cooker up to the pasted nodes first, so they can take the outputs.
             st.cooker.cook(&after, st.clock.now(), &[], &[]);
             held.into_iter()

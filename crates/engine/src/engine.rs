@@ -346,6 +346,8 @@ pub struct CookState {
     /// Added to the cooker's pass numbers in what is published, so they keep growing when
     /// another project opens (the output threads wait for a pass newer than the last they drew).
     pass_base: u64,
+    /// The project this cook thread cooks ([`Engine::generation`] when it started).
+    generation: u64,
 }
 
 /// Shared between the cook thread, the UI and the outputs.
@@ -368,6 +370,19 @@ impl CookState {
         {
             log::warn!("cook.step: {e}");
         }
+    }
+
+    /// Moves state snapshots along while stepping, when no pass does: the readback is polled,
+    /// a requested or due snapshot starts, a finished one goes to the writer.
+    fn keep_state(&mut self, session: &Session) {
+        if self.gpu.as_ref().is_some_and(Gpu::is_lost) {
+            return;
+        }
+        if let Some(gpu) = &self.gpu {
+            gpu.poll();
+        }
+        let net = session.doc().snapshot();
+        self.state.after_pass(&self.cooker, &net, self.gpu.as_ref(), self.clock.now().frame);
     }
 
     /// What drives the show clock now.
@@ -873,6 +888,7 @@ impl Engine {
             hubs: self.hubs.clone(),
             pass_base,
             stepping: false,
+            generation: self.generation(),
         }
     }
 
@@ -996,7 +1012,10 @@ impl Engine {
             hub.project_closing();
         }
         self.stop_threads(save_state);
-        let session = match make() {
+        // The old project's threads are stopped: a panic here must not leave none running.
+        let made = catch_unwind(AssertUnwindSafe(make))
+            .unwrap_or_else(|_| Err(Error::new("opening the project failed unexpectedly (a panic)")));
+        let session = match made {
             Ok(session) => session,
             Err(e) => {
                 let old = self.session();
@@ -1015,8 +1034,12 @@ impl Engine {
             s.restore = None;
             s.last_error = None;
         });
-        *lock(&self.session) = session.clone();
-        self.generation.fetch_add(1, Ordering::AcqRel);
+        {
+            // Together, so [`Engine::current`] never pairs a session with another's generation.
+            let mut open = lock(&self.session);
+            *open = session.clone();
+            self.generation.fetch_add(1, Ordering::AcqRel);
+        }
         self.launch(&session, pass_base)?;
         if self.gpu().is_some() {
             self.restore_in_background();
@@ -1048,6 +1071,14 @@ impl Engine {
     /// Grows by one whenever another project opens ([`Engine::open_project`]).
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
+    }
+
+    /// The open project with its [`Engine::generation`], read together. For work that hands
+    /// the session to the cook thread: [`Engine::on_cook_in`] refuses it once another project
+    /// opened.
+    pub fn current(&self) -> (Arc<Session>, u64) {
+        let open = lock(&self.session);
+        (open.clone(), self.generation())
     }
 
     /// Where recently opened projects are listed (`None`: nowhere). The app sets it; tests and
@@ -1481,11 +1512,14 @@ impl Engine {
         let started = Instant::now();
         let limits = self.state.config().limits;
         let mut report = RestoreReport::default();
-        if let Some(saved) = crate::state::load(&self.state_dir(), file, &limits, &mut report) {
-            let net = self.session().doc().snapshot();
+        let (session, generation) = self.current();
+        let dir = crate::state::dir_of(session.dir());
+        if let Some(saved) = crate::state::load(&dir, file, &limits, &mut report) {
+            let net = session.doc().snapshot();
             let take_state = !fresh && net.switch(PERSIST_STATE);
             let prepared = crate::state::prepare(saved, &net, self.gpu(), take_state, &mut report);
-            let results = self.on_cook(move |st| {
+            // Another project's nodes may have the same ids: the state goes only to this one.
+            let results = self.on_cook_in(generation, move |st| {
                 // Bring the cooker up to this network first, so new nodes can take state.
                 st.cooker.cook(&net, st.clock.now(), &[], &[]);
                 prepared
@@ -1506,9 +1540,9 @@ impl Engine {
     }
 
     /// Discards what operators hold beyond their params, now and on disk (the Helpers button,
-    /// `state.discard`, `--fresh`): every operator with state starts over, `latest.pnstate`
-    /// becomes `discarded.pnstate` (one kept, in case it was a mistake), `previous.pnstate` is
-    /// deleted, and a snapshot of what is left (the locked nodes' outputs) is written. Returns
+    /// `state.discard`, `--fresh`): every operator with state starts over, a snapshot of what is
+    /// left (the locked nodes' outputs) is written, the file from before becomes
+    /// `discarded.pnstate` (one kept, in case it was a mistake), and no older one stays. Returns
     /// what happened, for a message.
     pub fn discard_state(&self) -> Result<String, Error> {
         if self.state.holding() {
@@ -1516,23 +1550,50 @@ impl Engine {
             self.state.start_fresh();
             return Ok("the saved state will not be read back".into());
         }
-        let nodes = self.on_cook(|st| {
+        if let Some(why) = self.gpu().and_then(Gpu::lost) {
+            return Err(Error::new(format!("not discarding the state: the GPU device is lost ({why})")));
+        }
+        let (session, generation) = self.current();
+        // In one task: no periodic snapshot can come between forgetting and the request.
+        let (nodes, seq) = self.on_cook_in(generation, |st| {
             st.state.invalidate();
-            st.cooker.forget_state()
+            let nodes = st.cooker.forget_state();
+            (nodes, st.state.request())
         })?;
-        let dir = self.state_dir();
-        let latest = dir.join(crate::state::LATEST);
-        if latest.exists() {
-            std::fs::rename(&latest, dir.join(crate::state::DISCARDED))
-                .map_err(|e| Error::new(format!("cannot move {} aside: {e}", latest.display())))?;
+        let done =
+            format!("started fresh: {nodes} nodes forgot what they held; locked nodes keep their outputs");
+        let dir = crate::state::dir_of(session.dir());
+        let discarded = dir.join(crate::state::DISCARDED);
+        let saved = seq.and_then(|seq| self.state.wait_for(seq, Duration::from_secs(20)));
+        match saved {
+            // The save turned the file from before into `previous`.
+            Ok(_) => {
+                let previous = dir.join(crate::state::PREVIOUS);
+                if previous.exists() {
+                    std::fs::rename(&previous, &discarded)
+                        .map_err(|e| Error::new(format!("cannot move {} aside: {e}", previous.display())))?;
+                }
+                Ok(done)
+            }
+            // Without a new file the old ones go anyway, or the next start would bring the
+            // discarded state back. The locked outputs reach the disk with the next snapshot.
+            Err(e) => {
+                let latest = dir.join(crate::state::LATEST);
+                let previous = dir.join(crate::state::PREVIOUS);
+                if latest.exists() {
+                    std::fs::rename(&latest, &discarded)
+                        .map_err(|e| Error::new(format!("cannot move {} aside: {e}", latest.display())))?;
+                }
+                if previous.exists() {
+                    std::fs::remove_file(&previous)
+                        .map_err(|e| Error::new(format!("cannot delete {}: {e}", previous.display())))?;
+                }
+                Ok(format!(
+                    "{done}; the locked nodes' outputs are not on disk yet ({}), the next snapshot writes them",
+                    e.0
+                ))
+            }
         }
-        let previous = dir.join(crate::state::PREVIOUS);
-        if previous.exists() {
-            std::fs::remove_file(&previous)
-                .map_err(|e| Error::new(format!("cannot delete {}: {e}", previous.display())))?;
-        }
-        self.save_state(Duration::from_secs(20))?;
-        Ok(format!("started fresh: {nodes} nodes forgot what they held; locked nodes keep their outputs"))
     }
 
     /// Starts the given nodes over (`node.reset`, the reset button, R in the editor): what a
@@ -1686,6 +1747,17 @@ impl Engine {
         })
     }
 
+    /// [`Engine::on_cook`] for work on the project of `generation` ([`Engine::current`]):
+    /// refused, without running `task`, when the cook thread cooks another project by then.
+    pub fn on_cook_in<R, F>(&self, generation: u64, task: F) -> Result<R, Error>
+    where
+        R: Send + 'static,
+        F: FnOnce(&mut CookState) -> R + Send + 'static,
+    {
+        self.on_cook(move |st| (st.generation == generation).then(|| task(st)))?
+            .ok_or_else(|| Error::new("another project was opened meanwhile; nothing was done"))
+    }
+
     /// Runs `task` on the cook thread between two frames without waiting for it, for the UI
     /// (play, pause, the thumbnail switch), which must not stall on the cook thread.
     pub fn post_cook<F>(&self, task: F)
@@ -1727,6 +1799,10 @@ fn cook_loop(session: &Session, mut state: CookState, rx: &Receiver<CookMsg>) {
                 }
                 Err(RecvTimeoutError::Disconnected) => return,
                 Err(RecvTimeoutError::Timeout) => {}
+            }
+            // Saving still has to go on (`state.save`, the periodic snapshot, closing).
+            if state.stepping && catch_unwind(AssertUnwindSafe(|| state.keep_state(session))).is_err() {
+                log::error!("moving a state snapshot along panicked");
             }
             continue;
         }

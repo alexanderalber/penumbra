@@ -2173,6 +2173,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 {&quot;id&quot;: 1, &quot;ok&quot;: true, &quot;result&quot;: {...}}
 </code></pre>
 <p><code>id</code> and <code>params</code> are optional. A failure answers <code>{&quot;ok&quot;: false, &quot;error&quot;: &quot;...&quot;}</code>. The channel listens on the loopback interface only; a line that is not a JSON object with a <code>method</code>, or is longer than 4 MiB, gets one error reply and the connection is closed.</p>
+<p>At most 16 connections are open at once. A further one takes the place of the connection that has waited longest for its next request: that client gets an error line, then its connection closes. A connection in the middle of a request is never closed. When all 16 are busy, the new connection gets the error line instead.</p>
 <h3 id="control-taking-turns">Taking turns</h3>
 <p>Edits from the channel pass the same gate as the user's (see <a href="#concepts-who-is-editing">who is editing</a>):</p>
 <ul>
@@ -2184,7 +2185,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </li>
 </ul>
 <p>Commands that only look (<a class="ref" href="#node.info"><code>node.info</code></a>, <a class="ref" href="#node.snapshot"><code>node.snapshot</code></a>, <a class="ref" href="#chan.read"><code>chan.read</code></a>, <a class="ref" href="#ui.screenshot"><code>ui.screenshot</code></a>, ...) work at any time.</p>
-<p>In <a href="#getting-started-show-mode">show mode</a> (<a class="ref" href="#show.lock"><code>show.lock</code></a>) every editing command is refused until <a class="ref" href="#show.unlock"><code>show.unlock</code></a>, and so are commands that write into the project folder or switch projects. Commands that only look, <a class="ref" href="#cook.play"><code>cook.play</code></a> and OSC/DMX keep working. The exception among the edits: <a class="ref" href="#chan.press"><code>chan.press</code></a> and <a class="ref" href="#node.set"><code>node.set</code></a> still set the <code>value</code> of a control shown on the show screen (<code>show</code> ticked), without an undo step; the reply says <code>&quot;history&quot;: &quot;none_in_show_mode&quot;</code>.</p>
+<p>In <a href="#getting-started-show-mode">show mode</a> (<a class="ref" href="#show.lock"><code>show.lock</code></a>) every editing command is refused until <a class="ref" href="#show.unlock"><code>show.unlock</code></a>, and so are commands that write into the project folder or switch projects, and the test aid <a class="ref" href="#gpu.simulate_loss"><code>gpu.simulate_loss</code></a>. Commands that only look, <a class="ref" href="#cook.play"><code>cook.play</code></a> and OSC/DMX keep working. The exception among the edits: <a class="ref" href="#chan.press"><code>chan.press</code></a> and <a class="ref" href="#node.set"><code>node.set</code></a> still set the <code>value</code> of a control shown on the show screen (<code>show</code> ticked), without an undo step; the reply says <code>&quot;history&quot;: &quot;none_in_show_mode&quot;</code>.</p>
 <h3 id="control-looking-at-results">Looking at results</h3>
 <ul>
 <li><a class="ref" href="#node.snapshot"><code>node.snapshot {path, file?}</code></a> cooks a <code>tex</code> node (or the picture of a <code>geo</code> node) and writes a PNG.
@@ -6672,6 +6673,7 @@ def cook(cx):
 <details class="entry command" id="gpu.simulate_loss"><summary><code class="name">gpu.simulate_loss</code><span class="sum">Test aid: end the GPU device as if the driver had lost it. The app then closes as after a real loss, and the next start opens paused</span></summary>
 <div class="body">
 <p>Test aid: end the GPU device as if the driver had lost it. The app then closes as after a real loss, and the next start opens paused; {confirm: true}</p>
+<p class="mentions">Mentioned in: <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
 </div>
 <div class="group" id="group-help">

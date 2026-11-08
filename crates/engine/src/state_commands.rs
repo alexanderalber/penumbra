@@ -92,9 +92,9 @@ fn file_info(path: &std::path::Path) -> Json {
 
 fn state_info(e: &Engine, p: &Json) -> Result<Json> {
     no_args(p)?;
-    let dir = e.state_dir();
-    let session = e.session().clone();
-    let now = e.on_cook(move |st| {
+    let (session, generation) = e.current();
+    let dir = crate::state::dir_of(session.dir());
+    let now = e.on_cook_in(generation, move |st| {
         let net = session.doc().snapshot();
         let summary = crate::state::summary(&st.cooker, &net);
         (summary, st.state.busy())
@@ -426,8 +426,8 @@ fn node_memory(e: &Engine, p: &Json) -> Result<Json> {
     }
     let a: A = args(p)?;
     let limit = a.limit.unwrap_or(MEMORY_LIMIT);
-    let session = e.session().clone();
-    let (mut nodes, views) = e.on_cook(move |st| {
+    let (session, generation) = e.current();
+    let (mut nodes, views) = e.on_cook_in(generation, move |st| {
         let net = session.doc().snapshot();
         let nodes: Vec<(String, String, u64)> = net
             .nodes()

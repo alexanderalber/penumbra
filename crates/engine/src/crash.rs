@@ -49,10 +49,7 @@ pub fn write(file: &Path, project: &Path, reason: &str, frame: Option<i64>) -> R
         frame,
     };
     let text = serde_json::to_string_pretty(&marker).map_err(|e| Error::new(e.to_string()))?;
-    if let Some(dir) = file.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| Error::new(format!("{}: {e}", dir.display())))?;
-    }
-    std::fs::write(file, text).map_err(|e| Error::new(format!("{}: {e}", file.display())))
+    crate::show::write_atomic(file, &text)
 }
 
 /// Reads and deletes the marker; `None` when there is none. A marker that does not parse still

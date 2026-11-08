@@ -7,13 +7,18 @@
 //! Hardening: loopback only; a line that is not a JSON object with a string `method` (an HTTP
 //! request line from a web page's `fetch`, invalid UTF-8, binary junk) or that is longer than
 //! [`MAX_LINE`] gets one error reply and the connection is closed, so nothing sent after it runs;
-//! at most [`MAX_CONNECTIONS`] connections at once.
+//! at most [`MAX_CONNECTIONS`] connections at once. When all are taken, the one that has waited
+//! longest for its next request is closed for the new one, so clients that connect and never
+//! close cannot lock out the rest; a connection in the middle of a request is never closed. A
+//! command that panics gets an error reply, and the connection stays open.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use penumbra_core::lock;
 
 use serde_json::{Value, json};
 
@@ -23,7 +28,8 @@ pub const DEFAULT_PORT: u16 = 9880;
 pub const PORT_ENV: &str = "PENUMBRA_PORT";
 /// Longest accepted request line in bytes, without the newline.
 pub const MAX_LINE: usize = 4 * 1024 * 1024;
-/// Connections served at once; further ones get an error line and are closed.
+/// Connections served at once. A further one takes the place of the connection idle longest;
+/// when every connection is in the middle of a request, it gets an error line and is closed.
 pub const MAX_CONNECTIONS: usize = 16;
 /// Longest reply the client accepts.
 pub const MAX_REPLY: usize = 64 * 1024 * 1024;
@@ -55,17 +61,99 @@ pub fn serve(port: u16, handler: Arc<Handler>) -> io::Result<SocketAddr> {
     Ok(addr)
 }
 
-/// Gives the connection slot back when the connection ends, however it ends.
-struct Slot(Arc<AtomicUsize>);
+/// The open connections.
+#[derive(Default)]
+struct Conns {
+    next: u64,
+    list: Vec<Conn>,
+}
+
+struct Conn {
+    id: u64,
+    /// A handle on the socket, to close it from the accept thread.
+    stream: TcpStream,
+    /// When the last request was answered (or the connection opened).
+    idle_since: Instant,
+    /// A request is running.
+    busy: bool,
+}
+
+impl Conns {
+    /// Makes room for one more: false when every connection is busy. Closes the connection
+    /// idle longest when all places are taken.
+    fn make_room(&mut self, max: usize) -> bool {
+        if self.list.len() < max {
+            return true;
+        }
+        let Some(oldest) = self
+            .list
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| !c.busy)
+            .min_by_key(|(_, c)| c.idle_since)
+            .map(|(i, _)| i)
+        else {
+            return false;
+        };
+        let mut conn = self.list.remove(oldest);
+        // A client that reads nothing must not hold up the accept thread.
+        let _ = conn.stream.set_write_timeout(Some(Duration::from_millis(200)));
+        let _ = writeln!(
+            conn.stream,
+            "{}",
+            json!({"ok": false, "error": "closed for a new connection: all control connections were taken, this one was idle longest"})
+        );
+        let _ = conn.stream.shutdown(Shutdown::Both);
+        true
+    }
+
+    /// A request on connection `id` starts; false when the connection was closed for another.
+    fn begin(&mut self, id: u64) -> bool {
+        self.list.iter_mut().find(|c| c.id == id).map(|c| c.busy = true).is_some()
+    }
+
+    fn end(&mut self, id: u64) {
+        if let Some(c) = self.list.iter_mut().find(|c| c.id == id) {
+            c.busy = false;
+            c.idle_since = Instant::now();
+        }
+    }
+}
+
+/// The reply side of connection `id`: once a reply is flushed out, the connection counts as
+/// idle again.
+struct Replies {
+    stream: TcpStream,
+    conns: Arc<Mutex<Conns>>,
+    id: u64,
+}
+
+impl Write for Replies {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.stream.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let flushed = self.stream.flush();
+        lock(&self.conns).end(self.id);
+        flushed
+    }
+}
+
+/// Takes the connection off the list when it ends, however it ends.
+struct Slot {
+    conns: Arc<Mutex<Conns>>,
+    id: u64,
+}
 
 impl Drop for Slot {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
+        lock(&self.conns).list.retain(|c| c.id != self.id);
     }
 }
 
 fn accept_loop(listener: TcpListener, handler: Arc<Handler>) {
-    let open = Arc::new(AtomicUsize::new(0));
+    let conns = Arc::new(Mutex::new(Conns::default()));
     for stream in listener.incoming() {
         let mut stream = match stream {
             Ok(s) => s,
@@ -74,27 +162,43 @@ fn accept_loop(listener: TcpListener, handler: Arc<Handler>) {
                 continue;
             }
         };
-        if open.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
-            open.fetch_sub(1, Ordering::SeqCst);
-            let _ = writeln!(stream, "{}", json!({"ok": false, "error": "too many control connections"}));
-            continue;
-        }
-        let slot = Slot(Arc::clone(&open));
+        let handle = match stream.try_clone() {
+            Ok(h) => h,
+            Err(e) => {
+                log::warn!("control channel: cannot keep a handle on a connection: {e}");
+                continue;
+            }
+        };
+        let id = {
+            let mut list = lock(&conns);
+            if !list.make_room(MAX_CONNECTIONS) {
+                drop(list);
+                let _ = writeln!(stream, "{}", json!({"ok": false, "error": "too many control connections"}));
+                continue;
+            }
+            list.next += 1;
+            let id = list.next;
+            list.list.push(Conn { id, stream: handle, idle_since: Instant::now(), busy: false });
+            id
+        };
+        let slot = Slot { conns: Arc::clone(&conns), id };
         let handler = Arc::clone(&handler);
         let spawned = std::thread::Builder::new().name("control-conn".into()).spawn(move || {
+            let conns = Arc::clone(&slot.conns);
             let _slot = slot;
-            serve_stream(stream, handler.as_ref());
+            let _ = stream.set_nodelay(true);
+            let Ok(read) = stream.try_clone() else { return };
+            let out = Replies { stream, conns: Arc::clone(&conns), id };
+            serve_lines(read, out, |method: &str, params: &Value| {
+                // Busy until the reply is flushed: a connection is never closed mid-reply.
+                let open = lock(&conns).begin(id);
+                open.then(|| handler(method, params))
+            });
         });
         if let Err(e) = spawned {
             log::warn!("control channel: cannot start a connection thread: {e}");
         }
     }
-}
-
-fn serve_stream(stream: TcpStream, handler: &Handler) {
-    let _ = stream.set_nodelay(true);
-    let Ok(read) = stream.try_clone() else { return };
-    serve_lines(read, stream, handler);
 }
 
 /// One parsed request line.
@@ -166,9 +270,14 @@ fn read_bounded_line(reader: &mut impl BufRead, buf: &mut Vec<u8>, max: usize) -
 }
 
 /// Serve requests from `read`, answering on `out`, until the peer closes or sends something that
-/// is not a request. `handle` gets `(method, params)` and returns the reply; the request's `id`
-/// is added here.
-fn serve_lines<R: Read, W: Write>(read: R, mut out: W, mut handle: impl FnMut(&str, &Value) -> Value) {
+/// is not a request. `handle` gets `(method, params)` and returns the reply, or `None` to end
+/// the connection without one; the request's `id` is added here. A panic in `handle` becomes
+/// an error reply.
+fn serve_lines<R: Read, W: Write>(
+    read: R,
+    mut out: W,
+    mut handle: impl FnMut(&str, &Value) -> Option<Value>,
+) {
     let mut reader = BufReader::new(read);
     let mut buf = Vec::new();
     loop {
@@ -179,7 +288,11 @@ fn serve_lines<R: Read, W: Write>(read: R, mut out: W, mut handle: impl FnMut(&s
                 Line::Blank => continue,
                 Line::Reject(e) => e,
                 Line::Request { id, method, params } => {
-                    let mut reply = handle(&method, &params);
+                    let reply = catch_unwind(AssertUnwindSafe(|| handle(&method, &params))).unwrap_or_else(|_| {
+                        log::error!("control channel: {method} panicked");
+                        Some(json!({"ok": false, "error": format!("{method} failed unexpectedly (a panic); the app goes on")}))
+                    });
+                    let Some(mut reply) = reply else { return };
                     if let Some(obj) = reply.as_object_mut() {
                         obj.insert("id".into(), id);
                     }
@@ -225,7 +338,7 @@ mod tests {
         let mut calls = Vec::new();
         serve_lines(input, &mut out, |m, _p| {
             calls.push(m.to_string());
-            json!({"ok": true, "result": null})
+            Some(json!({"ok": true, "result": null}))
         });
         let replies = String::from_utf8(out)
             .unwrap()
@@ -341,18 +454,63 @@ mod tests {
     }
 
     #[test]
-    fn connections_beyond_the_limit_are_refused_and_slots_come_back() {
+    fn a_new_connection_takes_the_place_of_the_one_idle_longest() {
         let addr = start_registry();
-        let held: Vec<TcpStream> = (0..MAX_CONNECTIONS).map(|_| TcpStream::connect(addr).unwrap()).collect();
-        // The accept thread counts connections in order, so once the last held connection
-        // answers a ping, all held ones are counted.
-        let mut last = held.last().unwrap().try_clone().unwrap();
-        last.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        writeln!(last, "{{\"method\":\"ping\"}}").unwrap();
-        let mut line = String::new();
-        BufReader::new(last.try_clone().unwrap()).read_line(&mut line).unwrap();
-        assert!(line.contains("\"ok\":true"), "{line}");
+        let ping = |c: &mut TcpStream| {
+            c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            writeln!(c, "{{\"method\":\"ping\"}}").unwrap();
+            let mut line = String::new();
+            BufReader::new(c.try_clone().unwrap()).read_line(&mut line).unwrap();
+            line
+        };
+        let mut held: Vec<TcpStream> =
+            (0..MAX_CONNECTIONS).map(|_| TcpStream::connect(addr).unwrap()).collect();
+        // Answered in order: the first is idle longest once every other has answered a ping.
+        for c in held.iter_mut().skip(1) {
+            assert!(ping(c).contains("\"ok\":true"));
+        }
+        let r = call(addr.port(), "ping", json!({}), Duration::from_secs(5)).unwrap();
+        assert_eq!(r["ok"], true, "{r}");
+        // The first one was told why and closed.
+        let first = &mut held[0];
+        first.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut text = String::new();
+        let _ = first.read_to_string(&mut text);
+        assert!(text.contains("idle longest"), "{text}");
+        // The others still work.
+        assert!(ping(&mut held[1]).contains("\"ok\":true"));
+    }
 
+    #[test]
+    fn connections_all_busy_refuse_a_new_one_and_slots_come_back() {
+        let release = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let waiting = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (r, w) = (release.clone(), waiting.clone());
+        let addr = serve(
+            0,
+            Arc::new(move |m: &str, _p: &Value| {
+                if m == "wait" {
+                    w.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    while !r.load(std::sync::atomic::Ordering::SeqCst) {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                }
+                json!({"ok": true, "result": null})
+            }),
+        )
+        .unwrap();
+        let held: Vec<TcpStream> = (0..MAX_CONNECTIONS)
+            .map(|_| {
+                let mut c = TcpStream::connect(addr).unwrap();
+                writeln!(c, "{{\"method\":\"wait\"}}").unwrap();
+                c
+            })
+            .collect();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while waiting.load(std::sync::atomic::Ordering::SeqCst) < MAX_CONNECTIONS {
+            assert!(Instant::now() < deadline, "the requests never started");
+            std::thread::sleep(Duration::from_millis(5));
+        }
         // Refused: either the error line arrives, or (Windows) the early close resets the
         // connection before the client reads it. Never a successful ping.
         match call(addr.port(), "ping", json!({}), Duration::from_secs(5)) {
@@ -362,18 +520,36 @@ mod tests {
             }
             Err(e) => assert!(e.contains("failed"), "{e}"),
         }
-
-        drop(last);
+        release.store(true, std::sync::atomic::Ordering::SeqCst);
         drop(held);
         // Slots come back once the server notices the closed connections.
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let r = call(addr.port(), "ping", json!({}), Duration::from_secs(5));
             if r.is_ok_and(|r| r["ok"] == true) {
                 break;
             }
-            assert!(std::time::Instant::now() < deadline, "slots never came back");
+            assert!(Instant::now() < deadline, "slots never came back");
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    #[test]
+    fn a_panicking_command_gets_an_error_reply_and_the_connection_goes_on() {
+        let mut out = Vec::new();
+        serve_lines(
+            &b"{\"id\":1,\"method\":\"boom\"}\n{\"id\":2,\"method\":\"a\"}\n"[..],
+            &mut out,
+            |m, _p| {
+                assert_ne!(m, "boom", "a command that panics");
+                Some(json!({"ok": true, "result": null}))
+            },
+        );
+        let replies: Vec<Value> =
+            String::from_utf8(out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(replies.len(), 2, "{replies:?}");
+        assert_eq!((replies[0]["id"].clone(), replies[0]["ok"].clone()), (json!(1), json!(false)));
+        assert!(replies[0]["error"].as_str().unwrap().contains("boom"), "{replies:?}");
+        assert_eq!((replies[1]["id"].clone(), replies[1]["ok"].clone()), (json!(2), json!(true)));
     }
 }

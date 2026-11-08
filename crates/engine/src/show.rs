@@ -18,6 +18,7 @@
 //! crash. Nothing is written into the project folder for it. The node state the project keeps
 //! (its `state` folder) is still saved, so a restart picks feedback and caches up again.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -84,7 +85,9 @@ pub fn write(file: &Path, kept: &Kept) -> Result<(), Error> {
 }
 
 /// Writes `text` into `file` through a temporary file beside it, so a crash in the middle
-/// leaves the old content or the new, never half of it.
+/// leaves the old content or the new, never half of it. The temporary file reaches the disk
+/// before the rename: after a power cut the rename may survive while unsynced content comes
+/// back as zeros.
 pub fn write_atomic(file: &Path, text: &str) -> Result<(), Error> {
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(|e| Error::new(format!("{}: {e}", dir.display())))?;
@@ -92,7 +95,11 @@ pub fn write_atomic(file: &Path, text: &str) -> Result<(), Error> {
     let mut tmp = file.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, text).map_err(|e| Error::new(format!("{}: {e}", tmp.display())))?;
+    let fail = |e: std::io::Error| Error::new(format!("{}: {e}", tmp.display()));
+    let mut out = std::fs::File::create(&tmp).map_err(fail)?;
+    out.write_all(text.as_bytes()).map_err(fail)?;
+    out.sync_all().map_err(fail)?;
+    drop(out);
     std::fs::rename(&tmp, file).map_err(|e| Error::new(format!("{}: {e}", file.display())))
 }
 
@@ -132,7 +139,7 @@ pub fn take_restart(file: &Path, now: u64) -> bool {
 }
 
 /// The commands show mode refuses: those that write into the project folder, switch the
-/// project or start editing. Edits themselves (`node.*`, `history.*`, ...) are refused by the
+/// project or start editing, and the test aid that ends the GPU device. Edits themselves (`node.*`, `history.*`, ...) are refused by the
 /// locked project, so they need no entry here. `cook.play` is allowed on purpose: the editor's
 /// Play/Pause button is locked in show mode, so a mistaken click cannot stop the show, while
 /// a script or cue software can still pause and run the clock deliberately.
@@ -154,6 +161,7 @@ pub fn refuses(method: &str) -> bool {
         "osc.learn",
         "projector.match",
         "projector.flatfield",
+        "gpu.simulate_loss",
     ];
     if REFUSED.contains(&method) {
         return true;
@@ -164,6 +172,9 @@ pub fn refuses(method: &str) -> bool {
 
 /// The error for a command show mode refuses.
 pub fn refusal(method: &str) -> String {
+    if method == "gpu.simulate_loss" {
+        return format!("show mode is on: {method} would end the show; show.unlock ends show mode");
+    }
     format!("show mode is on: {method} would change the project; show.unlock ends show mode")
 }
 
@@ -261,9 +272,18 @@ mod tests {
 
     #[test]
     fn what_is_refused() {
-        for m in ["project.save", "project.open", "palette.set", "scan.capture", "scan.run", "osc.learn"] {
+        for m in [
+            "project.save",
+            "project.open",
+            "palette.set",
+            "scan.capture",
+            "scan.run",
+            "osc.learn",
+            "gpu.simulate_loss",
+        ] {
             assert!(refuses(m), "{m}");
         }
+        assert!(refusal("gpu.simulate_loss").contains("end the show"));
         for m in
             ["scan.status", "scan.cancel", "cook.play", "node.info", "osc.send", "dmx.status", "show.unlock"]
         {

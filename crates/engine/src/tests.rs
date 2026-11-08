@@ -837,6 +837,12 @@ fn geometry_through_commands() {
     assert!((eye[1].as_f64().unwrap() - y).abs() < 1e-6, "{free}");
     assert!((free["home"]["target"][2].as_f64().unwrap() - 0.5).abs() < 1e-6, "{free}");
     assert_eq!((free["width"].clone(), free["lines"].clone()), (json!(96), json!(10)));
+    // A relative file lands in the project folder, as node.snapshot's does.
+    let free =
+        f.call("view.free", json!({"path": "/r", "width": 32, "height": 18, "file": "shots/free.png"}));
+    let beside = f.engine.session().dir().join("shots").join("free.png");
+    assert_eq!(PathBuf::from(free["file"].as_str().unwrap()), beside, "{free}");
+    assert!(beside.is_file());
     let free = f.call(
         "view.free",
         json!({"path": "/both", "camera": {"eye": [0, 0, 9], "target": [0, 0, 0], "roll": 0, "fov": 30}}),
@@ -1298,6 +1304,73 @@ fn another_project_opens_while_the_engine_keeps_running() {
     assert!(std::fs::read_to_string(other.path().join(penumbra_project::FILE_NAME)).unwrap().contains("/n"));
     // No recent file is set in tests, so nothing is listed.
     assert_eq!(f.call("project.recent", json!({}))["recent"], json!([]));
+}
+
+#[test]
+fn work_for_a_project_is_refused_once_another_opened() {
+    let f = Fixture::new("switch-generation");
+    let other = ScratchDir::unborn("engine-switch-generation-b");
+    f.call("node.create", json!({"path": "/k", "kind": "chan.constant"}));
+    let (session, generation) = f.engine.current();
+    assert_eq!(f.engine.on_cook_in(generation, |_| 1).unwrap(), 1);
+    let id = session.doc().snapshot().resolve(&"/k".parse().unwrap()).unwrap();
+    f.call("project.new", json!({"dir": other.path()}));
+    let (_, now) = f.engine.current();
+    assert_eq!(now, generation + 1);
+    // The old project's session and node id would land in the new project's cooker.
+    let e = f.engine.on_cook_in(generation, |_| 1).unwrap_err();
+    assert!(e.0.contains("another project"), "{e}");
+    let e = crate::commands::cook_now_in(&f.engine, &session, generation, id, 0).unwrap_err();
+    assert!(e.0.contains("another project"), "{e}");
+    assert_eq!(f.engine.on_cook_in(now, |_| 2).unwrap(), 2);
+}
+
+#[test]
+fn a_panic_while_opening_a_project_opens_the_old_one_again() {
+    let f = Fixture::new("switch-panic");
+    f.call("node.create", json!({"path": "/n", "kind": "chan.noise"}));
+    f.call("node.watch", json!({"path": "/n"}));
+    let r = f.engine.replace_project(true, || panic!("a project that cannot be made"));
+    assert!(r.unwrap_err().0.contains("panic"));
+    assert_eq!(f.engine.generation(), 0);
+    // The cook thread runs again for the old project (a new one: what it watched is gone).
+    f.call("node.watch", json!({"path": "/n"}));
+    let cooks = || f.call("node.info", json!({"path": "/n"}))["status"]["cooks"].as_u64().unwrap_or(0);
+    let before = cooks();
+    eventually("/n to cook again", || cooks() > before + 2);
+}
+
+#[test]
+fn saving_the_state_goes_on_while_stepping() {
+    let f = Fixture::new("state-stepping");
+    f.call("state.config", json!({"restore_on_start": false}));
+    f.call("node.create", json!({"path": "/k", "kind": "chan.constant", "params": {"value0": 2.5}}));
+    f.call("node.create", json!({"path": "/t", "kind": "table.text", "params": {"text": "a b"}}));
+    f.call("node.watch", json!({"path": "/k"}));
+    f.call("node.watch", json!({"path": "/t"}));
+    eventually("a cook", || {
+        ["/k", "/t"].iter().all(|p| f.call("node.info", json!({"path": p}))["status"]["has_output"] == true)
+    });
+    f.call("node.lock", json!({"path": "/k"}));
+    f.call("node.lock", json!({"path": "/t"}));
+    // The cooker holds them as locked from its next pass on.
+    eventually("the locked nodes", || {
+        f.call("state.info", json!({}))["kept_now"].as_array().map(Vec::len) == Some(2)
+    });
+    f.call("cook.stepping", json!({"on": true}));
+    // No pass runs on its own now; the snapshot still has to go through.
+    let saved = f.call("state.save", json!({"timeout": 5}));
+    assert_eq!(saved["nodes"], json!(["/k", "/t"]), "{saved}");
+    f.call("state.save", json!({"timeout": 5}));
+    // Discarding writes the new file first, then keeps the one from before as `discarded`.
+    let state = f.engine.state_dir();
+    let done = f.call("state.discard", json!({}));
+    assert!(done["done"].as_str().unwrap().starts_with("started fresh"), "{done}");
+    assert!(!done["done"].as_str().unwrap().contains("not on disk"), "{done}");
+    assert!(state.join("latest.pnstate").exists() && state.join("discarded.pnstate").exists());
+    assert!(!state.join("previous.pnstate").exists());
+    let back = crate::state::read_path(&state.join("latest.pnstate"), &Default::default()).unwrap();
+    assert_eq!(back.nodes.iter().map(|n| n.path.as_str()).collect::<Vec<_>>(), ["/k", "/t"]);
 }
 
 #[test]
@@ -2594,6 +2667,9 @@ fn show_mode_locks_the_project_and_is_kept_in_its_file() {
         let e = f.fail(m, json!({}));
         assert!(e.contains("show mode is on"), "{m}: {e}");
     }
+    // The test aid that ends the GPU device would end the show.
+    let e = f.fail("gpu.simulate_loss", json!({"confirm": true}));
+    assert!(e.contains("would end the show"), "{e}");
     // Reading and the clock still work.
     f.call("node.info", json!({"path": "/c"}));
     f.call("cook.play", json!({"playing": true}));

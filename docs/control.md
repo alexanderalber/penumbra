@@ -77,6 +77,11 @@ JSON lines over TCP on `127.0.0.1`, port 9880 (`--port`, or `PENUMBRA_PORT` for 
 listens on the loopback interface only; a line that is not a JSON object with a `method`, or is
 longer than 4 MiB, gets one error reply and the connection is closed.
 
+At most 16 connections are open at once. A further one takes the place of the connection that
+has waited longest for its next request: that client gets an error line, then its connection
+closes. A connection in the middle of a request is never closed. When all 16 are busy, the new
+connection gets the error line instead.
+
 ## Taking turns
 
 Edits from the channel pass the same gate as the user's (see [who is
@@ -99,7 +104,8 @@ Commands that only look (`node.info`, `node.snapshot`, `chan.read`, `ui.screensh
 at any time.
 
 In [show mode](getting-started.md#show-mode) (`show.lock`) every editing command is refused
-until `show.unlock`, and so are commands that write into the project folder or switch projects.
+until `show.unlock`, and so are commands that write into the project folder or switch projects,
+and the test aid `gpu.simulate_loss`.
 Commands that only look, `cook.play` and OSC/DMX keep working. The exception among the edits:
 `chan.press` and `node.set` still set the `value` of a control shown on the show screen
 (`show` ticked), without an undo step; the reply says `"history": "none_in_show_mode"`.

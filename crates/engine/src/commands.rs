@@ -1161,20 +1161,23 @@ const SNAPSHOT_WAIT: Duration = Duration::from_secs(10);
 /// `output` with the node's status. Waits while a job is in flight, so the result is the
 /// current one rather than the previous file's.
 pub(crate) fn cook_now(e: &Engine, id: NodeId, output: u32) -> Result<(Option<Data>, Option<NodeStatus>)> {
-    cook_now_in(e, &e.session(), id, output)
+    let (session, generation) = e.current();
+    cook_now_in(e, &session, generation, id, output)
 }
 
-/// [`cook_now`] with the network of `session`.
+/// [`cook_now`] with the network of `session`, the project of `generation`
+/// ([`Engine::current`]); refused once another project opened.
 pub(crate) fn cook_now_in(
     e: &Engine,
     session: &Arc<Session>,
+    generation: u64,
     id: NodeId,
     output: u32,
 ) -> Result<(Option<Data>, Option<NodeStatus>)> {
     let deadline = Instant::now() + SNAPSHOT_WAIT;
     loop {
         let session = session.clone();
-        let (data, status) = e.on_cook(move |st| {
+        let (data, status) = e.on_cook_in(generation, move |st| {
             let net = session.doc().snapshot();
             let port = Port { node: id, output };
             st.cooker.cook_showing(&net, st.clock.now(), &[id], &[], &[port]);
@@ -1387,7 +1390,7 @@ fn render_frame(e: &Engine, p: &Json) -> Result<Json> {
         path: NodePath,
     }
     let a: A = args(p)?;
-    let session = e.session();
+    let (session, generation) = e.current();
     let net = session.doc().snapshot();
     let id = require(&net, &a.path)?;
     let desc = kind_at(e, &net, &a.path)?;
@@ -1397,7 +1400,7 @@ fn render_frame(e: &Engine, p: &Json) -> Result<Json> {
     }
     let source =
         node.inputs.first().copied().flatten().ok_or_else(|| format!("{} has no geo input", a.path))?;
-    let (data, _) = cook_now_in(e, &session, source.node, source.output)?;
+    let (data, _) = cook_now_in(e, &session, generation, source.node, source.output)?;
     let geo = data.as_ref().and_then(|d| d.get::<Geo>()).ok_or("its geo input has no geometry yet")?;
     let b = geo.bounds().ok_or("its geometry is empty")?;
     let size = |name: &str| node.param(desc, name).and_then(Value::as_f64).unwrap_or(1.0).max(1.0);
@@ -1587,9 +1590,10 @@ const RES_MEASURE_WAIT: Duration = Duration::from_secs(3);
 
 fn analyze(e: &Engine) -> Result<(Arc<Network>, Arc<Report>)> {
     let started = Instant::now();
+    let (session, generation) = e.current();
     loop {
-        let session = e.session().clone();
-        let (net, report) = e.on_cook(move |st| {
+        let session = session.clone();
+        let (net, report) = e.on_cook_in(generation, move |st| {
             st.renders.activate_for(RES_MEASURE_WAIT);
             st.renders.collect();
             let net = session.doc().snapshot();
@@ -1636,8 +1640,8 @@ fn res_optimize(e: &Engine, p: &Json) -> Result<Json> {
     let ids: Vec<NodeId> = changes.iter().map(|(n, _, _)| n.id).collect();
     let listed: Vec<Json> =
         changes.iter().map(|(n, from, to)| json!({"path": n.path, "from": from, "to": to})).collect();
-    let session = e.session().clone();
-    let pixel = e.on_cook(move |st| {
+    let (session, generation) = e.current();
+    let pixel = e.on_cook_in(generation, move |st| {
         penumbra_ops::res::pixel_params(&session.doc().snapshot(), session.types(), &st.cooker, &ids)
     })?;
     let ops = report.optimize_ops(&net, only.as_ref());
@@ -1670,8 +1674,8 @@ fn res_overlay(e: &Engine, p: &Json) -> Result<Json> {
 /// `res.overlay`: switches the resolution overlay on the mappers' and render nodes' pictures;
 /// returns how many of each there are.
 pub fn set_overlay(e: &Engine, on: bool) -> Result<(usize, usize)> {
-    let session = e.session().clone();
-    let counts = e.on_cook(move |st| {
+    let (session, generation) = e.current();
+    let counts = e.on_cook_in(generation, move |st| {
         let net = session.doc().snapshot();
         st.set_overlay(on, &net, session.types());
         let count = |kind: &str| net.nodes().filter(|n| n.kind == kind).count();
