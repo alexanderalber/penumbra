@@ -14,8 +14,9 @@ goes the other way: it sends channels and table rows. For OSC use `chan.osc_in` 
    - `tcp_connect`: penumbra connects to the server at `host` and `port`, and connects again when it drops.
    - `serial`: the port in `serial` (`COM3`, `/dev/ttyACM0`) at `baud`, 8 data bits, no parity, 1 stop bit.
      Empty takes the only port plugged in. `net.ports` lists them.
-2. Pick the `format`, see below. One message ends at `delimiter` (`\n` by default; a `\r` before it is ignored).
-   Over UDP each datagram is one message, and lines or JSON in one datagram are split at the delimiter too.
+2. Pick the `format`, see below. One message ends at `delimiter` (`\n` by default). For lines and JSON
+   a `\r` before the `\n` is ignored. Over UDP each datagram is one message, and lines in one datagram are
+   split at the delimiter too.
 3. Bind a param to a channel of the node.
 
 `udp` and `tcp_listen` take only programs on this machine until `lan` is on. Windows may then ask
@@ -27,11 +28,12 @@ once whether penumbra may use the network.
   channels. `names` renames the unnamed fields in order: `x y z` makes `1,2,3` into x, y and z, and `-`
   leaves a field out. A line splits at commas, semicolons or tabs, else at spaces (`split` picks one).
   A field that is not a number shows only in the table.
-- **json:** one value per message. `{"temp": 21.5, "acc": {"x": 1}, "xy": [0.5, 0.2]}` makes `acc_x`,
+- **json:** one value per line. Over UDP a whole datagram is one value (pretty-printed JSON
+  works); a datagram that does not parse as a whole is split into lines. `{"temp": 21.5, "acc": {"x": 1}, "xy": [0.5, 0.2]}` makes `acc_x`,
   `temp`, `xy_0` and `xy_1` (keys come in alphabetical order). `true` is 1, `false` 0. A top-level array
   `[1, 2]` makes `chan0` and `chan1`, named by `names` like lines.
-- **bytes:** each byte a channel, 0 to 255. On a stream, a message ends at the delimiter (empty for none),
-  else after `length` bytes, else with each read.
+- **bytes:** each byte a channel, 0 to 255. On a stream, a message ends at the delimiter. With an empty
+  `delimiter`, a message is `length` bytes, or with `length` 0 whatever one read brings.
 
 A channel holds its latest number until a message sets it again. The `table` output has the names
 as its first row, then the last `rows` messages, the newest last.
@@ -39,7 +41,8 @@ as its first row, then the last `rows` messages, the newest last.
 ## Sending
 
 `chan.data_out` sends its `chans` input as one message and every row of its `table` input as one
-more, at most `rate` times a second.
+more, at most `rate` times a second. One send carries at most 1024 messages; the node warns about
+table rows beyond.
 
 - **lines:** `0.5,1`, or `x:0.5,y:1` with `names` on; `separator` picks the comma. A table row is its cells joined.
 - **json:** `{"x":0.5,"y":1}`; a table row is an array, `["go",1]`.
@@ -57,7 +60,8 @@ message on a stream; UDP sends each message as one datagram without it. `tcp_con
 A `chan.data_in` and a `chan.data_out` with the same serial port, or the same `tcp_connect` host and
 port, share one connection. A request the out node sends gets its answer in the in node. A serial
 port opens at the `baud` of the node that opened it first; the other node warns when its own `baud`
-differs.
+differs. When the first node goes away or changes its `baud`, the port opens again at the `baud` of the
+oldest node left.
 
 ## When something goes wrong
 
@@ -65,7 +69,10 @@ differs.
   and counted; the node warns with the last reason.
 - **A peer that goes away** (a TCP server stopping, a USB cable pulled) leaves the channels at
   their last values with a warning. penumbra tries again after 0.5 s, then waits twice as long each
-  time, up to 5 s. A port another program holds is tried again every second.
+  time, up to 5 s. A serial port another program holds is tried the same way. A UDP or TCP port
+  another program listens on is tried again every second.
+- **A slow receiver:** a connection queues up to 1 MiB, a serial port about one second of bytes at its
+  `baud`. Messages beyond are dropped, and the node warns.
 - **Caps:** 1024 channels and 256 table columns per node, 1024 fields per message, 4096 characters
   per text cell. Names beyond are left out and counted.
 
@@ -75,8 +82,8 @@ differs.
 - `net.status`: every link with its readers and writers, open or not, the bound address (the port
   that `port` 0 got), who is connected, bytes and messages, drops with the last reason.
 
-Serial is written to the same tests as UDP and TCP (framing, parsing, reconnect logic), but has not
-been tried with a real device yet.
+Serial has not been tried with a real device yet. Its framing, parsing and reconnecting are the same
+code as for TCP, and that code is tested over loopback.
 
 ## Trying it without a device
 

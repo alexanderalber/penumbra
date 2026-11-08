@@ -9,7 +9,6 @@ publish.workspace = true
 
 [dependencies]
 penumbra-core.workspace = true
-log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serialport.workspace = true

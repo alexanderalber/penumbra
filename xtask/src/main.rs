@@ -49,8 +49,8 @@ const LINUX_LINK_OVERRIDES: &[&str] = &[
 /// `project` stay headless; `gpu`, `ops` and `engine` use wgpu but no UI. `system` is OS code and
 /// `video` decodes files, both without GPU or windows; `output` has windows (winit) but no egui.
 /// `script` and `pyhost` (Python) `audio` (input devices, analysis), `midi` (MIDI devices), `dmx` (serial port, UDP) and
-/// `camera` (capture devices), `track` (blob tracking) and `record` (movie encoding) are headless
-/// too.
+/// `camera` (capture devices), `track` (blob tracking), `record` (movie encoding) and `net`
+/// (serial ports, UDP and TCP) are headless too.
 const UI: &[&str] = &["egui", "eframe", "egui-wgpu", "egui-winit", "winit"];
 const EGUI: &[&str] = &["egui", "eframe", "egui-wgpu", "egui-winit"];
 const UI_AND_GPU: &[&str] = &["egui", "eframe", "egui-wgpu", "egui-winit", "winit", "wgpu"];

@@ -768,16 +768,11 @@ fn every_builtin_cooks_without_warnings() {
                 dmx_rx.send_to(&packet, ("127.0.0.1", dmx_in_port)).unwrap();
             }
             let data_in = kind == crate::data_io::DATA_IN;
-            if data_in {
-                dmx_rx
-                    .send_to(
-                        b"x=1
-",
-                        ("127.0.0.1", data_in_port),
-                    )
-                    .unwrap();
-            }
             rig.cook(&path);
+            if data_in {
+                // After the cook: the first cook opens the node's port, a later one reads the line.
+                dmx_rx.send_to(b"x=1\n", ("127.0.0.1", data_in_port)).unwrap();
+            }
             let s = rig.cooker.status(rig.id(&path)).unwrap();
             if s.has_output && !((dmx_in || data_in) && s.warning.is_some()) {
                 // One more pass at a new time, where an undeclared time read would show.

@@ -162,7 +162,13 @@ fn tcp_in_and_out_share_a_connection_and_survive_the_server_going_away() {
     eventually("the drop noticed", || warning(&f, "/in").contains("holding the last values"));
     assert_eq!(channel(&f, "/in", "reply"), Some(1.0));
     // The server comes back on the same port: the link reconnects and the latest goes out.
-    let server = TcpListener::bind(("127.0.0.1", port)).unwrap();
+    // The system may hold the port a moment after it was let go: try for a while.
+    let mut server = None;
+    eventually("the port to be free again", || {
+        server = TcpListener::bind(("127.0.0.1", port)).ok();
+        server.is_some()
+    });
+    let server = server.unwrap();
     let (conn, _) = server.accept().unwrap();
     conn.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     let mut lines = BufReader::new(conn.try_clone().unwrap()).lines();

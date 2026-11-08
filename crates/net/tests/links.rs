@@ -42,6 +42,16 @@ fn local_port(r: &Reader) -> u16 {
     port
 }
 
+/// Binds `to` again after it was let go, trying for a while: the system may hold it briefly.
+fn rebind(to: SocketAddr) -> TcpListener {
+    let mut listener = None;
+    eventually("the port to be free again", || {
+        listener = TcpListener::bind(to).ok();
+        listener.is_some()
+    });
+    listener.unwrap()
+}
+
 fn value(r: &Reader, name: &str) -> Option<f64> {
     r.store().values.iter().find(|(n, _)| n == name).map(|(_, v)| *v)
 }
@@ -110,11 +120,52 @@ fn a_flood_of_garbage_over_udp_stays_bounded() {
         }
         tx.send_to(&packet, ("127.0.0.1", port)).ok();
     }
-    tx.send_to(b"{\"last\": 1}", ("127.0.0.1", port)).unwrap();
-    eventually("the last one", || value(&r, "last") == Some(1.0));
+    // The burst may overflow the socket's buffer: send the last one until it arrives.
+    eventually("the last one", || {
+        tx.send_to(b"{\"last\": 1}", ("127.0.0.1", port)).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        value(&r, "last") == Some(1.0)
+    });
     let s = r.store();
     assert!(s.rows.len() <= 4 && s.values.len() <= penumbra_net::parse::MAX_CHANNELS);
     assert!(s.counts.malformed > 0);
+    drop(r);
+    hub.shutdown();
+}
+
+#[test]
+fn dropping_a_link_and_opening_it_again_does_not_wait_for_its_thread() {
+    let hub = Hub::new();
+    let server = TcpListener::bind("127.0.0.1:0").unwrap();
+    let to = server.local_addr().unwrap();
+    let (_, wake) = wakes();
+    let r = hub.reader("/in", Endpoint::TcpConnect(to), Decode::default(), wake.clone()).unwrap();
+    let (conn, _) = server.accept().unwrap();
+    eventually("connected", || r.status().open);
+    // A UDP link waits up to 100 ms in a receive: dropping it and opening the same port again
+    // must not wait for that, and the new link binds once the old one let go.
+    let port = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let udp = Endpoint::Udp { lan: false, port };
+    let mut u = hub.reader("/u", udp.clone(), Decode::default(), wake.clone()).unwrap();
+    for _ in 0..10 {
+        eventually("bound", || u.status().open);
+        let start = Instant::now();
+        drop(u);
+        u = hub.reader("/u", udp.clone(), Decode::default(), wake.clone()).unwrap();
+        assert!(start.elapsed() < Duration::from_millis(50), "{:?}", start.elapsed());
+    }
+    eventually("bound at last", || u.status().open);
+    drop(u);
+    let start = Instant::now();
+    drop(r);
+    let again = hub.reader("/in", Endpoint::TcpConnect(to), Decode::default(), wake).unwrap();
+    assert!(start.elapsed() < Duration::from_millis(50), "{:?}", start.elapsed());
+    drop(conn);
+    let (mut conn, _) = server.accept().unwrap();
+    conn.write_all(b"v=2\n").unwrap();
+    eventually("the new link to read", || value(&again, "v") == Some(2.0));
+    drop(again);
+    hub.shutdown();
 }
 
 #[test]
@@ -161,6 +212,8 @@ fn a_tcp_listener_reads_every_client_and_writes_to_all() {
     // A client that goes away is let go.
     drop(a);
     eventually("one client fewer", || r.status().peers.len() == 2);
+    drop((r, w));
+    hub.shutdown();
 }
 
 #[test]
@@ -188,6 +241,8 @@ fn a_tcp_listener_refuses_clients_beyond_its_cap_and_survives_garbage() {
     assert_eq!(r.store().counts.too_long, 1);
     clients.clear();
     eventually("the clients gone", || r.status().peers.is_empty());
+    drop(r);
+    hub.shutdown();
 }
 
 #[test]
@@ -237,11 +292,13 @@ fn a_tcp_peer_that_is_not_there_is_an_error_and_retried() {
     eventually("the error", || r.status().error.is_some_and(|e| e.contains("cannot connect")));
     assert!(woken.load(Ordering::Relaxed) >= 1);
     // It comes up later: the link finds it.
-    let server = TcpListener::bind(to).unwrap();
+    let server = rebind(to);
     let (mut conn, _) = server.accept().unwrap();
     conn.write_all(b"v=1\n").unwrap();
     eventually("the value", || value(&r, "v") == Some(1.0));
     assert!(r.status().error.is_none());
+    drop(r);
+    hub.shutdown();
 }
 
 #[test]
@@ -264,6 +321,8 @@ fn udp_out_sends_datagrams_without_a_delimiter() {
     assert!(
         hub.reader("/x", Endpoint::UdpTo(rx.local_addr().unwrap()), Decode::default(), wakes().1).is_err()
     );
+    drop(w);
+    hub.shutdown();
 }
 
 #[test]
@@ -276,4 +335,6 @@ fn a_taken_port_is_an_error_until_it_is_free() {
     eventually("the error", || r.status().error.is_some_and(|e| e.contains("cannot listen")));
     drop(holder);
     eventually("listening", || r.status().open);
+    drop(r);
+    hub.shutdown();
 }

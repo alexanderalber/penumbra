@@ -17,17 +17,23 @@
 //!   it fails or the peer goes away.
 //!
 //! Every reader cuts its own messages ([`Decode`]) and keeps its own [`Store`]; the link's
-//! thread parses, so a reader's cook only copies the store. A new connection (a client
+//! thread parses (before it locks the readers), so a reader's cook only copies the store. A new connection (a client
 //! connecting, a reconnect, a serial port opened again) first gets each writer's latest message.
 //! Sending while nothing is connected drops the message and counts it. What waits to be written
-//! to one connection is capped at [`MAX_QUEUED`] bytes; beyond, messages are dropped and
-//! counted. Nothing here blocks the caller, and a panic on a link's thread ends only that link.
+//! to one connection is capped at [`MAX_QUEUED`] bytes, for a serial port at about a second of
+//! bytes at its bit rate; beyond, messages are dropped and counted. Nothing here blocks the
+//! caller: a link that ends is joined by the thread of the next link on the same endpoint, never
+//! by the caller. A panic on a link's thread ends only that link.
+//!
+//! A serial port opens at the bit rate of the first handle. When no handle asks for that rate
+//! any more (the handle that asked for it left), the port opens again at the rate of the oldest
+//! handle left.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -36,7 +42,7 @@ use penumbra_core::lock;
 use serde::Serialize;
 
 use crate::frame::{Framer, Frames};
-use crate::parse::{Decode, Store};
+use crate::parse::{self, Decode, Parsed, Store};
 
 /// Clients one TCP listener takes at once; more are closed at once and counted.
 pub const MAX_CLIENTS: usize = 16;
@@ -61,6 +67,10 @@ const WRITE_TIMEOUT: Duration = Duration::from_millis(500);
 const RETRY: Duration = Duration::from_secs(1);
 /// Bytes read at once.
 const READ_CHUNK: usize = 16 * 1024;
+/// How long one pass of a connection's loop may spend writing before it reads again.
+const WRITE_BUDGET: Duration = Duration::from_millis(20);
+/// Rows of a table one writer sends per call at most.
+pub const MAX_MESSAGES: usize = 1024;
 
 /// Where a link reads or writes.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -84,10 +94,22 @@ impl Endpoint {
     }
 
     /// The link this endpoint shares: a serial port is one link whatever bit rate is asked.
+    /// Windows port names do not depend on case, so `com3` is `COM3` there.
     fn key(&self) -> Endpoint {
         match self {
-            Endpoint::Serial { name, .. } => Endpoint::Serial { name: name.trim().to_string(), baud: 0 },
+            Endpoint::Serial { name, .. } => {
+                let name = name.trim();
+                let name = if cfg!(windows) { name.to_ascii_uppercase() } else { name.to_string() };
+                Endpoint::Serial { name, baud: 0 }
+            }
             other => other.clone(),
+        }
+    }
+
+    fn baud(&self) -> u32 {
+        match self {
+            Endpoint::Serial { baud, .. } => *baud,
+            _ => 0,
         }
     }
 }
@@ -100,10 +122,8 @@ impl fmt::Display for Endpoint {
             Endpoint::UdpTo(a) => write!(f, "udp to {a}"),
             Endpoint::TcpListen { lan, port } => write!(f, "tcp port {port} ({})", reach(*lan)),
             Endpoint::TcpConnect(a) => write!(f, "tcp to {a}"),
-            Endpoint::Serial { name, baud } if name.is_empty() => {
-                write!(f, "serial (the only port) at {baud}")
-            }
-            Endpoint::Serial { name, baud } => write!(f, "serial {name} at {baud}"),
+            Endpoint::Serial { name, .. } if name.is_empty() => write!(f, "serial (the only port)"),
+            Endpoint::Serial { name, .. } => write!(f, "serial {name}"),
         }
     }
 }
@@ -112,7 +132,7 @@ impl fmt::Display for Endpoint {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Status {
     pub endpoint: String,
-    /// The readers' and writers' labels (node paths), in the order they came.
+    /// The readers' and writers' labels (the nodes' names), in the order they came.
     pub readers: Vec<String>,
     pub writers: Vec<String>,
     /// Bound (listening), connected, or the serial port open.
@@ -149,11 +169,14 @@ struct ReaderSlot {
     wake: Arc<dyn Fn() + Send + Sync>,
     /// A wake is on its way and the reader has not read since: no second one.
     woken: Arc<AtomicBool>,
+    /// The serial bit rate asked for (0 elsewhere).
+    baud: u32,
 }
 
 struct WriterSlot {
     label: String,
     order: u64,
+    baud: u32,
     /// The last message sent, with its delimiter, for a connection that opens later.
     latest: Vec<u8>,
 }
@@ -174,6 +197,10 @@ struct Link {
     stop: AtomicBool,
     status: Mutex<Status>,
     next_conn: AtomicU64,
+    /// The serial bit rate in use.
+    baud: AtomicU32,
+    /// The serial port has to open again, at a new bit rate.
+    reopen: AtomicBool,
 }
 
 type Running = (Arc<Link>, Option<JoinHandle<()>>);
@@ -209,7 +236,7 @@ impl Hub {
     }
 
     /// A reader on `endpoint`, starting the link if it is the first handle. `label` names it in
-    /// the status (a node path); `wake` is called when a message arrived or the link opened,
+    /// the status (a node's name); `wake` is called when a message arrived or the link opened,
     /// closed or failed, at most once between two [`Reader::store`] calls.
     pub fn reader(
         &self,
@@ -230,6 +257,7 @@ impl Hub {
             store: Store::default(),
             wake,
             woken: Arc::new(AtomicBool::new(false)),
+            baud: endpoint.baud(),
         };
         let link = self.link(&endpoint, |l| {
             lock(&l.readers).insert(id, slot);
@@ -243,7 +271,8 @@ impl Hub {
             return Err("a UDP port to listen on only receives; send to an address".to_string());
         }
         let id = self.inner.next.fetch_add(1, Ordering::Relaxed);
-        let slot = WriterSlot { label: label.to_string(), order: id, latest: Vec::new() };
+        let slot =
+            WriterSlot { label: label.to_string(), order: id, baud: endpoint.baud(), latest: Vec::new() };
         let link = self.link(&endpoint, |l| {
             lock(&l.writers).insert(id, slot);
         })?;
@@ -276,17 +305,16 @@ impl Hub {
             add(l);
             return Ok(l.clone());
         }
-        // A link on the same endpoint that is still ending holds its port: wait for it (it looks
-        // at its stop flag at least every 100 ms).
+        // A link on the same endpoint that is still ending holds its port. The new link's thread
+        // waits for it before it binds or opens (the old one looks at its stop flag at least every
+        // 100 ms); the caller never does.
         let old: Vec<JoinHandle<()>> = {
             let mut stopping = lock(&self.inner.stopping);
+            stopping.retain(|(_, h)| !h.is_finished());
             let (same, rest): (Vec<_>, Vec<_>) = stopping.drain(..).partition(|(e, _)| *e == key);
             *stopping = rest;
             same.into_iter().map(|(_, h)| h).collect()
         };
-        for h in old {
-            h.join().ok();
-        }
         let udp_out = match endpoint {
             Endpoint::UdpTo(to) => Some(udp_sender(*to)?),
             _ => None,
@@ -298,22 +326,30 @@ impl Hub {
             outboxes: Mutex::new(BTreeMap::new()),
             udp_out,
             stop: AtomicBool::new(false),
-            status: Mutex::new(Status { endpoint: endpoint.to_string(), ..Status::default() }),
+            status: Mutex::new(Status { endpoint: key.to_string(), ..Status::default() }),
             next_conn: AtomicU64::new(1),
+            baud: AtomicU32::new(endpoint.baud()),
+            reopen: AtomicBool::new(false),
         });
-        add(&link);
         let handle = if link.udp_out.is_some() {
+            // A UDP sender holds no port others want; its old threads are none.
             lock(&link.status).open = true;
             None
         } else {
             let run_link = link.clone();
             Some(
                 std::thread::Builder::new()
-                    .name(format!("net {endpoint}"))
-                    .spawn(move || run(&run_link))
-                    .map_err(|e| format!("cannot start a thread for {endpoint}: {e}"))?,
+                    .name(format!("net {key}"))
+                    .spawn(move || {
+                        for h in old {
+                            h.join().ok();
+                        }
+                        run(&run_link);
+                    })
+                    .map_err(|e| format!("cannot start a thread for {key}: {e}"))?,
             )
         };
+        add(&link);
         links.insert(key, (link.clone(), handle));
         Ok(link)
     }
@@ -360,9 +396,14 @@ fn udp_sender(to: SocketAddr) -> Result<UdpSocket, String> {
 fn release(hub: &Weak<Inner>, link: &Arc<Link>) {
     let empty = || lock(&link.readers).is_empty() && lock(&link.writers).is_empty();
     if !empty() {
+        link.rebalance_baud();
         return;
     }
-    let Some(inner) = hub.upgrade() else { return };
+    let Some(inner) = hub.upgrade() else {
+        // The hub is gone: nobody will join the thread, but it must still end.
+        link.stop.store(true, Ordering::Release);
+        return;
+    };
     let key = link.endpoint.key();
     let mut links = lock(&inner.links);
     // Another handle may have joined in between; only an empty link stops, and only this one.
@@ -371,8 +412,10 @@ fn release(hub: &Weak<Inner>, link: &Arc<Link>) {
         && let Some((l, handle)) = links.remove(&key)
     {
         l.stop.store(true, Ordering::Release);
+        let mut stopping = lock(&inner.stopping);
+        stopping.retain(|(_, h)| !h.is_finished());
         if let Some(h) = handle {
-            lock(&inner.stopping).push((key, h));
+            stopping.push((key, h));
         }
     }
 }
@@ -450,6 +493,10 @@ pub struct Sent {
     /// Messages dropped, with the last reason.
     pub dropped: usize,
     pub reason: Option<String>,
+    /// Some connection's queue was full and did not get the messages: send them again.
+    pub full: bool,
+    /// Nothing was connected (normal for a TCP listener without clients).
+    pub unconnected: bool,
 }
 
 impl Writer {
@@ -475,7 +522,13 @@ impl Writer {
                 let r = if m.len() > MAX_DATAGRAM {
                     Err(format!("a message of {} bytes does not fit a datagram", m.len()))
                 } else {
-                    socket.send_to(m, to).map_err(|e| e.to_string())
+                    socket.send_to(m, to).map_err(|e| {
+                        if e.kind() == ErrorKind::WouldBlock {
+                            "the network is busy: a datagram was not sent".to_string()
+                        } else {
+                            e.to_string()
+                        }
+                    })
                 };
                 match r {
                     Ok(n) => {
@@ -502,15 +555,23 @@ impl Writer {
             payload.extend_from_slice(m);
             payload.extend_from_slice(delimiter);
         }
-        if payload.len() > MAX_QUEUED {
+        let cap = self.link.queue_cap();
+        if payload.len() > cap {
             out.dropped = messages.len();
-            out.reason = Some(format!("{} bytes at once is more than a connection queues", payload.len()));
+            out.reason = Some(match self.link.endpoint {
+                Endpoint::Serial { .. } => format!(
+                    "{} bytes at once take more than a second at {} baud",
+                    payload.len(),
+                    self.link.baud.load(Ordering::Relaxed)
+                ),
+                _ => format!("{} bytes at once is more than a connection queues", payload.len()),
+            });
         } else {
             let mut boxes = lock(&self.link.outboxes);
             let mut reached = 0;
             let mut full = 0;
             for b in boxes.values_mut() {
-                if b.bytes.len() + payload.len() > MAX_QUEUED {
+                if b.bytes.len() + payload.len() > cap {
                     full += 1;
                 } else {
                     b.bytes.extend(payload.iter().copied());
@@ -524,8 +585,17 @@ impl Writer {
                 out.dropped = messages.len();
             }
             if full > 0 {
-                out.reason = Some("the other side does not read fast enough: messages dropped".to_string());
+                out.full = true;
+                out.reason = Some(if reached > 0 {
+                    format!(
+                        "{full} of {} connections do not read fast enough: messages dropped there",
+                        full + reached
+                    )
+                } else {
+                    "the other side does not read fast enough: messages dropped".to_string()
+                });
             } else if reached == 0 {
+                out.unconnected = true;
                 out.reason = Some("not connected".to_string());
             }
             if let Some(w) = lock(&self.link.writers).get_mut(&self.id) {
@@ -550,6 +620,36 @@ impl Drop for Writer {
 }
 
 impl Link {
+    /// Bytes one connection may queue: about a second of bytes for a serial port (10 bits a
+    /// byte), else [`MAX_QUEUED`].
+    fn queue_cap(&self) -> usize {
+        match self.endpoint {
+            Endpoint::Serial { .. } => usize::try_from(self.baud.load(Ordering::Relaxed) / 10)
+                .unwrap_or(MAX_QUEUED)
+                .clamp(64, MAX_QUEUED),
+            _ => MAX_QUEUED,
+        }
+    }
+
+    /// A serial port opens again at the rate of the oldest handle when none asks for the rate in
+    /// use any more.
+    fn rebalance_baud(&self) {
+        if !matches!(self.endpoint, Endpoint::Serial { .. }) {
+            return;
+        }
+        let mut asked: Vec<(u64, u32)> = lock(&self.readers).values().map(|r| (r.order, r.baud)).collect();
+        asked.extend(lock(&self.writers).values().map(|w| (w.order, w.baud)));
+        asked.sort();
+        let current = self.baud.load(Ordering::Acquire);
+        if asked.is_empty() || asked.iter().any(|(_, b)| *b == current) {
+            return;
+        }
+        if let Some((_, b)) = asked.first() {
+            self.baud.store(*b, Ordering::Release);
+            self.reopen.store(true, Ordering::Release);
+        }
+    }
+
     /// The port a listener got.
     fn bound_port(&self) -> Option<u16> {
         let st = lock(&self.status);
@@ -607,25 +707,49 @@ impl Link {
         !self.stopped()
     }
 
-    /// Bytes from connection `conn` (a datagram when `datagram`).
+    /// Bytes from connection `conn` (a datagram when `datagram`). Framing (cheap) happens under
+    /// the readers' lock, parsing outside it, so a cook reading a store never waits for a parse.
     fn incoming(&self, conn: u64, bytes: &[u8], datagram: bool) {
-        let mut wakers = Vec::new();
+        // Per reader: its decode as it was, and the messages cut for it.
+        let mut cut: Vec<(u64, Decode, Vec<Vec<u8>>, u64)> = Vec::new();
         {
             let mut readers = lock(&self.readers);
-            for r in readers.values_mut() {
-                let before = r.store.version;
+            for (id, r) in readers.iter_mut() {
                 if datagram {
-                    r.store.datagram(bytes, &r.decode);
+                    cut.push((*id, r.decode.clone(), vec![bytes.to_vec()], 0));
                 } else {
                     let decode = &r.decode;
                     let framer = r.framers.entry(conn).or_insert_with(|| decode.framer());
                     let mut frames = Frames::default();
                     framer.push(bytes, &mut frames);
-                    for m in &frames.messages {
-                        r.store.take(m, &r.decode);
+                    if !frames.messages.is_empty() || frames.too_long > 0 {
+                        cut.push((*id, r.decode.clone(), frames.messages, frames.too_long));
                     }
-                    r.store.too_long(frames.too_long);
                 }
+            }
+        }
+        let parsed: Vec<(u64, Decode, Vec<Parsed>, u64)> = cut
+            .into_iter()
+            .map(|(id, d, messages, too_long)| {
+                let p = if datagram {
+                    messages.iter().flat_map(|m| parse::parse_datagram(m, &d)).collect()
+                } else {
+                    messages.iter().map(|m| parse::parse(m, &d)).collect()
+                };
+                (id, d, p, too_long)
+            })
+            .collect();
+        let mut wakers = Vec::new();
+        {
+            let mut readers = lock(&self.readers);
+            for (id, d, messages, too_long) in parsed {
+                // A reader that left or changed its decode meanwhile does not take these.
+                let Some(r) = readers.get_mut(&id).filter(|r| r.decode == d) else { continue };
+                let before = r.store.version;
+                for p in messages {
+                    r.store.apply_parsed(p, &d);
+                }
+                r.store.too_long(too_long);
                 if r.store.version != before && !r.woken.swap(true, Ordering::AcqRel) {
                     wakers.push(r.wake.clone());
                 }
@@ -637,16 +761,19 @@ impl Link {
         }
     }
 
-    /// Opens an outbox for a new connection, holding each writer's latest message.
+    /// Opens an outbox for a new connection, holding each writer's latest message. The outboxes
+    /// are locked first, so a send at the same time reaches either the latest or the new box.
     fn open_conn(&self) -> u64 {
         let conn = self.next_conn.fetch_add(1, Ordering::Relaxed);
+        let cap = self.queue_cap();
+        let mut boxes = lock(&self.outboxes);
         let mut b = Outbox::default();
         for w in lock(&self.writers).values() {
-            if b.bytes.len() + w.latest.len() <= MAX_QUEUED {
+            if b.bytes.len() + w.latest.len() <= cap {
                 b.bytes.extend(w.latest.iter().copied());
             }
         }
-        lock(&self.outboxes).insert(conn, b);
+        boxes.insert(conn, b);
         conn
     }
 
@@ -666,13 +793,15 @@ fn run(link: &Arc<Link>) {
         Endpoint::UdpTo(_) => {}
         Endpoint::TcpListen { lan, port } => tcp_listen(link, *lan, *port),
         Endpoint::TcpConnect(to) => tcp_connect(link, *to),
-        Endpoint::Serial { name, baud } => serial(link, name, *baud),
+        Endpoint::Serial { name, .. } => serial(link, name),
     }));
     if outcome.is_err() {
         link.set_status(|st| {
             st.open = false;
-            st.error =
-                Some("the link's thread failed; remove and add the node to start it again".to_string());
+            st.error = Some(
+                "this connection failed; it starts again when every node using it changes its params or is removed"
+                    .to_string(),
+            );
         });
     }
 }
@@ -742,11 +871,13 @@ fn pump<S: Read + Write>(link: &Link, conn: u64, s: &mut S) -> Result<(), String
     let mut buf = vec![0u8; READ_CHUNK];
     let mut chunk: Vec<u8> = Vec::new();
     loop {
-        if link.stopped() {
+        if link.stopped() || link.reopen.load(Ordering::Acquire) {
             return Ok(());
         }
-        // Write what waits, as much as goes without blocking for long.
-        loop {
+        // Write what waits, for a short while at most, so reading goes on even while a slow
+        // serial port has a full queue.
+        let started = Instant::now();
+        while started.elapsed() < WRITE_BUDGET {
             if chunk.is_empty() {
                 let mut boxes = lock(&link.outboxes);
                 let Some(b) = boxes.get_mut(&conn) else { break };
@@ -886,8 +1017,11 @@ fn reconnecting<S: Read + Write>(
                         st.error = Some(e);
                     }
                 });
-                // A connection that worked starts the backoff over.
+                // A connection that worked starts the backoff over; a new bit rate opens at once.
                 backoff = BACKOFF_MIN;
+                if link.reopen.swap(false, Ordering::AcqRel) {
+                    continue;
+                }
             }
             Err(e) => {
                 link.set_status(|st| {
@@ -936,8 +1070,10 @@ fn serial_name(name: &str) -> Result<String, String> {
     }
 }
 
-fn serial(link: &Link, name: &str, baud: u32) {
+fn serial(link: &Link, name: &str) {
     reconnecting(link, || {
+        link.reopen.store(false, Ordering::Release);
+        let baud = link.baud.load(Ordering::Acquire);
         let name = serial_name(name.trim())?;
         let mut port = serialport::new(&name, baud)
             .data_bits(serialport::DataBits::Eight)
@@ -962,8 +1098,31 @@ mod tests {
         let a = Endpoint::Serial { name: " COM3".into(), baud: 9600 };
         let b = Endpoint::Serial { name: "COM3".into(), baud: 115_200 };
         assert_eq!(a.key(), b.key());
+        if cfg!(windows) {
+            assert_eq!(Endpoint::Serial { name: "com3".into(), baud: 1 }.key(), b.key());
+        }
         assert!(Endpoint::Udp { lan: false, port: 1 }.datagrams());
         assert!(!Endpoint::TcpConnect("127.0.0.1:1".parse().unwrap()).datagrams());
-        assert_eq!(b.to_string(), "serial COM3 at 115200");
+        assert_eq!(b.to_string(), "serial COM3");
+    }
+
+    #[test]
+    fn a_serial_link_takes_the_rate_of_the_oldest_handle_when_its_own_leaves() {
+        let hub = Hub::new();
+        let w = |name: &str, baud| {
+            hub.writer(name, Endpoint::Serial { name: "COM_PENUMBRA_NONE".into(), baud }).unwrap()
+        };
+        let a = w("a", 9600);
+        let b = w("b", 115_200);
+        let c = w("c", 115_200);
+        assert_eq!(a.link.baud.load(Ordering::Relaxed), 9600);
+        // A serial queue holds about a second of bytes.
+        assert_eq!(a.link.queue_cap(), 960);
+        drop(a);
+        assert_eq!(b.link.baud.load(Ordering::Relaxed), 115_200);
+        drop(b);
+        assert_eq!(c.link.baud.load(Ordering::Relaxed), 115_200);
+        drop(c);
+        hub.shutdown();
     }
 }

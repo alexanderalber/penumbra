@@ -62,7 +62,7 @@ fn format_param() -> ParamSpec {
     ParamSpec::choice("format", &["lines", "json", "bytes"])
         .doc("What one message is")
         .choice_doc("lines", "a line of text: numbers split by commas or spaces, or `name:value`")
-        .choice_doc("json", "one JSON object or array per line (per datagram over UDP)")
+        .choice_doc("json", "one JSON value per line; over UDP a whole datagram, or each line of it")
         .choice_doc("bytes", "raw bytes, each 0 to 255")
 }
 
@@ -70,17 +70,15 @@ fn common(desc: NodeDesc, out: bool) -> NodeDesc {
     desc.param(ParamSpec::text("host", if out { "127.0.0.1" } else { "" }).doc(
         "IP address of the other side, or localhost; `10.0.0.5:7000` sets the port too. Names are not looked up",
     ))
-    .param(
-        ParamSpec::int("port", DEFAULT_PORT)
-            .clamp(0.0, 65535.0)
-            .range(1024.0, 65535.0)
-            .special(0.0, "any free port")
-            .doc(if out {
-                "UDP or TCP port of the receiver; for tcp_listen, the port to listen on"
-            } else {
-                "UDP or TCP port to listen on (net.status says which one 0 got); for tcp_connect, the server's port"
-            }),
-    )
+    .param(if out {
+        ParamSpec::int("port", DEFAULT_PORT).clamp(0.0, 65535.0).range(1024.0, 65535.0).doc(
+            "UDP or TCP port of the receiver; for tcp_listen, the port to listen on (there 0 picks any free port)",
+        )
+    } else {
+        ParamSpec::int("port", DEFAULT_PORT).clamp(0.0, 65535.0).range(1024.0, 65535.0).special(0.0, "any free port").doc(
+            "UDP or TCP port to listen on (net.status says which one 0 got); for tcp_connect, the server's port",
+        )
+    })
     .param(ParamSpec::bool("lan", false).doc(
         "Also take connections from other devices: listens on every network interface. Off: this machine only",
     ))
@@ -119,11 +117,11 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
              `-` leaves a field out. Fields past the names are chan3, chan4 and so on",
         ))
         .param(ParamSpec::text("delimiter", "\\n").doc(
-            "Where a message ends: `\\n` (a `\\r` before it is ignored), `\\r`, `;`, `\\xff`. Over UDP a datagram is a message; \
-             lines and JSON in one are split at it too",
+            "Where a message ends: `\\n`, `\\r`, `;`, `\\xff`. For lines and JSON a `\\r` before the `\\n` is ignored. \
+             Over UDP a datagram is a message; lines in one are split at it too",
         ))
-        .param(ParamSpec::int("length", 0).clamp(0.0, 65536.0).range(0.0, 64.0).special(0.0, "by delimiter").more().doc(
-            "For bytes on a stream with no delimiter: every this many bytes is one message. 0 with no delimiter takes each read as it comes",
+        .param(ParamSpec::int("length", 0).clamp(0.0, 65536.0).range(0.0, 64.0).special(0.0, "each read").more().doc(
+            "For bytes on a stream with an empty `delimiter`: every this many bytes is one message. 0 takes each read as it comes",
         ))
         .param(
             ParamSpec::int("rows", 16)
@@ -363,6 +361,8 @@ impl Operator for DataIn {
             warnings.push(format!("{e}; holding the last values"));
         } else if c.messages == 0 && status.open {
             warnings.push(format!("nothing received yet on {endpoint}"));
+        } else if !status.open {
+            warnings.push(format!("opening {endpoint}"));
         }
         if !warnings.is_empty() {
             cx.warn(warnings.join("; "));
@@ -393,7 +393,15 @@ struct DataOut {
     last_full: Option<f64>,
     /// What was sent last.
     sent: Vec<Vec<u8>>,
+    /// Why the last send dropped messages; shown until a send goes through.
+    dropped: Option<String>,
+    /// The last cook's warning, shown again on the frames that send nothing (a warning lasts
+    /// one cook).
+    warning: Option<String>,
 }
+
+/// Messages one cook sends at most: a table's rows beyond are left out and counted.
+pub const MAX_MESSAGES: usize = penumbra_net::hub::MAX_MESSAGES;
 
 fn separator_of(text: &str) -> &'static str {
     match text {
@@ -425,6 +433,9 @@ impl Operator for DataOut {
             && now - last < period * 0.9
             && !cx.params_changed()
         {
+            if let Some(w) = &self.warning {
+                cx.warn(w.clone());
+            }
             return Ok(Cooked::Outputs(Vec::new()));
         }
         self.last = Some(now);
@@ -444,8 +455,11 @@ impl Operator for DataOut {
                 Format::Bytes => encode::chans_bytes(&values),
             });
         }
+        let mut left_out = 0;
         if let Some(table) = cx.input_as::<Table>(1) {
-            for row in table.rows() {
+            let room = MAX_MESSAGES.saturating_sub(messages.len());
+            left_out = table.rows().len().saturating_sub(room);
+            for row in table.rows().iter().take(room) {
                 messages.push(match format {
                     Format::Lines => encode::row_line(row, separator),
                     Format::Json => encode::row_json(row),
@@ -457,20 +471,31 @@ impl Operator for DataOut {
         let send = cx.text("send")? == "always" || refresh || cx.params_changed() || messages != self.sent;
         let Some(writer) = &self.writer else { return Ok(Cooked::Outputs(Vec::new())) };
         let mut warnings = Vec::new();
+        if left_out > 0 {
+            warnings.push(format!(
+                "{left_out} table rows left out: one send carries {MAX_MESSAGES} messages at most"
+            ));
+        }
         if send {
             if endpoint.datagrams() {
                 self.last_full = Some(now);
             }
             let r = writer.send(&messages, &delimiter);
-            if r.dropped > 0 {
-                let listening_alone = matches!(endpoint, Endpoint::TcpListen { .. })
-                    && r.reason.as_deref() == Some("not connected");
-                if !listening_alone {
-                    let n = u64::try_from(r.dropped).unwrap_or(u64::MAX);
-                    warnings.push(format!("{} dropped: {}", count_messages(n), r.reason.unwrap_or_default()));
+            let listening_alone = matches!(endpoint, Endpoint::TcpListen { .. }) && r.unconnected;
+            self.dropped = match &r.reason {
+                Some(why) if !listening_alone => {
+                    let n = u64::try_from(r.dropped.max(1)).unwrap_or(u64::MAX);
+                    Some(format!("{} dropped: {why}", count_messages(n)))
                 }
+                _ => None,
+            };
+            // A connection whose queue was full did not get them: try again at the next send.
+            if !r.full {
+                self.sent = messages;
             }
-            self.sent = messages;
+        }
+        if let Some(d) = &self.dropped {
+            warnings.push(d.clone());
         }
         let status = writer.status();
         if let Some(w) = baud_clash(&endpoint, status.baud) {
@@ -479,8 +504,9 @@ impl Operator for DataOut {
         if let Some(e) = status.error.filter(|_| !status.open) {
             warnings.push(e);
         }
-        if !warnings.is_empty() {
-            cx.warn(warnings.join("; "));
+        self.warning = (!warnings.is_empty()).then(|| warnings.join("; "));
+        if let Some(w) = &self.warning {
+            cx.warn(w.clone());
         }
         Ok(Cooked::Outputs(Vec::new()))
     }

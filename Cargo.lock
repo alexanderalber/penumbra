@@ -3539,7 +3539,6 @@ dependencies = [
 name = "penumbra-net"
 version = "0.9.0"
 dependencies = [
- "log",
  "penumbra-core",
  "serde",
  "serde_json",

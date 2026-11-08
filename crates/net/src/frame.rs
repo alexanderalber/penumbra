@@ -29,7 +29,7 @@ pub fn delimiter(text: &str) -> Result<Vec<u8>, String> {
                 let hex: String = chars.by_ref().take(2).collect();
                 let b = u8::from_str_radix(&hex, 16)
                     .ok()
-                    .filter(|_| hex.len() == 2)
+                    .filter(|_| hex.len() == 2 && hex.chars().all(|c| c.is_ascii_hexdigit()))
                     .ok_or_else(|| format!("`\\x{hex}` is not a byte: write two hex digits, \\x0d"))?;
                 out.push(b);
             }
@@ -171,6 +171,7 @@ mod tests {
         assert!(delimiter("\\q").is_err());
         assert!(delimiter("\\x1").is_err());
         assert!(delimiter("\\xzz").is_err());
+        assert!(delimiter("\\x+1").is_err());
         assert!(delimiter("\\").is_err());
         assert!(delimiter("123456789").is_err());
     }

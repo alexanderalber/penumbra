@@ -268,14 +268,28 @@ fn line_fields(text: &str, d: &Decode, out: &mut Vec<Field>) {
     }
 }
 
+/// Characters of a channel name.
+const MAX_NAME: usize = 64;
+
+/// At most the first [`MAX_NAME`] characters of `key`.
+fn short(key: &str) -> &str {
+    key.char_indices().nth(MAX_NAME).and_then(|(i, _)| key.get(..i)).unwrap_or(key)
+}
+
 fn flatten(value: &serde_json::Value, prefix: Option<&str>, depth: usize, out: &mut Vec<Field>) {
     use serde_json::Value;
     if depth > MAX_DEPTH || out.len() >= MAX_FIELDS {
         return;
     }
-    let join = |key: &str| match prefix {
-        Some(p) => format!("{p}_{key}"),
-        None => key.to_string(),
+    // A name is at most 64 characters, so a longer prefix is never copied on: a huge key with
+    // many items under it costs a short string per item.
+    let join = |key: &str| {
+        let mut name = match prefix {
+            Some(p) => format!("{p}_{}", short(key)),
+            None => short(key).to_string(),
+        };
+        name.truncate(short(&name).len());
+        name
     };
     let leaf = |cell: Cell, out: &mut Vec<Field>| {
         if let Some(name) = prefix.and_then(channel_name) {
@@ -285,11 +299,17 @@ fn flatten(value: &serde_json::Value, prefix: Option<&str>, depth: usize, out: &
     match value {
         Value::Object(map) => {
             for (k, v) in map {
+                if out.len() >= MAX_FIELDS {
+                    break;
+                }
                 flatten(v, Some(&join(k)), depth + 1, out);
             }
         }
         Value::Array(items) => {
             for (i, v) in items.iter().enumerate() {
+                if out.len() >= MAX_FIELDS {
+                    break;
+                }
                 flatten(v, Some(&join(&i.to_string())), depth + 1, out);
             }
         }
@@ -336,64 +356,104 @@ pub struct Store {
     column_index: BTreeMap<String, usize>,
 }
 
+/// One message, parsed: what a [`Store`] takes in. Parsing needs no store, so a link parses
+/// before it locks its readers.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Parsed {
+    Fields {
+        fields: Vec<Field>,
+        preview: String,
+    },
+    Malformed(String),
+    TooLong,
+    /// Only whitespace: skipped.
+    Blank,
+}
+
+/// One message from a stream.
+pub fn parse(message: &[u8], d: &Decode) -> Parsed {
+    if message.len() > d.max {
+        return Parsed::TooLong;
+    }
+    if d.format != Format::Bytes && message.iter().all(u8::is_ascii_whitespace) {
+        return Parsed::Blank;
+    }
+    match fields(message, d) {
+        Ok(fields) => {
+            let preview = if d.format == Format::Bytes {
+                message.iter().take(PREVIEW / 3).map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")
+            } else {
+                String::from_utf8_lossy(message.get(..PREVIEW * 4).unwrap_or(message))
+                    .chars()
+                    .take(PREVIEW)
+                    .collect()
+            };
+            Parsed::Fields { fields, preview }
+        }
+        Err(e) => Parsed::Malformed(e),
+    }
+}
+
+/// One UDP datagram: one message for bytes. JSON is one message when the whole datagram parses
+/// (pretty-printed JSON spans lines), else it is split at the delimiter like lines.
+pub fn parse_datagram(datagram: &[u8], d: &Decode) -> Vec<Parsed> {
+    if datagram.len() > d.max {
+        return vec![Parsed::TooLong];
+    }
+    if d.format == Format::Bytes || d.delimiter.is_empty() {
+        return vec![parse(datagram, d)];
+    }
+    if d.format == Format::Json {
+        let whole = parse(datagram, d);
+        if matches!(whole, Parsed::Fields { .. } | Parsed::Blank) {
+            return vec![whole];
+        }
+    }
+    let n = d.delimiter.len();
+    let mut out = Vec::new();
+    let mut rest = datagram;
+    while !rest.is_empty() && out.len() < MAX_ROWS {
+        let at = rest.windows(n).position(|w| w == d.delimiter.as_slice());
+        let (message, next) = match at {
+            Some(at) => (rest.get(..at).unwrap_or_default(), rest.get(at + n..).unwrap_or_default()),
+            None => (rest, &[][..]),
+        };
+        if !message.iter().all(u8::is_ascii_whitespace) {
+            out.push(parse(message, d));
+        }
+        rest = next;
+    }
+    out
+}
+
 impl Store {
-    /// One message from a stream.
-    pub fn take(&mut self, message: &[u8], d: &Decode) {
+    /// Takes in a parsed message.
+    pub fn apply_parsed(&mut self, parsed: Parsed, d: &Decode) {
         self.version += 1;
-        if message.len() > d.max {
-            self.too_long(1);
-            return;
-        }
-        if d.format != Format::Bytes && message.iter().all(u8::is_ascii_whitespace) {
-            return;
-        }
-        match fields(message, d) {
-            Ok(fields) => {
+        match parsed {
+            Parsed::Fields { fields, preview } => {
                 self.counts.messages += 1;
-                let mut preview = String::from_utf8_lossy(message).chars().take(PREVIEW).collect::<String>();
-                if d.format == Format::Bytes {
-                    preview = message
-                        .iter()
-                        .take(PREVIEW / 3)
-                        .map(|b| format!("{b:02x}"))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                }
                 self.counts.last = Some(preview);
                 self.apply(&fields, d.rows.clamp(1, MAX_ROWS));
             }
-            Err(e) => {
+            Parsed::Malformed(e) => {
                 self.counts.malformed += 1;
                 self.counts.last_problem = Some(e);
             }
+            Parsed::TooLong => self.too_long(1),
+            Parsed::Blank => {}
         }
     }
 
-    /// One UDP datagram: one message for bytes; lines and JSON split at the delimiter.
+    /// One message from a stream, parsed and taken in.
+    pub fn take(&mut self, message: &[u8], d: &Decode) {
+        self.apply_parsed(parse(message, d), d);
+    }
+
+    /// One UDP datagram, parsed and taken in.
     pub fn datagram(&mut self, datagram: &[u8], d: &Decode) {
-        if datagram.len() > d.max {
-            self.version += 1;
-            self.too_long(1);
-            return;
-        }
-        if d.format == Format::Bytes || d.delimiter.is_empty() {
-            self.take(datagram, d);
-            return;
-        }
-        let n = d.delimiter.len();
-        let mut rest = datagram;
-        let mut taken = 0;
-        while !rest.is_empty() && taken < MAX_ROWS {
-            let at = rest.windows(n).position(|w| w == d.delimiter.as_slice());
-            let (message, next) = match at {
-                Some(at) => (rest.get(..at).unwrap_or_default(), rest.get(at + n..).unwrap_or_default()),
-                None => (rest, &[][..]),
-            };
-            if !message.iter().all(u8::is_ascii_whitespace) {
-                self.take(message, d);
-                taken += 1;
-            }
-            rest = next;
+        for p in parse_datagram(datagram, d) {
+            self.apply_parsed(p, d);
         }
     }
 
@@ -546,6 +606,31 @@ mod tests {
         let many =
             format!("{{{}}}", (0..5000).map(|i| format!("\"k{i}\": {i}")).collect::<Vec<_>>().join(","));
         assert_eq!(line(&many, &j).len(), MAX_FIELDS);
+    }
+
+    #[test]
+    fn a_huge_key_over_many_items_stays_cheap() {
+        let j = d(Format::Json);
+        let key = "k".repeat(32 * 1024);
+        let items = vec!["0"; 15_000].join(",");
+        let msg = format!("{{\"{key}\": [{items}]}}");
+        let start = std::time::Instant::now();
+        let got = fields(msg.as_bytes(), &j).unwrap();
+        assert_eq!(got.len(), MAX_FIELDS);
+        assert!(got.iter().all(|f| f.name.len() <= 64));
+        assert!(start.elapsed() < std::time::Duration::from_secs(2), "{:?}", start.elapsed());
+    }
+
+    #[test]
+    fn pretty_json_in_one_datagram_is_one_message() {
+        let j = d(Format::Json);
+        let mut s = Store::default();
+        s.datagram(b"{\n  \"a\": 1,\n  \"b\": 2\n}\n", &j);
+        assert_eq!(values(&s), [("a", 1.0), ("b", 2.0)]);
+        assert_eq!(s.counts.malformed, 0);
+        // Several lines of JSON still split.
+        s.datagram(b"{\"a\": 3}\n{\"b\": 4}", &j);
+        assert_eq!(values(&s), [("a", 3.0), ("b", 4.0)]);
     }
 
     #[test]

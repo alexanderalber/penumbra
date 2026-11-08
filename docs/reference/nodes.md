@@ -1366,11 +1366,11 @@ Outputs:
 | `lan` | bool | `false` |  | Also take connections from other devices: listens on every network interface. Off: this machine only |
 | `serial` | text |  |  | Serial port, such as COM3 or /dev/ttyACM0 (net.ports lists them). Empty takes the only one plugged in |
 | `baud` | int | `9600` | 1200 to 1000000 (soft, held within 50 to 4000000) | Serial bit rate; match the device (Arduino: Serial.begin). Always 8 data bits, no parity, 1 stop bit |
-| `format` | lines \| json \| bytes | `"lines"` |  | What one message is; lines: a line of text: numbers split by commas or spaces, or `name:value`; json: one JSON object or array per line (per datagram over UDP); bytes: raw bytes, each 0 to 255 |
+| `format` | lines \| json \| bytes | `"lines"` |  | What one message is; lines: a line of text: numbers split by commas or spaces, or `name:value`; json: one JSON value per line; over UDP a whole datagram, or each line of it; bytes: raw bytes, each 0 to 255 |
 | `split` | auto \| comma \| semicolon \| tab \| space \| none | `"auto"` |  | Where a line is split into fields; auto: at commas, semicolons and tabs; at spaces when the line has none of those; comma: at commas; semicolon: at semicolons; tab: at tabs; space: at runs of spaces and tabs; none: not at all: the whole line is one field |
 | `names` | text |  |  | Space-separated names for the fields without a name, in order: `x y z` makes `1,2,3` channels x, y and z. `-` leaves a field out. Fields past the names are chan3, chan4 and so on |
-| `delimiter` | text | `"\\n"` |  | Where a message ends: `\n` (a `\r` before it is ignored), `\r`, `;`, `\xff`. Over UDP a datagram is a message; lines and JSON in one are split at it too |
-| `length` *(more)* | int | `0` (by delimiter) | 0 to 64 (soft, held within 0 to 65536) | For bytes on a stream with no delimiter: every this many bytes is one message. 0 with no delimiter takes each read as it comes; 0: by delimiter |
+| `delimiter` | text | `"\\n"` |  | Where a message ends: `\n`, `\r`, `;`, `\xff`. For lines and JSON a `\r` before the `\n` is ignored. Over UDP a datagram is a message; lines in one are split at it too |
+| `length` *(more)* | int | `0` (each read) | 0 to 64 (soft, held within 0 to 65536) | For bytes on a stream with an empty `delimiter`: every this many bytes is one message. 0 takes each read as it comes; 0: each read |
 | `rows` | int | `16` | 1 to 100 (soft, held within 1 to 1024) | Messages the table keeps, the newest last |
 | `max` *(more)* | int | `65536` | 256 to 65536 (soft, held within 16 to 1048576) | Longest message in bytes; longer ones are dropped and counted |
 
@@ -1391,11 +1391,11 @@ Outputs: none.
 |---|---|---|---|---|
 | `transport` | udp \| tcp_connect \| tcp_listen \| serial | `"udp"` |  | Where the messages go; udp: UDP datagrams to `host` and `port`, one message each; tcp_connect: a TCP connection to the server at `host` and `port`; reconnects when it drops; tcp_listen: a TCP server on `port`: every client that connects gets the messages; serial: a serial port such as an Arduino's USB cable |
 | `host` | text | `"127.0.0.1"` |  | IP address of the other side, or localhost; `10.0.0.5:7000` sets the port too. Names are not looked up |
-| `port` | int | `7000` | 1024 to 65535 (soft, held within 0 to 65535) | UDP or TCP port of the receiver; for tcp_listen, the port to listen on; 0: any free port |
+| `port` | int | `7000` | 1024 to 65535 (soft, held within 0 to 65535) | UDP or TCP port of the receiver; for tcp_listen, the port to listen on (there 0 picks any free port) |
 | `lan` | bool | `false` |  | Also take connections from other devices: listens on every network interface. Off: this machine only |
 | `serial` | text |  |  | Serial port, such as COM3 or /dev/ttyACM0 (net.ports lists them). Empty takes the only one plugged in |
 | `baud` | int | `9600` | 1200 to 1000000 (soft, held within 50 to 4000000) | Serial bit rate; match the device (Arduino: Serial.begin). Always 8 data bits, no parity, 1 stop bit |
-| `format` | lines \| json \| bytes | `"lines"` |  | What one message is; lines: a line of text: numbers split by commas or spaces, or `name:value`; json: one JSON object or array per line (per datagram over UDP); bytes: raw bytes, each 0 to 255 |
+| `format` | lines \| json \| bytes | `"lines"` |  | What one message is; lines: a line of text: numbers split by commas or spaces, or `name:value`; json: one JSON value per line; over UDP a whole datagram, or each line of it; bytes: raw bytes, each 0 to 255 |
 | `separator` | comma \| semicolon \| tab \| space | `"comma"` |  | What goes between the values of a line; comma: `0.5,1`; semicolon: `0.5;1`; tab: a tab; space: `0.5 1` |
 | `names` | bool | `false` |  | Lines: each channel as `name:value`. Off: the values alone, in order. JSON always has the names |
 | `delimiter` | text | `"\\n"` |  | What ends each message on a serial port or TCP: `\n`, `\r\n`, `;`, empty for none. UDP sends each message as one datagram without it |
