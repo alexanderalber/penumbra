@@ -84,15 +84,40 @@ struct Shown {
     lost: u32,
 }
 
+/// A display whose window failed, and when it is tried again.
+struct Failure {
+    error: String,
+    failures: u32,
+    retry_at: Instant,
+}
+
+/// The first retry after a window failed; each further failure doubles it, up to
+/// [`MAX_RETRY_AFTER`]. A display whose first surface setup failed (a driver still busy after
+/// a mode change) would otherwise stay black until the display set changes.
+const RETRY_AFTER: Duration = Duration::from_secs(2);
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
+
+/// How long to wait before the next try after `failures` failures in a row.
+fn retry_after(failures: u32) -> Duration {
+    RETRY_AFTER.saturating_mul(1 << failures.saturating_sub(1).min(8)).min(MAX_RETRY_AFTER)
+}
+
+/// Notes that the window for `display` failed with `error` at `now`.
+fn note_failure(failed: &mut BTreeMap<String, Failure>, display: &str, error: String, now: Instant) {
+    let failures = failed.get(display).map_or(0, |f| f.failures).saturating_add(1);
+    let retry_at = now + retry_after(failures);
+    failed.insert(display.to_string(), Failure { error, failures, retry_at });
+}
+
 /// The output windows of the app.
 pub struct Outputs {
     engine: Arc<Engine>,
     gpu: Option<(wgpu::Instance, Gpu)>,
     windows: Vec<OutputWindow>,
     last_tick: Option<Instant>,
-    /// Displays whose window failed to open, with the error, so it is not retried every tick;
-    /// cleared when the display set changes.
-    failed: BTreeMap<String, String>,
+    /// Displays whose window failed to open, with the error, so it is not retried every tick
+    /// but after a wait that grows with each failure; cleared when the display set changes.
+    failed: BTreeMap<String, Failure>,
     last_displays: Vec<String>,
     /// Where each projector was last shown, for the grace and the log.
     shown: BTreeMap<NodeId, Shown>,
@@ -319,7 +344,7 @@ impl Outputs {
                 continue;
             }
             if let Some(e) = w.failed() {
-                self.failed.insert(w.display.clone(), e);
+                note_failure(&mut self.failed, &w.display, e, now);
             }
             log::info!("output {}: closing", w.display);
             let mut w = self.windows.remove(i);
@@ -330,7 +355,8 @@ impl Outputs {
 
         // Open the missing ones.
         for (display, nodes) in &wanted {
-            if self.windows.iter().any(|w| &w.display == display) || self.failed.contains_key(display) {
+            let waiting = self.failed.get(display).is_some_and(|f| now < f.retry_at);
+            if self.windows.iter().any(|w| &w.display == display) || waiting {
                 continue;
             }
             if let Some(want) = desks.get(display) {
@@ -348,7 +374,7 @@ impl Outputs {
                     }
                     Err(e) => {
                         log::error!("output {display}: {e}");
-                        self.failed.insert(display.clone(), e);
+                        note_failure(&mut self.failed, display, e, now);
                     }
                 }
                 continue;
@@ -366,7 +392,7 @@ impl Outputs {
                 }
                 Err(e) => {
                     log::error!("output {display}: {e}");
-                    self.failed.insert(display.clone(), e);
+                    note_failure(&mut self.failed, display, e, now);
                 }
             }
         }
@@ -375,8 +401,14 @@ impl Outputs {
         }
         self.keep_places(&desks, &rects, now);
         for state in states.values_mut() {
-            if let Some(e) = state.display.as_ref().and_then(|d| self.failed.get(d)) {
-                state.error = Some(format!("the output window failed: {e}"));
+            // While a window is open again for the display, its last failure is not shown.
+            let failure = state
+                .display
+                .as_ref()
+                .filter(|d| !self.windows.iter().any(|w| &w.display == *d))
+                .and_then(|d| self.failed.get(d));
+            if let Some(f) = failure {
+                state.error = Some(format!("the output window failed: {}", f.error));
             }
             // A desktop window's picture is as large as the window.
             if let Some(w) =
@@ -733,6 +765,19 @@ fn mark_editor(infos: &mut [DisplayInfo], [x, y, w, h]: [i32; 4]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_window_is_tried_again_later_and_later() {
+        assert_eq!(retry_after(1), RETRY_AFTER);
+        assert_eq!(retry_after(2), RETRY_AFTER * 2);
+        assert_eq!(retry_after(40), MAX_RETRY_AFTER);
+        let mut failed = BTreeMap::new();
+        let now = Instant::now();
+        note_failure(&mut failed, "DP-1", "no surface".into(), now);
+        note_failure(&mut failed, "DP-1", "no surface".into(), now);
+        let f = &failed["DP-1"];
+        assert_eq!((f.failures, f.retry_at), (2, now + RETRY_AFTER * 2));
+    }
 
     fn info(id: &str, x: i32, w: u32) -> DisplayInfo {
         DisplayInfo {
