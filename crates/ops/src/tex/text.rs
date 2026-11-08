@@ -212,7 +212,19 @@ impl Operator for Text {
     }
 
     fn job_status(&self) -> Option<JobStatus> {
-        Some(self.slot.status())
+        Some(status(&self.slot))
+    }
+}
+
+/// The job status of `slot` as the picture sees it. A raster that finished after the last cook
+/// is not in the picture yet: the node draws it only when it cooks again. Until then it counts as
+/// running, so a snapshot taken right after an edit waits for the new text instead of reading
+/// the old one. A raster still waiting to start keeps the slot busy the same way, since the
+/// cook that takes the finished one starts it.
+fn status(slot: &AsyncSlot<Arc<Raster>>) -> JobStatus {
+    match slot.status() {
+        JobStatus::Done | JobStatus::Failed { .. } if slot.busy() => JobStatus::Running { progress: None },
+        s => s,
     }
 }
 
@@ -304,4 +316,29 @@ pub(super) fn to_skia(path: &BezPath) -> Option<tiny_skia::Path> {
         }
     }
     pb.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use penumbra_graph::JobPool;
+
+    use super::*;
+
+    #[test]
+    fn a_raster_not_yet_drawn_counts_as_running() {
+        let pool = JobPool::new(1).unwrap();
+        let mut slot: AsyncSlot<Arc<Raster>> = AsyncSlot::new();
+        slot.start(pool.spawn(|_| Err("no font".to_string()), None));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while matches!(slot.status(), JobStatus::Queued | JobStatus::Running { .. }) {
+            assert!(Instant::now() < deadline, "the job never finished");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(matches!(slot.status(), JobStatus::Failed { .. }), "the job itself is done");
+        assert_eq!(status(&slot), JobStatus::Running { progress: None }, "the picture is not");
+        slot.poll();
+        assert!(matches!(status(&slot), JobStatus::Failed { .. }), "taken by the next cook");
+    }
 }

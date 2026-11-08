@@ -122,6 +122,22 @@ fn build_a_network_and_watch_it_cook() {
         .collect();
     assert!(found.contains(&("tex.slope", None)), "by its name: {found:?}");
     assert!(found.contains(&("chan.derivative", Some("slope"))), "by a tag: {found:?}");
+    // A TouchDesigner family word narrows the search to the family it stands for.
+    let kinds = |text: &str| -> Vec<String> {
+        f.call("node.kinds", json!({"search": text}))["kinds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| k["kind"].as_str().unwrap_or_default().to_string())
+            .collect()
+    };
+    let top = kinds("noise top");
+    assert!(top.contains(&"tex.noise".to_string()), "{top:?}");
+    assert!(top.iter().all(|k| k.starts_with("tex.")), "{top:?}");
+    assert_eq!(kinds("Noise TOP"), top);
+    assert!(kinds("lfo chop").contains(&"chan.lfo".to_string()));
+    assert!(kinds("noise").contains(&"chan.noise".to_string()), "without one, every family");
+    assert!(kinds("chop to").contains(&"tex.from_chan".to_string()), "a tag holding the word wins");
 }
 
 #[test]

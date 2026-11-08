@@ -73,7 +73,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("history.redo", "Redo one history entry", history_redo);
     add(
         "node.kinds",
-        "Node types with their params, inputs, outputs and tags. With a param: its help (what it does, type, default, range, unit, what each choice does). With search: the types whose name contains the text or a tag starts with it (TouchDesigner names, file extensions), as the add dialog finds them; {kind?, param?, search?}",
+        "Node types with their params, inputs, outputs and tags. With a param: its help (what it does, type, default, range, unit, what each choice does). With search: the types whose name contains the text or a tag starts with it (TouchDesigner names, file extensions), as the add dialog finds them; a family word (`noise top`, `lfo chop`) searches that family alone; {kind?, param?, search?}",
         node_kinds,
     );
     add("node.list", "Nodes under a path; {path?, recursive?}", node_list);
@@ -359,9 +359,11 @@ fn node_kinds(e: &Engine, p: &Json) -> Result<Json> {
     let mut a: A = args(p)?;
     let types = e.types();
     if let Some(text) = &a.search {
+        let search = types.search(text);
+        let text = &search.text;
         let found: Vec<Json> = types
             .kinds()
-            .filter(|k| *k != penumbra_graph::broken::BROKEN_KIND)
+            .filter(|k| *k != penumbra_graph::broken::BROKEN_KIND && search.in_family(k))
             .filter_map(|k| {
                 let tag = types.tag_found(k, text);
                 let by_name = penumbra_graph::name_found(k, text);

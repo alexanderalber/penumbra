@@ -1829,7 +1829,7 @@ impl Editor {
         // Header text, badges.
         if zoom > HEADER_TEXT_ZOOM {
             let name = node.name.as_str();
-            painter.text(
+            let name_rect = painter.text(
                 pos2(header.min.x + 6.0 * zoom, header.center().y),
                 Align2::LEFT_CENTER,
                 name,
@@ -1876,13 +1876,17 @@ impl Editor {
                 );
                 right -= 14.0 * zoom;
             }
-            painter.text(
-                pos2(right, header.center().y),
-                Align2::RIGHT_CENTER,
-                short,
+            // The kind only where it keeps a gap to the name: a long name ran into it
+            // (`projector1projector`).
+            let kind = painter.layout_no_wrap(
+                short.to_string(),
                 FontId::proportional(11.0 * zoom),
                 Color32::from_white_alpha(150),
             );
+            let left = right - kind.size().x;
+            if left >= name_rect.max.x + 6.0 * zoom {
+                painter.galley(pos2(left, header.center().y - kind.size().y / 2.0), kind, Color32::WHITE);
+            }
         }
         if let Some(s) = status
             && let Some(penumbra_graph::JobStatus::Running { progress }) = s.job

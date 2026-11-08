@@ -136,6 +136,66 @@ fn build_wire_tweak_and_undo_through_the_ui() {
     assert!(line("/lfo1").contains("pos: ["), "{project}");
 }
 
+/// The add dialog takes a TouchDesigner name with its family word, Tab passes over families
+/// without a match, and a click on a switch's row flips it.
+#[test]
+fn a_family_word_tab_past_empty_families_and_a_switch_clicked() {
+    let dir = ScratchDir::unborn("ui_add");
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let content = penumbra_project::parse(PROJECT, &types).unwrap();
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
+    let engine = Engine::start(session).unwrap();
+
+    let script = [
+        json!({"wait": 1.0}),
+        json!({"method": "ui.click", "params": {"id": "node./c"}}),
+        json!({"method": "ui.key", "params": {"key": "Tab"}}),
+        json!({"method": "ui.type", "params": {"text": "Noise TOP"}}),
+        json!({"method": "ui.key", "params": {"key": "Enter"}}),
+        json!({"method": "node.info", "params": {"path": "/noise2"}}),
+        json!({"method": "ui.key", "params": {"key": "Tab"}}),
+        json!({"method": "ui.type", "params": {"text": "projector"}}),
+        json!({"method": "ui.elements", "params": {"prefix": "add.tab."}}),
+        // From tex, Tab passes over chan, audio and table: `rendering` holds light.projector,
+        // `out` out.projector.
+        json!({"method": "ui.key", "params": {"key": "Tab"}}),
+        json!({"method": "ui.elements", "params": {"prefix": "add.heading."}}),
+        json!({"method": "ui.key", "params": {"key": "Tab"}}),
+        json!({"method": "ui.key", "params": {"key": "Enter"}}),
+        json!({"method": "node.info", "params": {"path": "/projector1"}}),
+        json!({"wait": 0.2}),
+        json!({"method": "ui.click", "params": {"id": "param./projector1.borderless"}}),
+        json!({"method": "node.info", "params": {"path": "/projector1"}}),
+    ];
+    let script: Vec<String> = script.iter().map(Json::to_string).collect();
+    let options = headless::Options { size: [1200.0, 800.0], pixels_per_point: 1.0, software: true };
+    let replies = headless::run(engine.clone(), &script.join("\n"), &options).unwrap();
+    for (m, r) in &replies {
+        eprintln!("{m}: {}", r.to_string().chars().take(300).collect::<String>());
+    }
+    assert_eq!(reply(&replies, "node.info", 0)["kind"], "tex.noise", "`Noise TOP` found tex.noise");
+    let labels = |n: usize| -> Vec<String> {
+        reply(&replies, "ui.elements", n)["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["label"].as_str().unwrap_or_default().to_string())
+            .collect()
+    };
+    assert_eq!(
+        labels(0),
+        ["tex", "chan", "audio", "table", "rendering (match)", "out (match)", "system", "library"]
+    );
+    assert!(labels(1).contains(&"lights".to_string()), "the first Tab: rendering, {:?}", labels(1));
+    assert_eq!(reply(&replies, "node.info", 1)["kind"], "out.projector", "the second Tab: out");
+    let borderless = |i: &Json| {
+        i["params"].as_array().unwrap().iter().find(|p| p["name"] == "borderless").unwrap()["value"].clone()
+    };
+    assert_eq!(borderless(reply(&replies, "node.info", 1)), json!(false));
+    assert_eq!(borderless(reply(&replies, "node.info", 2)), json!(true), "the click hit the box");
+    engine.shutdown();
+}
+
 #[test]
 fn reset_stateful_nodes_with_the_key_and_the_button() {
     let dir = ScratchDir::unborn("ui-reset");

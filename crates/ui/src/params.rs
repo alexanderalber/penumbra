@@ -735,7 +735,12 @@ impl ParamPanel {
         let row = line(ui, height, egui::Layout::right_to_left(align), cell);
         let (widget, reset) = (row.response, row.inner);
         self.removed = remove_clicked;
-        auto.add(format!("param.{key}"), widget.rect, spec.name.clone());
+        // A click on a switch's row goes to the box: the row's middle is empty.
+        let row_rect = match (&spec.kind, parts.first()) {
+            (ParamKind::Bool, Some(r)) => *r,
+            _ => widget.rect,
+        };
+        auto.add(format!("param.{key}"), row_rect, spec.name.clone());
         for (i, r) in parts.iter().enumerate() {
             auto.add(format!("param.{key}.{i}"), *r, spec.name.clone());
         }
@@ -797,6 +802,7 @@ impl ParamPanel {
             ParamKind::Bool => {
                 let mut b = value.as_bool().unwrap_or(false);
                 let r = ui.add_enabled(!whole_bound, egui::Checkbox::without_text(&mut b));
+                track(&r);
                 if r.changed() {
                     *new = Some(Value::Bool(b));
                 }

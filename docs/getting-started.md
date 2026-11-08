@@ -99,8 +99,10 @@ it.
 
 1. **Add a node:** press Tab, or double-click on empty canvas. The add dialog has a tab per
    family; small families share one: `rendering` holds the 3D ones, `system` the scripts,
-   outputs and components. Tab cycles the tabs. Typing greys out the types that do not match,
-   Enter takes the type named exactly as typed, else the first match; a click takes any. Try `tex` > `noise`. The everyday types come first in each tab. Live inputs
+   outputs and components. Tab cycles the tabs; while you type, it skips tabs without a match.
+   Typing greys out the types that do not match, Enter takes the type named exactly as typed,
+   else the first match; a click takes any. A TouchDesigner name works with its family word:
+   `noise top` opens `tex` on `noise`. Try `tex` > `noise`. The everyday types come first in each tab. Live inputs
    (cameras, NDI, OSC, the keyboard and the like) stand apart under "inputs", the scan's own
    nodes under "scan and shapes" at the end of `tex`. Ready-made effects are in the `library`
    tab.

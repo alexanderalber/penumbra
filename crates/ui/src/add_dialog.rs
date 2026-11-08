@@ -22,11 +22,14 @@
 //! A type is also found by a tag that starts with the text: a TouchDesigner name (`chop to`
 //! finds `tex.from_chan`) or a file name extension it reads (`fbx` finds `geo.file`). The
 //! summary names the tag. Families with a match are marked in their tab (bright text, a bar
-//! underneath), the others dimmed; the dialog never switches the tab by itself. Enter takes the
-//! first match of the active tab: the type named exactly so, then one whose name starts with the
-//! text, then any other found by its name, then one found by a tag. Tab switches to the next
-//! tab, Escape or a click outside closes. Opened by double-click on empty canvas or Tab in the editor, and by "Replace
-//! node..." in the node menu, where choosing replaces that node.
+//! underneath), the others dimmed. Enter takes the first match of the active tab: the type
+//! named exactly so, then one whose name starts with the text, then any other found by its
+//! name, then one found by a tag. Tab switches to the next tab, Shift+Tab to the one before;
+//! while searching, both pass over tabs without a match. A TouchDesigner family word in the
+//! text (`noise top`, `lfo chop`) searches that family alone for the rest of the text, when the
+//! whole text finds nothing, and opens its tab. Otherwise the dialog never switches the tab by
+//! itself. Escape or a click outside closes. Opened by double-click on empty canvas or Tab in
+//! the editor, and by "Replace node..." in the node menu, where choosing replaces that node.
 //!
 //! The component ports (`tex.in`, `chan.out`, ...) are greyed out and cannot be chosen at the
 //! top level of the project: there they have no component whose sockets they would be.
@@ -113,6 +116,8 @@ pub struct AddDialog {
     pub shelf: ShelfChoice,
     /// The pictures shown so far by component name; `None` for one that has no usable picture.
     previews: BTreeMap<String, Option<egui::TextureHandle>>,
+    /// The search text whose family word last opened its family.
+    jumped: String,
 }
 
 /// Which shelf the library tab shows.
@@ -414,6 +419,17 @@ fn enter_choice<'k>(
         .map(str::to_string)
 }
 
+/// The tab Tab (or with `back` Shift+Tab) moves to from `active`: the next one that `wanted`
+/// takes, all the way round to `active` itself. When none is wanted, the next one.
+fn next_tab<T>(groups: &[T], active: usize, back: bool, wanted: impl Fn(&T) -> bool) -> usize {
+    let n = groups.len();
+    if n == 0 {
+        return 0;
+    }
+    let step = |i: usize| if back { (active + n - i % n) % n } else { (active + i) % n };
+    (1..=n).map(step).find(|&g| groups.get(g).is_some_and(&wanted)).unwrap_or_else(|| step(1))
+}
+
 fn matches(kind: &str, filter: &str) -> bool {
     kind != GAP && penumbra_graph::name_found(kind, filter)
 }
@@ -425,6 +441,9 @@ struct Usable<'a> {
     types: &'a NodeTypes,
     in_component: bool,
     library: &'a [Offered],
+    /// The only family the search finds in, named by a TouchDesigner family word in the text
+    /// ([`penumbra_graph::Search`]).
+    family: Option<&'a str>,
 }
 
 impl Usable<'_> {
@@ -436,6 +455,7 @@ impl Usable<'_> {
     /// tag with it or, for a component file, naming it in its shelf or `about` line.
     fn hit(self, kind: &str, filter: &str) -> bool {
         self.allows(kind)
+            && self.family.is_none_or(|f| kind.split_once('.').is_some_and(|(k, _)| k == f))
             && (matches(kind, filter) || self.tag(kind, filter).is_some() || self.says(kind, filter))
     }
 
@@ -470,6 +490,7 @@ impl AddDialog {
             in_component: false,
             shelf: ShelfChoice::default(),
             previews: BTreeMap::new(),
+            jumped: String::new(),
         }
     }
 
@@ -483,21 +504,37 @@ impl AddDialog {
         auto: &mut automation::Registry,
     ) -> Outcome {
         let groups = groups(types);
-        let filter = self.filter.trim().to_lowercase();
-        let usable = Usable { types, in_component: self.in_component, library };
+        let typed = self.filter.trim().to_lowercase();
+        let search = types.search(&typed);
+        let filter = search.text.clone();
+        let usable = Usable { types, in_component: self.in_component, library, family: search.family };
+        // A family word typed (`noise top`) opens its family, once per text, so Tab still
+        // moves on from there.
+        match search.family {
+            Some(f) if self.jumped != typed => {
+                self.family = f.to_string();
+                self.jumped.clone_from(&typed);
+            }
+            Some(_) => {}
+            None => self.jumped.clear(),
+        }
         let mut active = groups.iter().position(|g| g.contains(&self.family)).unwrap_or(0);
         let mut outcome = Outcome::Open;
 
         // Keys first, so Tab does not move the focus out of the search field.
-        let (enter, escape, tab) = ui.input_mut(|i| {
+        let (enter, escape, tab, back) = ui.input_mut(|i| {
             (
                 i.key_pressed(Key::Enter),
                 i.consume_key(egui::Modifiers::NONE, Key::Escape),
                 i.consume_key(egui::Modifiers::NONE, Key::Tab),
+                i.consume_key(egui::Modifiers::SHIFT, Key::Tab),
             )
         });
-        if tab && !groups.is_empty() {
-            active = (active + 1) % groups.len();
+        if (tab || back) && !groups.is_empty() {
+            active = next_tab(&groups, active, back, |g| {
+                filter.is_empty()
+                    || g.iter().any(|f| kinds_of(types, f, library).iter().any(|k| usable.hit(k, &filter)))
+            });
             self.focus = true;
             // egui moves the focus on Tab before the key is consumed here; without this the
             // close button gets it, and the next Enter presses it instead of choosing.
@@ -1201,7 +1238,7 @@ mod tests {
         let types = penumbra_ops::builtin_types().unwrap();
         let library = stock();
         let found = shelves(&library);
-        let usable = Usable { types: &types, in_component: false, library: &library };
+        let usable = Usable { types: &types, in_component: false, library: &library, family: None };
         let on = |c: &ShelfChoice| listed(&library, &found, c, usable, "");
         assert_eq!(names(&on(&choose("dmx", Some("safety")))), ["fade_all"]);
         assert_eq!(names(&on(&choose("dmx", Some("other")))), ["loose"], "beside the second level");
@@ -1218,7 +1255,7 @@ mod tests {
         let types = penumbra_ops::builtin_types().unwrap();
         let library = stock();
         let found = shelves(&library);
-        let usable = Usable { types: &types, in_component: false, library: &library };
+        let usable = Usable { types: &types, in_component: false, library: &library, family: None };
         let shelf = choose("tools", None);
         let search = |f: &str| listed(&library, &found, &shelf, usable, f);
         assert_eq!(names(&search("fade")), ["fade_all"], "from another shelf");
@@ -1245,8 +1282,8 @@ mod tests {
     #[test]
     fn the_component_ports_are_offered_only_inside_a_component() {
         let types = penumbra_ops::builtin_types().unwrap();
-        let top = Usable { types: &types, in_component: false, library: &[] };
-        let inside = Usable { types: &types, in_component: true, library: &[] };
+        let top = Usable { types: &types, in_component: false, library: &[], family: None };
+        let inside = Usable { types: &types, in_component: true, library: &[], family: None };
         assert!(!top.allows("tex.in") && !top.allows("chan.out"));
         assert!(top.allows("tex.noise") && top.allows("out.video"));
         assert!(inside.allows("tex.in") && inside.allows("tex.noise"));
@@ -1257,7 +1294,7 @@ mod tests {
     #[test]
     fn a_tag_finds_a_type_its_name_does_not() {
         let types = penumbra_ops::builtin_types().unwrap();
-        let u = Usable { types: &types, in_component: false, library: &[] };
+        let u = Usable { types: &types, in_component: false, library: &[], family: None };
         assert!(u.hit("geo.file", "fbx"), "the extensions geo.file reads are its tags");
         assert_eq!(u.tag("geo.file", "fbx").as_deref(), Some("fbx"));
         assert!(!u.hit("tex.blur", "fbx"));
@@ -1270,9 +1307,41 @@ mod tests {
     }
 
     #[test]
+    fn a_touchdesigner_family_word_narrows_the_search_to_its_family() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let search = types.search("noise top");
+        assert_eq!((search.text.as_str(), search.family), ("noise", Some("tex")));
+        assert_eq!(types.search("chop lfo").family, Some("chan"), "at the start as well");
+        assert_eq!(types.search("noise").family, None, "a plain search searches every family");
+        assert_eq!(types.search("chop to").family, None, "a tag holding the word wins");
+        assert_eq!(types.search("top").family, None, "the word alone is a plain search");
+        let u = Usable { types: &types, in_component: false, library: &[], family: search.family };
+        assert!(u.hit("tex.noise", &search.text) && !u.hit("chan.noise", &search.text));
+        let groups = groups(&types);
+        let tex = groups.iter().position(|g| g.iter().any(|f| f == "tex"));
+        let kinds = |g: usize| groups[g].iter().flat_map(|f| kinds_of(&types, f, &[])).collect::<Vec<_>>();
+        let first = tex.map(|g| enter_choice(kinds(g).iter().map(String::as_str), u, &search.text));
+        assert_eq!(first, Some(Some("tex.noise".to_string())));
+    }
+
+    #[test]
+    fn tab_passes_over_tabs_without_a_match() {
+        let tabs = [false, true, false, true];
+        let next = |active: usize, back: bool| next_tab(&tabs, active, back, |t| *t);
+        assert_eq!(next(1, false), 3);
+        assert_eq!(next(3, false), 1, "all the way round");
+        assert_eq!(next(1, true), 3, "Shift+Tab goes back");
+        assert_eq!(next(0, true), 3);
+        assert_eq!(next_tab(&[true, false], 0, false, |t| *t), 0, "the only match stays");
+        assert_eq!(next_tab(&[false, false, false], 0, false, |t| *t), 1, "no match: the next one");
+        assert_eq!(next_tab(&[false, false, false], 0, true, |t| *t), 2);
+        assert_eq!(next_tab::<bool>(&[], 0, false, |t| *t), 0);
+    }
+
+    #[test]
     fn enter_takes_the_exact_name_before_one_that_only_contains_it() {
         let types = penumbra_ops::builtin_types().unwrap();
-        let u = Usable { types: &types, in_component: false, library: &[] };
+        let u = Usable { types: &types, in_component: false, library: &[], family: None };
         let kinds = ["tex.denoise", "tex.level", "tex.noise", "tex.lens_distort", "geo.file"];
         let choice = |f: &str| enter_choice(kinds.iter().copied(), u, f);
         assert_eq!(choice("noise").as_deref(), Some("tex.noise"));

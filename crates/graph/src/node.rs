@@ -944,6 +944,16 @@ impl NodeTypes {
         self.tags(kind).into_iter().find(|t| search_form(t).starts_with(&text))
     }
 
+    /// Reads a search `text`. A TouchDesigner family word at its end or start (`noise top`,
+    /// `CHOP lfo`) narrows the search to that family, with the rest as the text. Only when the
+    /// whole text finds nothing: a tag may hold such a word (`chop to`).
+    pub fn search(&self, text: &str) -> Search {
+        let whole = Search { text: text.to_string(), family: None };
+        let Some((family, rest)) = family_word(text) else { return whole };
+        let found = self.kinds().any(|k| name_found(k, text) || self.tag_found(k, text).is_some());
+        if found { whole } else { Search { text: rest, family: Some(family) } }
+    }
+
     pub fn get(&self, kind: &str) -> Option<&Arc<dyn NodeType>> {
         self.types.get(kind)
     }
@@ -971,6 +981,45 @@ pub fn search_form(s: &str) -> String {
 /// empty text.
 pub fn name_found(kind: &str, text: &str) -> bool {
     search_form(kind).contains(&search_form(text))
+}
+
+/// TouchDesigner's family words and the family each stands for here, so `noise top` finds
+/// `tex.noise` and `lfo chop` finds `chan.lfo`.
+const FAMILY_WORDS: [(&str, &str); 6] =
+    [("top", "tex"), ("chop", "chan"), ("dat", "table"), ("sop", "geo"), ("mat", "mat"), ("comp", "comp")];
+
+/// A search text as the add dialog and `node.kinds` read it ([`NodeTypes::search`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Search {
+    /// What names and tags are searched for.
+    pub text: String,
+    /// The only family searched, named by a family word in the text.
+    pub family: Option<&'static str>,
+}
+
+impl Search {
+    /// Whether `kind` is in the family searched; every kind when the text names none.
+    pub fn in_family(&self, kind: &str) -> bool {
+        self.family.is_none_or(|f| kind.split_once('.').is_some_and(|(k, _)| k == f))
+    }
+}
+
+/// The family a TouchDesigner family word at the end or the start of `text` stands for, and the
+/// rest of the text. `None` when no such word is there or nothing else is.
+fn family_word(text: &str) -> Option<(&'static str, String)> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let family = |w: &str| FAMILY_WORDS.iter().find(|(t, _)| w.eq_ignore_ascii_case(t)).map(|(_, f)| *f);
+    if let Some((last, rest)) = words.split_last()
+        && !rest.is_empty()
+        && let Some(f) = family(last)
+    {
+        return Some((f, rest.join(" ")));
+    }
+    let (first, rest) = words.split_first()?;
+    if rest.is_empty() {
+        return None;
+    }
+    Some((family(first)?, rest.join(" ")))
 }
 
 /// A [`NodeType`] made from a declaration and a closure, for simple nodes.
@@ -1066,6 +1115,20 @@ mod tests {
         assert_eq!(d.free_input(DataKind::Tex, |i| i == 0), Some(0));
         assert_eq!(d.free_input(DataKind::Chan, |i| i == 1 + MAX_RUN), Some(2 + MAX_RUN));
         assert_eq!(d.free_input(DataKind::Geo, |_| false), None);
+    }
+
+    #[test]
+    fn a_family_word_at_either_end_names_the_family() {
+        assert_eq!(family_word("noise top"), Some(("tex", "noise".to_string())));
+        assert_eq!(family_word("CHOP lfo"), Some(("chan", "lfo".to_string())));
+        assert_eq!(family_word("table dat"), Some(("table", "table".to_string())));
+        assert_eq!(family_word("constant mat"), Some(("mat", "constant".to_string())));
+        assert_eq!(family_word("base comp"), Some(("comp", "base".to_string())));
+        assert_eq!(family_word("lens distort top"), Some(("tex", "lens distort".to_string())));
+        assert_eq!(family_word("sphere sop"), Some(("geo", "sphere".to_string())));
+        assert_eq!(family_word("top"), None, "nothing else to search for");
+        assert_eq!(family_word("noise"), None);
+        assert_eq!(family_word("stop motion"), None, "a whole word only");
     }
 
     #[test]
