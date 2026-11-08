@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use crate::scrub::{Cache, Role};
-use crate::{ClipInfo, Decoder, Frame, Limits, open};
+use crate::{ClipInfo, Decoder, Frame, Limits, guarded, open};
 use penumbra_core::lock;
 
 /// Bytes of decoded frames one thread may queue.
@@ -451,6 +451,12 @@ impl Drop for Player {
     }
 }
 
+/// One frame, with a panic in the decoder turned into an error frame. A thread that died here
+/// would leave its clip frozen on the last frame with nothing reported.
+pub(crate) fn decode(decoder: &mut dyn Decoder, index: usize) -> Result<Frame, String> {
+    guarded(|| decoder.frame(index))
+}
+
 /// A decoding thread: opens its own decoder, then decodes whatever its run asks for while the
 /// queue has room.
 fn work(shared: &Shared, path: &Path, limits: &Limits) {
@@ -509,7 +515,7 @@ fn work(shared: &Shared, path: &Path, limits: &Limits) {
         };
         match job {
             Job::Run(id, index) => {
-                let result = decoder.frame(index);
+                let result = decode(decoder.as_mut(), index);
                 last = Some(index);
                 let mut s = shared.lock();
                 if !sized && let Ok(f) = &result {
@@ -527,7 +533,7 @@ fn work(shared: &Shared, path: &Path, limits: &Limits) {
             }
             Job::Scrub { generation, index, focus } => {
                 let seek = last.is_none_or(|l| l.checked_add(1) != Some(index));
-                let result = decoder.frame(index);
+                let result = decode(decoder.as_mut(), index);
                 last = Some(index);
                 let mut c = lock(&shared.cache);
                 if c.generation != generation {

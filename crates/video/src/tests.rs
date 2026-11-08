@@ -537,3 +537,48 @@ fn the_scrub_cache_keeps_the_frames_nearest_the_position() {
     }
     assert!(c.get(4999).is_some() && c.get(1).is_some() && c.get(4000).is_none());
 }
+
+#[test]
+fn a_panicking_decoder_yields_an_error_frame() {
+    struct Panics(ClipInfo);
+    impl Decoder for Panics {
+        fn info(&self) -> &ClipInfo {
+            &self.0
+        }
+        fn frame(&mut self, index: usize) -> Result<Frame, String> {
+            panic!("bad chunk at {index}")
+        }
+    }
+    let info = ClipInfo {
+        width: 1,
+        height: 1,
+        frames: 4,
+        timing: Timing::Rate { num: 30, den: 1 },
+        codec: String::new(),
+        container: String::new(),
+        seeks: true,
+    };
+    let mut d = Panics(info);
+    let err = player::decode(&mut d, 2).err().unwrap_or_default();
+    assert!(err.contains("panicked") && err.contains("bad chunk at 2"), "{err}");
+}
+
+#[test]
+fn frame_rates_are_reduced_and_hostile_ones_refused() {
+    assert_eq!(film::reduced(60000, 2002), Some((30000, 1001)));
+    assert_eq!(film::reduced(30, 1), Some((30, 1)));
+    assert_eq!(film::reduced(0, 1), None);
+    assert_eq!(film::reduced(30, -1), None);
+    assert_eq!(film::reduced(3, (1 << 40) + 1), None);
+    // Reduction first: a large but reducible denominator is fine.
+    assert_eq!(film::reduced(1 << 50, 1 << 50), Some((1, 1)));
+}
+
+#[test]
+fn frame_times_do_not_overflow() {
+    let t = film::frame_time(2, 30, 1).map(|t| t.seconds());
+    assert!(t.is_some_and(|s| (s - 2.25 / 30.0).abs() < 1e-9), "{t:?}");
+    assert!(film::frame_time(usize::MAX, 30, 1).is_none());
+    assert!(film::frame_time(1 << 30, 30, 1 << 40).is_none());
+    assert!(film::frame_time(0, i64::MAX, 1).is_none());
+}
