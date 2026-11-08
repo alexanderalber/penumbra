@@ -12,6 +12,7 @@
 //! not hold the geometry back: the material then draws without the picture and warns.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use half::f16;
 use penumbra_core::{Curve, Error, ParamSpec, Unit};
@@ -173,11 +174,26 @@ struct MatNode {
     /// reflections.
     studio: Option<Arc<EnvironmentMaps>>,
     renderer: Renderer,
+    /// The last picture of the material and when it was made.
+    picture: Option<(Tex, Instant)>,
+    /// A new texture came since the picture was made.
+    behind: bool,
 }
+
+/// How often at most a new texture alone makes the picture again.
+const PICTURE_EVERY: Duration = Duration::from_millis(500);
 
 impl MatNode {
     fn new(shading: Shading) -> Self {
-        Self { shading, wire: false, sphere: None, studio: None, renderer: Renderer::new() }
+        Self {
+            shading,
+            wire: false,
+            sphere: None,
+            studio: None,
+            renderer: Renderer::new(),
+            picture: None,
+            behind: false,
+        }
     }
 
     fn wire() -> Self {
@@ -277,6 +293,36 @@ impl Operator for MatNode {
             cx.warn("the picture on `texture` failed upstream: this material draws without it");
         }
         let material = Arc::new(material);
+        // The picture is made again at once for a change of a param, and at most every
+        // PICTURE_EVERY for a new texture alone: an animated texture input made a sphere
+        // render on every frame that nobody looked at. A change left out is caught up later.
+        let settings = cx.params_changed() || cx.first_cook() || self.picture.is_none();
+        let fresh = cx.inputs_changed();
+        let due = self.picture.as_ref().is_none_or(|(_, at)| at.elapsed() >= PICTURE_EVERY);
+        if settings || ((fresh || self.behind) && due) {
+            self.picture = match self.picture(gpu, &material) {
+                Ok(t) => Some((t, Instant::now())),
+                Err(e) => {
+                    log::warn!("material preview: {e}");
+                    None
+                }
+            };
+            self.behind = false;
+        } else if fresh || self.behind {
+            self.behind = true;
+            cx.waker().wake();
+            if !fresh {
+                return Ok(Cooked::Unchanged);
+            }
+        }
+        let preview = self.picture.as_ref().map(|(t, _)| t.clone());
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Mat, Mat { material, preview })]))
+    }
+}
+
+impl MatNode {
+    /// The material on the preview sphere.
+    fn picture(&mut self, gpu: &Gpu, material: &Arc<Material>) -> Result<Tex, Error> {
         // An occluder's picture would be empty: a dark matte sphere, a hole, stands in for it.
         let shown = if self.shading == Shading::Occluder {
             Arc::new(Material {
@@ -304,14 +350,6 @@ impl Operator for MatNode {
                 Err(e) => log::warn!("material preview: {e}"),
             }
         }
-        let kind = crate::geo::Preview::Material;
-        let preview = match crate::geo::preview_lit(gpu, &mut self.renderer, &geo, kind, &extra) {
-            Ok(t) => Some(t),
-            Err(e) => {
-                log::warn!("material preview: {e}");
-                None
-            }
-        };
-        Ok(Cooked::Outputs(vec![Data::new(DataKind::Mat, Mat { material, preview })]))
+        crate::geo::preview_lit(gpu, &mut self.renderer, &geo, crate::geo::Preview::Material, &extra)
     }
 }
