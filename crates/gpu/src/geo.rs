@@ -575,7 +575,13 @@ impl Geo {
 
     /// Number of part ids: one past the highest.
     pub fn part_count(&self) -> u32 {
-        self.items.iter().map(|i| i.part_offset + i.model.mesh.parts.len() as u32).max().unwrap_or(0)
+        self.items
+            .iter()
+            .map(|i| {
+                i.part_offset.saturating_add(u32::try_from(i.model.mesh.parts.len()).unwrap_or(u32::MAX))
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     /// Name of every part id (later items win where ids overlap, which merges never make).

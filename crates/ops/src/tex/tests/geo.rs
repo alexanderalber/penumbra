@@ -1692,6 +1692,30 @@ fn instance_places_a_copy_per_row() {
     assert!((b.max[2] - 1.0).abs() < 1e-5, "the taller copy reaches z 1: {b:?}");
 }
 
+#[test]
+fn chained_instances_stop_at_the_draw_limit() {
+    let Some(gpu) = gpu() else { return };
+    let rows: String = (0..300).map(|i| format!("{i}\n")).collect();
+    let ops = vec![
+        create("/box", "geo.primitive", &[]),
+        create("/places", "table.text", &[("format", "csv".into()), ("text", format!("tx\n{rows}").into())]),
+        create("/row", "geo.instance", &[]),
+        connect("/box", "/row", 0),
+        connect("/places", "/row", 1),
+        create("/grid", "geo.instance", &[]),
+        connect("/row", "/grid", 0),
+        connect("/places", "/grid", 1),
+    ];
+    let mut rig = rig(gpu, None, &ops);
+    rig.cook("/grid");
+    let geo =
+        rig.cooker.output(Port { node: rig.id("/grid"), output: 0 }).unwrap().get::<Geo>().unwrap().clone();
+    let fit = penumbra_gpu::render::MAX_DRAWS / 300;
+    assert_eq!(geo.items.len(), fit * 300);
+    let s = rig.cooker.status(rig.id("/grid")).unwrap();
+    assert!(s.warning.as_deref().is_some_and(|w| w.contains(&format!("the first {fit}"))), "{s:?}");
+}
+
 /// Two copies placed, turned, scaled and coloured by texels, seen from the front: the left one
 /// as it is but twice as tall, green; the right one turned to lie along x, red.
 #[test]

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use penumbra_calib::{Camera, Intrinsics, Pose};
 use penumbra_core::{Curve, Error, ParamSpec, Table, Unit};
 use penumbra_gpu::geo::{Instances, Item, Mat4, Model, mul};
-use penumbra_gpu::render::{Light, Look, Renderer, Surface, View};
+use penumbra_gpu::render::{Light, Look, MAX_DRAWS, Renderer, Surface, View};
 use penumbra_gpu::{Geo, Gpu, Mat, Tex};
 use penumbra_graph::{
     AsyncSlot, CookContext, CookError, Cooked, Data, DataKind, FileWatch, FnNodeType, JobStatus, NodeDesc,
@@ -224,7 +224,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .describe_input("show", crate::show::SHOW_DOC)
             .output("out", DataKind::Geo)
             .describe_output("out", "All inputs as one; part ids continue from input to input"),
-            || Box::new(Merge) as Box<dyn Operator>,
+            || Box::new(Merge::default()) as Box<dyn Operator>,
         )
         .choose_inputs(crate::show::choose),
     )?;
@@ -711,7 +711,11 @@ impl Operator for Transform {
 }
 
 #[derive(Default)]
-struct Merge;
+struct Merge {
+    /// The part count each input had when it last arrived. An input that is hidden or not
+    /// there yet keeps its place in the numbering, so the part ids after it do not shift.
+    counts: Vec<u32>,
+}
 
 impl Operator for Merge {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
@@ -719,11 +723,25 @@ impl Operator for Merge {
         let mut items = Vec::new();
         let mut offset = 0u32;
         let mut any = false;
-        for k in 0..cx.def().inputs.len() {
-            let Some(g) = cx.input_as::<Geo>(k) else { continue };
+        let inputs = cx.def().inputs.len();
+        self.counts.resize(inputs, 0);
+        for (k, count) in self.counts.iter_mut().enumerate() {
+            let Some(g) = cx.input_as::<Geo>(k) else {
+                // An input wired to nothing gives up its place.
+                if !cx.def().inputs.get(k).is_some_and(Option::is_some) {
+                    *count = 0;
+                }
+                offset = offset.saturating_add(*count);
+                continue;
+            };
             any = true;
-            items.extend(g.items.iter().map(|i| Item { part_offset: i.part_offset + offset, ..i.clone() }));
-            offset += g.part_count();
+            items.extend(
+                g.items
+                    .iter()
+                    .map(|i| Item { part_offset: i.part_offset.saturating_add(offset), ..i.clone() }),
+            );
+            *count = g.part_count();
+            offset = offset.saturating_add(*count);
         }
         if !any && !crate::show::all_hidden(cx) {
             return Err(waiting(cx));
@@ -794,9 +812,28 @@ impl Operator for Instance {
                 CookError::failed("connect a geometry and a table of placements")
             });
         };
-        let (places, warning) = placements(table);
-        if let Some(w) = warning {
-            cx.warn(w);
+        let (mut places, warning) = placements(table);
+        let mut warnings: Vec<String> = warning.into_iter().collect();
+        // Every copy of every item is a draw, and the renderer draws at most MAX_DRAWS. Copies
+        // of copies multiply: two chained instances of 10 000 rows would make 10^8 items.
+        let fit = MAX_DRAWS / input.items.len().max(1);
+        if fit == 0 {
+            return Err(CookError::failed(format!(
+                "the geometry holds {} items; copies of it would be more than the {MAX_DRAWS} the renderer draws",
+                input.items.len()
+            )));
+        }
+        if places.len() > fit {
+            warnings.push(format!(
+                "{} copies of {} items would be more than the {MAX_DRAWS} the renderer draws: the first {fit} \
+                 are kept",
+                places.len(),
+                input.items.len()
+            ));
+            places.truncate(fit);
+        }
+        if !warnings.is_empty() {
+            cx.warn(warnings.join("; "));
         }
         let parts = input.part_count();
         let mut items = Vec::with_capacity(places.len() * input.items.len());

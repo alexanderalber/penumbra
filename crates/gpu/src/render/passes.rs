@@ -129,7 +129,7 @@ impl Calls {
                     color,
                     m,
                     occluder,
-                    item.part_offset + r.part,
+                    item.part_offset.saturating_add(r.part),
                     item.instances.as_deref(),
                 ));
                 calls.push(DrawCall {
