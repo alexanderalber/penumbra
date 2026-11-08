@@ -2497,6 +2497,14 @@ fn time_machine_out_of_memory_keeps_fewer_frames_and_does_not_retry_every_cook()
     rig.cook("/tm");
     let s = rig.cooker.status(rig.id("/tm")).unwrap();
     assert_eq!((s.error, s.warning), (None, None));
+    // A bound length moving within what the stack holds keeps it and its frames.
+    let before = gpu.stack_attempts();
+    for length in [5, 8, 3, 10] {
+        rig.clock.advance(1);
+        rig.edit(&[set("/tm.length", Value::Int(length))]);
+        rig.cook("/tm");
+    }
+    assert_eq!(gpu.stack_attempts() - before, 0);
     assert_eq!(gpu.errors().count, 0);
 }
 

@@ -4,10 +4,13 @@
 //! n-th frame) where memory runs out before the wanted length.
 //!
 //! How many frames are kept is decided once per shape (input size, `scale`, `precision`,
-//! `length`, `step`, `budget`) and not again until one of those changes: the wanted number,
-//! cut to the budget, to what the GPU has free and to what one stack holds ([`plan`]). A
-//! refused allocation is not retried on every cook either; asking for gigabytes the GPU does
-//! not have, frame after frame, is what drives a driver into suspending the device.
+//! `budget`) and wanted number of frames (`length`, `step`): the wanted number, cut to the
+//! budget, to what the GPU has free and to what one stack holds ([`plan`]). A shorter `length`
+//! keeps the stack and its frames, and so does a longer one up to what was asked for before.
+//! Only a request for more frames than the stack holds and than was asked for makes a new one,
+//! so a bound `length` does not drop the frames on every cook. A refused allocation is not
+//! retried on every cook either; asking for gigabytes the GPU does not have, frame after
+//! frame, is what drives a driver into suspending the device.
 
 use std::time::Duration;
 
@@ -145,21 +148,41 @@ fn plan(wanted: u64, per: u64, budget: u64, auto: bool, free: Option<u64>, capac
 }
 
 /// The shape a stack was sized for. While it stays the same, neither the size nor a refused
-/// allocation is looked at again.
+/// allocation is looked at again, unless more frames are wanted ([`Asked::renew`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Shape {
     size: (u32, u32),
     precision: Precision,
-    wanted: u64,
     budget: f64,
+}
+
+/// What the current stack was made for: its shape and the frames asked for then.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Asked {
+    shape: Shape,
+    frames: u64,
+}
+
+impl Asked {
+    /// Whether `wanted` frames of `shape` need a new stack, where the current one holds `held`
+    /// frames (`None`: making it failed). A stack that holds the wanted frames stays. So does
+    /// one cut below an earlier, larger request, since asking again would be cut the same way.
+    /// After a failure only a smaller request is tried again.
+    fn renew(this: Option<Self>, shape: Shape, wanted: u64, held: Option<u64>) -> bool {
+        let Some(asked) = this.filter(|a| a.shape == shape) else { return true };
+        match held {
+            Some(held) => wanted > held && wanted > asked.frames,
+            None => wanted < asked.frames,
+        }
+    }
 }
 
 #[derive(Default)]
 struct TimeMachine {
     stack: Option<Stack>,
-    shape: Option<Shape>,
-    /// The warning for the current shape, repeated on every cook.
-    warning: Option<String>,
+    asked: Option<Asked>,
+    /// Why the stack holds fewer frames than were asked for.
+    why: Option<String>,
     /// Why no stack could be made for the current shape.
     failed: Option<String>,
     ring: TexRing,
@@ -170,14 +193,15 @@ struct TimeMachine {
 }
 
 impl TimeMachine {
-    /// Drops the old stack and makes one for `shape`, noting a warning or the failure.
-    fn reshape(&mut self, gpu: &Gpu, shape: Shape, step: u64) {
+    /// Drops the old stack and makes one for `wanted` frames of `shape`, noting why it holds
+    /// fewer or why it failed.
+    fn reshape(&mut self, gpu: &Gpu, shape: Shape, wanted: u64) {
         // The old frames go first, so their memory is free for the new ones.
         if self.stack.take().is_some() {
             gpu.settle(SETTLE);
         }
-        self.shape = Some(shape);
-        self.warning = None;
+        self.asked = Some(Asked { shape, frames: wanted });
+        self.why = None;
         self.failed = None;
         let (sw, sh) = shape.size;
         let per = Stack::bytes_for(sw, sh, 1, shape.precision).max(1);
@@ -196,16 +220,17 @@ impl TimeMachine {
             (false, _) => (shape.budget * GIB) as u64,
         };
         let free = vram.map(|v| v.creatable(reserve(&v)));
-        let plan = plan(shape.wanted, per, budget, auto, free, capacity);
+        let plan = plan(wanted, per, budget, auto, free, capacity);
         let frames = u32::try_from(plan.frames).unwrap_or(MAX_FRAMES);
-        let again = "tried again when a param or the input size changes";
+        let again = "tried again when the input size, scale, precision or budget changes";
         match Stack::new(gpu, sw, sh, frames, shape.precision) {
             Ok(stack) => {
                 let kept = u64::from(stack.frames());
-                if kept < shape.wanted {
-                    let gib = |n: u64| (n * per) as f64 / GIB;
+                if kept < wanted {
                     let why = match (stack.shortfall(), plan.limit) {
-                        (Some(_), _) => format!("the GPU refused more memory after {kept} frames ({again})"),
+                        (Some(_), _) => format!(
+                            "the GPU refused more memory after {kept} frames ({again}, or for a longer length)"
+                        ),
                         (None, Limit::Budget) => format!("the budget is {:.1} GiB", budget as f64 / GIB),
                         (None, Limit::Auto) => match vram {
                             Some(v) => format!(
@@ -222,16 +247,7 @@ impl TimeMachine {
                             format!("one stack holds at most {capacity} frames of this size")
                         }
                     };
-                    let bits = if shape.precision == Precision::Byte { 8 } else { 16 };
-                    self.warning = Some(format!(
-                        "white reaches {} frames back: keeping {kept} of {} frames of {sw}x{sh} at {bits} \
-                         bit ({:.1} of the {:.1} GiB wanted) because {why}. A lower scale, 8bit or a \
-                         larger step keep more",
-                        (kept - 1) * step,
-                        shape.wanted,
-                        gib(kept),
-                        gib(shape.wanted)
-                    ));
+                    self.why = Some(why);
                 }
                 if let Some(s) = stack.shortfall() {
                     log::warn!("{KIND}: {s}");
@@ -240,10 +256,25 @@ impl TimeMachine {
             }
             Err(e) => {
                 log::warn!("{KIND}: {e}");
-                self.failed = Some(format!("{e} ({again})"));
+                self.failed = Some(format!("{e} ({again}, or for a shorter length)"));
             }
         }
     }
+}
+
+/// The warning for a stack of `kept` frames of `shape` where `wanted` were wanted.
+fn shortage(shape: Shape, kept: u64, wanted: u64, step: u64, why: &str) -> String {
+    let (sw, sh) = shape.size;
+    let per = Stack::bytes_for(sw, sh, 1, shape.precision).max(1);
+    let gib = |n: u64| n.saturating_mul(per) as f64 / GIB;
+    let bits = if shape.precision == Precision::Byte { 8 } else { 16 };
+    format!(
+        "white reaches {} frames back: keeping {kept} of {wanted} frames of {sw}x{sh} at {bits} bit \
+         ({:.1} of the {:.1} GiB wanted) because {why}. A lower scale, 8bit or a larger step keep more",
+        kept.saturating_sub(1).saturating_mul(step),
+        gib(kept),
+        gib(wanted)
+    )
 }
 
 /// GPU memory left to the rest of the app when sizing by what is free.
@@ -270,17 +301,20 @@ impl Operator for TimeMachine {
 
         // Stored frames for `length` input frames back, plus the newest.
         let wanted = length.div_ceil(step) + 1;
-        let shape = Shape { size: (side(w), side(h)), precision, wanted, budget };
-        if self.shape != Some(shape) {
-            self.reshape(gpu, shape, step);
-        }
-        if let Some(w) = &self.warning {
-            cx.warn(w.clone());
+        let shape = Shape { size: (side(w), side(h)), precision, budget };
+        let held = self.stack.as_ref().map(|s| u64::from(s.frames()));
+        if Asked::renew(self.asked, shape, wanted, held) {
+            self.reshape(gpu, shape, wanted);
         }
         if let Some(e) = &self.failed {
             return Err(CookError::failed(e.clone()));
         }
         let Some(stack) = self.stack.as_mut() else { return Err(waiting(cx)) };
+        let kept = u64::from(stack.frames());
+        if kept < wanted {
+            let why = self.why.as_deref().unwrap_or("the GPU refused more memory");
+            cx.warn(shortage(shape, kept, wanted, step, why));
+        }
 
         if cx.bool("record")? {
             let new = !self.input.as_ref().is_some_and(|d| d.same(data));
@@ -332,5 +366,28 @@ mod tests {
         // Never zero, even with nothing free or a frame larger than the budget.
         assert_eq!(plan(10, hd, 0, false, Some(0), 512).frames, 1);
         assert_eq!(plan(0, 0, 0, false, None, 0).frames, 1);
+    }
+
+    #[test]
+    fn a_changing_length_keeps_the_stack_until_more_is_needed() {
+        let shape = Shape { size: (640, 360), precision: Precision::Half, budget: 0.0 };
+        let asked = Some(Asked { shape, frames: 121 });
+        // Nothing made yet, or another shape: a new stack.
+        assert!(Asked::renew(None, shape, 121, None));
+        let wider = Shape { size: (1280, 720), ..shape };
+        assert!(Asked::renew(asked, wider, 121, Some(121)));
+        // A bound length moving below what the stack holds keeps it.
+        for wanted in [1, 60, 120, 121] {
+            assert!(!Asked::renew(asked, shape, wanted, Some(121)), "{wanted}");
+        }
+        // More than it holds and than was asked for: a new one.
+        assert!(Asked::renew(asked, shape, 122, Some(121)));
+        // A stack cut to 64 by the budget stays while the request does not grow past 121.
+        assert!(!Asked::renew(asked, shape, 100, Some(64)));
+        assert!(Asked::renew(asked, shape, 200, Some(64)));
+        // After a failure only a smaller request is tried again.
+        assert!(!Asked::renew(asked, shape, 121, None));
+        assert!(!Asked::renew(asked, shape, 500, None));
+        assert!(Asked::renew(asked, shape, 60, None));
     }
 }
