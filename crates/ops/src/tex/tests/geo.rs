@@ -2196,4 +2196,60 @@ fn uv_project_decides_which_way_a_texture_runs_over_a_wall() {
     let up = rig.pixels("/up_look");
     let (top, bottom) = (at(&up, w / 2, h * 3 / 10), at(&up, w / 2, h * 7 / 10));
     assert!(bottom[0] < 0.45 && top[0] > 0.55, "turned 90 degrees, u runs upwards: {bottom:?} {top:?}");
+
+    // A merge upstream cooks again for its other input: the wall's piece is the same model,
+    // placement and projection, and keeps the model made before.
+    rig.edit(&[
+        create("/box", "geo.primitive", &[]),
+        create("/both", "geo.merge", &[]),
+        create("/both_uv", "geo.uv_project", &[("fit", "units".into())]),
+        connect("/wall", "/both", 0),
+        connect("/box", "/both", 1),
+        connect("/both", "/both_uv", 0),
+    ]);
+    let wall_piece = |rig: &mut Rig| {
+        rig.cook("/both_uv");
+        let out = rig.cooker.output(Port { node: rig.id("/both_uv"), output: 0 }).unwrap();
+        let geo = out.get::<Geo>().unwrap();
+        (geo.items[0].model.clone(), geo.items[1].model.clone())
+    };
+    let (wall, boxed) = wall_piece(&mut rig);
+    rig.edit(&[set("/box.size", Value::Vec3([0.5, 0.5, 0.5]))]);
+    let (wall_again, box_again) = wall_piece(&mut rig);
+    assert!(std::sync::Arc::ptr_eq(&wall, &wall_again), "the wall is not projected again");
+    assert!(!std::sync::Arc::ptr_eq(&boxed, &box_again), "the new box is");
+    rig.edit(&[set("/both_uv.offset", Value::Vec2([0.5, 0.0]))]);
+    let (wall_moved, _) = wall_piece(&mut rig);
+    assert!(!std::sync::Arc::ptr_eq(&wall, &wall_moved), "a new offset projects again");
+}
+
+#[test]
+fn a_material_picture_follows_its_colour_at_once_and_a_texture_later() {
+    let Some(gpu) = gpu() else { return };
+    let ops = vec![
+        create("/pic", "tex.constant", &[("width", Value::Int(8)), ("height", Value::Int(8))]),
+        create("/m", "mat.constant", &[]),
+        connect("/pic", "/m", 0),
+    ];
+    let mut rig = rig(gpu, None, &ops);
+    let mat = |rig: &mut Rig| {
+        rig.clock.advance(1);
+        rig.cook("/m");
+        rig.cooker
+            .output(Port { node: rig.id("/m"), output: 0 })
+            .unwrap()
+            .get::<penumbra_gpu::Mat>()
+            .unwrap()
+            .clone()
+    };
+    let first = mat(&mut rig);
+    let shown = first.preview.clone().unwrap();
+    // A new picture on the texture input: the material has it, the sphere waits.
+    rig.edit(&[set("/pic.color", Value::Vec4([1.0, 0.0, 0.0, 1.0]))]);
+    let textured = mat(&mut rig);
+    assert!(!textured.material.texture.as_ref().unwrap().same(first.material.texture.as_ref().unwrap()));
+    assert!(textured.preview.unwrap().same(&shown), "no new sphere for a texture alone, yet");
+    // A colour: a new sphere at once.
+    rig.edit(&[set("/m.color", Value::Vec4([0.0, 1.0, 0.0, 1.0]))]);
+    assert!(!mat(&mut rig).preview.unwrap().same(&shown));
 }

@@ -898,13 +898,24 @@ pub const UV_FITS: [&str; 2] = ["geometry", "units"];
 /// `geo.instance` before the node would upload thousands of them.
 pub const MAX_UV_ITEMS: usize = 256;
 
-/// Keeps the models it made last, which its output holds anyway, to count them.
+/// Keeps the models it made last, which its output holds anyway: to count them, and to use
+/// them again for a piece whose model, placement and projection are the same as last time.
+/// A cook for another reason (a merge upstream, a piece that moved beside it) then uploads
+/// nothing for the pieces that stayed.
 #[derive(Default)]
-struct UvProject(Vec<Arc<Model>>);
+struct UvProject(Vec<Projected>);
+
+/// A piece projected: what it was made from and the model with its uvs.
+struct Projected {
+    source: Arc<Model>,
+    world: Mat4,
+    projection: penumbra_mesh::uv_project::Projection,
+    made: Arc<Model>,
+}
 
 impl Operator for UvProject {
     fn gpu_bytes(&self) -> u64 {
-        self.0.iter().map(|m| m.triangle_bytes()).sum()
+        self.0.iter().map(|p| p.made.triangle_bytes()).sum()
     }
 
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
@@ -951,9 +962,22 @@ impl Operator for UvProject {
         let mut models = Vec::with_capacity(input.items.len());
         let mut items = Vec::with_capacity(input.items.len());
         for item in &input.items {
-            let p = project(&item.model.mesh, &item.world, &projection, max)?;
-            let model = Arc::new(item.model.with_triangles(gpu, p.vertices, p.indices)?);
-            models.push(model.clone());
+            let same = |p: &&Projected| {
+                Arc::ptr_eq(&p.source, &item.model) && p.world == item.world && p.projection == projection
+            };
+            let model = match self.0.iter().find(same) {
+                Some(p) => p.made.clone(),
+                None => {
+                    let p = project(&item.model.mesh, &item.world, &projection, max)?;
+                    Arc::new(item.model.with_triangles(gpu, p.vertices, p.indices)?)
+                }
+            };
+            models.push(Projected {
+                source: item.model.clone(),
+                world: item.world,
+                projection,
+                made: model.clone(),
+            });
             items.push(Item { model, ..item.clone() });
         }
         self.0 = models;
