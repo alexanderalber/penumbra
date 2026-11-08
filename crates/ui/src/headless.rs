@@ -88,6 +88,47 @@ fn setup(software: bool) -> egui_wgpu::WgpuSetup {
     egui_wgpu::WgpuSetup::CreateNew(setup)
 }
 
+/// kittest's wgpu renderer without the cursor kittest adds to every recorded frame: a white
+/// triangle at the pointer. The app paints its own arrow when a script asks for one
+/// (`ui.pointer`), so a recording with both showed two pointers on top of each other.
+struct NoTestCursor(egui_kittest::wgpu::WgpuTestRenderer);
+
+impl NoTestCursor {
+    fn new(setup: egui_wgpu::WgpuSetup) -> Self {
+        Self(egui_kittest::wgpu::WgpuTestRenderer::from_setup(setup))
+    }
+}
+
+/// Whether `shape` is the cursor `Harness::render` appends: a closed white triangle with its
+/// corners at the pointer, 16 x 8 and 8 x 16 points from it.
+fn is_test_cursor(shape: &egui::epaint::ClippedShape) -> bool {
+    let egui::Shape::Path(path) = &shape.shape else { return false };
+    let [tip, a, b] = path.points.as_slice() else { return false };
+    path.closed
+        && path.fill == egui::Color32::WHITE
+        && *a == *tip + egui::vec2(16.0, 8.0)
+        && *b == *tip + egui::vec2(8.0, 16.0)
+}
+
+impl egui_kittest::TestRenderer for NoTestCursor {
+    fn setup_eframe(&self, cc: &mut eframe::CreationContext<'_>, frame: &mut eframe::Frame) {
+        self.0.setup_eframe(cc, frame);
+    }
+
+    fn handle_delta(&mut self, delta: &mut egui::TexturesDelta) {
+        self.0.handle_delta(delta);
+    }
+
+    fn render(&mut self, ctx: &egui::Context, output: &egui::FullOutput) -> Result<image::RgbaImage, String> {
+        if output.shapes.last().is_some_and(is_test_cursor) {
+            let mut output = output.clone();
+            output.shapes.pop();
+            return self.0.render(ctx, &output);
+        }
+        self.0.render(ctx, output)
+    }
+}
+
 /// A headless app on the software adapter without a script or control channel, for tests that
 /// feed it input of their own. The guard keeps other software runs out while it lives.
 #[cfg(test)]
@@ -97,7 +138,7 @@ pub(crate) fn software_app(engine: Arc<Engine>) -> (std::sync::MutexGuard<'stati
         .with_size(egui::vec2(1200.0, 800.0))
         .with_max_steps(4)
         .with_step_dt(1.0 / 60.0)
-        .wgpu_setup(setup(true))
+        .renderer(NoTestCursor::new(setup(true)))
         .build_eframe(|cc| {
             PenumbraApp::new(
                 cc,
@@ -157,7 +198,7 @@ pub fn run(engine: Arc<Engine>, script: &str, options: &Options) -> Result<Vec<(
         .with_max_steps(4)
         // Frame time as in the window (kittest's default is 0.25 s), so double-clicks register.
         .with_step_dt(step_dt)
-        .wgpu_setup(setup(options.software))
+        .renderer(NoTestCursor::new(setup(options.software)))
         .build_eframe(|cc| {
             PenumbraApp::new(
                 cc,
@@ -369,6 +410,40 @@ fn step_for(harness: &mut Harness<'_>, d: Duration) {
     while Instant::now() < end {
         step(harness);
         std::thread::sleep(Duration::from_millis(8));
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use egui::epaint::{ClippedShape, PathShape};
+    use egui::{Color32, Rect, Stroke, pos2, vec2};
+
+    fn clipped(shape: egui::Shape) -> ClippedShape {
+        ClippedShape { clip_rect: Rect::EVERYTHING, shape }
+    }
+
+    #[test]
+    fn only_kittests_cursor_triangle_is_dropped() {
+        let at = pos2(100.0, 50.0);
+        let triangle = |fill| {
+            clipped(
+                PathShape::convex_polygon(
+                    vec![at, at + vec2(16.0, 8.0), at + vec2(8.0, 16.0)],
+                    fill,
+                    Stroke::new(1.0, Color32::BLACK),
+                )
+                .into(),
+            )
+        };
+        assert!(super::is_test_cursor(&triangle(Color32::WHITE)));
+        assert!(!super::is_test_cursor(&triangle(Color32::RED)));
+        let other = PathShape::convex_polygon(
+            vec![at, at + vec2(12.0, 8.0), at + vec2(8.0, 16.0)],
+            Color32::WHITE,
+            Stroke::NONE,
+        );
+        assert!(!super::is_test_cursor(&clipped(other.into())));
+        assert!(!super::is_test_cursor(&clipped(egui::Shape::circle_filled(at, 4.0, Color32::WHITE))));
     }
 }
 

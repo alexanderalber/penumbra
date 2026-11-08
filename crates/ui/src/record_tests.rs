@@ -117,3 +117,26 @@ fn tab_to_another_family_and_enter_adds_its_first_match() {
     assert!(kinds.contains(&"tex.noise".to_string()), "the exact name, not tex.denoise: {kinds:?}");
     engine.shutdown();
 }
+
+#[test]
+fn a_recorded_frame_shows_no_cursor_of_its_own() {
+    let dir = ScratchDir::unborn("ui-record-cursor");
+    let frames = dir.path().join("frames");
+    let engine = engine(&dir);
+    // No drawn pointer: whatever sits under the hover point would be the harness's cursor.
+    let replies = run(
+        &engine,
+        &[
+            json!({"record": {"dir": frames.display().to_string(), "fps": 30}}),
+            json!({"method": "ui.hover", "params": {"x": 100, "y": 100}}),
+            json!({"wait": 0.2}),
+            json!({"record": false}),
+        ],
+    );
+    let n = ok(&replies, "record", 1)["frames"].as_u64().unwrap();
+    let last = image::open(frames.join(format!("frame_{:06}.png", n - 1))).unwrap().to_rgba8();
+    // Inside the triangle a test harness paints at the pointer (tip, +16/+8, +8/+16).
+    let px = last.get_pixel(108, 108);
+    assert!(px[0] < 128 && px[1] < 128 && px[2] < 128, "a bright cursor pixel {px:?} in the recording");
+    engine.shutdown();
+}
