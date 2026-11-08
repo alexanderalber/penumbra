@@ -895,7 +895,7 @@ Outputs:
 | `source` | monitor \| window | `"monitor"` |  | What to capture; monitor: a whole monitor, chosen by `display`; window: one window, chosen by a part of its title in `window` |
 | `display` | text |  |  | The monitor: empty for the primary one, 1, 2, ... in the order the ... menu and screen.sources list them, or a display id as out.projector takes it. Does something only with source monitor. |
 | `window` | text |  |  | A part of the window's title, upper or lower case alike, e.g. `notepad`. The frontmost window that matches is captured; when it closes, the node waits for one to match again. The ... menu lists the windows open now. Does something only with source window. |
-| `cursor` | bool | `false` |  | Draw the mouse pointer into the picture |
+| `cursor` | bool | `false` |  | Draw the mouse pointer into the picture. Before Windows 10 2004 the pointer is always drawn |
 | `border` | bool | `false` |  | Let Windows draw its yellow frame around what is captured. Windows 10 always draws it |
 
 ### tex.select

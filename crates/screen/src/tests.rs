@@ -32,10 +32,12 @@ fn first_frame(
 
 fn capture(gpu: &Gpu, target: Target) -> (Capture, mpsc::Receiver<()>) {
     let (tx, rx) = mpsc::channel();
-    let capture = Capture::new(gpu, target, OPTIONS, move || {
-        tx.send(()).ok();
-    })
-    .unwrap();
+    let mut capture = Capture::new(gpu).unwrap();
+    capture
+        .start(target, OPTIONS, move || {
+            tx.send(()).ok();
+        })
+        .unwrap();
     (capture, rx)
 }
 
@@ -53,6 +55,7 @@ fn captures_the_primary_monitor(choice: AdapterChoice) {
     assert!(lit > 0, "the capture is black");
     assert!(pixels.data.iter().all(|p| (p[3] - 1.0).abs() < 1e-3), "the capture is not opaque");
     assert_eq!(capture.status().capturing.as_deref(), Some(primary.id.as_str()));
+    assert_eq!(capture.status().warning, None, "border");
 }
 
 #[test]

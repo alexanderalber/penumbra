@@ -6,9 +6,10 @@
 //! Direct3D 11 on 12 on wgpu's own DirectX 12 device and queue (`wgc.rs`): two GPU copies and
 //! one conversion pass per frame, and the picture never leaves the graphics card.
 //!
-//! - [`Capture`]: one per node. A thread of its own finds the monitor or window, starts the
-//!   capture, notices when the window closes or the monitor goes, and tries again with a
-//!   growing pause. The cook takes the newest frame with [`Capture::take`].
+//! - [`Capture`]: one per node, its devices kept for the node's life. Per target a thread of
+//!   its own finds the monitor or window, starts the capture, notices when the window closes
+//!   or the monitor goes, and tries again with a growing pause. The cook takes the newest
+//!   frame with [`Capture::take`].
 //! - [`sources`]: the monitors and windows that can be captured now, for menus and
 //!   `screen.sources`.
 //! - [`pick`]: the pure rules that choose a monitor or a window, tested everywhere.
@@ -56,6 +57,10 @@ pub struct Status {
     pub capturing: Option<String>,
     /// Why nothing is captured now; the capture tries again by itself.
     pub error: Option<String>,
+    /// Something Windows refused that does not stop the capture.
+    pub warning: Option<String>,
+    /// The capture runs, but no frame came yet (a minimised window sends none).
+    pub waiting: bool,
     /// The size of the last frame.
     pub size: Option<(u32, u32)>,
 }

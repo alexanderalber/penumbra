@@ -3656,7 +3656,6 @@ dependencies = [
 name = "penumbra-screen"
 version = "0.9.0"
 dependencies = [
- "log",
  "penumbra-gpu",
  "penumbra-spout",
  "penumbra-system",

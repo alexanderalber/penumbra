@@ -43,7 +43,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     )
                     .applies_when("source", &["window"]),
             )
-            .param(ParamSpec::bool("cursor", false).doc("Draw the mouse pointer into the picture"))
+            .param(ParamSpec::bool("cursor", false).doc(
+                "Draw the mouse pointer into the picture. Before Windows 10 2004 the pointer is always drawn",
+            ))
             .param(
                 ParamSpec::bool("border", false).doc(
                     "Let Windows draw its yellow frame around what is captured. Windows 10 always draws it",
@@ -57,14 +59,22 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 
 #[derive(Default)]
 struct ScreenIn {
-    capture: Option<((Target, Options), Capture)>,
+    /// Kept for the node's life; only its session changes with the params.
+    capture: Option<Capture>,
+    key: Option<(Target, Options)>,
     out: Option<Data>,
     failed: Option<String>,
 }
 
 impl Operator for ScreenIn {
     fn gpu_bytes(&self) -> u64 {
-        self.capture.as_ref().map_or(0, |(_, c)| c.bytes())
+        self.capture.as_ref().map_or(0, Capture::bytes)
+    }
+
+    fn trim(&mut self) {
+        if let Some(c) = self.capture.as_mut() {
+            c.trim();
+        }
     }
 
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
@@ -95,19 +105,21 @@ impl ScreenIn {
         };
         let options = Options { cursor: cx.bool("cursor")?, border: cx.bool("border")? };
         let key = (target, options);
-        if self.capture.as_ref().is_none_or(|(k, _)| *k != key) {
-            // The old capture stops before the new one starts, so Windows' border does not flicker
-            // between two sessions.
-            self.capture = None;
+        if self.capture.is_none() {
+            self.capture = Some(Capture::new(gpu).map_err(CookError::failed)?);
+        }
+        let Some(capture) = self.capture.as_mut() else { return Err(CookError::failed("no capture")) };
+        if self.key.as_ref() != Some(&key) {
             self.out = None;
             let waker = cx.waker();
-            let capture =
-                Capture::new(gpu, key.0.clone(), options, move || waker.wake()).map_err(CookError::failed)?;
-            self.capture = Some((key, capture));
+            capture.start(key.0.clone(), options, move || waker.wake()).map_err(CookError::failed)?;
+            self.key = Some(key);
         }
-        let Some((_, capture)) = self.capture.as_mut() else { return Err(CookError::failed("no capture")) };
         let taken = capture.take(gpu);
         let status = capture.status();
+        if let Some(w) = &status.warning {
+            cx.warn(w.clone());
+        }
         match taken {
             Ok(Some(tex)) => {
                 let data = Data::new(DataKind::Tex, tex);
@@ -119,10 +131,13 @@ impl ScreenIn {
             Err(e) => cx.warn(e),
         }
         if self.out.is_none() {
-            return Err(match status.error {
-                Some(e) => CookError::failed(e),
-                None => CookError::Pending,
-            });
+            if let Some(e) = status.error {
+                return Err(CookError::failed(e));
+            }
+            if status.waiting {
+                cx.warn("waiting for the first picture: Windows sends one when the window is shown (a minimised window sends none)");
+            }
+            return Err(CookError::Pending);
         }
         if let Some(e) = status.error {
             cx.warn(format!("{e}: showing the last picture"));

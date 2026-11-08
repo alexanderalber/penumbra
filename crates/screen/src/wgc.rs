@@ -22,7 +22,7 @@
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use penumbra_gpu::{Alpha, Gpu, Tex, TexRing};
@@ -55,8 +55,10 @@ use windows::Win32::Graphics::Gdi::{
     DEVMODEW, ENUM_CURRENT_SETTINGS, EnumDisplayMonitors, EnumDisplaySettingsW, GetMonitorInfoW, HDC,
     HMONITOR, MONITORINFO, MONITORINFOEXW,
 };
+use windows::Win32::System::Com::CoIncrementMTAUsage;
 use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    GetCurrentProcessId, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW,
 };
 use windows::Win32::System::WinRT::Direct3D11::{
     CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess,
@@ -82,6 +84,8 @@ const DXGI_BGRA8: i32 = 87;
 const POLL: Duration = Duration::from_millis(100);
 /// How long a keyed mutex of the shared texture is waited for (both sides are the cook's).
 const KEYED_WAIT_MS: u32 = 100;
+/// How long a new session may send nothing before the node says it waits for a first frame.
+const FIRST_FRAME_WAIT: Duration = Duration::from_secs(1);
 
 const UNSUPPORTED: &str = "Windows cannot capture the screen here: Windows.Graphics.Capture needs Windows 10 \
                            1903 or later and a desktop session (some remote desktops have none)";
@@ -207,6 +211,20 @@ struct Bridge {
 // `Device` that made them.
 unsafe impl Send for Bridge {}
 
+/// Keeps the multithreaded apartment alive for the rest of the process, once. The windows crate
+/// caches activation factories in statics; when the last thread of the apartment left it, COM
+/// unloaded their code and the next capture crashed on a cached factory (seen in this crate's
+/// tests run one after another). It also gives the cook thread the apartment the agile capture
+/// objects need, whatever the workers do.
+fn keep_apartment() -> Result<(), String> {
+    static KEPT: OnceLock<Result<(), String>> = OnceLock::new();
+    KEPT.get_or_init(|| {
+        // SAFETY: takes a usage reference that is never given back, on purpose.
+        unsafe { CoIncrementMTAUsage() }.map(|_| ()).map_err(|e| err("cannot join Windows' COM apartment", e))
+    })
+    .clone()
+}
+
 /// The device as the Windows Runtime takes it. Called on the worker, inside the apartment.
 fn winrt_device(device: &ID3D11Device) -> Result<IDirect3DDevice, String> {
     let dxgi = device.cast::<IDXGIDevice>().map_err(|e| err("the Direct3D device has no DXGI device", e))?;
@@ -238,8 +256,11 @@ unsafe impl Send for Wrapped {}
 struct Live {
     pool: Direct3D11CaptureFramePool,
     session: GraphicsCaptureSession,
-    _item: GraphicsCaptureItem,
+    item: GraphicsCaptureItem,
     winrt: IDirect3DDevice,
+    /// The registrations of the `Closed` and `FrameArrived` handlers, revoked on drop.
+    closed_token: i64,
+    frame_token: i64,
     /// The size of the pool's buffers.
     size: Mutex<SizeInt32>,
     /// Set by the item's `Closed` event: the window closed or the monitor went.
@@ -276,6 +297,8 @@ impl Live {
 
 impl Drop for Live {
     fn drop(&mut self) {
+        self.item.RemoveClosed(self.closed_token).ok();
+        self.pool.RemoveFrameArrived(self.frame_token).ok();
         self.session.Close().ok();
         self.pool.Close().ok();
     }
@@ -285,69 +308,91 @@ impl Drop for Live {
 struct State {
     live: Option<Arc<Live>>,
     error: Option<String>,
-    /// Counts sessions started.
-    generation: u64,
+    /// Something Windows refused that does not stop the capture (the border).
+    warning: Option<String>,
+    /// The session runs but sent no frame for a while (a minimised window sends none).
+    waiting: bool,
+    /// The cook took a frame of this session.
+    framed: bool,
 }
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
 
-/// One node's capture: a worker thread that keeps a session running, and the textures the cook
-/// copies frames into.
-pub struct Capture {
-    device: Device,
+/// A worker thread and what it shares with the cook. Dropped, it stops the worker and closes
+/// the session at once, so two sessions (and two of Windows' borders) never overlap.
+struct Session {
     state: Arc<Mutex<State>>,
     stop: Arc<AtomicBool>,
-    bridge: Option<Bridge>,
-    converter: Converter,
-    ring: TexRing,
-    frames: u64,
-    size: Option<(u32, u32)>,
 }
 
-impl Drop for Capture {
+impl Drop for Session {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        // Agile objects, closed on this thread while the worker still holds the apartment.
+        let live = lock(&self.state).live.take();
+        drop(live);
     }
 }
 
+/// One node's capture: the devices and textures the cook copies frames through, kept for the
+/// node's life, and the session of what it captures now, replaced by [`Capture::start`].
+pub struct Capture {
+    device: Device,
+    session: Option<Session>,
+    bridge: Option<Bridge>,
+    converter: Converter,
+    ring: TexRing,
+    size: Option<(u32, u32)>,
+}
+
 impl Capture {
-    /// Starts capturing `target`. `wake` is called when a frame arrives or the capture changes.
-    pub fn new(
-        gpu: &Gpu,
+    /// The devices for capturing. Nothing is captured until [`Capture::start`].
+    pub fn new(gpu: &Gpu) -> Result<Self, String> {
+        keep_apartment()?;
+        let device = Device::new(gpu)?;
+        Ok(Self {
+            device,
+            session: None,
+            bridge: None,
+            converter: Converter::new(),
+            ring: TexRing::new(),
+            size: None,
+        })
+    }
+
+    /// Captures `target` from now on, ending what was captured before. `wake` is called when
+    /// a frame arrives or the capture changes.
+    pub fn start(
+        &mut self,
         target: Target,
         options: Options,
         wake: impl Fn() + Send + Sync + 'static,
-    ) -> Result<Self, String> {
-        let device = Device::new(gpu)?;
+    ) -> Result<(), String> {
+        self.session = None;
+        self.size = None;
         let state = Arc::new(Mutex::new(State::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let wake: Wake = Arc::new(wake);
-        let dxgi = DxgiDevice(device.native.clone());
+        let dxgi = DxgiDevice(self.device.native.clone());
         let (s, flag) = (state.clone(), stop.clone());
         std::thread::Builder::new()
             .name("screen capture".into())
             .spawn(move || run(&target, options, dxgi, &s, &flag, &wake))
             .map_err(|e| format!("cannot start the capture thread: {e}"))?;
-        Ok(Self {
-            device,
-            state,
-            stop,
-            bridge: None,
-            converter: Converter::new(),
-            ring: TexRing::new(),
-            frames: 0,
-            size: None,
-        })
+        self.session = Some(Session { state, stop });
+        Ok(())
     }
 
     pub fn status(&self) -> Status {
-        let s = lock(&self.state);
-        Status { capturing: s.live.as_ref().map(|l| l.name.clone()), error: s.error.clone(), size: self.size }
-    }
-
-    /// Frames taken.
-    pub fn frames(&self) -> u64 {
-        self.frames
+        let Some(session) = &self.session else { return Status::default() };
+        let s = lock(&session.state);
+        Status {
+            capturing: s.live.as_ref().map(|l| l.name.clone()),
+            error: s.error.clone(),
+            warning: s.warning.clone(),
+            waiting: s.waiting,
+            size: self.size,
+        }
     }
 
     /// Bytes on the GPU of the textures the capture keeps.
@@ -357,13 +402,25 @@ impl Capture {
             let s = b.target.texture.size();
             u64::from(s.width) * u64::from(s.height) * 8
         });
-        self.ring.bytes() + bridge
+        // The frame pool's buffers, 4 bytes a pixel each.
+        let pool = self.session.as_ref().and_then(|s| lock(&s.state).live.clone()).map_or(0, |l| {
+            let size = *lock(&l.size);
+            let (w, h) = (u64::try_from(size.Width).unwrap_or(0), u64::try_from(size.Height).unwrap_or(0));
+            w * h * 4 * BUFFERS.unsigned_abs() as u64
+        });
+        self.ring.bytes() + bridge + pool
+    }
+
+    /// Lets go of the textures nobody reads.
+    pub fn trim(&mut self) {
+        self.ring.trim();
     }
 
     /// The newest frame as a texture, `None` when none arrived since the last call. An error
     /// is about this frame; why nothing is captured at all is in [`Capture::status`].
     pub fn take(&mut self, gpu: &Gpu) -> Result<Option<Tex>, String> {
-        let Some(live) = lock(&self.state).live.clone() else { return Ok(None) };
+        let Some(session) = &self.session else { return Ok(None) };
+        let Some(live) = lock(&session.state).live.clone() else { return Ok(None) };
         let mut newest: Option<Direct3D11CaptureFrame> = None;
         // An empty pool answers with an error (a null frame).
         while let Ok(frame) = live.pool.TryGetNextFrame() {
@@ -372,19 +429,20 @@ impl Capture {
             }
         }
         let Some(frame) = newest else { return Ok(None) };
-        let result = self.copy(gpu, &live, &frame);
+        {
+            let mut s = lock(&session.state);
+            s.framed = true;
+            s.waiting = false;
+        }
+        let content = frame.ContentSize().map_err(|e| err("the frame has no size", e));
+        let result = content.clone().and_then(|c| self.copy(gpu, &frame, c));
         frame.Close().ok();
-        result
-    }
-
-    fn copy(
-        &mut self,
-        gpu: &Gpu,
-        live: &Live,
-        frame: &Direct3D11CaptureFrame,
-    ) -> Result<Option<Tex>, String> {
-        let content = frame.ContentSize().map_err(|e| err("the frame has no size", e))?;
-        if content.Width > 0 && content.Height > 0 {
+        // A new size: the pool's buffers follow after this frame is copied, as Windows' own
+        // capture sample does it. The frame was copied clipped to the old buffers.
+        if let Ok(content) = content
+            && content.Width > 0
+            && content.Height > 0
+        {
             let mut size = lock(&live.size);
             if *size != content {
                 live.pool
@@ -393,6 +451,15 @@ impl Capture {
                 *size = content;
             }
         }
+        result
+    }
+
+    fn copy(
+        &mut self,
+        gpu: &Gpu,
+        frame: &Direct3D11CaptureFrame,
+        content: SizeInt32,
+    ) -> Result<Option<Tex>, String> {
         let surface = frame.Surface().map_err(|e| err("the frame has no picture", e))?;
         let access = surface
             .cast::<IDirect3DDxgiInterfaceAccess>()
@@ -429,7 +496,8 @@ impl Capture {
         // The frame into the shared texture, on the capture's device. Both sides of the keyed
         // mutex are this thread's, one after the other, so it is free at once.
         if !acquire(&bridge.native_keyed, KEYED_WAIT_MS) {
-            return Err("the capture's shared texture stayed locked".into());
+            self.bridge = None;
+            return Err("the capture's shared texture stayed locked; it is made anew".into());
         }
         let area = D3D11_BOX { left: 0, top: 0, front: 0, right: w, bottom: h, back: 1 };
         // SAFETY: live resources of the plain device; the box lies inside both textures.
@@ -452,7 +520,8 @@ impl Capture {
         );
         gpu.submit([encoder.finish()]);
         if !acquire(&bridge.on12_keyed, KEYED_WAIT_MS) {
-            return Err("the capture's shared texture stayed locked".into());
+            self.bridge = None;
+            return Err("the capture's shared texture stayed locked; it is made anew".into());
         }
         let list = [Some(bridge.target.resource.clone())];
         // SAFETY: live resources of the layered device; the wrapped one is acquired around its
@@ -486,7 +555,6 @@ impl Capture {
         if let Some(e) = error {
             return Err(format!("cannot convert the captured picture: {e}"));
         }
-        self.frames += 1;
         self.size = Some((w, h));
         Ok(Some(out))
     }
@@ -598,7 +666,8 @@ fn run(
     // SAFETY: joins this thread to the multithreaded apartment; undone below if it succeeded.
     let apartment = unsafe { RoInitialize(RO_INIT_MULTITHREADED) }.is_ok();
     watch(target, options, &dxgi, state, stop, wake);
-    lock(state).live = None;
+    let live = lock(state).live.take();
+    drop(live);
     drop(dxgi);
     if apartment {
         // SAFETY: balances the RoInitialize above, on the same thread, after every object this
@@ -618,6 +687,7 @@ fn watch(
     let winrt = winrt_device(&dxgi.0);
     let mut pause = Duration::ZERO;
     let mut next = Instant::now();
+    let mut started_at = Instant::now();
     let report = |e: Option<String>| {
         let mut s = lock(state);
         if s.error != e {
@@ -631,10 +701,17 @@ fn watch(
         match alive {
             Some(true) => {
                 std::thread::sleep(POLL);
+                let mut s = lock(state);
+                if !s.framed && !s.waiting && started_at.elapsed() > FIRST_FRAME_WAIT {
+                    s.waiting = true;
+                    drop(s);
+                    wake();
+                }
                 continue;
             }
             Some(false) => {
-                lock(state).live = None;
+                let live = lock(state).live.take();
+                drop(live);
                 report(Some(match target {
                     Target::Window(_) => "the window closed; waiting for it to come back".into(),
                     Target::Monitor(_) => "the monitor went away; waiting for it to come back".into(),
@@ -651,12 +728,18 @@ fn watch(
         }
         let started = winrt.clone().and_then(|w| start(target, options, w, wake));
         match started {
-            Ok(live) => {
+            Ok((live, warning)) => {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
                 let mut s = lock(state);
                 s.live = Some(Arc::new(live));
                 s.error = None;
-                s.generation += 1;
+                s.warning = warning;
+                s.framed = false;
+                s.waiting = false;
                 drop(s);
+                started_at = Instant::now();
                 pause = Duration::ZERO;
                 wake();
             }
@@ -669,8 +752,13 @@ fn watch(
     }
 }
 
-/// Starts a session on what `target` names now.
-fn start(target: &Target, options: Options, winrt: IDirect3DDevice, wake: &Wake) -> Result<Live, String> {
+/// Starts a session on what `target` names now, with a warning when Windows refused an option.
+fn start(
+    target: &Target,
+    options: Options,
+    winrt: IDirect3DDevice,
+    wake: &Wake,
+) -> Result<(Live, Option<String>), String> {
     if !GraphicsCaptureSession::IsSupported().unwrap_or(false) {
         return Err(UNSUPPORTED.into());
     }
@@ -712,27 +800,45 @@ fn start(target: &Target, options: Options, winrt: IDirect3DDevice, wake: &Wake)
     let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(&winrt, FORMAT, BUFFERS, size)
         .map_err(|e| err("cannot make the capture's frame pool", e))?;
     let session = pool.CreateCaptureSession(&item).map_err(|e| err("cannot start a capture session", e))?;
-    // Both are missing on older Windows: the pointer is then always drawn, the border too.
+    // Missing before Windows 10 2004: the pointer is then always drawn.
     session.SetIsCursorCaptureEnabled(options.cursor).ok();
-    if !options.border {
-        session.SetIsBorderRequired(false).ok();
+    let mut warning = None;
+    if !options.border
+        && let Err(e) = session.SetIsBorderRequired(false)
+    {
+        warning = Some(err("Windows draws its border anyway (it needs Windows 11 to leave it out)", e));
     }
     let closed = Arc::new(AtomicBool::new(false));
     let (flag, w) = (closed.clone(), wake.clone());
-    item.Closed(&TypedEventHandler::new(move |_, _| {
-        flag.store(true, Ordering::Relaxed);
-        w();
-        Ok(())
-    }))
-    .map_err(|e| err("cannot watch the capture", e))?;
+    let closed_token = item
+        .Closed(&TypedEventHandler::new(move |_, _| {
+            flag.store(true, Ordering::Relaxed);
+            w();
+            Ok(())
+        }))
+        .map_err(|e| err("cannot watch the capture", e))?;
     let w = wake.clone();
-    pool.FrameArrived(&TypedEventHandler::new(move |_, _| {
-        w();
-        Ok(())
-    }))
-    .map_err(|e| err("cannot watch the capture's frames", e))?;
+    let frame_token = pool
+        .FrameArrived(&TypedEventHandler::new(move |_, _| {
+            w();
+            Ok(())
+        }))
+        .map_err(|e| err("cannot watch the capture's frames", e))?;
     session.StartCapture().map_err(|e| err(&format!("cannot capture `{name}`"), e))?;
-    Ok(Live { pool, session, _item: item, winrt, size: Mutex::new(size), closed, window, monitor, name })
+    let live = Live {
+        pool,
+        session,
+        item,
+        winrt,
+        closed_token,
+        frame_token,
+        size: Mutex::new(size),
+        closed,
+        window,
+        monitor,
+        name,
+    };
+    Ok((live, warning))
 }
 
 /// The monitors showing the desktop, with their handles, in `display`'s order.
@@ -799,6 +905,13 @@ fn windows() -> Vec<(isize, WindowListing)> {
 fn window(handle: HWND) -> Option<WindowListing> {
     // SAFETY: plain queries on a window handle being enumerated; buffers outlive the calls.
     unsafe {
+        // penumbra's own windows: capturing them feeds back, and asking their title would wait
+        // for the UI thread.
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(handle, Some(&mut pid));
+        if pid == GetCurrentProcessId() {
+            return None;
+        }
         if !IsWindowVisible(handle).as_bool() {
             return None;
         }

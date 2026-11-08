@@ -1318,15 +1318,16 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 </li>
 <li><code>display</code>: which monitor. Empty: the primary one. A number: the n-th monitor, in the order of their OS names (<code>\\.\DISPLAY1</code> first). Or a display id, as <a class="ref" href="#out.projector"><code>out.projector</code></a> takes it. The <strong>...</strong> menu lists the monitors with their number, id and size.
 </li>
-<li><code>window</code>: a part of the window's title, upper or lower case alike, such as <code>notepad</code> or <code>firefox</code>. The frontmost window that matches is captured. The <strong>...</strong> menu lists the windows open now, front to back, with their size and program.
+<li><code>window</code>: a part of the window's title, upper or lower case alike, such as <code>notepad</code> or <code>firefox</code>. The frontmost window that matches is captured. The <strong>...</strong> menu lists the windows open now, front to back, with their size and program. penumbra's own windows are never listed or captured.
 </li>
-<li><code>cursor</code>: draw the mouse pointer into the picture. Off by default.
+<li><code>cursor</code>: draw the mouse pointer into the picture. Off by default. Before Windows 10 2004 the pointer is always drawn.
 </li>
 <li><code>border</code>: let Windows draw its yellow frame around what is captured. Off by default; Windows 10 draws it anyway.
 </li>
 </ul>
-<p>The picture follows the window when it is resized. A minimized window sends nothing, so the node keeps its last picture. Windows sends a new frame only when something changed on the monitor or in the window, at most at the monitor's refresh rate. The picture stays live while the show is paused, like a camera's.</p>
+<p>The picture follows the window when it is resized. A minimized window sends nothing, so the node keeps its last picture. A window that is minimized when the node starts sends no first picture; the node warns that it waits for one. Windows sends a new frame only when something changed on the monitor or in the window, at most at the monitor's refresh rate. The picture stays live while the show is paused, like a camera's.</p>
 <p><a class="ref" href="#screen.sources"><code>screen.sources</code></a> on the control channel lists the monitors and windows as the menus do.</p>
+<p><strong>Capturing the editor's own monitor</strong> feeds back: every repaint of the editor is a new frame, which cooks the node and its thumbnail, which repaints the editor. Capture another monitor, or a window, where you can.</p>
 <h3 id="screen-when-the-window-or-monitor-goes">When the window or monitor goes</h3>
 <p>When the window closes or the monitor is unplugged, the node keeps showing the last picture and warns. It looks for the window or monitor again, every quarter second at first and every 4 seconds later. A window that comes back with a matching title is captured again; it does not have to be the same window. Before the first picture the node shows an error instead: no window matches, or Windows cannot capture here (some remote desktop sessions cannot).</p>
 <h3 id="screen-a-web-page-as-a-picture">A web page as a picture</h3>
@@ -3399,7 +3400,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>source</code></td><td>monitor | window</td><td><code>&quot;monitor&quot;</code></td><td></td><td>What to capture<ul><li><code>monitor</code>: a whole monitor, chosen by <code>display</code></li><li><code>window</code>: one window, chosen by a part of its title in <code>window</code></li></ul></td></tr>
 <tr><td><code>display</code></td><td>text</td><td></td><td></td><td>The monitor: empty for the primary one, 1, 2, ... in the order the ... menu and screen.sources list them, or a display id as out.projector takes it</td></tr>
 <tr><td><code>window</code></td><td>text</td><td></td><td></td><td>A part of the window's title, upper or lower case alike, e.g. <code>notepad</code>. The frontmost window that matches is captured; when it closes, the node waits for one to match again. The ... menu lists the windows open now</td></tr>
-<tr><td><code>cursor</code></td><td>bool</td><td><code>false</code></td><td></td><td>Draw the mouse pointer into the picture</td></tr>
+<tr><td><code>cursor</code></td><td>bool</td><td><code>false</code></td><td></td><td>Draw the mouse pointer into the picture. Before Windows 10 2004 the pointer is always drawn</td></tr>
 <tr><td><code>border</code></td><td>bool</td><td><code>false</code></td><td></td><td>Let Windows draw its yellow frame around what is captured. Windows 10 always draws it</td></tr>
 </tbody>
 </table>

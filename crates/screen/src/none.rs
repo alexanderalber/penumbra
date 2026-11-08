@@ -9,14 +9,20 @@ const MISSING: &str = "screen capture exists only on Windows so far";
 pub struct Capture;
 
 impl Capture {
-    pub fn new(
-        _gpu: &Gpu,
+    pub fn new(_gpu: &Gpu) -> Result<Self, String> {
+        Err(MISSING.into())
+    }
+
+    pub fn start(
+        &mut self,
         _target: Target,
         _options: Options,
         _wake: impl Fn() + Send + Sync + 'static,
-    ) -> Result<Self, String> {
+    ) -> Result<(), String> {
         Err(MISSING.into())
     }
+
+    pub fn trim(&mut self) {}
 
     pub fn take(&mut self, _gpu: &Gpu) -> Result<Option<Tex>, String> {
         Err(MISSING.into())
@@ -24,10 +30,6 @@ impl Capture {
 
     pub fn status(&self) -> Status {
         Status { error: Some(MISSING.into()), ..Status::default() }
-    }
-
-    pub fn frames(&self) -> u64 {
-        0
     }
 
     pub fn bytes(&self) -> u64 {

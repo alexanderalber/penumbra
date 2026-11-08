@@ -18,17 +18,24 @@ Add a `tex.screen_in` (Tab > tex > screen_in). With the defaults it shows the pr
   it. The **...** menu lists the monitors with their number, id and size.
 - `window`: a part of the window's title, upper or lower case alike, such as `notepad` or
   `firefox`. The frontmost window that matches is captured. The **...** menu lists the windows
-  open now, front to back, with their size and program.
-- `cursor`: draw the mouse pointer into the picture. Off by default.
+  open now, front to back, with their size and program. penumbra's own windows are never
+  listed or captured.
+- `cursor`: draw the mouse pointer into the picture. Off by default. Before Windows 10 2004 the
+  pointer is always drawn.
 - `border`: let Windows draw its yellow frame around what is captured. Off by default; Windows
   10 draws it anyway.
 
 The picture follows the window when it is resized. A minimized window sends nothing, so the node
-keeps its last picture. Windows sends a new frame only when something changed on the monitor or
+keeps its last picture. A window that is minimized when the node starts sends no first picture;
+the node warns that it waits for one. Windows sends a new frame only when something changed on the monitor or
 in the window, at most at the monitor's refresh rate. The picture stays live while the show is
 paused, like a camera's.
 
 `screen.sources` on the control channel lists the monitors and windows as the menus do.
+
+**Capturing the editor's own monitor** feeds back: every repaint of the editor is a new frame,
+which cooks the node and its thumbnail, which repaints the editor. Capture another monitor, or
+a window, where you can.
 
 ## When the window or monitor goes
 
