@@ -3,11 +3,13 @@
 //! - **Autosave:** about [`AUTOSAVE_DELAY`] after the document first differs from the file, the
 //!   file is rewritten (in canonical form, atomically through a temporary file). A continuous
 //!   drag is written once per delay, not only at its end.
-//! - **External edits:** the file is read on every [`Session::poll`] (a few times per second)
-//!   and compared with the text last written or read; comparing text rather than timestamps
-//!   cannot miss an edit that lands in the same timestamp tick. A change waits for the
-//!   [`Gate`], is diffed against the content it was based on and merged into the running
-//!   document as one history entry with source "project file".
+//! - **External edits:** every [`Session::poll`] (a few times per second) looks at the file's
+//!   modification time and length. When they changed, when the file was modified in the last
+//!   [`FRESH`], or every [`FULL_READ_EVERY`] polls, the file is read in full and its text
+//!   compared with the text last written or read; the text decides, so an edit that keeps the
+//!   timestamp and the length is still found. A change waits for the [`Gate`], is diffed
+//!   against the content it was based on and merged into the running document as one history
+//!   entry with source "project file".
 //! - **A node that does not load** (unknown kind, an input its kind does not have, a param value
 //!   its declaration refuses) becomes a placeholder that keeps its entry as written
 //!   ([`penumbra_graph::broken`]); the rest of the project opens or merges, and saving writes
@@ -16,7 +18,8 @@
 //!   a conflict with the user's unsaved edits) is reported in [`SessionStatus::file_error`], and
 //!   autosave pauses so the broken file, which is probably someone's work in progress, is not
 //!   overwritten. The next change to the file is tried again; `project.save` overwrites it on
-//!   purpose, after copying it to [`BACKUP_NAME`].
+//!   purpose, after copying it to [`BACKUP_NAME`]. A file that cannot be read pauses autosave
+//!   the same way, until the next read succeeds.
 //!
 //! - **Renamed kinds:** a node whose kind the file names by an old name
 //!   ([`NodeTypes::renamed_kind`]) loads as the new kind; the nodes are listed in
@@ -31,16 +34,18 @@
 //! - **Locked for a show** ([`Session::set_locked`]): edits, undo and redo are refused with
 //!   [`LOCKED`], the file is neither read nor written, and `project.save` is refused. Param
 //!   values from OSC ([`Session::edit_live`]) still arrive, and so do the values of the show
-//!   screen's controls ([`Session::edit_locked`]); neither makes a history entry. Unlocking
-//!   picks up whatever changed on disk meanwhile at the next poll, as an external edit.
+//!   screen's controls ([`Session::edit_locked`]); neither makes a history entry. Locking ends
+//!   Claude's claim, so nothing waits for it during the show. Unlocking picks up whatever
+//!   changed on disk meanwhile at the next poll, as an external edit.
 //!
-//! File IO happens outside the state lock, so a slow disk never stalls an edit from the UI.
+//! File IO and parsing happen outside the state lock, so a slow disk or a large file never
+//! stalls an edit from the UI.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use penumbra_core::{Error, GroupId, NodeId, lock};
 use penumbra_graph::{Document, EditOutcome, Network, NodeTypes, Op, Params, Source};
@@ -61,6 +66,14 @@ pub const LOCKED: &str =
 
 /// Delay between the first unsaved change and writing the file.
 pub const AUTOSAVE_DELAY: Duration = Duration::from_secs(1);
+
+/// A file modified less than this long ago is read in full on every poll: a second edit within
+/// the same timestamp tick that keeps the length would leave the stamp as it was.
+pub const FRESH: Duration = Duration::from_secs(2);
+
+/// A file whose stamp stays the same is still read in full every this many polls, in case a
+/// tool restored an old modification time.
+pub const FULL_READ_EVERY: u32 = 20;
 
 /// Who asks for an edit; decides which rule of the [`Gate`] applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,7 +121,14 @@ struct State {
     written: Arc<Network>,
     /// File text that changed and waits for the gate.
     waiting: Option<String>,
+    /// Why the file did not load or merge. Cleared by the next merge that succeeds.
     file_error: Option<String>,
+    /// Why the file could not be read. Cleared by the next read that succeeds.
+    read_error: Option<String>,
+    /// Modification time and length of the file as last read in full; `None` forces a full read.
+    stamp: Option<FileStamp>,
+    /// Polls since the last full read.
+    unread_polls: u32,
     write_error: Option<String>,
     dirty_since: Option<Instant>,
     /// Nodes of the file read last that name an old kind ([`SessionStatus::renamed`]).
@@ -117,6 +137,17 @@ struct State {
     /// holds.
     rewrite: bool,
 }
+
+/// What [`Session::status`] derives from the document and the written snapshot, kept while
+/// both stay the same: the UI asks every frame.
+struct Derived {
+    current: Arc<Network>,
+    written: Arc<Network>,
+    same: bool,
+    broken: Vec<BrokenNode>,
+}
+
+type FileStamp = (SystemTime, u64);
 
 pub struct Session {
     dir: PathBuf,
@@ -127,6 +158,7 @@ pub struct Session {
     state: Mutex<State>,
     /// Show mode ([`Session::set_locked`]).
     locked: AtomicBool,
+    derived: Mutex<Option<Derived>>,
 }
 
 /// The network with `content`, built from scratch, as a project opens: params that open at
@@ -164,6 +196,33 @@ fn build(content: &Content, types: &NodeTypes) -> Result<Network, Error> {
             Ok(net)
         }
     }
+}
+
+/// The file's modification time and length, `None` when either is unknown.
+fn file_stamp(path: &Path) -> Option<FileStamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
+/// Whether a file with this stamp was modified within [`FRESH`] (or in the future, as far as
+/// this clock knows).
+fn fresh(stamp: FileStamp) -> bool {
+    match SystemTime::now().duration_since(stamp.0) {
+        Ok(age) => age < FRESH,
+        Err(_) => true,
+    }
+}
+
+/// Refuses a project text that [`read_text`] would refuse to read back.
+fn check_size(text: &str, max: u64) -> Result<(), Error> {
+    if text.len() as u64 > max {
+        return Err(Error::new(format!(
+            "the project is {} MiB as text, more than the {} MiB a project file may have; not written",
+            text.len() >> 20,
+            max >> 20
+        )));
+    }
+    Ok(())
 }
 
 /// The file's text, `None` if it does not exist.
@@ -205,6 +264,7 @@ impl Session {
         std::fs::create_dir_all(dir)
             .map_err(|e| Error::new(format!("cannot create the project directory {}: {e}", dir.display())))?;
         let file = dir.join(FILE_NAME);
+        let stamp = file_stamp(&file);
         let loaded = read_text(&file).and_then(|text| match text {
             None => Ok(None),
             Some(text) => {
@@ -263,6 +323,7 @@ impl Session {
             doc,
             io: Mutex::new(()),
             locked: AtomicBool::new(false),
+            derived: Mutex::new(None),
             state: Mutex::new(State {
                 gate: Gate::new(),
                 base,
@@ -270,6 +331,9 @@ impl Session {
                 written,
                 waiting: None,
                 file_error,
+                read_error: None,
+                stamp,
+                unread_polls: 0,
                 write_error: None,
                 dirty_since: None,
                 rewrite: !renamed.is_empty(),
@@ -295,11 +359,16 @@ impl Session {
     }
 
     /// Locks the project for a show, or unlocks it: while locked, every edit, undo and redo is
-    /// refused with [`LOCKED`], and the file is neither read, merged nor written.
+    /// refused with [`LOCKED`], and the file is neither read, merged nor written. Locking ends
+    /// Claude's claim: Claude cannot edit during the show anyway, and a claim left over would
+    /// otherwise hold up OSC param values until it lapses.
     pub fn set_locked(&self, locked: bool) {
         // Taken with the io lock, so a poll that is reading or writing finishes first.
         let _io = lock(&self.io);
         self.locked.store(locked, Ordering::Release);
+        if locked && lock(&self.state).gate.end(Instant::now()) {
+            log::info!("show mode ended Claude's editing claim");
+        }
     }
 
     pub fn locked(&self) -> bool {
@@ -344,8 +413,12 @@ impl Session {
     }
 
     /// Sets param values outside the history ([`Document::edit_live`]), if the gate lets the
-    /// user edit now: OSC param edits, live control as in TouchDesigner.
+    /// user edit now: OSC param edits, live control as in TouchDesigner. While the session is
+    /// locked the gate is not asked, since nobody else may edit then.
     pub fn edit_live(&self, ops: &[Op], now: Instant) -> Result<Arc<Network>, Error> {
+        if self.locked() {
+            return self.doc.edit_live(ops);
+        }
         let mut state = lock(&self.state);
         state.gate.user_edit(now)?;
         self.doc.edit_live(ops)
@@ -409,23 +482,46 @@ impl Session {
     }
 
     pub fn status(&self, now: Instant) -> SessionStatus {
-        let mut state = lock(&self.state);
         let current = self.doc.snapshot();
+        let written = lock(&self.state).written.clone();
+        let (same, broken) = self.derive(&current, &written);
         let (can_undo, can_redo) = self.doc.with_history(|h| (h.can_undo(), h.can_redo()));
+        let mut state = lock(&self.state);
         SessionStatus {
             dir: self.dir.display().to_string(),
             nodes: current.len(),
-            unsaved: state.file_text.is_none() || state.rewrite || !Network::same(&current, &state.written),
+            unsaved: state.file_text.is_none() || state.rewrite || !same,
             merge_waiting: state.waiting.is_some(),
-            file_error: state.file_error.clone(),
+            file_error: state.read_error.clone().or_else(|| state.file_error.clone()),
             write_error: state.write_error.clone(),
-            broken: broken_nodes(&current),
+            broken,
             renamed: state.renamed.clone(),
             can_undo,
             can_redo,
             edit: state.gate.status(now),
             locked: self.locked(),
         }
+    }
+
+    /// Whether `current` is the same as `written`, and the placeholders in `current`; computed
+    /// once per pair of snapshots, outside the state lock.
+    fn derive(&self, current: &Arc<Network>, written: &Arc<Network>) -> (bool, Vec<BrokenNode>) {
+        let mut cache = lock(&self.derived);
+        if let Some(d) = cache.as_ref()
+            && Arc::ptr_eq(&d.current, current)
+            && Arc::ptr_eq(&d.written, written)
+        {
+            return (d.same, d.broken.clone());
+        }
+        let same = Network::same(current, written);
+        let broken = broken_nodes(current);
+        *cache = Some(Derived {
+            current: current.clone(),
+            written: written.clone(),
+            same,
+            broken: broken.clone(),
+        });
+        (same, broken)
     }
 
     /// Called a few times per second from the project thread: picks up external edits of the
@@ -452,7 +548,7 @@ impl Session {
         self.merge_waiting(now);
         let paused = {
             let state = lock(&self.state);
-            state.waiting.is_some() || state.file_error.is_some()
+            state.waiting.is_some() || state.file_error.is_some() || state.read_error.is_some()
         };
         if !paused && let Err(e) = self.write(false) {
             log::error!("saving on close: {e}");
@@ -466,7 +562,10 @@ impl Session {
     pub fn save(&self) -> Result<bool, Error> {
         let _io = lock(&self.io);
         self.refuse_if_locked()?;
-        let failed = lock(&self.state).file_error.is_some();
+        let failed = {
+            let state = lock(&self.state);
+            state.file_error.is_some() || state.read_error.is_some()
+        };
         if failed || !broken_nodes(&self.doc.snapshot()).is_empty() {
             self.backup()?;
         }
@@ -474,6 +573,7 @@ impl Session {
             let mut state = lock(&self.state);
             state.waiting = None;
             state.file_error = None;
+            state.read_error = None;
         }
         self.write(true)
     }
@@ -492,36 +592,68 @@ impl Session {
     }
 
     fn look_at_file(&self) {
+        let stamp = file_stamp(&self.file);
+        {
+            let mut state = lock(&self.state);
+            let unchanged = stamp.is_some_and(|s| state.stamp == Some(s) && !fresh(s));
+            if unchanged && state.read_error.is_none() && state.unread_polls < FULL_READ_EVERY {
+                state.unread_polls += 1;
+                return;
+            }
+            state.unread_polls = 0;
+        }
         let read = read_text(&self.file);
         let mut state = lock(&self.state);
         match read {
-            Ok(text) if text == state.file_text => {}
-            Ok(None) => {
-                log::warn!("{} disappeared; writing it again", self.file.display());
-                state.file_text = None;
-                state.waiting = None;
-            }
-            Ok(Some(text)) => {
-                state.file_text = Some(text.clone());
-                state.waiting = Some(text);
+            Ok(text) => {
+                state.stamp = stamp;
+                if state.read_error.take().is_some() {
+                    log::info!("{} can be read again", self.file.display());
+                }
+                if text == state.file_text {
+                    return;
+                }
+                match text {
+                    None => {
+                        log::warn!("{} disappeared; writing it again", self.file.display());
+                        state.file_text = None;
+                        state.waiting = None;
+                    }
+                    Some(text) => {
+                        state.file_text = Some(text.clone());
+                        state.waiting = Some(text);
+                    }
+                }
             }
             Err(e) => {
-                if state.file_error.as_deref() != Some(e.0.as_str()) {
+                state.stamp = None;
+                if state.read_error.as_deref() != Some(e.0.as_str()) {
                     log::warn!("{e}");
                 }
-                state.file_error = Some(e.0);
+                state.read_error = Some(e.0);
             }
         }
     }
 
     fn merge_waiting(&self, now: Instant) {
+        let text = {
+            let mut state = lock(&self.state);
+            if state.waiting.is_none() || !state.gate.file_merge_allowed(now) {
+                return;
+            }
+            let Some(text) = state.waiting.take() else { return };
+            text
+        };
+        // Parsed outside the state lock: a large file must not hold up the UI's edits.
+        let types = self.doc.types();
+        let loaded = load_renaming(&text, types);
         let mut state = lock(&self.state);
-        if state.waiting.is_none() || !state.gate.file_merge_allowed(now) {
+        if !state.gate.file_merge_allowed(now) {
+            // The user started editing meanwhile; the edit waits for the next quiet period.
+            state.waiting = Some(text);
             return;
         }
-        let Some(text) = state.waiting.take() else { return };
-        let types = self.doc.types();
-        let merged = load_renaming(&text, types).and_then(|(theirs, renamed)| {
+        let merged = loaded.and_then(|(theirs, renamed)| {
             let ops = diff(&state.base, &theirs);
             if !ops.is_empty() {
                 self.doc.edit(
@@ -552,7 +684,7 @@ impl Session {
     fn autosave(&self, now: Instant) {
         {
             let mut state = lock(&self.state);
-            if state.waiting.is_some() || state.file_error.is_some() {
+            if state.waiting.is_some() || state.file_error.is_some() || state.read_error.is_some() {
                 return;
             }
             let dirty = state.file_text.is_none()
@@ -578,11 +710,13 @@ impl Session {
 
     /// Writes the current snapshot unless the file already holds it. Unless `force`d, the file
     /// is checked first: if it changed since it was last read, nothing is written and the next
-    /// poll merges the change instead.
+    /// poll merges the change instead. A text larger than [`MAX_FILE_BYTES`] is refused, since
+    /// it could not be read back.
     fn write(&self, force: bool) -> Result<bool, Error> {
         let current = self.doc.snapshot();
         let content = Content::from_network(&current)?;
         let text = print(&content, self.doc.types())?;
+        check_size(&text, MAX_FILE_BYTES)?;
         let on_disk = if force { None } else { Some(read_text(&self.file)) };
         let mut state = lock(&self.state);
         if let Some(on_disk) = on_disk
@@ -596,6 +730,8 @@ impl Session {
             write_atomic(&self.file, &text)?;
             state = lock(&self.state);
             state.file_text = Some(text);
+            // The next poll reads the file in full and takes the new stamp from there.
+            state.stamp = None;
         }
         state.written = current;
         state.base = content;
@@ -1035,5 +1171,76 @@ mod tests {
         });
         assert!(s.end(t0 + 7 * S));
         s.edit(Actor::User, &[set(4.0)], None, "", t0 + 7 * S).unwrap();
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_read_pauses_autosave_until_it_reads_again() {
+        let dir = ScratchDir::unborn("test-read_error");
+        let s = open(&dir);
+        let t0 = Instant::now();
+        let good = file(&s);
+        let unreadable = [0xff_u8, 0xfe, 0x00];
+        std::fs::write(s.file(), unreadable).unwrap();
+        s.poll(t0);
+        let err = s.status(t0).file_error.unwrap();
+        assert!(err.contains("not UTF-8"), "{err}");
+        s.edit(Actor::User, &[set(3.0)], None, "", t0).unwrap();
+        s.poll(t0 + 2 * S);
+        assert_eq!(std::fs::read(s.file()).unwrap(), unreadable, "not written over");
+        // The text it had before comes back: nothing to merge, and autosave goes on.
+        std::fs::write(s.file(), &good).unwrap();
+        s.poll(t0 + 3 * S);
+        assert_eq!(s.status(t0 + 3 * S).file_error, None);
+        s.poll(t0 + 5 * S);
+        assert!(file(&s).contains(r#"{"value": 3.0}"#), "{}", file(&s));
+    }
+
+    #[test]
+    fn an_edit_that_keeps_the_stamp_is_found_by_a_later_full_read() {
+        let dir = ScratchDir::unborn("test-stamp");
+        let s = open(&dir);
+        let t0 = Instant::now();
+        let age = |s: &Session| {
+            let old = SystemTime::now() - Duration::from_secs(3600);
+            let f = std::fs::File::options().write(true).open(s.file()).unwrap();
+            f.set_modified(old).unwrap();
+            old
+        };
+        s.edit(Actor::User, &[set(5.0)], None, "", t0).unwrap();
+        s.poll(t0);
+        s.poll(t0 + S);
+        assert!(file(&s).contains(r#"{"value": 5.0}"#), "{}", file(&s));
+        let old = age(&s);
+        s.poll(t0 + 2 * S);
+        // Same length, same modification time: the next polls look at the stamp only.
+        std::fs::write(s.file(), file(&s).replace("5.0", "6.0")).unwrap();
+        std::fs::File::options().write(true).open(s.file()).unwrap().set_modified(old).unwrap();
+        s.poll(t0 + 4 * S);
+        assert_eq!(value(&s), Some(Value::Float(5.0)));
+        for i in 0..FULL_READ_EVERY {
+            s.poll(t0 + 5 * S + i * S);
+        }
+        assert_eq!(value(&s), Some(Value::Float(6.0)));
+    }
+
+    #[test]
+    fn locking_ends_claudes_claim_so_osc_values_arrive() {
+        let dir = ScratchDir::unborn("test-lock_claim");
+        let s = open(&dir);
+        let t0 = Instant::now();
+        s.begin("tuning", t0).unwrap();
+        assert!(s.edit_live(&[set(2.0)], t0).is_err(), "the claim holds up OSC while unlocked");
+        s.set_locked(true);
+        s.edit_live(&[set(3.0)], t0 + S).unwrap();
+        assert_eq!(value(&s), Some(Value::Float(3.0)));
+        s.set_locked(false);
+        assert_eq!(s.status(t0 + S).edit.mode, "user");
+    }
+
+    #[test]
+    fn a_text_too_large_to_read_back_is_not_written() {
+        assert!(check_size("ab", 2).is_ok());
+        let e = check_size("abc", 2).unwrap_err();
+        assert!(e.0.contains("not written"), "{e}");
     }
 }
