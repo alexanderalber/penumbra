@@ -108,10 +108,10 @@ registry (`cargo xtask docs`).
 ## What is enforced
 
 The workspace lints (`[workspace.lints]` in `Cargo.toml`) deny `unwrap`, `expect`, `panic`,
-`unreachable`, `todo`, indexing that can panic, and `unsafe` code; the exceptions are tests
-and the modules that talk to foreign code or the GPU (in `camera`, `gpu`, `mesh`, `ndi`,
-`osc`, `pyhost`, `script`, `spout`, `system`, `ui`), each with a local allow and a `SAFETY`
-comment per block. `clippy.toml` bans a few wgpu calls that panic on failure. Input
+`unreachable`, `todo`, indexing that can panic, and `unsafe` code; the exceptions are tests,
+the counting allocator of `penumbra-cli` and the modules that talk to foreign code or the GPU
+(in `camera`, `gpu`, `ndi`, `pyhost`, `record`, `script`, `spout`, `system`, `ui`), each with
+a local allow and a `SAFETY` comment per block. `clippy.toml` bans a few wgpu calls that panic on failure. Input
 from files, network and hardware is treated as hostile: bounded parsers, budgets on mesh and
 image sizes, timeouts.
 

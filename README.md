@@ -278,6 +278,10 @@ The program is not signed. Windows may show "Windows protected your PC": click "
 then "Run anyway". The zip also holds the [examples](examples/README.md), the content library
 and the documentation.
 
+Two features need something installed. The script node needs Python 3.12 or newer
+([scripts](docs/scripts.md)). The two NDI nodes need the NDI runtime ([NDI](docs/ndi.md)).
+Everything else runs without them.
+
 ## Building from source
 
 ```
@@ -292,9 +296,9 @@ What a build needs:
 - Rust 1.95 or newer (`rust-version` in `Cargo.toml`).
 - Network on the first build: some dependencies (`photocraft`, `filmcraft`, `effectcraft`) are
   git dependencies pinned to a revision, not crates.io releases.
-- Nothing else at build time. At run time the script node needs a Python 3.12 or newer
-  ([scripts](docs/scripts.md)) and the two NDI nodes the NDI runtime ([NDI](docs/ndi.md));
-  everything else runs without them.
+- On Windows, the Visual Studio Build Tools for Rust's MSVC toolchain. `rustup` offers to
+  install them.
+- No Python or NDI SDK at build time.
 
 `cargo xtask ci` is the gate before a commit: `fmt`, `clippy`, `test`, `clippy` for Linux,
 the layer check (`core` and `graph` must not depend on wgpu or egui, nothing below `ui` on
@@ -309,9 +313,14 @@ Linux is only checked by clippy so far.
 Most of the code is written by Claude Code. The author directs it, reviews what it wrote and
 tests the result on the projectors, the camera and real shows. Tooling enforces the rules: the
 workspace denies `unwrap`, `expect`, `panic`, `unreachable`, indexing that can panic and
-`unsafe` outside delimited FFI modules. A layer check runs on every dependency set. Renders are
-compared with golden images. File, network and hardware input is tested with hostile data. The
-history on GitHub begins with the split into a public repository in October 2026; the work
+`unsafe` outside small delimited modules. A layer check runs on every dependency set. Renders
+are compared with golden images. File, network and hardware input is tested with hostile data.
+
+All code in this repository is Rust, and a Windows build compiles no C or C++. Foreign code is
+reached only at the edges, through those small modules: Windows and the graphics driver, and
+the NDI runtime and Python, which load at run time and are optional.
+
+The history on GitHub begins with the split into a public repository in October 2026; the work
 before that is in a private archive. How the code is put together is in
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
