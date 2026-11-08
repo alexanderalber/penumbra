@@ -24,6 +24,7 @@ penumbra-osc.workspace = true
 penumbra-record.workspace = true
 penumbra-script.workspace = true
 penumbra-spacenav.workspace = true
+penumbra-screen.workspace = true
 penumbra-spout.workspace = true
 penumbra-system.workspace = true
 penumbra-track.workspace = true

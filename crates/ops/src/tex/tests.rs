@@ -15,6 +15,7 @@ use penumbra_gpu::{AdapterChoice, Gpu, Pixels, Tex};
 use penumbra_graph::{Cooker, Density, JobPool, Network, NodeTypes, Op, Port};
 
 use crate::builtin_types;
+use crate::tex::SCREEN_IN;
 
 const W: i64 = 96;
 const H: i64 = 64;
@@ -750,6 +751,10 @@ fn every_builtin_cooks_without_warnings() {
         // On the network, which makes Windows ask about the firewall for every new test binary:
         // `ndi_round_trip` (ignored) covers both.
         if kind == "tex.ndi_in" || kind == "out.ndi" {
+            continue;
+        }
+        // Needs a desktop session: `screen_in_captures_the_primary_monitor` (ignored) covers it.
+        if kind == SCREEN_IN {
             continue;
         }
         rig.clock.advance(1);
@@ -3710,6 +3715,45 @@ fn ndi_round_trip() {
     assert!(p.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.02), "{p:?}, expected {want:?}");
     let status = rig.cooker.status(rig.id("/out")).unwrap();
     assert_eq!((status.error, status.warning), (None, None));
+}
+
+/// `tex.screen_in` with its defaults: the primary monitor at its size, opaque, and no warning
+/// on a later cook that finds no new frame.
+#[test]
+#[ignore = "needs a desktop session"]
+fn screen_in_captures_the_primary_monitor() {
+    let Some(gpu) = gpu() else { return };
+    let mut rig = Rig::new(gpu, None, &[create("/in", SCREEN_IN, &[])]);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while rig.tex("/in").is_none() {
+        rig.cook("/in");
+        assert!(Instant::now() < deadline, "nothing captured: {:?}", rig.cooker.status(rig.id("/in")));
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    let primary = penumbra_screen::sources().monitors.into_iter().find(|m| m.primary).unwrap();
+    let px = rig.gpu.read(&rig.tex("/in").unwrap()).unwrap();
+    assert_eq!((px.width, px.height), (primary.width, primary.height));
+    assert!(px.data.iter().all(|p| (p[3] - 1.0).abs() < 1e-3));
+    rig.clock.advance(1);
+    rig.cook("/in");
+    let status = rig.cooker.status(rig.id("/in")).unwrap();
+    assert_eq!((status.error, status.warning), (None, None));
+    // A window no title matches: an error on the node, not a crash.
+    rig.edit(&[
+        set("/in.source", "window".into()),
+        set("/in.window", "no window is called this 7f3a9c".into()),
+    ]);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        rig.cook("/in");
+        let status = rig.cooker.status(rig.id("/in")).unwrap();
+        if let Some(e) = status.error {
+            assert!(e.contains("no window"), "{e}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "no error: {status:?}");
+        std::thread::sleep(Duration::from_millis(16));
+    }
 }
 
 /// Through the installed runtime: a tone wired to `out.ndi`'s `audio` comes out of a

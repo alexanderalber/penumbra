@@ -82,6 +82,9 @@ pub struct ParamPanel {
     cameras: Option<(String, Result<Vec<penumbra_camera::DeviceInfo>, String>)>,
     /// Spout senders offered for a `tex.spout_in`'s `sender`, listed when the menu opens.
     spout_senders: Option<(String, Vec<penumbra_spout::Listing>)>,
+    /// Monitors and windows offered for a `tex.screen_in`'s `display` or `window`, listed when
+    /// the menu opens.
+    screen_sources: Option<(String, penumbra_screen::Sources)>,
     /// MIDI devices offered for a `chan.midi_in`'s or `chan.midi_out`'s `device`, listed when
     /// the menu opens.
     midi_ports: Option<(String, penumbra_midi::Ports)>,
@@ -1023,6 +1026,11 @@ impl ParamPanel {
                     if node.kind == penumbra_ops::tex::NDI_IN && spec.name == "source" {
                         ndi_menu(ui, key, auto, new);
                     }
+                    if node.kind == penumbra_ops::tex::SCREEN_IN
+                        && (spec.name == "display" || spec.name == "window")
+                    {
+                        self.screen_menu(ui, key, spec.name == "window", auto, new);
+                    }
                     if node.kind == penumbra_ops::out::ndi::NDI_OUT && spec.name == "name" {
                         ndi_link(ui, key, auto);
                     }
@@ -1267,6 +1275,64 @@ impl ParamPanel {
         auto.add(format!("param.{key}.menu"), r.response.rect, "Spout senders");
         if r.inner.is_none() && self.spout_senders.as_ref().is_some_and(|(k, _)| k == key) {
             self.spout_senders = None;
+        }
+    }
+
+    /// The monitors (or windows) that can be captured now, for a `tex.screen_in`'s `display` (or
+    /// `window`) (`param.<path>.menu`, entries `screen.primary` and `screen.<i>`).
+    fn screen_menu(
+        &mut self,
+        ui: &mut Ui,
+        key: &str,
+        windows: bool,
+        auto: &mut automation::Registry,
+        new: &mut Option<Value>,
+    ) {
+        let r = ui.menu_button("\u{2026}", |ui| {
+            if self.screen_sources.as_ref().is_none_or(|(k, _)| k != key) {
+                self.screen_sources = Some((key.to_string(), penumbra_screen::sources()));
+            }
+            let Some((_, sources)) = self.screen_sources.as_ref() else { return };
+            if let Some(e) = &sources.error {
+                ui.colored_label(theme::WARNING, e);
+                return;
+            }
+            if windows {
+                if sources.windows.is_empty() {
+                    ui.label(RichText::new("no windows with a title").color(theme::TEXT_WEAK));
+                }
+                for (i, w) in sources.windows.iter().enumerate() {
+                    let r = ui.button(format!("{}  {}x{}, {}", w.title, w.width, w.height, w.program));
+                    auto.add(format!("screen.{i}"), r.rect, w.title.clone());
+                    if r.clicked() {
+                        *new = Some(Value::Text(w.title.clone()));
+                        ui.close();
+                    }
+                }
+                return;
+            }
+            let r = ui.button("the primary monitor").on_hover_text("Leaves `display` empty");
+            auto.add("screen.primary", r.rect, "primary monitor");
+            if r.clicked() {
+                *new = Some(Value::Text(String::new()));
+                ui.close();
+            }
+            for (i, m) in sources.monitors.iter().enumerate() {
+                let primary = if m.primary { ", primary" } else { "" };
+                let r = ui
+                    .button(format!("{}  {}  {}x{}{primary}", m.index, m.id, m.width, m.height))
+                    .on_hover_text(&m.os_name);
+                auto.add(format!("screen.{i}"), r.rect, m.id.clone());
+                if r.clicked() {
+                    *new = Some(Value::Text(m.id.clone()));
+                    ui.close();
+                }
+            }
+        });
+        let label = if windows { "windows" } else { "monitors" };
+        auto.add(format!("param.{key}.menu"), r.response.rect, label);
+        if r.inner.is_none() && self.screen_sources.as_ref().is_some_and(|(k, _)| k == key) {
+            self.screen_sources = None;
         }
     }
 

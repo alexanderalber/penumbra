@@ -21,6 +21,7 @@ offline: [penumbra.html](penumbra.html), which the `?` on every node opens.
 - [Recording](recording.md): the show to a movie file with `out.video` (H.264 or ProRes).
 - [Spout](spout.md): pictures to and from other programs on this machine (TouchDesigner, OBS, Resolume) with `out.spout` and `tex.spout_in`.
 - [NDI](ndi.md): pictures and sound over the network, to and from OBS, vMix, cameras or another machine, with `out.ndi` and `tex.ndi_in`.
+- [Screen capture](screen.md): a monitor or a window of this machine as a picture (a browser, slides, another program) with `tex.screen_in`.
 - [Camera](camera.md): a live camera or capture card with `tex.video_in`, calmed with `tex.denoise`, its motion with `tex.optical_flow`.
 - [Tracking](tracking.md): blobs with ids that stay, from a camera, with `tex.blob_track`.
 - [Mapping without a camera](mapping-without-camera.md): corners, mesh warp, soft edges and masks by eye, with `tex.mapper` and `tex.shapes`.

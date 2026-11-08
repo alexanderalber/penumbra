@@ -48,6 +48,7 @@ pub mod scan_relief;
 pub mod scan_run;
 pub mod scan_scene;
 pub mod scan_synthetic;
+pub mod screen;
 pub mod shapes;
 pub mod show;
 pub mod show_values;
@@ -99,6 +100,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     dmx::register(&mut registry, engine);
     net::register(&mut registry, engine);
     ndi::register(&mut registry);
+    screen::register(&mut registry);
     spout::register(&mut registry);
     video_file::register(&mut registry, engine);
     video_in::register(&mut registry, engine);

@@ -26,6 +26,7 @@ penumbra-osc.workspace = true
 penumbra-script.workspace = true
 penumbra-spacenav.workspace = true
 penumbra-ndi.workspace = true
+penumbra-screen.workspace = true
 penumbra-spout.workspace = true
 penumbra-system.workspace = true
 serde.workspace = true

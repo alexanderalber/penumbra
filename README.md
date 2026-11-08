@@ -101,6 +101,7 @@ sound, `table` text tables, `geo`, `mat`, `light` and `view` for 3D, `vol` volum
 | Audio | yes | yes | any device (WASAPI, shared mode). Files: WAV, FLAC, MP3, Ogg, AAC, in step with video files. Output always through a limiter at -1 dBFS. Records to WAV |
 | Spout | yes | yes | textures shared with other programs on the same machine |
 | NDI® | video and audio | video and audio | needs the NDI runtime installed |
+| Screen, windows | yes | | a monitor or one window by its title (Windows.Graphics.Capture) |
 | DMX over USB | | yes | Enttec Open DMX USB, one universe |
 | Art-Net | yes | yes | |
 | sACN (E1.31) | yes | yes | |

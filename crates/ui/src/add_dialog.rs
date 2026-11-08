@@ -1116,7 +1116,7 @@ mod tests {
         assert!(common.contains(&"tex.blur".to_string()));
         assert!(!common.contains(&"tex.video_in".to_string()));
         assert_eq!(common[common.len() - 3..], [GAP, "tex.in", "tex.out"], "ports last, after a line");
-        assert_eq!(tex[1].1, ["tex.ndi_in", "tex.spout_in", "tex.video_in"]);
+        assert_eq!(tex[1].1, ["tex.ndi_in", "tex.screen_in", "tex.spout_in", "tex.video_in"]);
         assert_eq!(
             tex[2].1,
             [

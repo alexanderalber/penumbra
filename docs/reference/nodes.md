@@ -10,7 +10,7 @@ Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#g
 
 [tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.dilate](#texdilate), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.erode](#texerode), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.render_volume](#texrender_volume), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
 
-*inputs:* [tex.ndi_in](#texndi_in), [tex.spout_in](#texspout_in), [tex.video_in](#texvideo_in)
+*inputs:* [tex.ndi_in](#texndi_in), [tex.screen_in](#texscreen_in), [tex.spout_in](#texspout_in), [tex.video_in](#texvideo_in)
 
 *scan and shapes:* [tex.blend_weight](#texblend_weight), [tex.face_content](#texface_content), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes)
 
@@ -879,6 +879,24 @@ Outputs: `out` (tex).
 | `keep_size` *(more)* | bool | `true` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 | `pattern` | int | `0` | 0 to 45 (soft, held within 0 to 1000) | Which picture: 0 white, 1 black, then each column bit (coarsest first) followed by its inverse, then the row bits the same way. Past the last: black. scan.patterns lists them |
 | `level` *(more)* | float | `1` | 0 to 1 (soft) | Brightness of the lit stripes; lower it only if the camera clips even with its exposure turned down |
+
+### tex.screen_in
+
+A monitor or a window of this machine as a picture (Windows)
+
+Inputs: none.
+
+Outputs:
+
+- `out` (tex): The monitor or window, at its size in pixels
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `source` | monitor \| window | `"monitor"` |  | What to capture; monitor: a whole monitor, chosen by `display`; window: one window, chosen by a part of its title in `window` |
+| `display` | text |  |  | The monitor: empty for the primary one, 1, 2, ... in the order the ... menu and screen.sources list them, or a display id as out.projector takes it. Does something only with source monitor. |
+| `window` | text |  |  | A part of the window's title, upper or lower case alike, e.g. `notepad`. The frontmost window that matches is captured; when it closes, the node waits for one to match again. The ... menu lists the windows open now. Does something only with source window. |
+| `cursor` | bool | `false` |  | Draw the mouse pointer into the picture |
+| `border` | bool | `false` |  | Let Windows draw its yellow frame around what is captured. Windows 10 always draws it |
 
 ### tex.select
 

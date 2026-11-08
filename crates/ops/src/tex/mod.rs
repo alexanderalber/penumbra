@@ -30,6 +30,7 @@ pub mod render;
 mod render_volume;
 pub mod scan;
 mod scan_pattern;
+pub mod screen_in;
 mod sequence;
 mod shader;
 mod shape_content;
@@ -41,6 +42,7 @@ pub mod video_file;
 pub mod video_in;
 
 pub use ndi_in::NDI_IN;
+pub use screen_in::SCREEN_IN;
 pub use spout_in::SPOUT_IN;
 pub use text::{DEFAULT_FONT, TEXT, families as font_families};
 pub use video_file::VIDEO_FILE;
@@ -556,6 +558,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ramp::register(types)?;
     render::register(types)?;
     scan::register(types)?;
+    screen_in::register(types)?;
     shader::register(types)?;
     shapes::register(types)?;
     spout_in::register(types)?;

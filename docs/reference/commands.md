@@ -318,6 +318,12 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `scan.status` | How the scans of the tex.scan nodes stand: running, progress (0 to 1), step, the last run's error and warnings; {} |
 | `scan.synthetic` | Writes the scans of a made-up room, ray cast, as scan.decode writes real ones: for trying scan.scene and the content after it without projectors or a camera. The room "pumpkin" is a landscape of five Euro crates with a ribbed pumpkin on one of them, two projectors left and right of the camera, decode noise like a real scan's; "landscape" three crates and a ball, "crate" one crate and a ball (both small and nearly noise free, as the tests use them). Writes per projector a folder (a, b) with proj_to_cam.exr, cam_to_proj.exr, scene.png and quality.png, and photo.png (the camera's picture of the room lit white by that projector, which a real decode does not write). {room? (pumpkin, landscape or crate; pumpkin), out? (folder, synthetic), scale? (pumpkin: camera and projectors are scale times 480 x 270 pixels, 0.25 to 8; 4, full HD), noise? (camera px, the standard deviation of the decode noise per axis; pumpkin 0.15 times scale), outliers? (share of pixels decoded far off, 0 to 0.1; pumpkin 0.002)} |
 
+## screen
+
+| command | |
+|---|---|
+| `screen.sources` | What a tex.screen_in can capture now: the monitors (index, id, os_name, width, height, primary) and the windows with a title, front to back (title, program, width, height) |
+
 ## script
 
 | command | |

@@ -92,6 +92,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("tex.image_file", &["movie file in"]),
     ("tex.mapper", &["kantan mapper", "stoner"]),
     ("tex.primitive", &["rectangle", "circle"]),
+    ("tex.screen_in", &["screen grab", "capture", "desktop", "window capture"]),
     ("tex.shader", &["glsl"]),
     ("tex.spout_in", &["syphon spout in"]),
     ("tex.video_file", &["movie file in"]),
