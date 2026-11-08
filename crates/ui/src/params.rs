@@ -2308,6 +2308,7 @@ fn table_list(
         ui.label(RichText::new("no table nodes in the network").color(theme::TEXT_WEAK));
     }
     let cell_label = |i: usize, text: &str| {
+        let text = crate::editor::format_cell(text);
         let short: String = text.chars().take(24).collect();
         if short.len() < text.len() { format!("{i}: {short}...") } else { format!("{i}: {short}") }
     };

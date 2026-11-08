@@ -713,7 +713,12 @@ pub fn table_grid(painter: &egui::Painter, rect: Rect, table: &Table) {
     let char_w = 7.2;
     let widths: Vec<f32> = (0..cols)
         .map(|c| {
-            let chars = shown.iter().filter_map(|r| r.get(c)).map(|s| s.chars().count()).max().unwrap_or(0);
+            let chars = shown
+                .iter()
+                .filter_map(|r| r.get(c))
+                .map(|s| crate::editor::format_cell(s).chars().count())
+                .max()
+                .unwrap_or(0);
             (chars.clamp(1, 40) as f32 * char_w + 12.0).min(rect.width())
         })
         .collect();
@@ -731,8 +736,9 @@ pub fn table_grid(painter: &egui::Painter, rect: Rect, table: &Table) {
             if x > rect.max.x {
                 break;
             }
+            let shown_cell = crate::editor::format_cell(cell);
             let text: String =
-                cell.chars().take(40).map(|ch| if ch.is_control() { ' ' } else { ch }).collect();
+                shown_cell.chars().take(40).map(|ch| if ch.is_control() { ' ' } else { ch }).collect();
             painter.text(pos2(x, y + 1.0), egui::Align2::LEFT_TOP, text, font.clone(), theme::TEXT);
             x += widths.get(c).copied().unwrap_or(0.0);
         }

@@ -2790,8 +2790,9 @@ fn table_body(painter: &egui::Painter, body: Rect, table: &penumbra_core::Table,
     let fit = lines_fit(body, zoom);
     let max_chars = ((body.width() - 8.0 * zoom) / (6.0 * zoom)).max(1.0) as usize;
     for (i, row) in table.rows().iter().take(fit).enumerate() {
+        let cells: Vec<_> = row.iter().map(|c| format_cell(c)).collect();
         let text: String =
-            row.join("  ").chars().take(max_chars).map(|c| if c.is_control() { ' ' } else { c }).collect();
+            cells.join("  ").chars().take(max_chars).map(|c| if c.is_control() { ' ' } else { c }).collect();
         painter.text(
             pos2(body.min.x + 4.0 * zoom, body.min.y + 3.0 * zoom + i as f32 * line),
             Align2::LEFT_TOP,
@@ -2857,6 +2858,36 @@ pub fn format_value(v: f64) -> String {
         return format!("{v}");
     }
     if v.abs() >= 1000.0 { format!("{v:.1}") } else { format!("{v:.3}") }
+}
+
+/// A table cell as the UI shows it: a number with a fraction or an exponent to four significant
+/// digits, keeping every digit before the point. Whole numbers and text stay as they are, since
+/// they may be counts or names. The table itself keeps the exact number.
+pub fn format_cell(cell: &str) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    let text = cell.trim();
+    let Some(v) = text.parse::<f64>().ok().filter(|v| v.is_finite()) else {
+        return Cow::Borrowed(cell);
+    };
+    if v == 0.0 {
+        return if text.starts_with('-') { Cow::Borrowed("0") } else { Cow::Borrowed(cell) };
+    }
+    if !text.contains(['.', 'e', 'E']) {
+        return Cow::Borrowed(cell);
+    }
+    let magnitude = v.abs().log10().floor();
+    let short = if (-4.0..15.0).contains(&magnitude) {
+        let decimals = (3.0 - magnitude).max(0.0) as usize;
+        let fixed = format!("{v:.decimals$}");
+        if fixed.contains('.') {
+            fixed.trim_end_matches('0').trim_end_matches('.').to_string()
+        } else {
+            fixed
+        }
+    } else {
+        format!("{v:.3e}")
+    };
+    if short.len() < text.len() { Cow::Owned(short) } else { Cow::Borrowed(cell) }
 }
 
 fn wire(painter: &egui::Painter, points: &[Pos2], color: Color32, zoom: f32, hot: bool) {

@@ -820,3 +820,19 @@ fn copy_and_paste_with_the_keyboard() {
     assert!(listed(1).contains("/level2"), "undone: {}", listed(1));
     engine.shutdown();
 }
+
+#[test]
+fn table_cells_show_four_significant_digits() {
+    let shown = |cell: &str| crate::editor::format_cell(cell).into_owned();
+    assert_eq!(shown("-0.3703629227445994"), "-0.3704");
+    assert_eq!(shown("0.00012345678"), "0.0001235");
+    assert_eq!(shown("1234.56789"), "1235");
+    assert_eq!(shown("123456.789"), "123457");
+    assert_eq!(shown("9.99996"), "10");
+    assert_eq!(shown("1.23456789e-12"), "1.235e-12");
+    assert_eq!(shown("-0"), "0");
+    // Short numbers, whole numbers and text stay as they are.
+    for same in ["0.5", "0", "0.000", "1234567", "box", "x", "nan", "inf", "", "1.5 m"] {
+        assert_eq!(shown(same), same);
+    }
+}
