@@ -65,7 +65,8 @@ stay when you paste one:
   its own, `@expose speed = noise1.speed`. Changing the exposed param changes the inner one,
   and you can bind it like any param. The inner node keeps the value and the range.
 - **`@reset`** names params whose change starts the component over: `@reset preset seed
-  width height`. More under "Starting over" below.
+  width height`, or with a condition, `@reset preset unless morph`. More under "Starting over"
+  below.
 - **`@preset`** gives the values that choosing an entry of a choice writes: `@preset
   preset=maze feed=0.029 kill=0.057`. More under "Presets" below.
 - **Comments:** lines starting with `#`, and `//` lines without an `@`.
@@ -84,7 +85,9 @@ component the node sits in, whatever it is called, so a copy from the library fo
 component. The follower's row shows `parent.preset`; a click on it goes to the component. When a
 follower cannot take a value (a choice it lacks), the component's panel lists the warning at the
 top. Every follower takes the new value in the same frame, also when the component's
-param is bound to a dropdown or an LFO outside.
+param is bound to a dropdown or an LFO outside. A bound choice with presets is the exception:
+its followers take the new entry one frame later, together with the entry's values (see
+"Presets").
 
 More in the Components section of the concepts guide.
 
@@ -114,7 +117,14 @@ presetManager for this job.
 - **Choosing** writes the values in the same edit, and one undo takes all of them back. This
   holds for the panel, `node.set`, `node.batch` and OSC. Choosing the entry that is chosen
   already writes its values again: back to the preset. Opening a project writes nothing, and
-  neither does a hand edit of `project.ron`. A binding on the choice writes nothing yet.
+  neither does a hand edit of `project.ron`.
+- **A bound choice:** bind the choice to a key, a channel or a `chan.dropdown`. When the
+  binding gives another entry, the component writes that entry and its values one frame later.
+  That frame still runs the old entry with the old values, so no frame mixes the two. The write
+  makes no undo step, also works while the show is locked, and is saved with the project. A
+  dropdown names the entry; a number picks it by place, 0 for the first. Only a change of the
+  binding writes: opening a project writes nothing, and a choice set by hand stays until the
+  binding gives another entry. A binding made anew writes its entry at once when it differs.
 - **`node.set` with several names** sets the choice first: `node.set {path: "/rd", params:
   {preset: "maze", feed: 0.03}}` gives maze with `feed` at 0.03.
 - **Reset** of a param a preset writes goes to the chosen entry's value: the row's reset
@@ -127,9 +137,11 @@ presetManager for this job.
   `@param` does not take, a param that the presets of two choices write. An inner param may
   refuse a value when the entry is chosen. That value is skipped, and the edit's reply names it
   under `left_out`.
+- **A bound param among the values:** a preset writes its stored value, and the binding still
+  decides the value in effect. `node.info` lists such params under `bound`.
 - **`node.info`** lists `component.presets`: the entries, the params the presets own (`owns`),
-  the chosen entry, `changed` (owned params whose value differs from the chosen entry's) and
-  `problems` (values an inner param would refuse now).
+  the chosen entry, `changed` (owned params whose value differs from the chosen entry's),
+  `problems` (values an inner param would refuse now) and `bound`.
 
 ## Starting over
 
@@ -146,6 +158,14 @@ works on the old picture. Two things start the loop over from its seed:
   over once. A value set by hand, by undo or through a binding counts. The new start already
   uses the new value, in the same frame. Only `@param` names may stand there; for an exposed
   param, make it an `@param` that the inner param follows ("Put on component").
+- **`@reset preset unless morph`, `@reset seed if fresh`:** the line counts only while the
+  bool `@param` after `unless` is off, or the one after `if` is on. Turning the bool on or off
+  starts nothing. One condition per line; write two lines for two.
+- **A new preset decides alone:** when a choice with presets changes, only its own `@reset`
+  line decides whether the component starts over. The params the preset writes in the same
+  edit do not start it over on their own, even when an `@reset` line names them. Changed by
+  hand, they start it over as usual. Choosing the chosen entry again is no change of the
+  choice: when it brings back a value on an `@reset` line, that value starts it over.
 
 Nodes that only follow the clock, such as an LFO or a shader that reads `time`, do not start
 over. A locked node keeps what it holds.

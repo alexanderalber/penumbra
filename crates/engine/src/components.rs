@@ -814,6 +814,7 @@ pub fn info(e: &Engine, net: &Network, id: NodeId) -> Option<Json> {
                 "owns": p.owns,
                 "changed": p.changed,
                 "problems": p.problems,
+                "bound": p.bound,
             })
         })
         .collect();

@@ -24,7 +24,8 @@
 //! component, its value and spec kept inside. [`component`] reads such a text.
 //!
 //! And `@reset <name> <name> ...`: a change of any of these `@param` values starts the stateful
-//! nodes inside over, so a new preset starts from its own seed.
+//! nodes inside over, so a new preset starts from its own seed. `@reset <name> ... if <bool>`
+//! or `unless <bool>` does so only while the bool `@param` is on, or off ([`Reset`]).
 //!
 //! And `@preset <choice>=<entry> <name>=<value> ... [-- doc]`: the values that choosing `entry`
 //! of the `@param` choice `choice` writes into the component's params ([`Presets`]). The entry
@@ -212,9 +213,9 @@ impl Declaration {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Declared {
     pub lines: Vec<Declaration>,
-    /// The params whose change starts the component over (`@reset` lines), each once, in the
-    /// order they are first named. Only names of `@param` lines.
-    pub resets: Vec<Name>,
+    /// The params whose change starts the component over (`@reset` lines), in the order they
+    /// are first named, each with its condition once. Only names of `@param` lines.
+    pub resets: Vec<Reset>,
     /// The choices with `@preset` lines, in the order of their first line.
     pub presets: Vec<Presets>,
     pub errors: Vec<String>,
@@ -250,6 +251,30 @@ impl Declared {
     /// The presets that write param `name` (it is on their `*` line).
     pub fn owner(&self, name: &str) -> Option<&Presets> {
         self.presets.iter().find(|p| p.owns(name))
+    }
+}
+
+/// One name of an `@reset` line: a change of its value starts the component over, when the
+/// line's condition holds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Reset {
+    pub name: Name,
+    /// `if <bool>` or `unless <bool>`; `None`: always.
+    pub when: Option<When>,
+}
+
+/// The condition of an `@reset` line: a bool `@param` of the component.
+#[derive(Clone, Debug, PartialEq)]
+pub struct When {
+    pub param: Name,
+    /// `unless`: the line holds while the bool is off; `if`: while it is on.
+    pub unless: bool,
+}
+
+impl When {
+    /// Whether the line holds with the bool at `on`.
+    pub fn holds(&self, on: bool) -> bool {
+        on != self.unless
     }
 }
 
@@ -315,7 +340,7 @@ pub fn component(text: &str, taken: impl Fn(&str) -> Option<String>) -> Declared
     // The line each declared name came from, to name it in a clash.
     let mut seen: Vec<(String, usize)> = Vec::new();
     // The `@reset` lines, checked once every `@param` line is known: a name may come first.
-    let mut resets: Vec<(usize, Vec<Name>)> = Vec::new();
+    let mut resets: Vec<(usize, ResetLine)> = Vec::new();
     // The `@preset` lines, checked once every declaration is known, for the same reason.
     let mut presets: Vec<PresetLine> = Vec::new();
     for (i, raw) in text.lines().enumerate() {
@@ -354,8 +379,8 @@ pub fn component(text: &str, taken: impl Fn(&str) -> Option<String>) -> Declared
                 expose(args).map(|line| Declaration::Expose(ExposeLine { group: group.clone(), ..line }))
             }
             RESET => {
-                match reset_names(args) {
-                    Ok(names) => resets.push((n, names)),
+                match reset_line(args) {
+                    Ok(line) => resets.push((n, line)),
                     Err(e) => out.errors.push(format!("line {n}: {e}")),
                 }
                 continue;
@@ -396,13 +421,34 @@ pub fn component(text: &str, taken: impl Fn(&str) -> Option<String>) -> Declared
         seen.push((name, n));
         out.lines.push(declaration);
     }
-    for (n, names) in resets {
+    for (n, line) in resets {
+        // A condition that is no bool `@param` costs the whole line: its names would restart
+        // in cases the line excludes.
+        if let Some(when) = &line.when {
+            let word = if when.unless { "unless" } else { "if" };
+            let name = &when.param;
+            let why = match out.lines.iter().find(|d| d.name() == name.as_str()) {
+                Some(Declaration::Param(spec)) if spec.kind == ParamKind::Bool => None,
+                Some(Declaration::Param(_)) => {
+                    Some(format!("`{word} {name}` needs a bool param, and `{name}` is none"))
+                }
+                Some(Declaration::Expose(_)) => Some(format!(
+                    "`{word} {name}`: `{name}` is shown from inside by @expose, and a condition needs a bool the component holds; make it an @param bool line that the inner param follows (Put on component)"
+                )),
+                None => Some(format!("`{word} {name}`: `{name}` is declared by no @param line")),
+            };
+            if let Some(why) = why {
+                insert_error(&mut out.errors, n, why);
+                continue;
+            }
+        }
         let mut bad: Vec<String> = Vec::new();
-        for name in names {
+        for name in line.names {
             match out.lines.iter().find(|d| d.name() == name.as_str()) {
                 Some(Declaration::Param(_)) => {
-                    if !out.resets.contains(&name) {
-                        out.resets.push(name);
+                    let reset = Reset { name, when: line.when.clone() };
+                    if !out.resets.contains(&reset) {
+                        out.resets.push(reset);
                     }
                 }
                 Some(Declaration::Expose(_)) => bad.push(format!(
@@ -690,20 +736,39 @@ fn error_line(error: &str) -> Option<usize> {
     error.strip_prefix("line ")?.split(':').next()?.parse().ok()
 }
 
-/// The names after `@reset`, separated by spaces or commas; `#` starts a comment.
-fn reset_names(args: &str) -> Result<Vec<Name>, Error> {
+/// An `@reset` line as written, before its names are checked against the declarations.
+struct ResetLine {
+    names: Vec<Name>,
+    when: Option<When>,
+}
+
+/// The text after `@reset`: names separated by spaces or commas, then maybe `if <bool>` or
+/// `unless <bool>`; `#` starts a comment.
+fn reset_line(args: &str) -> Result<ResetLine, Error> {
+    let usage = "expected `@reset <param> <param> ...`, the params whose change starts the component over, maybe followed by `if <bool param>` or `unless <bool param>`";
     let line = args.split('#').next().unwrap_or("");
-    let names: Vec<Name> = line
-        .split(|c: char| c.is_whitespace() || c == ',')
-        .filter(|w| !w.is_empty())
-        .map(Name::new)
-        .collect::<Result<_, _>>()?;
+    let words: Vec<&str> =
+        line.split(|c: char| c.is_whitespace() || c == ',').filter(|w| !w.is_empty()).collect();
+    let at = words.iter().position(|w| *w == "if" || *w == "unless").unwrap_or(words.len());
+    let (names, rest) = words.split_at(at);
+    let when = rest.split_first();
+    let names: Vec<Name> = names.iter().map(|w| Name::new(w)).collect::<Result<_, _>>()?;
     if names.is_empty() {
-        return Err(Error::new(
-            "expected `@reset <param> <param> ...`, the params whose change starts the component over",
-        ));
+        return Err(Error::new(usage));
     }
-    Ok(names)
+    let when = match when {
+        None => None,
+        Some((&word, [param])) => Some(When { param: Name::new(param)?, unless: word == "unless" }),
+        Some((word, [])) => {
+            return Err(Error::new(format!("`{word}` needs the name of a bool param after it")));
+        }
+        Some((word, _)) => {
+            return Err(Error::new(format!(
+                "`{word}` takes one bool param; for two conditions write two @reset lines"
+            )));
+        }
+    };
+    Ok(ResetLine { names, when })
 }
 
 /// The text after `@expose`.
@@ -901,6 +966,57 @@ mod tests {
     }
 
     #[test]
+    fn reset_lines_take_a_condition_on_a_bool_param() {
+        let d = component(
+            "@param preset choice(a|b)
+             @param morph bool
+             @param fresh bool = true
+             @param seed int
+             @param level float
+             @expose glow = show.glow
+             @reset preset unless morph  # a new preset grows out of the old one with morph
+             @reset seed, preset if fresh
+             @reset seed if level
+             @reset seed if glow
+             @reset seed if nothing
+             @reset seed if
+             @reset seed if morph fresh
+             @reset if morph
+             @reset seed size unless morph",
+            none,
+        );
+        let resets: Vec<(&str, Option<(&str, bool)>)> = d
+            .resets
+            .iter()
+            .map(|r| (r.name.as_str(), r.when.as_ref().map(|w| (w.param.as_str(), w.unless))))
+            .collect();
+        assert_eq!(
+            resets,
+            [
+                ("preset", Some(("morph", true))),
+                ("seed", Some(("fresh", false))),
+                ("preset", Some(("fresh", false))),
+                ("seed", Some(("morph", true))),
+            ]
+        );
+        let expect = [
+            ("line 9:", "needs a bool param, and `level` is none"),
+            ("line 10:", "shown from inside by @expose"),
+            ("line 11:", "`nothing` is declared by no @param line"),
+            ("line 12:", "`if` needs the name of a bool param"),
+            ("line 13:", "`if` takes one bool param"),
+            ("line 14:", "expected `@reset <param>"),
+            ("line 15:", "`size` is declared by no @param line"),
+        ];
+        assert_eq!(d.errors.len(), expect.len(), "{:?}", d.errors);
+        for (e, (line, needle)) in d.errors.iter().zip(expect) {
+            assert!(e.starts_with(line) && e.contains(needle), "{e}: wants {line} {needle}");
+        }
+        let when = d.resets.first().and_then(|r| r.when.clone()).unwrap();
+        assert!(when.holds(false) && !when.holds(true), "unless: holds while off");
+    }
+
+    #[test]
     fn reset_lines_name_params_the_component_holds() {
         let d = component(
             "@reset preset, seed  # restarts
@@ -912,8 +1028,9 @@ mod tests {
              @reste preset",
             none,
         );
-        let resets: Vec<&str> = d.resets.iter().map(Name::as_str).collect();
+        let resets: Vec<&str> = d.resets.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(resets, ["preset", "seed"]);
+        assert!(d.resets.iter().all(|r| r.when.is_none()));
         assert_eq!(d.errors.len(), 3, "{:?}", d.errors);
         assert!(
             d.errors[1].starts_with("line 6:") && d.errors[1].contains("expected `@reset"),

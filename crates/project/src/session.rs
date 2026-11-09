@@ -461,6 +461,14 @@ impl Session {
         self.doc.edit_live(ops)
     }
 
+    /// Writes the entries that bindings gave choices with presets, with the entries' values
+    /// ([`Document::edit_live`]): outside the history, not gated and also while locked. Nobody
+    /// edits here: a binding changed, as a show screen's control or a key does, and the
+    /// component must take the entry's values a frame later whoever holds the edit.
+    pub fn edit_bound(&self, ops: &[Op]) -> Result<Arc<Network>, Error> {
+        self.doc.edit_live(ops)
+    }
+
     /// Sets param values outside the history while the session is locked
     /// ([`Session::set_locked`]): the one change show mode allows, for the controls on its show
     /// screen. Not gated, since nobody else may edit then. The values are written to the file

@@ -91,7 +91,7 @@ use penumbra_dmx::Hub as DmxHub;
 use penumbra_dmx::Inputs as DmxInputs;
 use penumbra_gpu::Gpu;
 use penumbra_graph::{
-    CookReport, Cooker, Data, JobPool, Network, NodeStatus, NodeTypes, PERSIST_STATE, Port, ResetOutcome,
+    CookReport, Cooker, Data, JobPool, Network, NodeStatus, NodeTypes, Op, PERSIST_STATE, Port, ResetOutcome,
     ThumbnailMode,
 };
 use penumbra_ops::freeview;
@@ -499,6 +499,7 @@ impl CookState {
         }
         self.last = self.cooker.cook_showing(&net, self.clock.now(), &wanted, &request.thumbnails, &shown);
         drop(deferral);
+        self.write_bound_presets(session, &net);
         let t_cook = Instant::now();
         // The blocks the `out.audio` nodes played in this pass go to their devices now. Offline
         // renders (every frame, slower than real time) do not play.
@@ -572,6 +573,27 @@ impl CookState {
         // The whole pass, not only the cooking: outputs, free views and publishing take from
         // the same frame.
         lock(&self.view.meter).add(started, started.elapsed());
+    }
+
+    /// Writes the entries that bindings of choices with presets changed to in this pass, each
+    /// with its values, as one live edit ([`Cooker::bound_presets`], [`Session::edit_bound`]).
+    /// The next pass sees the new entry and its values together.
+    fn write_bound_presets(&mut self, session: &Session, net: &Network) {
+        let ops: Vec<Op> = self
+            .cooker
+            .bound_presets()
+            .into_iter()
+            .filter_map(|(id, name, value)| {
+                let param = net.path_of(id)?.param(name).ok()?;
+                Some(Op::Set { param, value })
+            })
+            .collect();
+        if ops.is_empty() {
+            return;
+        }
+        if let Err(e) = session.edit_bound(&ops) {
+            log::warn!("a bound preset was not written: {e}");
+        }
     }
 
     /// The free views the UI asks for, drawn from this pass's results.

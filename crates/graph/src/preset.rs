@@ -41,6 +41,10 @@ pub struct PresetStatus {
     /// Values that would not go in now: an `@expose` line that names no inner param, or a
     /// value the inner param refuses. Choosing the entry skips them.
     pub problems: Vec<String>,
+    /// The owned params that are bound (on the component, or inside where an `@expose` line
+    /// shows them): choosing an entry writes their stored value, and the binding decides the
+    /// value in effect.
+    pub bound: Vec<Name>,
 }
 
 /// Whether two values are the same for presets: numbers by value (`1` and `1.0`).
@@ -157,6 +161,7 @@ impl Network {
                 let chosen = self.chosen(types, id, presets).unwrap_or_default();
                 let mut changed = Vec::new();
                 let mut problems = Vec::new();
+                let mut bound = Vec::new();
                 for (name, _) in &presets.base {
                     let (now, target) = current(name);
                     let target = match target {
@@ -166,6 +171,16 @@ impl Network {
                             continue;
                         }
                     };
+                    let is_bound = match &target {
+                        None => node.is_bound(name.as_str()),
+                        Some(t) => self
+                            .resolve(t.node())
+                            .and_then(|n| self.node(n))
+                            .is_some_and(|n| n.is_bound(t.param().as_str())),
+                    };
+                    if is_bound {
+                        bound.push(name.clone());
+                    }
                     if let Some(t) = &target
                         && let Some(spec) =
                             self.resolve(t.node()).and_then(|n| self.spec_of(types, n, t.param().as_str()))
@@ -194,6 +209,7 @@ impl Network {
                     chosen,
                     changed,
                     problems,
+                    bound,
                 }
             })
             .collect()

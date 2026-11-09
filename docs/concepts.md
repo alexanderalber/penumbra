@@ -670,13 +670,15 @@ first output of the kind it reads.
   it to a key, such as a `chan.keyboard_in`'s `key_0`, and the key restarts the simulation;
   TouchDesigner users know this as a pulse parameter. A line `@reset preset seed` in the text
   starts the component over once when one of these params changes, by hand, by undo or through
-  a binding. The new start uses the new value in the same frame. The `reset` button in the
+  a binding. The new start uses the new value in the same frame. `@reset preset unless morph`
+  counts only while the bool `morph` is off. The `reset` button in the
   panel's header restarts once. More in [comp.base](reference/nodes.md#compbase).
 - **Presets:** `@preset preset=maze feed=0.029 kill=0.057` lines give the values that choosing
   an entry of a choice writes into the params. A `preset=*` line lists the params the presets
   write and the value every entry starts from. Choosing writes in the same edit, so one undo
   takes it back. Afterwards the values are ordinary values: tune them, and they are saved.
-  Opening a project writes nothing. More in [comp.base](reference/nodes.md#compbase).
+  Opening a project writes nothing. A choice bound to a key or a dropdown writes the entry and
+  its values one frame after the binding changes, without an undo step. More in [comp.base](reference/nodes.md#compbase).
 - **Mistakes in the text:** a line that declares nothing shows right below the text, with its
   line number and the reason. The other lines still work. A name may be declared once, and not as
   one of the component's own built-in params (`params`, `shelf`, `about`, `reset`).

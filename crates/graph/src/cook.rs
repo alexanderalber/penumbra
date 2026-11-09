@@ -641,6 +641,20 @@ struct Runtime {
     restart_seen: Option<Vec<(Name, Value)>>,
     /// The pass of that check.
     restart_pass: u64,
+    /// Per bound choice with presets: what its binding gave when last asked
+    /// ([`Cooker::bound_presets`]).
+    preset_edges: BTreeMap<Name, PresetEdge>,
+}
+
+/// What the binding of a choice with presets gave when last asked: only a change of it writes
+/// the presets, so a load (whose first value is no change) never does.
+#[derive(Clone, Debug, Default)]
+struct PresetEdge {
+    /// The entry the binding gave last; `None` before it gave one.
+    last: Option<Value>,
+    /// The binding was made by an edit while the component existed: its first entry counts as
+    /// a change when it differs from the stored one.
+    armed: bool,
 }
 
 impl Runtime {
@@ -728,18 +742,32 @@ impl Runtime {
             panicked: None,
             restart_seen: None,
             restart_pass: 0,
+            preset_edges: BTreeMap::new(),
         }
     }
 
-    /// The value param `name` takes in this pass: its bound value when bound, else the stored
-    /// one, else the default of the kind or of the component's declaration. Call after the
-    /// node's cook in the pass.
+    /// The value param `name` takes in this pass: its bound value when bound (but for a choice
+    /// with presets), else the stored one, else the default of the kind or of the component's
+    /// declaration. Call after the node's cook in the pass.
     fn in_effect(&self, name: &str) -> Option<Value> {
         if self.def.is_bound(name)
+            && !self.chooses_presets(name)
             && let Some(v) = self.seen_bound.get(name)
         {
             return Some(v.clone());
         }
+        self.stored_or_default(name)
+    }
+
+    /// Whether `name` is a choice with presets of this component. Bound, its stored entry stays
+    /// in effect until the engine has written the bound entry with its values
+    /// ([`Cooker::bound_presets`]), so no pass sees the new entry with the old values.
+    fn chooses_presets(&self, name: &str) -> bool {
+        self.declared.as_ref().is_some_and(|d| d.presets_of(name).is_some())
+    }
+
+    /// The value of param `name` without its binding: the stored one, else the default.
+    fn stored_or_default(&self, name: &str) -> Option<Value> {
         if let Some(v) = self.def.params.get(name) {
             return Some(v.clone());
         }
@@ -758,6 +786,38 @@ fn same_value(a: &Value, b: &Value) -> bool {
         (Some(x), Some(y)) => x == y,
         _ => a == b,
     }
+}
+
+/// The values a component's restart check compares pass to pass: its `@reset` params and its
+/// choices with presets, as in effect now.
+fn watched(rt: &Runtime, d: &Declared) -> Vec<(Name, Value)> {
+    let mut names: Vec<&Name> = d.resets.iter().map(|r| &r.name).collect();
+    names.extend(d.presets.iter().map(|p| &p.choice));
+    names.sort();
+    names.dedup();
+    names.into_iter().filter_map(|n| Some((n.clone(), rt.in_effect(n.as_str())?))).collect()
+}
+
+/// Whether a component's `@reset` lines start it over in this pass ([`Cooker::check_restart`]):
+/// a named value changed since the last check, it is no value written by presets whose choice
+/// changed too, and the line's condition holds now.
+fn restarts(rt: &Runtime, d: &Declared) -> bool {
+    let Some(seen) = rt.restart_seen.as_ref() else { return false };
+    let changed = |name: &Name| {
+        seen.iter()
+            .find(|(m, _)| m == name)
+            .is_some_and(|(_, old)| rt.in_effect(name.as_str()).is_some_and(|now| !same_value(old, &now)))
+    };
+    // What came with a new preset: every param a changed choice's presets write, a choice
+    // among them included.
+    let with_preset = |name: &Name| d.presets.iter().any(|p| p.owns(name.as_str()) && changed(&p.choice));
+    d.resets.iter().any(|r| {
+        changed(&r.name)
+            && !with_preset(&r.name)
+            && r.when.as_ref().is_none_or(|w| {
+                w.holds(rt.in_effect(w.param.as_str()).and_then(|v| v.as_bool()).unwrap_or(false))
+            })
+    })
 }
 
 /// A component that can start its stateful nodes over: `reset` is on or bound, or its text
@@ -800,6 +860,9 @@ pub struct Cooker {
     /// Components that may start their nodes over, as of the last sync. They are evaluated
     /// first in each pass, before anything inside them cooks.
     restarters: Vec<Restarter>,
+    /// Components with a bound choice with presets, as of the last sync
+    /// ([`Cooker::bound_presets`]).
+    choosers: Vec<NodeId>,
     /// Nodes are evaluated for thumbnails now, which does not count as use.
     for_thumbnails: bool,
     /// Time of the passes since the profile was last taken.
@@ -833,6 +896,7 @@ impl Cooker {
             eager: Vec::new(),
             feedback: Vec::new(),
             restarters: Vec::new(),
+            choosers: Vec::new(),
             for_thumbnails: false,
             spent: PassSpent::default(),
             exact: false,
@@ -1078,6 +1142,16 @@ impl Cooker {
                         rt.params_changed = true;
                         rt.declared = rt.ty.as_ref().and_then(|t| def.declared(t.desc()));
                     }
+                    // A choice bound by an edit now: its first entry is written.
+                    if let Some(d) = &rt.declared {
+                        for p in &d.presets {
+                            let name = p.choice.as_str();
+                            if def.is_bound(name) && !rt.def.is_bound(name) {
+                                rt.preset_edges
+                                    .insert(p.choice.clone(), PresetEdge { last: None, armed: true });
+                            }
+                        }
+                    }
                     rt.def = def.clone();
                 }
                 _ => {
@@ -1107,6 +1181,16 @@ impl Cooker {
             .values()
             .any(|rt| rt.ty.as_ref().is_some_and(|t| t.desc().outputs.iter().any(|o| o.lazy)));
         self.restarters = self.find_restarters(net);
+        self.choosers = self
+            .runtimes
+            .iter()
+            .filter(|(_, rt)| {
+                rt.declared
+                    .as_ref()
+                    .is_some_and(|d| d.presets.iter().any(|p| rt.def.is_bound(p.choice.as_str())))
+            })
+            .map(|(id, _)| *id)
+            .collect();
         self.last_net = Some(net.clone());
     }
 
@@ -1153,10 +1237,15 @@ impl Cooker {
     }
 
     /// After component `id` cooked in this pass: when its `reset` is on, or the value in effect
-    /// of one of its `@reset` params changed since the last pass, every stateful node inside
-    /// starts over ([`Runtime::start_over`]) before it cooks in this pass. Locked nodes keep
-    /// what they hold. Nothing starts over at the first check, for a param named anew, or when
-    /// only the text changed.
+    /// of one of its `@reset` params changed since the last pass while its line's condition
+    /// holds, every stateful node inside starts over ([`Runtime::start_over`]) before it cooks
+    /// in this pass. Locked nodes keep what they hold. Nothing starts over at the first check,
+    /// for a param named anew, or when only the text changed.
+    ///
+    /// A choice with presets that changed in the pass decides alone: the params its presets
+    /// write changed with it, and their own `@reset` lines do not count in that pass. So
+    /// `@reset preset unless morph` keeps a preset change with `morph` on from restarting, even
+    /// when a preset writes a value that restarts when changed by hand.
     fn check_restart(&mut self, id: NodeId) {
         let Some(at) = self.restarters.iter().position(|r| r.comp == id) else { return };
         let pass = self.pass;
@@ -1165,16 +1254,12 @@ impl Cooker {
             return;
         }
         let on = rt.in_effect(crate::RESET).and_then(|v| v.as_bool()) == Some(true);
-        let names: &[Name] = rt.declared.as_ref().map_or(&[], |d| d.resets.as_slice());
-        let now: Vec<(Name, Value)> =
-            names.iter().filter_map(|n| Some((n.clone(), rt.in_effect(n.as_str())?))).collect();
-        let changed = rt.restart_seen.as_ref().is_some_and(|seen| {
-            now.iter().any(|(n, v)| seen.iter().any(|(m, old)| m == n && !same_value(old, v)))
-        });
+        let fire = rt.declared.as_ref().is_some_and(|d| restarts(rt, d));
+        let now = rt.declared.as_ref().map(|d| watched(rt, d)).unwrap_or_default();
         let Some(rt) = self.runtimes.get_mut(&id) else { return };
         rt.restart_pass = pass;
         rt.restart_seen = Some(now);
-        if !(on || changed) {
+        if !(on || fire) {
             return;
         }
         let inside = self.restarters.get(at).map(|r| r.inside.clone()).unwrap_or_default();
@@ -1185,6 +1270,46 @@ impl Cooker {
                 rt.start_over();
             }
         }
+    }
+
+    /// The entries the bindings of choices with presets give now, where they changed since the
+    /// last call: (component, choice, entry). The engine writes each with the entry's values as
+    /// one live edit after the pass; until then the stored entry stays in effect
+    /// ([`Runtime::chooses_presets`]). A binding's first entry is no change, so opening a
+    /// project writes nothing; a binding made by an edit writes its first entry when it differs
+    /// from the stored one. Only components cooked in this pass are asked.
+    pub fn bound_presets(&mut self) -> Vec<(NodeId, Name, Value)> {
+        let pass = self.pass;
+        let mut out = Vec::new();
+        for &id in &self.choosers {
+            let Some(rt) = self.runtimes.get_mut(&id) else { continue };
+            if rt.evaluated_pass != pass {
+                continue;
+            }
+            let choices: Vec<Name> = rt
+                .declared
+                .as_ref()
+                .map(|d| d.presets.iter().map(|p| p.choice.clone()).collect())
+                .unwrap_or_default();
+            for name in choices {
+                if !rt.def.is_bound(name.as_str()) {
+                    continue;
+                }
+                let Some(now) = rt.seen_bound.get(&name).cloned() else { continue };
+                let stored = rt.stored_or_default(name.as_str());
+                let edge = rt.preset_edges.entry(name.clone()).or_default();
+                let changed = match &edge.last {
+                    Some(last) => !same_value(last, &now),
+                    None => edge.armed && stored.is_none_or(|s| !same_value(&s, &now)),
+                };
+                edge.last = Some(now.clone());
+                edge.armed = false;
+                if changed {
+                    out.push((id, name, now));
+                }
+            }
+        }
+        out
     }
 
     /// Cooks what the nodes cooked in this pass read through a previous-result input (the end
@@ -2046,6 +2171,7 @@ impl Cooker {
         let src = self.runtimes.get(&bind.node).ok_or_else(missing)?;
         let spec = src.declared.as_ref().and_then(|d| d.param(name.as_str())).ok_or_else(missing)?;
         if src.def.is_bound(name.as_str())
+            && !src.chooses_presets(name.as_str())
             && let Some(v) = src.seen_bound.get(name)
         {
             return Ok(v);
@@ -3502,6 +3628,116 @@ mod tests {
         f.edit(&[Op::Lock { path: pp("/c/d/sim"), locked: true }]);
         f.set("/key.value", Value::Float(1.0));
         assert_eq!(step(&mut f), (0.0, 7.0, 2.0));
+    }
+
+    #[test]
+    fn a_preset_change_restarts_by_its_own_reset_line_and_its_condition() {
+        let bind = |param: &str, from: &str, name: Option<&str>| Op::Bind {
+            param: ParamPath::parse(param).unwrap(),
+            component: None,
+            from: pp(from),
+            channel: None,
+            cell: None,
+            format: None,
+            from_param: name.map(|n| Name::new(n).unwrap()),
+        };
+        let mut f = Fixture::new(&[
+            create("/c", "test.comp"),
+            create("/c/k", "test.const"),
+            create("/c/sim", "test.sim"),
+            create("/c/p", "test.const"),
+            create("/c/show", "test.add"),
+            connect("/c/k", "/c/sim", 0),
+            connect("/c/sim", "/c/show", 0),
+            connect("/c/p", "/c/show", 1),
+            create("/lfo", "test.const"),
+        ]);
+        // `size` restarts when changed by hand; `seed` only while `fresh` is on.
+        f.set(
+            "/c.params",
+            Value::Text(
+                "@param preset choice(a|b|c) = a
+@param morph bool
+@param fresh bool = true
+                 @param size float = 1
+@param seed float
+                 @reset preset unless morph
+@reset size
+@reset seed if fresh
+                 @preset preset=* size=1
+@preset preset=b size=2
+@preset preset=c size=3"
+                    .into(),
+            ),
+        );
+        f.edit(&[bind("/c/p.value", "/c", Some("size"))]);
+        let step = |f: &mut Fixture| {
+            f.cook(&["/c/show"]);
+            f.clock.advance(1);
+            (f.value("/c/sim").unwrap(), f.value("/c/p").unwrap())
+        };
+        assert_eq!(step(&mut f), (0.0, 1.0));
+        assert_eq!(step(&mut f), (1.0, 1.0));
+        // A new preset with morph off: its own line restarts it.
+        f.set("/c.preset", Value::Text("b".into()));
+        assert_eq!(step(&mut f), (0.0, 2.0));
+        assert_eq!(step(&mut f), (1.0, 2.0));
+        // With morph on, the preset's line says no, and `size`, written by the preset in the
+        // same pass, does not restart on its own.
+        f.set("/c.morph", Value::Bool(true));
+        assert_eq!(step(&mut f), (2.0, 2.0), "a condition changing restarts nothing");
+        f.set("/c.preset", Value::Text("a".into()));
+        assert_eq!(step(&mut f), (3.0, 1.0), "with morph: no restart");
+        // `size` by hand restarts as ever, morph or not.
+        f.set("/c.size", Value::Float(5.0));
+        assert_eq!(step(&mut f), (0.0, 5.0));
+        // `seed` restarts only while `fresh` is on.
+        f.set("/c.fresh", Value::Bool(false));
+        f.set("/c.seed", Value::Float(4.0));
+        assert_eq!(step(&mut f), (1.0, 5.0));
+        f.set("/c.fresh", Value::Bool(true));
+        f.set("/c.seed", Value::Float(5.0));
+        assert_eq!(step(&mut f), (0.0, 5.0));
+        f.set("/c.morph", Value::Bool(false));
+        assert_eq!(step(&mut f), (1.0, 5.0));
+
+        // Bound: the stored entry stays in effect for the pass in which the binding changes,
+        // and the cooker reports the bound entry; the write comes as an edit after the pass.
+        f.set("/lfo.value", Value::Float(0.0));
+        f.edit(&[bind("/c.preset", "/lfo", None)]);
+        assert_eq!(step(&mut f), (2.0, 5.0), "stored `a`, bound `a`: nothing");
+        assert!(f.cooker.bound_presets().is_empty(), "the first entry equals the stored one");
+        f.set("/lfo.value", Value::Float(2.0));
+        assert_eq!(step(&mut f), (3.0, 5.0), "the old entry and its values for one more pass");
+        let c = f.id("/c");
+        let writes = f.cooker.bound_presets();
+        assert_eq!(writes, [(c, Name::new("preset").unwrap(), Value::Text("c".into()))]);
+        assert!(f.cooker.bound_presets().is_empty(), "edge-triggered: once per change");
+        f.set("/c.preset", Value::Text("c".into()));
+        assert_eq!(step(&mut f), (0.0, 3.0), "the new entry and its values together, restarted");
+        assert!(f.cooker.bound_presets().is_empty());
+        // A hand choice while bound stays until the binding changes again.
+        f.set("/c.preset", Value::Text("a".into()));
+        assert_eq!(step(&mut f), (0.0, 1.0));
+        assert!(f.cooker.bound_presets().is_empty());
+        f.set("/lfo.value", Value::Float(1.0));
+        step(&mut f);
+        assert_eq!(f.cooker.bound_presets(), [(c, Name::new("preset").unwrap(), Value::Text("b".into()))]);
+
+        // A fresh cooker (a project opened) writes nothing for the binding's first entry, though
+        // it differs from the stored one.
+        let pool = Arc::new(JobPool::new(2).unwrap());
+        f.cooker = Cooker::new(f.types.clone(), pool);
+        for _ in 0..3 {
+            step(&mut f);
+            assert!(f.cooker.bound_presets().is_empty(), "a load never writes");
+        }
+        // A binding made by an edit writes its first entry when it differs.
+        f.edit(&[Op::Unbind { param: ParamPath::parse("/c.preset").unwrap(), component: None }]);
+        step(&mut f);
+        f.edit(&[bind("/c.preset", "/lfo", None)]);
+        step(&mut f);
+        assert_eq!(f.cooker.bound_presets(), [(c, Name::new("preset").unwrap(), Value::Text("b".into()))]);
     }
 
     #[test]
