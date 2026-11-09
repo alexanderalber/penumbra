@@ -996,7 +996,8 @@ pub(crate) fn bind_source(owner: &NodePath, from: &str) -> Result<(NodePath, Opt
         return match owner.parent() {
             Some(comp) if !comp.is_root() => Ok((comp, Some(param))),
             _ => Err(format!(
-                "`{PARENT}` is the component a node sits in, and {owner} sits at the top level; name the node                  whose param it follows, like /rd.{param}"
+                "`{PARENT}` is the component a node sits in, and {owner} sits at the top level; name the \
+                 node whose param it follows, like /rd.{param}"
             )
             .into()),
         };

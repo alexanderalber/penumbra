@@ -562,7 +562,8 @@ fn load_node(
         let ctx = || format!("{path} bind `{part}`");
         if level.is_root() && source.follows().is_some_and(|(from, _)| from == PARENT) {
             dropped.push(format!(
-                "{}: `{PARENT}` is the component a node sits in, and {path} sits at the top level;                  the binding is left out",
+                "{}: `{PARENT}` is the component a node sits in, and {path} sits at the top level; \
+                 the binding is left out",
                 ctx()
             ));
             continue;
