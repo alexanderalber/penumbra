@@ -96,11 +96,23 @@ impl Viewer {
             Some(n) if n.kind.starts_with("out.") => {
                 n.inputs.first().copied().flatten().map(|p| p.node).or(Some(id))
             }
-            // A component shows its first output (its output nodes are `tex.out`, `chan.out`, ...).
+            // A component shows its first picture output, since a picture says most about it:
+            // a simulation with a `grains` channel beside its `out` picture shows the picture.
+            // Without one it shows its first output (the output nodes are `tex.out`, `chan.out`, ...).
             Some(n) if n.kind == penumbra_ops::comp::COMP_KIND => net
                 .children(Some(id))
                 .filter(|c| c.kind.ends_with(".out"))
-                .min_by(|a, b| penumbra_graph::natural_cmp(a.name.as_str(), b.name.as_str()))
+                .min_by(|a, b| {
+                    let shows = |kind: &str| match kind {
+                        "tex.out" => 0,
+                        "geo.out" => 1,
+                        "mat.out" => 2,
+                        _ => 3,
+                    };
+                    shows(a.kind.as_str())
+                        .cmp(&shows(b.kind.as_str()))
+                        .then_with(|| penumbra_graph::natural_cmp(a.name.as_str(), b.name.as_str()))
+                })
                 .map(|c| c.id)
                 .or(Some(id)),
             _ => Some(id),
@@ -833,4 +845,37 @@ fn light_line(l: &penumbra_gpu::render::Light) -> String {
         },
     };
     format!("{}{at}, {}", light_name(l), format_value(f64::from(peak)))
+}
+
+#[cfg(test)]
+mod tests {
+    use penumbra_graph::{Network, Op};
+
+    use super::Viewer;
+
+    #[test]
+    fn a_component_shows_its_picture_output_before_a_channel_output() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let create = |path: &str, kind: &str| Op::Create {
+            path: path.parse().unwrap(),
+            kind: kind.into(),
+            params: Default::default(),
+        };
+        let ops = vec![
+            create("/sand", "comp.base"),
+            create("/sand/grains", "chan.out"),
+            create("/sand/out", "tex.out"),
+            create("/sand/also", "tex.out"),
+            create("/meter", "comp.base"),
+            create("/meter/b", "chan.out"),
+            create("/meter/a", "chan.out"),
+            create("/empty", "comp.base"),
+        ];
+        let net = Network::new().apply(&types, &ops).unwrap().network;
+        let id = |path: &str| net.resolve(&path.parse().unwrap()).unwrap();
+        let shown = |path: &str| Viewer::default().target(&net, Some(id(path)));
+        assert_eq!(shown("/sand"), Some(id("/sand/also")), "the first picture by name, not `grains`");
+        assert_eq!(shown("/meter"), Some(id("/meter/a")), "no picture: the first output by name");
+        assert_eq!(shown("/empty"), Some(id("/empty")));
+    }
 }
