@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use penumbra_core::{Error, ParamSpec};
 use penumbra_gpu::header::{self, Header};
-use penumbra_gpu::{Pass, PassInput, TexRing};
+use penumbra_gpu::{Pass, PassInput, Tex, TexRing};
 use penumbra_graph::{
     AsyncSlot, CookContext, CookError, Cooked, Data, DataKind, Density, FileWatch, FnNodeType, JobStatus,
     NodeDef, NodeDesc, NodeTypes, Operator,
@@ -20,7 +20,12 @@ use penumbra_graph::{
 const MAX_SOURCE_BYTES: u64 = 1 << 20;
 
 /// Parameters every shader node has; the header adds its own.
-const FIXED: &[&str] = &["file", "resolution", "width", "height", super::KEEP_SIZE];
+const FIXED: &[&str] = &["file", "resolution", "width", "height", super::KEEP_SIZE, "iterations"];
+
+/// Most passes per cook. A cheap simulation step costs roughly 0.2 ms per pass at 1920 x 1080
+/// on a desktop GPU, so 64 passes still fit a 60 fps frame there; a bound value gone wild cannot
+/// stall the show for longer than that.
+const MAX_ITERATIONS: i64 = 64;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
@@ -45,6 +50,15 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "Height of the output in pixels, used with resolution custom or without in0. res.optimize may change it unless keep_size is on",
         ))
         .param(super::keep_size())
+        .param(
+            ParamSpec::int("iterations", 1)
+                .clamp(1.0, MAX_ITERATIONS as f64)
+                .range(1.0, 16.0)
+                .more()
+                .doc(
+                    "How often the shader runs per cook, TouchDesigner's Passes. From the second pass on, in0 is the pass before. The shader reads its pass as pn.iteration, from 0. For simulations that take several steps a frame",
+                ),
+        )
         .input("in0", DataKind::Tex)
         .input("in1", DataKind::Tex)
         .input("in2", DataKind::Tex)
@@ -67,16 +81,19 @@ struct Shader {
     current: Option<Compiled>,
     watch: Option<FileWatch>,
     ring: TexRing,
+    /// The passes before the last when `iterations` is above 1.
+    middle: TexRing,
     palettes: crate::palette::Palettes,
 }
 
 impl Operator for Shader {
     fn gpu_bytes(&self) -> u64 {
-        self.ring.bytes()
+        self.ring.bytes() + self.middle.bytes()
     }
 
     fn trim(&mut self) {
         self.ring.trim();
+        self.middle.trim();
     }
 
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
@@ -153,11 +170,34 @@ impl Operator for Shader {
         } else {
             (0.0, 0)
         };
-        let target = self.ring.next(gpu, w, h, "tex.shader")?;
+        // 0 and below run once, like 1.
+        let iterations = u32::try_from(cx.int("iterations")?.clamp(1, MAX_ITERATIONS)).unwrap_or(1);
         let palettes = self.palettes.pass_values(cx, &current.header.params);
         let param = |name: &str| palettes.get(name).cloned().or_else(|| cx.param(name).cloned());
-        current.pass.render(gpu, &target, &PassInput { inputs: &inputs, seconds, frame, param: &param })?;
-        Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, target)]))
+        // Every pass renders at the output's size, so from the second pass on in0 has that size
+        // too, whatever size the wired in0 has.
+        let mut previous: Option<Tex> = None;
+        for i in 0..iterations {
+            let last = i + 1 == iterations;
+            let ring = if last { &mut self.ring } else { &mut self.middle };
+            let target = ring.next(gpu, w, h, "tex.shader")?;
+            let mut ins = inputs.clone();
+            if let Some(p) = &previous {
+                match ins.first_mut() {
+                    Some(slot) => *slot = Some(p),
+                    None => ins.push(Some(p)),
+                }
+            }
+            let input = PassInput { inputs: &ins, seconds, frame, param: &param };
+            current.pass.render_iteration(gpu, &target, &input, i, iterations)?;
+            previous = Some(target);
+        }
+        if iterations == 1 {
+            // Back to one pass: the in-between textures go.
+            self.middle.trim();
+        }
+        let Some(out) = previous else { return Err(CookError::failed("the shader ran no pass")) };
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, out)]))
     }
 
     fn job_status(&self) -> Option<JobStatus> {

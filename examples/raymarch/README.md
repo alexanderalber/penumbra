@@ -71,7 +71,7 @@ To make a look cheaper:
 
 - Lower `steps` in the `look` group of that shader. Defaults: 96 tunnel, 72 morph, 88 fractal.
 - Lower `width` and `height` of that shader. The cost follows the number of pixels.
-- On `/fractal`, lower `iterations`. On `/morph` or `/fractal`, set `shadow` to 0.
+- On `/fractal`, lower `detail`. On `/morph` or `/fractal`, set `shadow` to 0.
 
 ## Try
 

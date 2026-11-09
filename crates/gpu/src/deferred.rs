@@ -36,6 +36,10 @@ use crate::Gpu;
 /// block holds the uniforms of about 300 passes; a list of more uses a second block.
 pub(crate) const BLOCK: u64 = 256 * 1024;
 
+/// Bytes the first uniform (a pass's `pn`, a compute program's grid) is bound with. A pass's
+/// `pn` carries the pass's number besides the size; a shorter one is padded with zeros.
+pub(crate) const FRAME_BYTES: u64 = 32;
+
 /// Passes a deferring thread collects before it submits them after all. Holding back every pass
 /// of a cook pass leaves the GPU idle until the end, and a readback in the cook (`chan.from_tex`)
 /// then waits for all of it; a submission every few passes keeps the GPU busy alongside. In a
@@ -53,7 +57,7 @@ pub(crate) struct Block {
     buffer: wgpu::Buffer,
     staged: Vec<u8>,
     /// Bind groups of the pass globals over this buffer, by the size of the `params` uniform
-    /// (the other two are 16 bytes each). Dynamic offsets pick the slots.
+    /// (the other two are [`FRAME_BYTES`] and 16 bytes). Dynamic offsets pick the slots.
     groups: HashMap<u64, wgpu::BindGroup>,
 }
 
@@ -233,7 +237,8 @@ impl Gpu {
     /// fit a block at all, which no declared set of parameters reaches.
     fn slots(&self, d: &mut Deferred, thread: ThreadId, parts: [&[u8]; 3]) -> Option<Slots> {
         let align = self.layouts().uniform_align;
-        let sizes = parts.map(|p| p.len().max(16).next_multiple_of(16) as u64);
+        let mut sizes = parts.map(|p| p.len().max(16).next_multiple_of(16) as u64);
+        sizes[0] = sizes[0].max(FRAME_BYTES);
         let need: u64 = sizes.iter().map(|s| s.next_multiple_of(align)).sum();
         if need > BLOCK {
             log::error!("pass uniforms of {need} bytes do not fit a block of {BLOCK}");
@@ -300,7 +305,7 @@ impl Gpu {
             label: Some("pass globals"),
             layout: &self.layouts().group0,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: binding(16) },
+                wgpu::BindGroupEntry { binding: 0, resource: binding(FRAME_BYTES) },
                 wgpu::BindGroupEntry { binding: 1, resource: binding(16) },
                 wgpu::BindGroupEntry { binding: 2, resource: binding(params) },
             ],

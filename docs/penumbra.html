@@ -1933,7 +1933,8 @@ fn colour(i: i32) -&gt; vec3f {
 <h3 id="shaders-what-a-shader-can-use">What a shader can use</h3>
 <p>A prelude is added to every shader (after it, so line numbers in errors stay yours):</p>
 <pre><code class="lang-wgsl">struct PnVertex { @builtin(position) pos: vec4f, @location(0) uv: vec2f }  // uv: 0..1, top left
-var&lt;uniform&gt; pn: PnFrame;          // pn.resolution (pixels), pn.texel (1 / resolution)
+var&lt;uniform&gt; pn: PnFrame;          // pn.resolution (pixels), pn.texel (1 / resolution),
+                                   // pn.iteration, pn.iterations (see Several steps per frame)
 var&lt;uniform&gt; pn_time: PnTime;      // pn_time.seconds, pn_time.frame (show time)
 var&lt;uniform&gt; params: Params;       // one field per declared numeric param
 var in0, in1, in2, in3: texture_2d&lt;f32&gt;;      // inputs, transparent black when unconnected
@@ -1954,6 +1955,20 @@ fn pn_band(p: PnPalette, t: f32) -&gt; vec4f     // 0..1 in equal bands, one per
 <p>A shader that reads <code>pn_time</code> cooks every frame; one that does not cooks only when its inputs or params change.</p>
 <h3 id="shaders-size">Size</h3>
 <p>The node's <code>resolution</code> param: <code>input</code> takes the size of <code>in0</code> (<code>width</code> and <code>height</code> while <code>in0</code> is unconnected), <code>custom</code> always uses <code>width</code> and <code>height</code>.</p>
+<h3 id="shaders-several-steps-per-frame">Several steps per frame</h3>
+<p>A simulation written as a shader (reaction-diffusion, waves, cellular automata) often needs several steps per frame. Set the node's <code>iterations</code> (under &quot;more&quot;; TouchDesigner calls it Passes) to the number of steps. The shader then runs that many times in one cook:</p>
+<ul>
+<li>The first pass reads <code>in0</code> as wired. Every later pass reads the pass before as <code>in0</code>.
+</li>
+<li><code>in1</code> to <code>in3</code>, the params and <code>pn_time</code> are the same for all passes.
+</li>
+<li>The node's output is the last pass.
+</li>
+<li><code>pn.iteration</code> is the pass's number, from 0. <code>pn.iterations</code> is the count. Schemes that alternate between passes, such as red-black relaxation, read them.
+</li>
+</ul>
+<p>A simulation loop: a <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a>, into one <a class="ref" href="#tex.shader"><code>tex.shader</code></a> with <code>iterations</code> 8, the shader back into the feedback's <code>previous</code>. Each pass costs as much as one more node with the same shader. <code>iterations</code> is held between 1 and 64.</p>
+<p><strong>Size.</strong> Every pass renders at the output's size. With <code>resolution</code> <code>custom</code> only the first pass reads the wired <code>in0</code>, at its own size; later passes read an <code>in0</code> of the output's size. Take the size from <code>textureDimensions(in0)</code> in each pass.</p>
 <h3 id="shaders-from-shadertoy-and-glsl">From Shadertoy and GLSL</h3>
 <p>A Shadertoy shader ports line by line. Shadertoy's template for a new shader, and the same in penumbra:</p>
 <pre><code class="lang-glsl">void mainImage(out vec4 fragColor, in vec2 fragCoord) {
@@ -2687,7 +2702,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="tex.feedback-example">Example</h5>
 <p>The <code>feedback</code> example project: text drawn over a loop that zooms, turns, dims and shifts the hue of the last frame a little, so the text leaves trails that drift outwards and change colour.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-state">The Helpers window › State</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-state">The Helpers window › State</a>, <a href="#shaders-several-steps-per-frame">Shaders › Several steps per frame</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.fit"><summary><code class="name">tex.fit</code><span class="sum">Fits a picture into a frame of another size or shape: whole with bars, cropped to fill, or stretched</span></summary>
 <div class="body">
@@ -3530,9 +3545,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>1 to 16384 px</td><td>Height of the output in pixels, used with resolution custom or without in0. res.optimize may change it unless keep_size is on</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
+<tr><td><code>iterations</code></td><td>int</td><td><code>1</code></td><td>1 to 16 (soft, held within 1 to 64)</td><td>How often the shader runs per cook, TouchDesigner's Passes. From the second pass on, in0 is the pass before. The shader reads its pass as pn.iteration, from 0. For simulations that take several steps a frame</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#shaders">Shaders</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#shaders">Shaders</a>, <a href="#shaders-several-steps-per-frame">Shaders › Several steps per frame</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.shape_content"><summary><code class="name">tex.shape_content</code><span class="sum">Animates the shapes of a tex.shapes one by one: pulses, light running along the outlines, ripples</span></summary>
 <div class="body">

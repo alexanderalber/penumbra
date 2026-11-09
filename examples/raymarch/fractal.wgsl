@@ -8,7 +8,7 @@
 // @param speed float = 1 0..4 -- speed of the wandering. Changing it makes the form jump, so set it once and bind `phase` instead.
 // @param phase float = 0 0..1000 -- seconds added to the wandering. Bind a channel that only grows.
 // @group form
-// @param iterations int = 8 4..14 -- detail of the fractal. Each one costs more on every step.
+// @param detail int = 8 4..14 -- detail of the fractal. Each one costs more on every step.
 // @param power float = 8 3..12 -- the bulbs' symmetry: 8 is the classic form, lower is rounder. Whole numbers have no seam; between them a line can show on the surface.
 // @param julia float = 0 0..1 -- 0 is the plain Mandelbulb, 1 a Julia form set by `seed`.
 // @param seed vec3 = [0.4, -0.6, 0.5] -- the Julia form's shape, used when `julia` is above 0.
@@ -26,7 +26,7 @@
 
 const TAU: f32 = 6.2831853;
 const MAX_STEPS: i32 = 220;      // upper limit whatever `steps` says, for a bounded cost
-const MAX_ITERATIONS: i32 = 16;  // upper limit whatever `iterations` says
+const MAX_ITERATIONS: i32 = 16;  // upper limit whatever `detail` says
 const SHADOW_STEPS: i32 = 16;
 const BOUND: f32 = 2.2;          // the fractal stays inside this radius for powers from 3 up
 
@@ -120,7 +120,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let energy = clamp(params.energy, 0.0, 2.0);
     let kick = clamp(params.kick, 0.0, 2.0);
 
-    iterations = clamp(params.iterations, 4, MAX_ITERATIONS);
+    iterations = clamp(params.detail, 4, MAX_ITERATIONS);
     // The form wanders slowly and trembles a little with the energy. Only the shifts move:
     // an animated power would leave whole numbers and show a seam on the surface.
     shape_power = clamp(params.power, 3.0, 12.0);

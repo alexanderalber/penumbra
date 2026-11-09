@@ -96,7 +96,8 @@ A prelude is added to every shader (after it, so line numbers in errors stay you
 
 ```wgsl
 struct PnVertex { @builtin(position) pos: vec4f, @location(0) uv: vec2f }  // uv: 0..1, top left
-var<uniform> pn: PnFrame;          // pn.resolution (pixels), pn.texel (1 / resolution)
+var<uniform> pn: PnFrame;          // pn.resolution (pixels), pn.texel (1 / resolution),
+                                   // pn.iteration, pn.iterations (see Several steps per frame)
 var<uniform> pn_time: PnTime;      // pn_time.seconds, pn_time.frame (show time)
 var<uniform> params: Params;       // one field per declared numeric param
 var in0, in1, in2, in3: texture_2d<f32>;      // inputs, transparent black when unconnected
@@ -122,6 +123,26 @@ or params change.
 
 The node's `resolution` param: `input` takes the size of `in0` (`width` and `height` while
 `in0` is unconnected), `custom` always uses `width` and `height`.
+
+## Several steps per frame
+
+A simulation written as a shader (reaction-diffusion, waves, cellular automata) often needs
+several steps per frame. Set the node's `iterations` (under "more"; TouchDesigner calls it
+Passes) to the number of steps. The shader then runs that many times in one cook:
+
+- The first pass reads `in0` as wired. Every later pass reads the pass before as `in0`.
+- `in1` to `in3`, the params and `pn_time` are the same for all passes.
+- The node's output is the last pass.
+- `pn.iteration` is the pass's number, from 0. `pn.iterations` is the count. Schemes that
+  alternate between passes, such as red-black relaxation, read them.
+
+A simulation loop: a `tex.feedback`, into one `tex.shader` with `iterations` 8, the shader back
+into the feedback's `previous`. Each pass costs as much as one more node with the same shader.
+`iterations` is held between 1 and 64.
+
+**Size.** Every pass renders at the output's size. With `resolution` `custom` only the first pass
+reads the wired `in0`, at its own size; later passes read an `in0` of the output's size. Take
+the size from `textureDimensions(in0)` in each pass.
 
 ## From Shadertoy and GLSL
 

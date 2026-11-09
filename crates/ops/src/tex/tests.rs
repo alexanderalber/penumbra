@@ -2864,6 +2864,7 @@ mod layers;
 mod mesh_out;
 mod palettes;
 mod resample;
+mod shader_iterations;
 mod smoke;
 
 /// A grey camera frame of 32 x 16 pixels, luma `y` give or take `noise` codes at random. One

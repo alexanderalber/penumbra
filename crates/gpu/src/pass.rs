@@ -6,7 +6,8 @@
 //!
 //! ```wgsl
 //! struct PnVertex { @builtin(position) pos: vec4f, @location(0) uv: vec2f }  // uv: 0..1, top left
-//! var<uniform> pn: PnFrame;          // pn.resolution (pixels), pn.texel (1 / resolution)
+//! var<uniform> pn: PnFrame;          // pn.resolution (pixels), pn.texel (1 / resolution),
+//!                                    // pn.iteration (0 first), pn.iterations (passes this cook)
 //! var<uniform> pn_time: PnTime;      // pn_time.seconds, pn_time.frame (show time)
 //! var<uniform> params: Params;       // one field per declared numeric parameter
 //! var in0, in1, in2, in3: texture_2d<f32>;      // inputs, transparent black when unconnected
@@ -51,7 +52,7 @@ pub const INPUTS: usize = 4;
 
 const PRELUDE: &str = r#"
 // ---- penumbra prelude ----
-struct PnFrame { resolution: vec2f, texel: vec2f }
+struct PnFrame { resolution: vec2f, texel: vec2f, iteration: i32, iterations: i32, _pn0: i32, _pn1: i32 }
 struct PnTime { seconds: f32, frame: f32, _pn0: f32, _pn1: f32 }
 struct PnVertex { @builtin(position) pos: vec4f, @location(0) uv: vec2f }
 @group(0) @binding(0) var<uniform> pn: PnFrame;
@@ -611,7 +612,20 @@ impl Pass {
     /// defers ([`Gpu::defer`]). A validation error of the work (a target of the wrong format,
     /// say) is returned instead of reaching wgpu's global handler, so the node reports it.
     pub fn render(&self, gpu: &Gpu, target: &Tex, input: &PassInput<'_>) -> Result<(), Error> {
-        match self.record(gpu, target, input) {
+        self.render_iteration(gpu, target, input, 0, 1)
+    }
+
+    /// [`Pass::render`] as pass `iteration` (from 0) of `iterations` that run one after the
+    /// other in one cook; the shader reads both as `pn.iteration` and `pn.iterations`.
+    pub fn render_iteration(
+        &self,
+        gpu: &Gpu,
+        target: &Tex,
+        input: &PassInput<'_>,
+        iteration: u32,
+        iterations: u32,
+    ) -> Result<(), Error> {
+        match self.record(gpu, target, input, [iteration, iterations]) {
             Some(e) => Err(Error::new(format!("{}: {e}", self.label))),
             None => Ok(()),
         }
@@ -619,12 +633,14 @@ impl Pass {
 
     /// Records rendering into `target` (cleared first) as part of `batch`. An error is logged.
     pub fn encode(&self, batch: &mut Batch<'_>, target: &Tex, input: &PassInput<'_>) {
-        if let Some(e) = self.record(batch.gpu, target, input) {
+        if let Some(e) = self.record(batch.gpu, target, input, [0, 1]) {
             log::error!("{} ({}): {e}", self.label, batch.label);
         }
     }
 
-    fn record(&self, gpu: &Gpu, target: &Tex, input: &PassInput<'_>) -> Option<String> {
+    /// `iteration` is the pass's number among the passes of one cook and their count
+    /// (`pn.iteration`, `pn.iterations`).
+    fn record(&self, gpu: &Gpu, target: &Tex, input: &PassInput<'_>, iteration: [u32; 2]) -> Option<String> {
         let (w, h) = target.size();
         let words = |v: [f32; 4]| {
             let mut out = [0u8; 16];
@@ -633,7 +649,11 @@ impl Pass {
             }
             out
         };
-        let frame = words([w as f32, h as f32, 1.0 / w as f32, 1.0 / h as f32]);
+        let mut frame = [0u8; crate::deferred::FRAME_BYTES as usize];
+        frame[..16].copy_from_slice(&words([w as f32, h as f32, 1.0 / w as f32, 1.0 / h as f32]));
+        for (slot, n) in frame[16..24].as_chunks_mut::<4>().0.iter_mut().zip(iteration) {
+            slot.copy_from_slice(&i32::try_from(n).unwrap_or(i32::MAX).to_le_bytes());
+        }
         let time = words([input.seconds as f32, input.frame as f32, 0.0, 0.0]);
         let params = self.pack(input.param);
         gpu.record(&self.label, [&frame, &time, &params], |encoder, slots| {
