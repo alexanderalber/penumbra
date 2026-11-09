@@ -21,6 +21,10 @@
 //!   purpose, after copying it to [`BACKUP_NAME`]. A file that cannot be read pauses autosave
 //!   the same way, until the next read succeeds.
 //!
+//! - **A binding that would make a loop** is left out of the document, so the rest of the
+//!   file still opens or merges; it is listed in [`SessionStatus::left_out`] with the reason, and
+//!   the next save writes the file without it.
+//!
 //! - **Renamed kinds:** a node whose kind the file names by an old name
 //!   ([`NodeTypes::renamed_kind`]) loads as the new kind; the nodes are listed in
 //!   [`SessionStatus::renamed`] and the document counts as unsaved, so autosave writes the new
@@ -30,6 +34,10 @@
 //!   the editor's `layout.ron`, are taken from there as the project opens ([`crate::legacy`]);
 //!   that makes no history entry, and the document counts as unsaved, so autosave writes them
 //!   into the file.
+//!
+//! - **Without autosave** ([`Session::set_autosave`], a headless run with `--no-save`): the
+//!   file is never written by itself, neither after a change nor on closing; `project.save`
+//!   still writes it. Edits of the file still merge.
 //!
 //! - **Locked for a show** ([`Session::set_locked`]): edits, undo and redo are refused with
 //!   [`LOCKED`], the file is neither read nor written, and `project.save` is refused. Param
@@ -104,6 +112,10 @@ pub struct SessionStatus {
     /// Nodes the file names by an old kind, loaded as the new kind, as the project opened or
     /// the file last merged. The next save writes the new names.
     pub renamed: Vec<RenamedNode>,
+    /// What the file holds that the document left out, with the reason, as the project opened
+    /// or the file last merged: bindings that would make a loop. The next save writes the file
+    /// without them.
+    pub left_out: Vec<String>,
     pub can_undo: bool,
     pub can_redo: bool,
     pub edit: GateStatus,
@@ -133,6 +145,8 @@ struct State {
     dirty_since: Option<Instant>,
     /// Nodes of the file read last that name an old kind ([`SessionStatus::renamed`]).
     renamed: Vec<RenamedNode>,
+    /// [`SessionStatus::left_out`].
+    left_out: Vec<String>,
     /// The file names old kinds: it is written again even though the document is the one it
     /// holds.
     rewrite: bool,
@@ -158,6 +172,8 @@ pub struct Session {
     state: Mutex<State>,
     /// Show mode ([`Session::set_locked`]).
     locked: AtomicBool,
+    /// [`Session::set_autosave`].
+    autosave: AtomicBool,
     derived: Mutex<Option<Derived>>,
 }
 
@@ -165,8 +181,13 @@ pub struct Session {
 /// their default ([`penumbra_core::ParamSpec::opens_at_default`], a recording's `record`) are
 /// reset, so opening never starts what they start. The content (the merge base) keeps the
 /// file's values, so an edit of the file that sets one again still counts as a change.
-fn build(content: &Content, types: &NodeTypes) -> Result<Network, Error> {
-    let net = Network::new().apply_with(types, &diff(&Content::default(), content), Params::Keep)?.network;
+/// Also returns what was left out ([`SessionStatus::left_out`]).
+fn build(content: &Content, types: &NodeTypes) -> Result<(Network, Vec<String>), Error> {
+    let applied = Network::new().apply_with(types, &diff(&Content::default(), content), Params::Keep)?;
+    let (net, left_out) = (applied.network, applied.left_out);
+    for why in &left_out {
+        log::warn!("{FILE_NAME}: left out {why}");
+    }
     let resets: Vec<Op> = net
         .nodes()
         .flat_map(|node| {
@@ -185,15 +206,15 @@ fn build(content: &Content, types: &NodeTypes) -> Result<Network, Error> {
         })
         .collect();
     if resets.is_empty() {
-        return Ok(net);
+        return Ok((net, left_out));
     }
     match net.apply(types, &resets) {
-        Ok(applied) => Ok(applied.network),
+        Ok(applied) => Ok((applied.network, left_out)),
         Err(e) => {
             // Opening matters more; the operators' own guards still keep a recording from
             // starting by itself.
             log::warn!("params that open at their default stay as stored: {e}");
-            Ok(net)
+            Ok((net, left_out))
         }
     }
 }
@@ -269,18 +290,20 @@ impl Session {
             None => Ok(None),
             Some(text) => {
                 let (content, renamed) = load_renaming(&text, &types)?;
-                let net = build(&content, &types)?;
-                Ok(Some((text, content, net, renamed)))
+                let (net, left_out) = build(&content, &types)?;
+                Ok(Some((text, content, net, renamed, left_out)))
             }
         });
         let mut renamed = Vec::new();
+        let mut left_out = Vec::new();
         let (net, base, file_text, file_error) = match loaded {
-            Ok(Some((text, content, net, r))) => {
+            Ok(Some((text, content, net, r, l))) => {
                 renamed = r;
+                left_out = l;
                 (net, content, Some(text), None)
             }
             Ok(None) => {
-                let net = build(template, &types).map_err(|e| e.context("the project template"))?;
+                let (net, _) = build(template, &types).map_err(|e| e.context("the project template"))?;
                 let content = Content::from_network(&net)?;
                 let text = print(&content, &types)?;
                 write_atomic(&file, &text)?;
@@ -323,6 +346,7 @@ impl Session {
             doc,
             io: Mutex::new(()),
             locked: AtomicBool::new(false),
+            autosave: AtomicBool::new(true),
             derived: Mutex::new(None),
             state: Mutex::new(State {
                 gate: Gate::new(),
@@ -338,6 +362,7 @@ impl Session {
                 dirty_since: None,
                 rewrite: !renamed.is_empty(),
                 renamed,
+                left_out,
             }),
         })
     }
@@ -373,6 +398,16 @@ impl Session {
 
     pub fn locked(&self) -> bool {
         self.locked.load(Ordering::Acquire)
+    }
+
+    /// Off: the file is written only by [`Session::save`], neither after a change nor by
+    /// [`Session::flush`]. On by default.
+    pub fn set_autosave(&self, on: bool) {
+        self.autosave.store(on, Ordering::Release);
+    }
+
+    pub fn autosave_on(&self) -> bool {
+        self.autosave.load(Ordering::Acquire)
     }
 
     fn refuse_if_locked(&self) -> Result<(), Error> {
@@ -496,6 +531,7 @@ impl Session {
             write_error: state.write_error.clone(),
             broken,
             renamed: state.renamed.clone(),
+            left_out: state.left_out.clone(),
             can_undo,
             can_redo,
             edit: state.gate.status(now),
@@ -538,7 +574,7 @@ impl Session {
 
     /// Like [`Session::poll`], but writes unsaved changes at once instead of after the delay.
     /// For closing the app. An edit of the file that has not merged yet (waiting for the gate,
-    /// or failed) is left alone, as autosave would.
+    /// or failed) is left alone, as autosave would. With autosave off it writes nothing.
     pub fn flush(&self, now: Instant) {
         let _io = lock(&self.io);
         if self.locked() {
@@ -550,7 +586,10 @@ impl Session {
             let state = lock(&self.state);
             state.waiting.is_some() || state.file_error.is_some() || state.read_error.is_some()
         };
-        if !paused && let Err(e) = self.write(false) {
+        if !paused
+            && self.autosave_on()
+            && let Err(e) = self.write(false)
+        {
             log::error!("saving on close: {e}");
         }
     }
@@ -655,20 +694,23 @@ impl Session {
         }
         let merged = loaded.and_then(|(theirs, renamed)| {
             let ops = diff(&state.base, &theirs);
+            let mut left_out = Vec::new();
             if !ops.is_empty() {
-                self.doc.edit(
-                    &ops,
-                    Source::ProjectFile,
-                    self.doc.new_group(),
-                    &format!("edit of {FILE_NAME}"),
-                )?;
+                left_out = self
+                    .doc
+                    .edit(&ops, Source::ProjectFile, self.doc.new_group(), &format!("edit of {FILE_NAME}"))?
+                    .left_out;
             }
-            Ok((theirs, renamed))
+            Ok((theirs, renamed, left_out))
         });
         match merged {
-            Ok((theirs, renamed)) => {
+            Ok((theirs, renamed, left_out)) => {
+                for why in &left_out {
+                    log::warn!("{FILE_NAME}: left out {why}");
+                }
                 state.rewrite = !renamed.is_empty();
                 state.renamed = renamed;
+                state.left_out = left_out;
                 if state.file_error.take().is_some() {
                     log::info!("{} loads again", self.file.display());
                 }
@@ -682,6 +724,9 @@ impl Session {
     }
 
     fn autosave(&self, now: Instant) {
+        if !self.autosave_on() {
+            return;
+        }
         {
             let mut state = lock(&self.state);
             if state.waiting.is_some() || state.file_error.is_some() || state.read_error.is_some() {
@@ -960,6 +1005,78 @@ mod tests {
         s.edit(Actor::User, &[reset], None, "", Instant::now()).unwrap();
         let net = s.doc().snapshot();
         assert!(net.node(a).unwrap().params.is_empty());
+    }
+
+    #[test]
+    fn without_autosave_only_save_writes() {
+        let dir = ScratchDir::unborn("test-no-autosave");
+        let s = open(&dir);
+        let before = file(&s);
+        s.set_autosave(false);
+        let t0 = Instant::now();
+        s.edit(Actor::User, &[set(5.0)], None, "", t0).unwrap();
+        s.poll(t0 + 5 * S);
+        s.flush(t0 + 6 * S);
+        assert_eq!(file(&s), before, "neither autosave nor closing writes");
+        assert!(s.status(t0 + 6 * S).unsaved);
+        // Edits of the file still arrive.
+        std::fs::write(
+            s.file(),
+            before.replace(r#"(kind: "test.const")"#, r#"(kind: "test.const", params: {"value": 7.0})"#),
+        )
+        .unwrap();
+        s.poll(t0 + 9 * S);
+        assert_eq!(value(&s), Some(Value::Float(7.0)));
+        s.edit(Actor::User, &[set(8.0)], None, "", t0 + 9 * S).unwrap();
+        assert!(s.save().unwrap());
+        assert!(file(&s).contains("8.0"), "{}", file(&s));
+    }
+
+    #[test]
+    fn a_binding_that_would_make_a_loop_costs_only_itself() {
+        let dir = ScratchDir::unborn("test-bind-loop");
+        std::fs::create_dir_all(dir.path()).unwrap();
+        // /sum reads /a, so /a.value bound to /sum would be a loop.
+        let text = r#"(version: 2, nodes: {
+            "/a": (kind: "test.const", binds: {"value": "sum"}),
+            "/sum": (kind: "test.add", inputs: {"a": "a"}),
+            "/c": (kind: "test.const", params: {"value": 3.0}),
+        })"#;
+        std::fs::write(dir.path().join(FILE_NAME), text).unwrap();
+        let s = open(&dir);
+        let status = s.status(Instant::now());
+        assert_eq!(status.file_error, None);
+        assert_eq!(status.left_out.len(), 1, "{:?}", status.left_out);
+        assert!(
+            status.left_out[0].contains("binding /a.value to /sum would make a loop"),
+            "{:?}",
+            status.left_out
+        );
+        let net = s.doc().snapshot();
+        assert_eq!(net.len(), 3);
+        let id = |p: &str| net.resolve(&p.parse::<NodePath>().unwrap()).unwrap();
+        assert!(net.node(id("/a")).unwrap().binds.is_empty());
+        assert!(net.node(id("/sum")).unwrap().inputs.first().is_some_and(Option::is_some));
+
+        // An edit of the file merges the same way: the rest arrives, the loop stays out.
+        let t0 = Instant::now();
+        std::fs::write(s.file(), text.replace("3.0", "4.0")).unwrap();
+        s.poll(t0);
+        let status = s.status(t0);
+        assert_eq!(status.file_error, None);
+        let net = s.doc().snapshot();
+        let c = net.node(net.resolve(&"/c".parse::<NodePath>().unwrap()).unwrap()).unwrap().clone();
+        assert_eq!(c.params.get("value"), Some(&Value::Float(4.0)));
+        // A binding added by the edit that would close a loop is reported as left out.
+        let looped = text.replace(r#"inputs: {"a": "a"}"#, r#"inputs: {"a": "a", "b": "c"}"#).replace(
+            r#""/c": (kind: "test.const", params: {"value": 3.0})"#,
+            r#""/c": (kind: "test.const", params: {"value": 4.0}, binds: {"value": "sum"})"#,
+        );
+        std::fs::write(s.file(), &looped).unwrap();
+        s.poll(t0 + 3 * S);
+        let status = s.status(t0 + 3 * S);
+        assert_eq!(status.file_error, None);
+        assert!(status.left_out.iter().any(|w| w.contains("/c.value to /sum")), "{:?}", status.left_out);
     }
 
     #[test]

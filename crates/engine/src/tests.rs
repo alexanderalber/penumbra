@@ -391,6 +391,21 @@ fn snapshot_of_a_texture_node() {
     let info = f.call("node.info", json!({"path": "/s"}));
     assert_eq!(info["instance_params"][0]["name"], "gain");
     assert_eq!(info["instance_params"][1], json!({"name": "typo", "value": 1, "declared": false}));
+    // A node waiting for a failed one says which node failed and why.
+    std::fs::write(
+        f.engine.session().dir().join("bad.wgsl"),
+        "@fragment fn main(v: PnVertex) -> @location(0) vec4f { return nope; }",
+    )
+    .unwrap();
+    f.call(
+        "node.create",
+        json!({"path": "/bad", "kind": "tex.shader", "params": {"file": "bad.wgsl", "resolution": "custom", "width": 4, "height": 4}}),
+    );
+    f.call("node.create", json!({"path": "/after", "kind": "tex.shader", "params": {"file": "s.wgsl"}}));
+    f.call("node.connect", json!({"from": "/bad", "to": "/after", "input": 0}));
+    let e = f.fail("node.snapshot", json!({"path": "/after"}));
+    assert!(e.contains("/after has no result: waits for /bad, which failed: "), "{e}");
+    assert!(e.contains("bad.wgsl:1"), "{e}");
 
     // A mapper: the right half of a white input, its top left corner pulled a quarter in.
     f.call(

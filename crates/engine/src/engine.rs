@@ -1031,6 +1031,11 @@ impl Engine {
                 return Err(e);
             }
         };
+        // A run that writes no project file by itself (headless `--no-save`) keeps to that in
+        // the project it switches to.
+        if !self.session().autosave_on() {
+            session.set_autosave(false);
+        }
         *lock(&self.view.request) = ViewRequest::default();
         *lock(&self.view.frame) = Arc::new(ViewFrame { pass: pass_base, ..ViewFrame::default() });
         *lock(&self.view.output) = Arc::new(OutputFrame { pass: pass_base, ..OutputFrame::default() });

@@ -23,6 +23,9 @@ pub struct EditOutcome {
     pub group: GroupId,
     pub created: Vec<NodeId>,
     pub snapshot: Arc<Network>,
+    /// What the edit left out instead of failing ([`crate::Applied::left_out`]); only edits
+    /// from the project file leave anything out.
+    pub left_out: Vec<String>,
 }
 
 pub struct Document {
@@ -78,7 +81,7 @@ impl Document {
         let recorded = history.record(Arc::new(applied.network), source, group, &label, applied.touched);
         let snapshot = history.current().clone();
         self.current.store(snapshot.clone());
-        Ok(EditOutcome { recorded, group, created: applied.created, snapshot })
+        Ok(EditOutcome { recorded, group, created: applied.created, snapshot, left_out: applied.left_out })
     }
 
     /// Applies param values or node positions outside the history ([`History::live`]): no

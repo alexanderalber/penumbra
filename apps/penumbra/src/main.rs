@@ -17,7 +17,8 @@
 //! renders on WARP instead of the GPU, `--size WxH` sets the window size in points, `--scale F`
 //! the pixels per point (2 draws the same layout at twice the resolution each way). A headless
 //! run plays no sound on a device (its frames come too slowly for a speaker); `--speakers` lets
-//! `out.audio` open its devices after all.
+//! `out.audio` open its devices after all. A headless run saves the project like the app does;
+//! with `--no-save` it writes `project.ron` only when the script calls `project.save`.
 //!
 //! When the GPU device is lost or the editor window fails, the app records it in
 //! `gpu-lost.json` in its data directory, shows a message box (not with
@@ -84,6 +85,8 @@ struct Args {
     fresh: bool,
     /// A headless run may play on the output devices.
     speakers: bool,
+    /// A headless run writes the project file only on `project.save`.
+    no_save: bool,
     /// Started again by show mode after this process crashed (`--after-crash-of PID`).
     after_crash_of: Option<u32>,
 }
@@ -153,6 +156,10 @@ fn run() -> Result<(), String> {
             }
         },
     };
+    if args.no_save {
+        session.set_autosave(false);
+        log::info!("--no-save: the project file is written only by project.save");
+    }
     let dir = session.dir().to_path_buf();
     let session = Arc::new(session);
     log::info!("project: {}", session.file().display());
@@ -354,10 +361,14 @@ fn headless(engine: &Arc<Engine>, script: &Path, args: &Args) -> Result<(), Stri
     if let Some(scale) = args.scale {
         options.pixels_per_point = scale;
     }
-    for (method, reply) in penumbra_ui::headless::run(engine.clone(), &text, &options)? {
-        println!("{method}: {reply}");
-    }
-    Ok(())
+    // Each reply as soon as its line is done, so whoever reads the output can follow the run.
+    let mut stdout = std::io::stdout();
+    penumbra_ui::headless::run_with(engine.clone(), &text, &options, &mut |method, reply| {
+        use std::io::Write;
+        if writeln!(stdout, "{method}: {reply}").and_then(|()| stdout.flush()).is_err() {
+            log::warn!("cannot print the reply to {method}");
+        }
+    })
 }
 
 fn parse_size(text: &str) -> Result<[f32; 2], String> {
@@ -392,6 +403,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
         scale: None,
         fresh: false,
         speakers: false,
+        no_save: false,
         after_crash_of: None,
     };
     while let Some(arg) = args.next() {
@@ -409,6 +421,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--software" => parsed.software = true,
             "--fresh" => parsed.fresh = true,
             "--speakers" => parsed.speakers = true,
+            "--no-save" => parsed.no_save = true,
             "--after-crash-of" => {
                 let value = args.next().ok_or("--after-crash-of needs a process id")?;
                 parsed.after_crash_of = Some(
@@ -422,10 +435,13 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             other => {
                 return Err(format!(
                     "unknown argument `{other}`; usage: penumbra [--project DIR] [--port N] [--fresh] \
-                     [--headless SCRIPT [--software] [--size WxH] [--scale F] [--speakers]]"
+                     [--headless SCRIPT [--software] [--size WxH] [--scale F] [--speakers] [--no-save]]"
                 ));
             }
         }
+    }
+    if parsed.no_save && parsed.headless.is_none() {
+        return Err("--no-save works in a headless run only (--headless SCRIPT)".into());
     }
     parsed.port = match port {
         Some(p) => p,
@@ -463,6 +479,9 @@ mod tests {
         assert!(parse_args(args(&["--scale", "x"])).is_err());
         assert_eq!(parse_args(args(&["--after-crash-of", "42"])).unwrap().after_crash_of, Some(42));
         assert!(parse_args(args(&["--after-crash-of", "x"])).is_err());
+        assert!(parse_args(args(&["--headless", "s", "--no-save"])).unwrap().no_save);
+        assert!(!parse_args(args(&["--headless", "s"])).unwrap().no_save);
+        assert!(parse_args(args(&["--no-save"])).is_err(), "only for a headless run");
         assert_eq!(
             restart_args(args(&["--project", "d", "--after-crash-of", "42", "--port", "1"])),
             ["--project", "d", "--port", "1"]

@@ -1891,7 +1891,14 @@ fn main(v: PnVertex) -&gt; @location(0) vec4f {
 </code></pre>
 <p>The entry point is a fragment function called <code>main</code> taking a <code>PnVertex</code>. It returns linear, premultiplied RGBA; values above 1 are kept.</p>
 <h3 id="shaders-params">Params</h3>
-<p>Comment lines starting with <code>// @param</code> declare params. They appear in the node's param panel under &quot;from the shader&quot;, and are set, bound to channels, saved and undone like any other. The node's own params (<code>file</code>, <code>resolution</code>, <code>width</code>, <code>height</code>, <code>keep_size</code>) are taken: a shader declaring one of those names does not load, so call a line width <code>line</code>, not <code>width</code>.</p>
+<p>Comment lines starting with <code>// @param</code> declare params. They appear in the node's param panel under &quot;from the shader&quot;, and are set, bound to channels, saved and undone like any other. Some names are taken, and a shader that declares one does not load:</p>
+<ul>
+<li><strong>The node's own params:</strong> <code>file</code>, <code>resolution</code>, <code>width</code>, <code>height</code>, <code>keep_size</code>, <code>iterations</code>. Call a line width <code>line</code>, not <code>width</code>. The error lists them.
+</li>
+<li><strong>WGSL's reserved words</strong>, since every param becomes a field <code>params.&lt;name&gt;</code>: <code>active</code>, <code>type</code>, <code>target</code>, <code>static</code>, <code>super</code>... and keywords such as <code>loop</code> or <code>default</code>. The error says which word it is.
+</li>
+</ul>
+<p>Other <code>// @word</code> comments are ordinary comments (<code>// @todo</code>, <code>// @@LAB@@</code>). A word close to a header refuses the shader, since the param it meant to declare would be missing: <code>// @parm</code>, <code>// @Param</code>, <code>// @params</code>.</p>
 <pre><code>// @param &lt;name&gt; &lt;kind&gt; [= &lt;default&gt;] [&lt;min&gt;..&lt;max&gt;] [-- &lt;doc&gt;]
 </code></pre>
 <table>
@@ -1899,7 +1906,7 @@ fn main(v: PnVertex) -&gt; @location(0) vec4f {
 <tbody>
 <tr><td><code>float</code></td><td><code>f32</code></td></tr>
 <tr><td><code>int</code></td><td><code>i32</code></td></tr>
-<tr><td><code>bool</code></td><td><code>u32</code>, 0 or 1</td></tr>
+<tr><td><code>bool</code></td><td><code>u32</code>, 0 or 1: write <code>if params.flag != 0u</code>; <code>if params.flag</code> does not compile</td></tr>
 <tr><td><code>vec2</code>, <code>vec3</code>, <code>vec4</code></td><td><code>vec2f</code> to <code>vec4f</code></td></tr>
 <tr><td><code>color</code></td><td><code>vec4f</code>, linear, straight alpha</td></tr>
 <tr><td><code>choice(a|b|c)</code></td><td><code>i32</code>, plus a constant per entry: <code>const &lt;name&gt;_a: i32</code></td></tr>
@@ -1953,6 +1960,17 @@ fn pn_colormap(p: PnPalette, t: f32) -&gt; vec4f // 0..1 along its colours, blen
 fn pn_band(p: PnPalette, t: f32) -&gt; vec4f     // 0..1 in equal bands, one per colour
 </code></pre>
 <p>A shader that reads <code>pn_time</code> cooks every frame; one that does not cooks only when its inputs or params change.</p>
+<p><code>pn_hash</code> returns three numbers, a <code>vec3u</code>: <code>.w</code> does not compile. For more random numbers, hash its result again: <code>pn_hash(h ^ vec3u(7u))</code>.</p>
+<h3 id="shaders-on-windows-direct3d-12">On Windows (Direct3D 12)</h3>
+<p>On Windows penumbra draws with Direct3D 12. naga first checks the WGSL, then translates it to HLSL for Direct3D's compiler, FXC. Some shaders pass naga and fail in FXC or on the GPU:</p>
+<ul>
+<li><strong>FXC refuses the shader.</strong> The node then shows FXC's message. Its line numbers count lines of the HLSL, not of your file. The usual cause is a <code>return</code> inside <code>switch</code> cases or loops (<code>X3507: Not all control paths return a value</code>, <code>X4000</code>, <code>X8000</code>). Give the function one result variable, use <code>if</code> and <code>else if</code>, and <code>return</code> once at its end. A node that reads the refused one has no picture either; <a class="ref" href="#node.snapshot"><code>node.snapshot</code></a> of it names the refused node.
+</li>
+<li><strong><code>atan2(0.0, 0.0)</code> is NaN</strong>, and NaN spreads through a feedback loop to every pixel. Guard it: <code>select(0.0, atan2(g.y, g.x), dot(g, g) &gt; 1e-8)</code>.
+</li>
+<li><strong><code>pack2x16float</code> and <code>unpack2x16float</code> do not compile</strong> (naga wants a capability penumbra does not ask for). To round <code>x</code> to the nearest half float by hand: <code>let b = bitcast&lt;u32&gt;(x); let h = bitcast&lt;f32&gt;((b + 0xfffu + ((b &gt;&gt; 13u) &amp; 1u)) &amp; ~0x1fffu);</code>
+</li>
+</ul>
 <h3 id="shaders-size">Size</h3>
 <p>The node's <code>resolution</code> param: <code>input</code> takes the size of <code>in0</code> (<code>width</code> and <code>height</code> while <code>in0</code> is unconnected), <code>custom</code> always uses <code>width</code> and <code>height</code>.</p>
 <h3 id="shaders-several-steps-per-frame">Several steps per frame</h3>
@@ -2203,7 +2221,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>In <a href="#getting-started-show-mode">show mode</a> (<a class="ref" href="#show.lock"><code>show.lock</code></a>) every editing command is refused until <a class="ref" href="#show.unlock"><code>show.unlock</code></a>, and so are commands that write into the project folder or switch projects, and the test aid <a class="ref" href="#gpu.simulate_loss"><code>gpu.simulate_loss</code></a>. Commands that only look, <a class="ref" href="#cook.play"><code>cook.play</code></a> and OSC/DMX keep working. The exception among the edits: <a class="ref" href="#chan.press"><code>chan.press</code></a> and <a class="ref" href="#node.set"><code>node.set</code></a> still set the <code>value</code> of a control shown on the show screen (<code>show</code> ticked), without an undo step; the reply says <code>&quot;history&quot;: &quot;none_in_show_mode&quot;</code>.</p>
 <h3 id="control-looking-at-results">Looking at results</h3>
 <ul>
-<li><a class="ref" href="#node.snapshot"><code>node.snapshot {path, file?}</code></a> cooks a <code>tex</code> node (or the picture of a <code>geo</code> node) and writes a PNG.
+<li><a class="ref" href="#node.snapshot"><code>node.snapshot {path, file?, opaque?}</code></a> cooks a <code>tex</code> node (or the picture of a <code>geo</code> node) and writes a PNG. Its reply has the channels' minimum, maximum and mean as stored. The PNG has straight alpha. <code>opaque: true</code> writes the colour channels as stored and leaves alpha out: a picture then lies on black. A texture whose alpha is 0 everywhere but whose colour is not (a simulation's state, say) is written that way by itself, and the reply says <code>&quot;opaque&quot;: true</code>. Without that, its PNG would be fully transparent.
 </li>
 <li><a class="ref" href="#chan.read"><code>chan.read</code></a>, <a class="ref" href="#table.read"><code>table.read</code></a> and <a class="ref" href="#geo.info"><code>geo.info</code></a> read the other kinds.
 </li>
@@ -2215,9 +2233,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </li>
 </ul>
 <h3 id="control-headless-runs">Headless runs</h3>
-<pre><code>cargo run -p penumbra -- --headless script.jsonl [--project DIR] [--software] [--size WxH] [--scale F] [--speakers]
+<pre><code>cargo run -p penumbra -- --headless script.jsonl [--project DIR] [--software] [--size WxH] [--scale F] [--speakers] [--no-save]
 </code></pre>
-<p>runs the real UI without a window and feeds it a script: one request per line (<code>{&quot;method&quot;: ..., &quot;params&quot;: {...}}</code>, any command including <code>ui.*</code>), <code>{&quot;wait&quot;: seconds}</code> to let the show run, <code>{&quot;wait_for&quot;: id, &quot;timeout&quot;: seconds}</code> to let it run until the element <code>id</code> is on screen (<code>timeout</code> optional, 30 s by default), or <code>{&quot;resize&quot;: [width, height]}</code> to change the window's size as a maximize would. <code>wait</code> is wall-clock time, so on a busy machine less has happened by its end; <code>wait_for</code> an element that appears only once something cooked (the viewer's handles, a helper's list) before clicking it. Empty lines and lines starting with <code>//</code> are skipped. <code>$HERE</code> in any string of a line is the project's folder (with forward slashes), so a script kept beside <code>project.ron</code> names its files wherever the project lies: <code>{&quot;method&quot;: &quot;node.snapshot&quot;, &quot;params&quot;: {&quot;path&quot;: &quot;/out&quot;, &quot;file&quot;: &quot;$HERE/snap/out.png&quot;}}</code>. Each reply is printed. Without <code>--project</code> it works on a fresh copy of the demo in the temp directory, so no project is touched. <code>--software</code> renders on a software adapter (WARP on Windows): slow but the same on every machine. <code>--size</code> is the window size in points. <code>--scale</code> is the number of pixels per point, from 0.5 to 4: <code>--size 1280x720 --scale 2</code> draws the 1280 by 720 layout at 2560 by 1440 pixels, so its text stays sharp and large in a video. A headless run plays no sound: <a class="ref" href="#out.audio"><code>out.audio</code></a> plays into nothing, since frames without a window come too slowly and unevenly for a speaker. <code>--speakers</code> lets it open its devices after all.</p>
+<p>runs the real UI without a window and feeds it a script: one request per line (<code>{&quot;method&quot;: ..., &quot;params&quot;: {...}}</code>, any command including <code>ui.*</code>), <code>{&quot;wait&quot;: seconds}</code> to let the show run, <code>{&quot;wait_for&quot;: id, &quot;timeout&quot;: seconds}</code> to let it run until the element <code>id</code> is on screen (<code>timeout</code> optional, 30 s by default), or <code>{&quot;resize&quot;: [width, height]}</code> to change the window's size as a maximize would. <code>wait</code> is wall-clock time, so on a busy machine less has happened by its end; <code>wait_for</code> an element that appears only once something cooked (the viewer's handles, a helper's list) before clicking it. Empty lines and lines starting with <code>//</code> are skipped. <code>$HERE</code> in any string of a line is the project's folder (with forward slashes), so a script kept beside <code>project.ron</code> names its files wherever the project lies: <code>{&quot;method&quot;: &quot;node.snapshot&quot;, &quot;params&quot;: {&quot;path&quot;: &quot;/out&quot;, &quot;file&quot;: &quot;$HERE/snap/out.png&quot;}}</code>. Each reply is printed as <code>method: {json}</code> on one line, as soon as its line of the script is done. Without <code>--project</code> it works on a fresh copy of the demo in the temp directory, so no project is touched. With <code>--project</code> the run saves the project as the app does: a param the script sets is in <code>project.ron</code> afterwards, and the next run starts with it. <code>--no-save</code> keeps the file as it was. The run then writes <code>project.ron</code> only where the script calls <a class="ref" href="#project.save"><code>project.save</code></a>. <code>--software</code> renders on a software adapter (WARP on Windows): slow but the same on every machine. <code>--size</code> is the window size in points. <code>--scale</code> is the number of pixels per point, from 0.5 to 4: <code>--size 1280x720 --scale 2</code> draws the 1280 by 720 layout at 2560 by 1440 pixels, so its text stays sharp and large in a video. A headless run plays no sound: <a class="ref" href="#out.audio"><code>out.audio</code></a> plays into nothing, since frames without a window come too slowly and unevenly for a speaker. <code>--speakers</code> lets it open its devices after all.</p>
 <h4 id="control-recording-a-headless-run">Recording a headless run</h4>
 <p><code>{&quot;record&quot;: {&quot;dir&quot;: &quot;E:/rec&quot;, &quot;fps&quot;: 30}}</code> in the script starts writing every drawn frame as <code>frame_000000.png</code>, <code>frame_000001.png</code>, ... into <code>dir</code>, which must not hold frames yet. <code>{&quot;record&quot;: false}</code> stops; so does the end of the script. Put the frames on a timeline in a video editor as an image sequence at the same rate.</p>
 <p>While it records, the show clock moves by exactly one recorded frame per picture, however long a picture takes to draw (<a class="ref" href="#cook.stepping"><code>cook.stepping</code></a>, see below). So a recording looks the same on a fast and a slow machine, and a sound file the show plays lines up with the frames when the editor puts both at the start. <code>fps</code> must divide the show rate: 30 or 60 for a 60 fps show, not 25.</p>
@@ -6920,8 +6938,8 @@ def cook(cx):
 </div></details>
 <details class="entry command" id="node.snapshot"><summary><code class="name">node.snapshot</code><span class="sum">Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB)</span></summary>
 <div class="body">
-<p>Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file? (relative to the project; default in the temp directory)}</p>
-<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#control-mcp-server">Control › MCP server</a>, <a href="#control-taking-turns">Control › Taking turns</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
+<p>Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file? (relative to the project; default in the temp directory), opaque? (true: the colour channels as stored, without alpha; on by itself when every pixel has alpha 0 and some colour)}</p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#shaders-on-windows-direct3d-12">Shaders › On Windows (Direct3D 12)</a>, <a href="#control-mcp-server">Control › MCP server</a>, <a href="#control-taking-turns">Control › Taking turns</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
 </div></details>
 <details class="entry command" id="node.unbind"><summary><code class="name">node.unbind</code><span class="sum">Back to the param's stored value</span></summary>
 <div class="body">
@@ -7017,7 +7035,7 @@ def cook(cx):
 <details class="entry command" id="project.save"><summary><code class="name">project.save</code><span class="sum">Write project.ron now, also over a file that failed to merge (copied to project.ron.bak first)</span></summary>
 <div class="body">
 <p>Write project.ron now, also over a file that failed to merge (copied to project.ron.bak first)</p>
-<p class="mentions">Mentioned in: <a href="#concepts-the-project-directory">Concepts › The project directory</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-the-project-directory">Concepts › The project directory</a>, <a href="#control-headless-runs">Control › Headless runs</a></p>
 </div></details>
 <details class="entry command" id="project.save_as"><summary><code class="name">project.save_as</code><span class="sum">Copy the open project (its files and the latest state snapshot) into dir (new or empty) and open the copy, a project of its own</span></summary>
 <div class="body">

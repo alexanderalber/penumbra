@@ -118,7 +118,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "node.snapshot",
-        "Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file? (relative to the project; default in the temp directory)}",
+        "Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file? (relative to the project; default in the temp directory), opaque? (true: the colour channels as stored, without alpha; on by itself when every pixel has alpha 0 and some colour)}",
         node_snapshot,
     );
     add(
@@ -1161,7 +1161,8 @@ const SNAPSHOT_WAIT: Duration = Duration::from_secs(10);
 
 /// Cooks node `id` on demand (it need not be watched or feed an output) and returns output
 /// `output` with the node's status. Waits while a job is in flight, so the result is the
-/// current one rather than the previous file's.
+/// current one rather than the previous file's. A node without a result because a node
+/// upstream failed gets that node's error as its status's error, at once.
 pub(crate) fn cook_now(e: &Engine, id: NodeId, output: u32) -> Result<(Option<Data>, Option<NodeStatus>)> {
     let (session, generation) = e.current();
     cook_now_in(e, &session, generation, id, output)
@@ -1179,12 +1180,24 @@ pub(crate) fn cook_now_in(
     let deadline = Instant::now() + SNAPSHOT_WAIT;
     loop {
         let session = session.clone();
-        let (data, status) = e.on_cook_in(generation, move |st| {
+        let (data, mut status, blame) = e.on_cook_in(generation, move |st| {
             let net = session.doc().snapshot();
             let port = Port { node: id, output };
             st.cooker.cook_showing(&net, st.clock.now(), &[id], &[], &[port]);
-            (st.cooker.output(port).cloned(), st.cooker.status(id))
+            let data = st.cooker.output(port).cloned();
+            let status = st.cooker.status(id);
+            let own_error = status.as_ref().is_some_and(|s| s.error.is_some());
+            let blame =
+                if data.is_none() && !own_error { failed_upstream(&st.cooker, &net, id) } else { None };
+            (data, status, blame)
         })?;
+        // A node waiting for an input whose node failed would wait forever: say which one.
+        if let Some(why) = blame {
+            if let Some(s) = status.as_mut() {
+                s.error = Some(why);
+            }
+            return Ok((data, status));
+        }
         let busy = status
             .as_ref()
             .is_some_and(|s| matches!(s.job, Some(JobStatus::Queued | JobStatus::Running { .. })));
@@ -1194,6 +1207,29 @@ pub(crate) fn cook_now_in(
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// The nearest node upstream of `id` that failed without a result, as `waits for /a, which
+/// failed: <its error>`. A node downstream of it waits for an input that never comes.
+fn failed_upstream(cooker: &penumbra_graph::Cooker, net: &Network, id: NodeId) -> Option<String> {
+    let mut seen = BTreeSet::from([id]);
+    let mut queue: std::collections::VecDeque<NodeId> = net.node(id)?.upstream().collect();
+    while let Some(up) = queue.pop_front() {
+        if !seen.insert(up) {
+            continue;
+        }
+        if let Some(status) = cooker.status(up)
+            && !status.has_output
+            && let Some(error) = status.error
+        {
+            let path = net.path_of(up).map_or_else(|| format!("node {up}"), |p| p.to_string());
+            return Some(format!("waits for {path}, which failed: {error}"));
+        }
+        if let Some(node) = net.node(up) {
+            queue.extend(node.upstream());
+        }
+    }
+    None
 }
 
 pub(crate) fn result_of(path: &NodePath, data: Option<Data>, error: Option<String>) -> Result<Data> {
@@ -1474,6 +1510,7 @@ fn node_snapshot(e: &Engine, p: &Json) -> Result<Json> {
         path: NodePath,
         output: Option<Slot>,
         file: Option<PathBuf>,
+        opaque: Option<bool>,
     }
     let mut a: A = args(p)?;
     let gpu = e.gpu().ok_or("no GPU yet (the window opens it)")?.clone();
@@ -1513,7 +1550,10 @@ fn node_snapshot(e: &Engine, p: &Json) -> Result<Json> {
         }
     };
     let pixels = gpu.read(&tex)?;
-    let png = pixels.to_png()?;
+    // A texture with alpha 0 everywhere but data in its colour channels (a simulation's state)
+    // would come out fully transparent with straight alpha.
+    let opaque = a.opaque.unwrap_or_else(|| pixels.colour_without_alpha());
+    let png = if opaque { pixels.to_png_opaque()? } else { pixels.to_png()? };
     let file = match a.file {
         Some(f) if f.is_absolute() => f,
         // Like every other file a command names: a script or a session working on the project
@@ -1544,7 +1584,12 @@ fn node_snapshot(e: &Engine, p: &Json) -> Result<Json> {
             "mean": stats.mean,
             "non_finite_pixels": stats.non_finite,
         },
-        "note": "linear premultiplied values in stats; the PNG is sRGB with straight alpha",
+        "opaque": opaque,
+        "note": if opaque {
+            "linear premultiplied values in stats; the PNG is sRGB of the colour channels as stored, alpha left out"
+        } else {
+            "linear premultiplied values in stats; the PNG is sRGB with straight alpha"
+        },
     }))
 }
 

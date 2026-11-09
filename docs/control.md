@@ -112,8 +112,12 @@ Commands that only look, `cook.play` and OSC/DMX keep working. The exception amo
 
 ## Looking at results
 
-- `node.snapshot {path, file?}` cooks a `tex` node (or the picture of a `geo` node) and writes
-  a PNG.
+- `node.snapshot {path, file?, opaque?}` cooks a `tex` node (or the picture of a `geo` node) and
+  writes a PNG. Its reply has the channels' minimum, maximum and mean as stored. The PNG has
+  straight alpha. `opaque: true` writes the colour channels as stored and leaves alpha out: a
+  picture then lies on black. A texture whose alpha is 0 everywhere but whose colour is not (a
+  simulation's state, say) is written that way by itself, and the reply says `"opaque": true`.
+  Without that, its PNG would be fully transparent.
 - `chan.read`, `table.read` and `geo.info` read the other kinds.
 - `ui.screenshot {file?}` saves a PNG of the whole window; the other `ui.*` commands click,
   drag, type and select as a user would, by automation ids that `ui.elements` lists.
@@ -130,7 +134,7 @@ Commands that only look, `cook.play` and OSC/DMX keep working. The exception amo
 ## Headless runs
 
 ```
-cargo run -p penumbra -- --headless script.jsonl [--project DIR] [--software] [--size WxH] [--scale F] [--speakers]
+cargo run -p penumbra -- --headless script.jsonl [--project DIR] [--software] [--size WxH] [--scale F] [--speakers] [--no-save]
 ```
 
 runs the real UI without a window and feeds it a script: one request per line
@@ -143,9 +147,13 @@ viewer's handles, a helper's list) before clicking it. Empty lines and lines sta
 `//` are skipped. `$HERE` in any string of a line is the project's folder (with forward
 slashes), so a script kept beside `project.ron` names its files wherever the project lies:
 `{"method": "node.snapshot", "params": {"path": "/out", "file": "$HERE/snap/out.png"}}`.
-Each reply is printed.
+Each reply is printed as `method: {json}` on one line, as soon as its line of the script is
+done.
 Without `--project` it works on a fresh copy of the demo in the temp directory, so no project
-is touched. `--software` renders on a software adapter (WARP on Windows): slow but the same on
+is touched. With `--project` the run saves the project as the app does: a param the script sets
+is in `project.ron` afterwards, and the next run starts with it. `--no-save` keeps the file as
+it was. The run then writes `project.ron` only where the script calls `project.save`.
+`--software` renders on a software adapter (WARP on Windows): slow but the same on
 every machine. `--size` is the window size in points. `--scale` is the number of pixels per
 point, from 0.5 to 4: `--size 1280x720 --scale 2` draws the 1280 by 720 layout at 2560 by 1440
 pixels, so its text stays sharp and large in a video.

@@ -159,6 +159,19 @@ pub(crate) fn software_app(engine: Arc<Engine>) -> (std::sync::MutexGuard<'stati
 /// Runs `script` against `engine` in a headless app. Returns the method and the reply envelope
 /// (`{"ok", "result" | "error"}`) of every request; a failing request does not stop the script.
 pub fn run(engine: Arc<Engine>, script: &str, options: &Options) -> Result<Vec<(String, Json)>, String> {
+    let mut out = Vec::new();
+    run_with(engine, script, options, &mut |method, reply| out.push((method.to_string(), reply.clone())))?;
+    Ok(out)
+}
+
+/// [`run`], handing each method and reply to `on_reply` as soon as its line is done, so a caller
+/// can print the replies while the script runs.
+pub fn run_with(
+    engine: Arc<Engine>,
+    script: &str,
+    options: &Options,
+    on_reply: &mut dyn FnMut(&str, &Json),
+) -> Result<(), String> {
     let _software = options.software.then(|| penumbra_core::lock(&SOFTWARE_RUN));
     let here = engine.session().dir().display().to_string().replace('\\', "/");
     // With their line numbers in the script, for the marks of a recording.
@@ -216,6 +229,11 @@ pub fn run(engine: Arc<Engine>, script: &str, options: &Options) -> Result<Vec<(
 
     let mut out = Vec::new();
     let mut rec: Option<record::Recorder> = None;
+    let mut emit = |out: &mut Vec<(String, Json)>| {
+        for (method, reply) in out.drain(..) {
+            on_reply(&method, &reply);
+        }
+    };
     for (number, line) in lines {
         let first = rec.as_ref().map_or(0, |r| r.frames);
         let what = line_kind(&line);
@@ -228,12 +246,14 @@ pub fn run(engine: Arc<Engine>, script: &str, options: &Options) -> Result<Vec<(
             let stopped = rec.take().map(record::Recorder::stop);
             out.push(("record".into(), json!({"ok": false, "error": e, "stopped": stopped.map(envelope)})));
         }
+        emit(&mut out);
     }
     if let Some(r) = rec.take() {
         out.push(("record".into(), envelope(r.stop())));
     }
+    emit(&mut out);
     harness.state_mut().close();
-    Ok(out)
+    Ok(())
 }
 
 /// What a script line does, for the marks: its method or its kind of line.

@@ -701,6 +701,7 @@ impl PenumbraApp {
             && status.write_error.is_none()
             && !status.merge_waiting
             && status.broken.is_empty()
+            && status.left_out.is_empty()
         {
             return;
         }
@@ -760,6 +761,23 @@ impl PenumbraApp {
                         .map(|b| format!("{} ({}): {}", b.path, b.kind, b.error))
                         .collect();
                     r.on_hover_text(why.join("\n"));
+                }
+                if !status.left_out.is_empty() {
+                    if claude
+                        || status.file_error.is_some()
+                        || status.write_error.is_some()
+                        || status.merge_waiting
+                        || !status.broken.is_empty()
+                    {
+                        ui.separator();
+                    }
+                    let n = status.left_out.len();
+                    let what = if n == 1 { "1 binding".to_string() } else { format!("{n} bindings") };
+                    let r = ui.colored_label(
+                        theme::ERROR,
+                        format!("not loaded from the project file: {what} that would make a loop"),
+                    );
+                    r.on_hover_text(status.left_out.join("\n"));
                 }
             });
         });

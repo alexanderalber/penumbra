@@ -364,6 +364,9 @@ pub struct Applied {
     pub created: Vec<NodeId>,
     /// Every node the batch created, changed or deleted (for the change log).
     pub touched: BTreeSet<NodeId>,
+    /// Ops of the project file left out instead of failing the batch, each with the reason
+    /// ([`Params::Keep`] only): a binding that would make a loop.
+    pub left_out: Vec<String>,
     params: Params,
 }
 
@@ -375,7 +378,8 @@ pub enum Params {
     Strict,
     /// Keep it as a stray value: loading the project file, where it is most likely a param a
     /// built-in node lost in a newer version. One stray value must not keep a whole project
-    /// from opening; the cooker warns about it and the UI offers to remove it.
+    /// from opening; the cooker warns about it and the UI offers to remove it. A binding that
+    /// would make a loop is left out for the same reason ([`Applied::left_out`]).
     Keep,
 }
 
@@ -776,8 +780,13 @@ impl Network {
 
     /// [`Self::apply`], choosing how parameters a node type does not declare are treated.
     pub fn apply_with(&self, types: &NodeTypes, ops: &[Op], params: Params) -> Result<Applied, Error> {
-        let mut work =
-            Applied { network: self.clone(), created: Vec::new(), touched: BTreeSet::new(), params };
+        let mut work = Applied {
+            network: self.clone(),
+            created: Vec::new(),
+            touched: BTreeSet::new(),
+            left_out: Vec::new(),
+            params,
+        };
         for (i, op) in ops.iter().enumerate() {
             work.apply_one(types, op).map_err(|e| e.context(format!("op {i} ({})", op.label())))?;
         }
@@ -1102,10 +1111,15 @@ impl Applied {
                     return Err(Error::new(format!("{from} has no {what} output to bind to")));
                 }
                 if src == dst || net.depends_on(src, dst) {
-                    return Err(Error::new(format!(
+                    let why = format!(
                         "binding {param} to {from} would make a loop: {from} depends on {}",
                         param.node()
-                    )));
+                    );
+                    if self.params == Params::Keep {
+                        self.left_out.push(why);
+                        return Ok(());
+                    }
+                    return Err(Error::new(why));
                 }
                 let part = ParamPart::new(name.clone(), *component);
                 self.node_mut(dst)?.binds.insert(part, bind);

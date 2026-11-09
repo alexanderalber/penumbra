@@ -84,12 +84,43 @@ impl Pixels {
         out
     }
 
+    /// 8-bit sRGB of the colour channels as stored, alpha left out (every pixel opaque). For a
+    /// picture that is the picture over black. For a texture that keeps data in its channels
+    /// (a simulation's state, whose alpha may be 0) it shows the data that [`Pixels::to_srgb8`]
+    /// would divide away.
+    pub fn to_srgb8_opaque(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.data.len() * 4);
+        for &[r, g, b, _] in &self.data {
+            for c in [r, g, b] {
+                out.push(unit_to_u8(linear_to_srgb(if c.is_finite() { c } else { 0.0 })));
+            }
+            out.push(255);
+        }
+        out
+    }
+
+    /// Whether every pixel has alpha 0 (or below) while some colour channel is not 0: no picture
+    /// in premultiplied alpha, whose colour is at most its alpha, but data in the colour
+    /// channels.
+    pub fn colour_without_alpha(&self) -> bool {
+        let mut colour = false;
+        for &[r, g, b, a] in &self.data {
+            if a > 0.0 {
+                return false;
+            }
+            colour |= [r, g, b].iter().any(|c| *c != 0.0);
+        }
+        colour
+    }
+
     /// A PNG of [`Pixels::to_srgb8`].
     pub fn to_png(&self) -> Result<Vec<u8>, Error> {
-        let image = Image::from_u8(self.width, self.height, ChannelLayout::Rgba, self.to_srgb8())
-            .map_err(|e| Error::new(format!("cannot build the image: {e}")))?;
-        photocraft_codecs::encode(&image, Format::Png, &EncodeOptions::default())
-            .map_err(|e| Error::new(format!("cannot encode the PNG: {e}")))
+        encode_png_rgba8(self.width, self.height, self.to_srgb8())
+    }
+
+    /// A PNG of [`Pixels::to_srgb8_opaque`].
+    pub fn to_png_opaque(&self) -> Result<Vec<u8>, Error> {
+        encode_png_rgba8(self.width, self.height, self.to_srgb8_opaque())
     }
 }
 
@@ -508,6 +539,22 @@ mod tests {
         let s = px.stats();
         assert_eq!(s.max, [0.5, 0.0, 0.0, 0.5]);
         assert_eq!(s.mean, [0.25, 0.0, 0.0, 0.25]);
+        // Opaque: the colour as stored, so over black.
+        assert_eq!(px.to_srgb8_opaque(), [188, 0, 0, 255, 0, 0, 0, 255]);
+        assert!(!px.colour_without_alpha());
+    }
+
+    #[test]
+    fn data_in_the_colour_channels_with_alpha_0_stays_visible_opaque() {
+        let state = Pixels { width: 2, height: 1, data: vec![[1.0, 0.5, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]] };
+        assert!(state.colour_without_alpha());
+        assert_eq!(state.to_srgb8(), [0; 8], "straight alpha divides it away");
+        assert_eq!(state.to_srgb8_opaque(), [255, 188, 0, 255, 0, 0, 0, 255]);
+        assert_eq!(state.to_png_opaque().unwrap().get(1..4), Some(&b"PNG"[..]));
+        let empty = Pixels { width: 1, height: 1, data: vec![[0.0; 4]] };
+        assert!(!empty.colour_without_alpha(), "fully transparent black is a picture");
+        let nan = Pixels { width: 1, height: 1, data: vec![[f32::NAN, 0.0, 0.0, 0.0]] };
+        assert_eq!(nan.to_srgb8_opaque(), [0, 0, 0, 255]);
     }
 
     #[test]
