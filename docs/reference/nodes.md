@@ -1223,7 +1223,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.dropdown](#chandropdown), [chan.envelope](#chanenvelope), [chan.feedback](#chanfeedback), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
+[chan.audio_envelope](#chanaudio_envelope), [chan.audio_pitch](#chanaudio_pitch), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.dropdown](#chandropdown), [chan.envelope](#chanenvelope), [chan.feedback](#chanfeedback), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
 
 *inputs:* [chan.data_in](#chandata_in), [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.midi_in](#chanmidi_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
@@ -1246,6 +1246,29 @@ Outputs: `out` (chan).
 | `release` | float | `0.2` | 0.001 to 5 s (soft, held within 0 to 60 s) | Seconds the value takes to fall to about a third when the sound gets quieter. Longer holds hits for the eye |
 | `unit` | linear \| db \| level | `"linear"` |  | What number a channel gives; linear: the amplitude: 1 is full scale, a sine at -20 dBFS reads 0.1. 0 below floor; db: dBFS: 0 is full scale, -20 a tenth of it. Never below floor; level: 0 at floor to 1 at full scale, even in dB: ready to drive a param |
 | `floor` | float | `-60` | -120 to -20 dB (soft, held within -200 to -1 dB) | Quieter than this counts as silence: 0 in linear and level, the floor itself in db |
+
+### chan.audio_pitch
+
+Which tone is sounding: the note of a voice, a whistle or an instrument, held through pauses, as numbers to bind
+
+Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs:
+
+- `audio` (audio): The sound to listen to, e.g. from an audio.device_in or an audio.file
+
+Outputs:
+
+- `out` (chan): note: the last sure tone as a MIDI note number with fraction (60 is middle C, 69 is A at 440 Hz, 12 is an octave), held through silence and noise, 0 until the first tone. frequency: the same in Hz. pitch_class: note within its octave, 0 (C) to 12. clarity: 0 to 1, how clearly the sound repeats at its pitch now. sure: 1 while note follows the sound. heard_note, heard_frequency: the estimate now, sure or not, 0 in silence
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `channel` | text |  |  | The channel to listen to, e.g. `ch1`; empty: all mixed |
+| `min` | float | `50` | 20 to 1000 Hz (soft, held within 20 to 10000 Hz) | The lowest tone looked for. Lower costs latency: the analysis waits for two periods of it, 40 ms at 50 Hz. 80 suits a voice, 40 a bass, 400 a whistle |
+| `max` | float | `4000` | 100 to 8000 Hz (soft, held within 20 to 10000 Hz) | The highest tone looked for. Sound above it is filtered down, so a range of 40 to 200 picks a bass line under a louder melody. A tone above max reads clarity 0 |
+| `threshold` | float | `0.8` | 0 to 1 | The clarity a tone needs to move note. Clean singing and whistling read above 0.9, white noise below 0.3, rumble and dense music mostly below 0.8. Lower follows more of a mix and jumps more |
+| `smooth` | float | `0.05` | 0.001 to 5 s (soft, held within 0 to 60 s) | Seconds note takes to get about two thirds of the way to a new tone. 0 jumps at once; longer glides from note to note |
+| `floor` | float | `-60` | -90 to -20 dB (soft, held within -120 to 0 dB) | Quieter than this counts as silence: clarity 0, note stays. Set it above the room's noise |
 
 ### chan.audio_spectrum
 

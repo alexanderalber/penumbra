@@ -5,7 +5,9 @@
 //!   arrived since they last looked.
 //! - [`analysis`]: an [`Analyzer`] turns blocks of samples into levels, bands, a spectrum,
 //!   onsets, a tempo, and beat and bar phase.
-//! - [`fft`]: the transform the analysis uses.
+//! - [`pitch`]: a [`PitchTracker`] finds the tone sounding (McLeod's method) and holds the
+//!   last sure one.
+//! - [`fft`]: the transform the analyses use.
 //! - [`spectrum`]: a [`Spectrum`] of the newest samples in bands, and the band code the
 //!   analysis shares.
 //! - [`envelope`]: an [`Envelope`] follows a signal's level with an attack and a release.
@@ -37,6 +39,9 @@ mod file_tests;
 pub mod limiter;
 pub mod measure;
 pub mod outputs;
+pub mod pitch;
+#[cfg(test)]
+mod pitch_tests;
 pub mod playback;
 pub mod resample;
 #[cfg(test)]
@@ -53,6 +58,7 @@ pub use envelope::{Detect, Envelope};
 pub use file::SoundFile;
 pub use limiter::Limiter;
 pub use outputs::{BusStatus, LaneStatus, Outputs, Tap, TapBlock, Want, keep_off_devices};
+pub use pitch::{Pitch, PitchSettings, PitchTracker};
 pub use playback::{Engine, EngineStatus, Player, PlayerStatus, output_devices};
 pub use resample::Resampler;
 pub use reverb::Reverb;

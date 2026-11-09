@@ -1,10 +1,11 @@
 # Audio
 
-`audio.device_in` reads an input device. Three nodes turn what it hears into channels that
+`audio.device_in` reads an input device. These nodes turn what it hears into channels that
 params can be bound to:
 
 - `chan.audio_envelope` for loudness: one number per channel, how loud it is now.
 - `chan.audio_spectrum` for frequency bands: the spectrum as numbers and as a texture.
+- `chan.audio_pitch` for the tone: which note a voice, a whistle or an instrument sounds.
 - `chan.beat_analysis` for music: beat, bar and tempo, with levels and hits.
 - `chan.beat_grid` for a sound file: beat, bar, levels and hits of what an `audio.file` plays, found ahead of time.
 
@@ -15,8 +16,8 @@ The energy of one band is an `audio.filter` (`bandpass`) into a `chan.audio_enve
 Sound travels on cyan wires of its own kind, `audio`. A `chan` wire carries values: its last
 sample is the value now. An `audio` wire carries a stream: each frame's block of samples
 continues the block before, so every sample counts. The two kinds do not connect.
-`chan.audio_envelope`, `chan.audio_spectrum` and `chan.beat_analysis` are the bridges from
-sound to channels that params can be bound to.
+`chan.audio_envelope`, `chan.audio_spectrum`, `chan.audio_pitch` and `chan.beat_analysis` are
+the bridges from sound to channels that params can be bound to.
 
 - `audio.device_in` reads a microphone or an audio interface.
 - `audio.oscillator` makes a test tone. `shape` is sine, saw, square, triangle or noise. The
@@ -297,6 +298,52 @@ something reads it; its rows start empty when it is read again.
 48 kHz): more for narrow bands, less for wide ones. Bands below about 200 Hz are narrower than
 that resolution with 32 log bands. A tone there spreads into its neighbours, and with many
 bands neighbouring low bands repeat one value.
+
+## Pitch
+
+`chan.audio_pitch` finds which tone is sounding: the note of a voice, a whistle or an
+instrument, or the strongest tone of a mix. Its `note` holds the last sure tone through pauses,
+so a picture keeps its state between two phrases.
+
+| channel | what |
+|---|---|
+| `note` | the last sure tone as a MIDI note number with fraction: 60 is middle C, 69 is the A at 440 Hz, 12 more is an octave up. Held through silence and noise. 0 until the first tone |
+| `frequency` | `note` in Hz |
+| `pitch_class` | `note` within its octave, 0 (C) to 12. Every C reads the same, ready for a hue |
+| `clarity` | 0 to 1: how clearly the sound repeats at its pitch now. A clean sung or whistled tone reads above 0.9, white noise below 0.3, rumble and a dense mix mostly below 0.8 |
+| `sure` | 1 while `note` follows the sound |
+| `heard_note`, `heard_frequency` | the estimate now, sure or not. 0 in silence |
+
+**Sure.** A tone counts once its `clarity` reaches `threshold` (0.8) in three estimates in a
+row, 10 ms apart, each within a semitone of the one before. Then `note` moves to it. `smooth`
+(0.05 s) is how long `note` takes to get about two thirds of the way; 0 jumps. Quieter than
+`floor` (-60 dB) is silence.
+
+**Range.** `min` (50 Hz) and `max` (4000 Hz) set where to look. Try 80 to 1000 Hz for a voice
+and 400 to 4000 Hz for whistling. Sound above `max` is filtered down first, so 40 to 200 Hz
+follows a bass line under a louder melody. A tone above `max` reads `clarity` 0 and leaves
+`note` alone. A tone below `min` may read an octave higher.
+
+**Latency.** A new tone is sure 30 to 60 ms after it starts, plus the frame. The analysis
+looks at two periods of `min`, 40 ms at 50 Hz, so a higher `min` answers sooner. Tracking costs
+about 1 % of one CPU core at the default range, and runs only while something reads the node.
+
+**Chords and music.** Two notes a fifth apart read an octave below the lower one: together they
+repeat at that pitch. A major third reads two octaves below the lower note, two notes a
+semitone apart read between them. In a full mix `clarity` stays mostly low, and `note` moves
+only where one tone stands out, often the bass.
+
+**A tone picks a value.**
+
+1. Wire `audio.device_in` into a `chan.audio_pitch`. Set `channel` to the microphone's input.
+2. Wire `out` into a `chan.math` with `op` `subtract` and `b` 48. The result is 0 at C3 and
+   counts semitones up from there: 12 at C4, 24 at C5.
+3. Bind the param to the `chan.math`'s `note`. A param that takes whole numbers picks one
+   value per semitone; a float glides between them. A `chan.math` `multiply` after it spreads
+   more or fewer values over an octave.
+4. For a colour per note, bind a hue to `pitch_class` through a `chan.math` `divide` by 12.
+5. For a flash each time a tone starts after a pause, wire `out` into a `chan.select` with
+   `channels` `sure`, then into a `chan.envelope` in `trigger` mode.
 
 ## Setting up
 

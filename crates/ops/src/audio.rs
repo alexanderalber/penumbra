@@ -30,7 +30,8 @@
 //!   for `chan.sequence` from those sections.
 //! - **`chan.audio_envelope`** ([`envelope`]) is the loudness of every channel now, with an
 //!   attack and a release; **`chan.audio_spectrum`** ([`spectrum`]) the spectrum in bands, as
-//!   one channel and as a texture (a row now, or a scrolling spectrogram).
+//!   one channel and as a texture (a row now, or a scrolling spectrogram);
+//!   **`chan.audio_pitch`** ([`pitch_track`]) which tone is sounding, held through pauses.
 //!
 //! The device streams belong to the engine's [`Hub`], which opens what [`wants`] lists after
 //! every change of the network.
@@ -63,6 +64,9 @@ mod mix_tests;
 pub mod oscillator;
 pub mod overview;
 pub mod pitch;
+pub mod pitch_track;
+#[cfg(test)]
+mod pitch_track_tests;
 pub mod spectrum;
 #[cfg(test)]
 mod spectrum_tests;
@@ -245,6 +249,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ambience::register(types)?;
     envelope::register(types)?;
     spectrum::register(types)?;
+    pitch_track::register(types)?;
     types.register(FnNodeType::new(
         NodeDesc::new("audio.null", "Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes")
             .input("in", DataKind::Audio)

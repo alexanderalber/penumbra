@@ -115,6 +115,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("tex.spout_in", &["syphon spout in"]),
     ("tex.video_file", &["movie file in"]),
     ("tex.video_in", &["video device in", "webcam"]),
+    ("chan.audio_pitch", &["audio analysis", "tuner", "fundamental", "f0", "melody", "note detection"]),
     ("chan.beat_analysis", &["audio analysis"]),
     ("chan.clock", &["timer"]),
     ("chan.data_in", &["serial", "udp in", "tcp", "arduino", "com port", "socket", "json", "uart"]),

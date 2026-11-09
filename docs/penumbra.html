@@ -750,11 +750,13 @@ water      15
 </div></details>
 <details class="entry guide" id="audio"><summary><span class="name">Audio</span></summary>
 <div class="body">
-<p><a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> reads an input device. Three nodes turn what it hears into channels that params can be bound to:</p>
+<p><a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> reads an input device. These nodes turn what it hears into channels that params can be bound to:</p>
 <ul>
 <li><a class="ref" href="#chan.audio_envelope"><code>chan.audio_envelope</code></a> for loudness: one number per channel, how loud it is now.
 </li>
 <li><a class="ref" href="#chan.audio_spectrum"><code>chan.audio_spectrum</code></a> for frequency bands: the spectrum as numbers and as a texture.
+</li>
+<li><a class="ref" href="#chan.audio_pitch"><code>chan.audio_pitch</code></a> for the tone: which note a voice, a whistle or an instrument sounds.
 </li>
 <li><a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> for music: beat, bar and tempo, with levels and hits.
 </li>
@@ -763,7 +765,7 @@ water      15
 </ul>
 <p>The energy of one band is an <a class="ref" href="#audio.filter"><code>audio.filter</code></a> (<code>bandpass</code>) into a <a class="ref" href="#chan.audio_envelope"><code>chan.audio_envelope</code></a>.</p>
 <h3 id="audio-sound-is-its-own-family">Sound is its own family</h3>
-<p>Sound travels on cyan wires of its own kind, <code>audio</code>. A <code>chan</code> wire carries values: its last sample is the value now. An <code>audio</code> wire carries a stream: each frame's block of samples continues the block before, so every sample counts. The two kinds do not connect. <a class="ref" href="#chan.audio_envelope"><code>chan.audio_envelope</code></a>, <a class="ref" href="#chan.audio_spectrum"><code>chan.audio_spectrum</code></a> and <a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> are the bridges from sound to channels that params can be bound to.</p>
+<p>Sound travels on cyan wires of its own kind, <code>audio</code>. A <code>chan</code> wire carries values: its last sample is the value now. An <code>audio</code> wire carries a stream: each frame's block of samples continues the block before, so every sample counts. The two kinds do not connect. <a class="ref" href="#chan.audio_envelope"><code>chan.audio_envelope</code></a>, <a class="ref" href="#chan.audio_spectrum"><code>chan.audio_spectrum</code></a>, <a class="ref" href="#chan.audio_pitch"><code>chan.audio_pitch</code></a> and <a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> are the bridges from sound to channels that params can be bound to.</p>
 <ul>
 <li><a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> reads a microphone or an audio interface.
 </li>
@@ -837,6 +839,36 @@ water      15
 <p><strong>Values.</strong> <code>unit</code> is <code>level</code> by default: 0 at <code>floor</code> (-60 dB), 1 at full scale. <code>linear</code> and <code>db</code> are as for the envelope: a sine at -20 dBFS reads 0.1 or -20 dB in its band. A band rises over <code>attack</code> (0 s, at once) and falls over <code>release</code> (0.2 s).</p>
 <p><strong>Outputs.</strong> <code>out</code> is one channel, <code>spectrum</code>, whose samples are the bands, low to high. The viewer draws it as a curve over the band number. <code>texture</code> is the same numbers as a picture, <code>bands</code> pixels wide, in grey. <code>history</code> (1) sets its rows. With more rows, row 0 at the top is now, and every new block of sound moves the older rows down by one: a scrolling spectrogram. In a shader, <code>uv.x</code> is the frequency band and <code>uv.y</code> how long ago. The texture is made only while something reads it; its rows start empty when it is read again.</p>
 <p><strong>Resolution.</strong> Each frame looks at the newest 11 to 85 ms of sound (512 to 4096 samples at 48 kHz): more for narrow bands, less for wide ones. Bands below about 200 Hz are narrower than that resolution with 32 log bands. A tone there spreads into its neighbours, and with many bands neighbouring low bands repeat one value.</p>
+<h3 id="audio-pitch">Pitch</h3>
+<p><a class="ref" href="#chan.audio_pitch"><code>chan.audio_pitch</code></a> finds which tone is sounding: the note of a voice, a whistle or an instrument, or the strongest tone of a mix. Its <code>note</code> holds the last sure tone through pauses, so a picture keeps its state between two phrases.</p>
+<table>
+<thead><tr><th>channel</th><th>what</th></tr></thead>
+<tbody>
+<tr><td><code>note</code></td><td>the last sure tone as a MIDI note number with fraction: 60 is middle C, 69 is the A at 440 Hz, 12 more is an octave up. Held through silence and noise. 0 until the first tone</td></tr>
+<tr><td><code>frequency</code></td><td><code>note</code> in Hz</td></tr>
+<tr><td><code>pitch_class</code></td><td><code>note</code> within its octave, 0 (C) to 12. Every C reads the same, ready for a hue</td></tr>
+<tr><td><code>clarity</code></td><td>0 to 1: how clearly the sound repeats at its pitch now. A clean sung or whistled tone reads above 0.9, white noise below 0.3, rumble and a dense mix mostly below 0.8</td></tr>
+<tr><td><code>sure</code></td><td>1 while <code>note</code> follows the sound</td></tr>
+<tr><td><code>heard_note</code>, <code>heard_frequency</code></td><td>the estimate now, sure or not. 0 in silence</td></tr>
+</tbody>
+</table>
+<p><strong>Sure.</strong> A tone counts once its <code>clarity</code> reaches <code>threshold</code> (0.8) in three estimates in a row, 10 ms apart, each within a semitone of the one before. Then <code>note</code> moves to it. <code>smooth</code> (0.05 s) is how long <code>note</code> takes to get about two thirds of the way; 0 jumps. Quieter than <code>floor</code> (-60 dB) is silence.</p>
+<p><strong>Range.</strong> <code>min</code> (50 Hz) and <code>max</code> (4000 Hz) set where to look. Try 80 to 1000 Hz for a voice and 400 to 4000 Hz for whistling. Sound above <code>max</code> is filtered down first, so 40 to 200 Hz follows a bass line under a louder melody. A tone above <code>max</code> reads <code>clarity</code> 0 and leaves <code>note</code> alone. A tone below <code>min</code> may read an octave higher.</p>
+<p><strong>Latency.</strong> A new tone is sure 30 to 60 ms after it starts, plus the frame. The analysis looks at two periods of <code>min</code>, 40 ms at 50 Hz, so a higher <code>min</code> answers sooner. Tracking costs about 1 % of one CPU core at the default range, and runs only while something reads the node.</p>
+<p><strong>Chords and music.</strong> Two notes a fifth apart read an octave below the lower one: together they repeat at that pitch. A major third reads two octaves below the lower note, two notes a semitone apart read between them. In a full mix <code>clarity</code> stays mostly low, and <code>note</code> moves only where one tone stands out, often the bass.</p>
+<p><strong>A tone picks a value.</strong></p>
+<ol>
+<li>Wire <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> into a <a class="ref" href="#chan.audio_pitch"><code>chan.audio_pitch</code></a>. Set <code>channel</code> to the microphone's input.
+</li>
+<li>Wire <code>out</code> into a <a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>op</code> <code>subtract</code> and <code>b</code> 48. The result is 0 at C3 and counts semitones up from there: 12 at C4, 24 at C5.
+</li>
+<li>Bind the param to the <a class="ref" href="#chan.math"><code>chan.math</code></a>'s <code>note</code>. A param that takes whole numbers picks one value per semitone; a float glides between them. A <a class="ref" href="#chan.math"><code>chan.math</code></a> <code>multiply</code> after it spreads more or fewer values over an octave.
+</li>
+<li>For a colour per note, bind a hue to <code>pitch_class</code> through a <a class="ref" href="#chan.math"><code>chan.math</code></a> <code>divide</code> by 12.
+</li>
+<li>For a flash each time a tone starts after a pause, wire <code>out</code> into a <a class="ref" href="#chan.select"><code>chan.select</code></a> with <code>channels</code> <code>sure</code>, then into a <a class="ref" href="#chan.envelope"><code>chan.envelope</code></a> in <code>trigger</code> mode.
+</li>
+</ol>
 <h3 id="audio-setting-up">Setting up</h3>
 <ol>
 <li>Add an <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> (Tab &gt; audio &gt; device_in). With <code>device</code> empty it reads the system's default input; the empty <code>device</code> box names that device in grey (hover the box for the device a typed name picked). <a class="ref" href="#audio.status"><code>audio.status</code></a> names it too. The <code>...</code> menu beside <code>device</code> lists the inputs of this machine; part of a name typed in works too, e.g. <code>Focusrite</code>. The <a href="#helpers-audio">Helpers window</a> shows a level meter per channel. The device is opened in shared mode, so other programs can use it too.
@@ -3986,7 +4018,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-chan">
 <h3>chan</h3>
-<p class="kinds"><a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.beat_analysis">chan.beat_analysis</a> <a href="#chan.beat_grid">chan.beat_grid</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.data_in">chan.data_in</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.dropdown">chan.dropdown</a> <a href="#chan.envelope">chan.envelope</a> <a href="#chan.feedback">chan.feedback</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.http_in">chan.http_in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.midi_in">chan.midi_in</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
+<p class="kinds"><a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_pitch">chan.audio_pitch</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.beat_analysis">chan.beat_analysis</a> <a href="#chan.beat_grid">chan.beat_grid</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.data_in">chan.data_in</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.dropdown">chan.dropdown</a> <a href="#chan.envelope">chan.envelope</a> <a href="#chan.feedback">chan.feedback</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.http_in">chan.http_in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.midi_in">chan.midi_in</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
 <details class="entry node" id="chan.audio_envelope"><summary><code class="name">chan.audio_envelope</code><span class="sum">How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</span></summary>
 <div class="body">
 <p>How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</p>
@@ -4011,6 +4043,32 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-loudness">Audio › Loudness</a></p>
+</div></details>
+<details class="entry node" id="chan.audio_pitch"><summary><code class="name">chan.audio_pitch</code><span class="sum">Which tone is sounding: the note of a voice, a whistle or an instrument, held through pauses, as numbers to bind</span></summary>
+<div class="body">
+<p>Which tone is sounding: the note of a voice, a whistle or an instrument, held through pauses, as numbers to bind</p>
+<p class="note">Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>audio</code> <span class="kind">audio</span>: The sound to listen to, e.g. from an audio.device_in or an audio.file</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span>: note: the last sure tone as a MIDI note number with fraction (60 is middle C, 69 is A at 440 Hz, 12 is an octave), held through silence and noise, 0 until the first tone. frequency: the same in Hz. pitch_class: note within its octave, 0 (C) to 12. clarity: 0 to 1, how clearly the sound repeats at its pitch now. sure: 1 while note follows the sound. heard_note, heard_frequency: the estimate now, sure or not, 0 in silence</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>channel</code></td><td>text</td><td></td><td></td><td>The channel to listen to, e.g. <code>ch1</code>; empty: all mixed</td></tr>
+<tr><td><code>min</code></td><td>float</td><td><code>50</code></td><td>20 to 1000 Hz (soft, held within 20 to 10000 Hz)</td><td>The lowest tone looked for. Lower costs latency: the analysis waits for two periods of it, 40 ms at 50 Hz. 80 suits a voice, 40 a bass, 400 a whistle</td></tr>
+<tr><td><code>max</code></td><td>float</td><td><code>4000</code></td><td>100 to 8000 Hz (soft, held within 20 to 10000 Hz)</td><td>The highest tone looked for. Sound above it is filtered down, so a range of 40 to 200 picks a bass line under a louder melody. A tone above max reads clarity 0</td></tr>
+<tr><td><code>threshold</code></td><td>float</td><td><code>0.8</code></td><td>0 to 1</td><td>The clarity a tone needs to move note. Clean singing and whistling read above 0.9, white noise below 0.3, rumble and dense music mostly below 0.8. Lower follows more of a mix and jumps more</td></tr>
+<tr><td><code>smooth</code></td><td>float</td><td><code>0.05</code></td><td>0.001 to 5 s (soft, held within 0 to 60 s)</td><td>Seconds note takes to get about two thirds of the way to a new tone. 0 jumps at once; longer glides from note to note</td></tr>
+<tr><td><code>floor</code></td><td>float</td><td><code>-60</code></td><td>-90 to -20 dB (soft, held within -120 to 0 dB)</td><td>Quieter than this counts as silence: clarity 0, note stays. Set it above the room's noise</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-pitch">Audio › Pitch</a></p>
 </div></details>
 <details class="entry node" id="chan.audio_spectrum"><summary><code class="name">chan.audio_spectrum</code><span class="sum">The spectrum of a sound: how loud each frequency band is now, as numbers and as a texture for shaders</span></summary>
 <div class="body">
@@ -4317,7 +4375,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>threshold</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1 (soft)</td><td>The input counts as on above this value</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#audio-tips">Audio › Tips</a></p>
+<p class="mentions">Mentioned in: <a href="#audio-pitch">Audio › Pitch</a>, <a href="#audio-tips">Audio › Tips</a></p>
 </div></details>
 <details class="entry node" id="chan.feedback"><summary><code class="name">chan.feedback</code><span class="sum">Passes on the channels its input had in the frame before. A measurement of a loop can then drive the loop: bind a tex.feedback's <code>reset</code> to it, and a simulation starts over when it has died</span></summary>
 <div class="body">
@@ -4648,7 +4706,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="chan.math-example">Example</h5>
 <p>A rotation that follows the music: a <a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> level into <a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>op</code> <code>multiply</code> and <code>b</code> 90, and bind a <a class="ref" href="#tex.transform"><code>tex.transform</code></a>'s <code>rotate</code> to the output. Loud passages turn the picture by up to 90 degrees.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#audio-loudness">Audio › Loudness</a>, <a href="#audio-tips">Audio › Tips</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#audio-loudness">Audio › Loudness</a>, <a href="#audio-pitch">Audio › Pitch</a>, <a href="#audio-tips">Audio › Tips</a></p>
 </div></details>
 <details class="entry node" id="chan.merge"><summary><code class="name">chan.merge</code><span class="sum">Puts the channels of its inputs together into one</span></summary>
 <div class="body">
@@ -4802,7 +4860,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>channels</code></td><td>text</td><td><code>&quot;*&quot;</code></td><td></td><td>Space-separated names, <code>*</code> matches any run of characters: <code>x y pos*</code>; <code>^name</code> leaves channels out. To rename, add a chan.rename</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#dmx-setting-up">DMX › Setting up</a>, <a href="#dmx-lights-from-a-music-stage">DMX › Lights from a music stage</a></p>
+<p class="mentions">Mentioned in: <a href="#audio-pitch">Audio › Pitch</a>, <a href="#dmx-setting-up">DMX › Setting up</a>, <a href="#dmx-lights-from-a-music-stage">DMX › Lights from a music stage</a></p>
 </div></details>
 <details class="entry node" id="chan.sequence"><summary><code class="name">chan.sequence</code><span class="sum">A timed show: pieces one after another with cuts, fades, dips to black and flashes. Drives the tex.sequence that shows it, and a run channel per piece</span></summary>
 <div class="body">
@@ -4947,7 +5005,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>device</code></td><td>text</td><td></td><td></td><td>Part of the input's name (Helpers &gt; Audio lists them), e.g. <code>Focusrite</code>; empty: the system's default input</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-mixing-rates-and-devices">Audio › Mixing rates and devices</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-sound">NDI › Sound</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-mixing-rates-and-devices">Audio › Mixing rates and devices</a>, <a href="#audio-pitch">Audio › Pitch</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-sound">NDI › Sound</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="audio.file"><summary><code class="name">audio.file</code><span class="sum">Plays a sound file: music, an atmosphere or a sample, looped or once</span></summary>
 <div class="body">
