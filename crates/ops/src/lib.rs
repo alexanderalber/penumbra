@@ -98,6 +98,18 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("tex.mapper", &["kantan mapper", "stoner"]),
     ("tex.primitive", &["rectangle", "circle"]),
     ("tex.render", &["render select"]),
+    (
+        "tex.scatter",
+        &[
+            "particles gpu",
+            "point sprite",
+            "splat",
+            "deposit",
+            "accumulate",
+            "instancing additive",
+            "histogram",
+        ],
+    ),
     ("tex.screen_in", &["screen grab", "capture", "desktop", "window capture"]),
     ("tex.shader", &["glsl"]),
     ("tex.spout_in", &["syphon spout in"]),

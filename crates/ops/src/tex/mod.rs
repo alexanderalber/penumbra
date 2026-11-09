@@ -30,6 +30,7 @@ pub mod render;
 mod render_volume;
 pub mod scan;
 mod scan_pattern;
+mod scatter;
 pub mod screen_in;
 mod sequence;
 mod shader;
@@ -558,6 +559,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ramp::register(types)?;
     render::register(types)?;
     scan::register(types)?;
+    scatter::register(types)?;
     screen_in::register(types)?;
     shader::register(types)?;
     shapes::register(types)?;

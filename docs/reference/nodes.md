@@ -8,7 +8,7 @@ Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#g
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.dilate](#texdilate), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.erode](#texerode), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.render_volume](#texrender_volume), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.dilate](#texdilate), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.erode](#texerode), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.render_volume](#texrender_volume), [tex.resolution](#texresolution), [tex.scatter](#texscatter), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
 
 *inputs:* [tex.ndi_in](#texndi_in), [tex.screen_in](#texscreen_in), [tex.spout_in](#texspout_in), [tex.video_in](#texvideo_in)
 
@@ -879,6 +879,31 @@ Outputs: `out` (tex).
 | `keep_size` *(more)* | bool | `true` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 | `pattern` | int | `0` | 0 to 45 (soft, held within 0 to 1000) | Which picture: 0 white, 1 black, then each column bit (coarsest first) followed by its inverse, then the row bits the same way. Past the last: black. scan.patterns lists them |
 | `level` *(more)* | float | `1` | 0 to 1 (soft) | Brightness of the lit stripes; lower it only if the camera clips even with its exposure turned down |
+
+### tex.scatter
+
+Points from a texture added into a picture: each texel of `positions` adds 1 into the pixel at its x and y. For particles that leave a trail, and for counting where things are
+
+Inputs:
+
+- `positions` (tex): One point per texel: red is x, green is y. Make it with a tex.shader with `format` 32f, so positions keep fractions of a pixel
+- `values` (tex): What each point adds, from the texel at the same place as its position: all four channels. Optional
+
+Outputs:
+
+- `out` (tex): The sum of all points per pixel. 0 where no point landed
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `keep_size` *(more)* | bool | `true` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
+| `units` | pixels \| share | `"pixels"` |  | What red (x) and green (y) of `positions` count in; pixels: pixels from the top left corner, y down: a point at 10.7, 3.2 adds into pixel 10, 3; share: shares of the picture, 0 to 1 across and 0 to 1 down |
+| `edge` | drop \| wrap \| clamp | `"drop"` |  | What happens to a point beyond the picture's edge; drop: it adds nothing; wrap: it comes back in from the opposite side, as on a torus; clamp: it adds into the nearest pixel of the edge |
+| `dead` | none \| blue \| alpha | `"none"` |  | Which channel of `positions` marks a dead point: a point with that channel below 0 adds nothing; none: only points whose x or y is not a finite number add nothing; blue: a point with blue below 0 adds nothing; alpha: a point with alpha below 0 adds nothing |
+| `value` | vec4 | `[1, 1, 1, 1]` |  | What each point adds to r, g, b and a while `values` is not connected |
+| `splat` *(more)* | int | `1` | 1 to 8 | Each point adds into a square of this many pixels a side around its pixel. Costs the square of it |
+| `format` *(more)* | 32f \| 16f | `"32f"` |  | Number format of the picture; 32f: 32-bit floats: sums are exact up to 16 777 216 per pixel; 16f: half floats: counts are exact up to 2048 per pixel; half the memory |
 
 ### tex.screen_in
 

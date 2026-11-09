@@ -23,3 +23,6 @@ lights use that box. Copies outside it may lose their shadows or fall outside a 
 it to the size of what the copies fill.
 
 For a few copies placed by numbers (a table of positions), `geo.instance` is the simpler node.
+
+To add points into a picture instead (a trail that particles leave, a count per pixel),
+`tex.scatter` is simpler: no camera, no material, exact sums.

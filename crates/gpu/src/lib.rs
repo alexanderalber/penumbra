@@ -29,6 +29,7 @@ pub mod pass;
 pub mod projection;
 pub mod readback;
 pub mod render;
+pub mod scatter;
 pub mod shapes;
 pub mod stack;
 pub mod tex;
@@ -53,6 +54,7 @@ pub use pass::{Batch, Pass, PassInput};
 pub use projection::{MeshVertex, Projection};
 pub use readback::{PendingRead, Pixels, ReadPool, ReadState, RowsError, encode_png_rgba8};
 pub use render::Lights;
+pub use scatter::{Scatter, ScatterDead, ScatterEdge, ScatterSettings, ScatterUnits};
 pub use shapes::{ShapeMode, ShapePoly, Shapes, shape_random};
 pub use stack::Stack;
 pub use tex::{Tex, TexRing, texture_bytes, unique_bytes, view_bytes};
@@ -335,6 +337,12 @@ impl Gpu {
     /// tried on one that has it.
     pub fn headless_without_float_filtering(choice: AdapterChoice) -> Result<Self, Error> {
         Self::headless_without(choice, wgpu::Features::FLOAT32_FILTERABLE)
+    }
+
+    /// [`Gpu::headless`] without blending into 32-bit floats even where the adapter has it: what
+    /// penumbra does on a device that lacks it ([`Gpu::float_blending`]), tried on one that has it.
+    pub fn headless_without_float_blending(choice: AdapterChoice) -> Result<Self, Error> {
+        Self::headless_without(choice, wgpu::Features::FLOAT32_BLENDABLE)
     }
 
     fn headless_without(choice: AdapterChoice, features: wgpu::Features) -> Result<Self, Error> {
@@ -630,6 +638,13 @@ impl Gpu {
                 .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
     }
 
+    /// Whether passes can add into [`FLOAT_FORMAT`] targets by blending: [`Gpu::float_targets`]
+    /// and the device blends 32-bit floats. Without it, sums that blend ([`scatter`]) are kept
+    /// in [`FORMAT`].
+    pub fn float_blending(&self) -> bool {
+        self.float_targets() && self.device().features().contains(wgpu::Features::FLOAT32_BLENDABLE)
+    }
+
     /// `tex` as a texture of [`FORMAT`]: itself when it is one, else a copy, rounded to half
     /// floats. For whatever copies texels rather than sampling them (readback, copies, mip chains).
     pub fn to_half(&self, tex: &Tex) -> Result<Tex, Error> {
@@ -757,16 +772,18 @@ impl Gpu {
 /// What penumbra asks of a device: the adapter's texture size limit (up to 16384), up to 64
 /// sampled textures per shader stage (frame stacks bind one array texture per chunk, see
 /// [`stack`]), BC texture compression where the adapter has it (HAP, [`bc`]), filtering of
-/// 32-bit float textures where it has that ([`FLOAT_FORMAT`]), otherwise wgpu's defaults. eframe
-/// gets the same in the app.
+/// 32-bit float textures where it has that ([`FLOAT_FORMAT`]), blending into them where it has
+/// that ([`scatter`]), otherwise wgpu's defaults. eframe gets the same in the app.
 pub fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
     let mut limits = wgpu::Limits::default();
     let offered = adapter.limits();
     limits.max_texture_dimension_2d = offered.max_texture_dimension_2d.clamp(8192, 16384);
     limits.max_sampled_textures_per_shader_stage =
         offered.max_sampled_textures_per_shader_stage.clamp(limits.max_sampled_textures_per_shader_stage, 64);
-    let required_features =
-        adapter.features() & (wgpu::Features::TEXTURE_COMPRESSION_BC | wgpu::Features::FLOAT32_FILTERABLE);
+    let required_features = adapter.features()
+        & (wgpu::Features::TEXTURE_COMPRESSION_BC
+            | wgpu::Features::FLOAT32_FILTERABLE
+            | wgpu::Features::FLOAT32_BLENDABLE);
     wgpu::DeviceDescriptor {
         label: Some("penumbra"),
         required_limits: limits,
