@@ -43,9 +43,11 @@ explained [below](#bindings), references under [Paths](#paths).
 
 ### Inputs and nodes that cook differently
 
-- **Feedback (`previous`).** A `tex.feedback`'s `previous` input sees what its source made in
-  the frame before. The wire into it may run backwards and close a loop; it is drawn dashed.
-  This is the only way to build a loop.
+- **Feedback (`previous`).** The `previous` input of a `tex.feedback` or a `chan.feedback` sees
+  what its source made in the frame before. The wire into it may run backwards and close a loop;
+  it is drawn dashed. This is the only way to build a loop. A binding closes a loop the same way:
+  bind to a `chan.feedback`, and wire the end of the loop into its `previous`. The source of a
+  `previous` input cooks in every frame its feedback node cooks, even when nothing else shows it.
 - **Inputs a node skips.** `tex.switch` with `inactive: skip` and `tex.sequence` cook only the
   inputs they show. So do `geo.merge` and `tex.composite` with a `show` input: channel k of
   `show` says whether `in<k>` shows, and at 0 or below it does not. The chains behind the others
@@ -113,8 +115,10 @@ The families:
   in and out. Channels drive params through [bindings](#bindings).
   A channel holds one or many samples, so a set of channels is a small grid of numbers:
   `tex.from_chan` turns it into a picture (a row per channel, a pixel per sample) for shaders to
-  look values up in, and `chan.from_tex` averages a picture down to a few pixels and turns them
-  into channels (at 1 x 1, its mean colour). Channels named `r`, `g`, `b` (and `a`), as
+  look values up in. `chan.from_tex` measures a picture, or a few areas of it, as channels: the
+  mean (at 1 x 1, its mean colour), the sum, the smallest or largest value, or the share of pixels
+  above a threshold. A sum of 0 and 1 counts pixels exactly (see
+  [chan.from_tex](reference/nodes.md#chanfrom_tex)). Channels named `r`, `g`, `b` (and `a`), as
   `chan.from_tex` makes them, come back from `tex.from_chan` as a colour.
 - **`audio`**: sound. A device input, a test tone, a mix, ready-made instruments and drones.
   `chan.beat_analysis` turns sound into channels (see [Audio](audio.md)).
@@ -252,6 +256,13 @@ draws every binding as a dashed line into the top of the node, green from a chan
 binding lines" unticked in the editor's right-click menu, a binding shows as a short stub on the
 bound node, and as a line only while the source or the bound node is selected or under the
 pointer.
+
+**A binding into a loop.** A param may not follow a channel that depends on the param's own
+node: `binding /loop.reset to /alive would make a loop`. To let a simulation restart when its
+measurement says it has died, put a `chan.feedback` between. Wire the measurement into the
+`chan.feedback`'s `previous` and bind the param to the `chan.feedback`. The param then follows the
+measurement a frame later. The recipe is on the [chan.from_tex](reference/nodes.md#chanfrom_tex)
+page.
 
 ### Text and choices
 

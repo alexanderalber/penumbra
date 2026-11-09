@@ -251,6 +251,14 @@ pub fn test_types() -> NodeTypes {
             Ok(Cooked::Outputs(vec![Data::new(DataKind::Chan, chans(v)), extra]))
         },
     );
+    simple(
+        &mut t,
+        NodeDesc::new("test.previous", "Its input's value from the frame before, 0 before it has one")
+            .input_previous("previous", DataKind::Chan)
+            .output("out", DataKind::Chan)
+            .time_dependent(),
+        |cx| chan(input(cx, 0)),
+    );
     t.register(FnNodeType::new(
         NodeDesc::new("test.counter", "Counts its cooks (time-dependent); keeps the count as state")
             .time_dependent()

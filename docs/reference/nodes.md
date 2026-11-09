@@ -1198,7 +1198,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.dropdown](#chandropdown), [chan.envelope](#chanenvelope), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
+[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.dropdown](#chandropdown), [chan.envelope](#chanenvelope), [chan.feedback](#chanfeedback), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
 
 *inputs:* [chan.data_in](#chandata_in), [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.midi_in](#chanmidi_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
@@ -1473,6 +1473,20 @@ Outputs:
 | `hold` | float | `0` | 0 to 5 s (soft, held within 0 to 3600 s) | Trigger mode: how long the level stays at `sustain` before the release |
 | `threshold` | float | `0.5` | 0 to 1 (soft) | The input counts as on above this value |
 
+### chan.feedback
+
+Passes on the channels its input had in the frame before. A measurement of a loop can then drive the loop: bind a tex.feedback's `reset` to it, and a simulation starts over when it has died
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs:
+
+- `previous` (chan): The channels to pass on a frame later. Sees the previous frame, so it may close a loop.
+
+Outputs:
+
+- `out` (chan): The input's channels as they were in the frame before. No channels in the first frame and right after a reset
+
 ### chan.filter
 
 Smooths jumpy numbers over time: calms a sensor, softens a jump. From a plain lag to steeper filters, averages, a speed limit and an adaptive filter for tracking
@@ -1514,18 +1528,22 @@ Outputs: `out` (chan).
 
 ### chan.from_tex
 
-Turns a picture into numbers: its average colour, or the colours of a few areas, as channels to drive things with
+Turns a picture into numbers: its average colour, the sum, smallest or largest value, or how much of it is lit, as channels to drive things with. Also per area
 
 Inputs:
 
 - `in` (tex)
 
-Outputs: `out` (chan).
+Outputs:
+
+- `out` (chan): Usually the values of the frame that just cooked. When the GPU is slow they come a frame or two later; while stepping or recording, always at once. A binding from them into the loop they measure goes through a chan.feedback
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `columns` | int | `1` | 1 to 256 (soft, held within 1 to 4096) | Samples per channel: the picture is averaged down to this many columns |
-| `rows` | int | `1` | 1 to 64 (soft, held within 1 to 1024) | Rows the picture is averaged down to. With more than one row, the channels are numbered by row from the top (r0, r1, ...) |
+| `measure` | mean \| sum \| min \| max \| coverage | `"mean"` |  | What each channel says about the pixels of its area; mean: the average value; sum: all values added up: in a picture of 0 and 1, the number of pixels that are 1, exact up to 16 million; min: the smallest value; max: the largest value; coverage: the share of pixels above `threshold`: 0 for none, 1 for all |
+| `threshold` | float | `0.5` | 0 to 1 (soft) | A pixel counts for coverage when its value is above this. Does something only with measure coverage. |
+| `columns` | int | `1` | 1 to 256 (soft, held within 1 to 4096) | Samples per channel: the picture is divided into this many columns |
+| `rows` | int | `1` | 1 to 64 (soft, held within 1 to 1024) | Rows the picture is divided into. With more than one row, the channels are numbered by row from the top (r0, r1, ...) |
 | `components` | rgba \| rgb \| red \| luminance | `"rgba"` |  | Which channels a row gives; values are linear and premultiplied, as the picture holds them; rgba: r, g, b and a; rgb: r, g and b; red: r only; luminance: lum, the brightness as the eye weighs it (Rec. 709) |
 
 ### chan.http_in
@@ -1618,8 +1636,8 @@ Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `op` | add \| subtract \| multiply \| divide \| min \| max \| power \| modulo \| floor \| equal \| atan2 \| sin \| cos \| tan \| abs | `"add"` |  | What is done with a and b, sample by sample. Angles are in radians: multiply degrees by 0.0174533 (pi / 180) first; add: a + b; subtract: a - b; multiply: a times b: b scales a; divide: a divided by b; min: the smaller of a and b: b is a ceiling; max: the larger of a and b: b is a floor; power: a to the power b; modulo: a wrapped into 0 to b (b = 0 leaves a); floor: a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a); equal: 1 where a equals b (to within a millionth), else 0: whether the piece channel is 3; atan2: the angle of the point x = b, y = a, from -pi to pi: the direction of a tracked movement (a and b both 0 give 0); sin: the sine of a, from -1 to 1: a swing as a goes round (b is not used); cos: the cosine of a, from -1 to 1: the sine a quarter turn ahead (b is not used); tan: the tangent of a; near a quarter turn it grows without bound (b is not used); abs: a without its sign: -3 becomes 3 (b is not used) |
-| `b` | float | `0` | -1 to 1 (soft) | The b side as a number, used while input b is unconnected. Does something only with op add, subtract, multiply, divide, min, max, power, modulo, floor, equal or atan2. |
+| `op` | add \| subtract \| multiply \| divide \| min \| max \| power \| modulo \| floor \| equal \| atan2 \| sin \| cos \| tan \| abs \| above \| below | `"add"` |  | What is done with a and b, sample by sample. Angles are in radians: multiply degrees by 0.0174533 (pi / 180) first; add: a + b; subtract: a - b; multiply: a times b: b scales a; divide: a divided by b; min: the smaller of a and b: b is a ceiling; max: the larger of a and b: b is a floor; power: a to the power b; modulo: a wrapped into 0 to b (b = 0 leaves a); floor: a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a); equal: 1 where a equals b (to within a millionth), else 0: whether the piece channel is 3; atan2: the angle of the point x = b, y = a, from -pi to pi: the direction of a tracked movement (a and b both 0 give 0); sin: the sine of a, from -1 to 1: a swing as a goes round (b is not used); cos: the cosine of a, from -1 to 1: the sine a quarter turn ahead (b is not used); tan: the tangent of a; near a quarter turn it grows without bound (b is not used); abs: a without its sign: -3 becomes 3 (b is not used); above: 1 where a is greater than b, else 0: whether a level has passed a mark; below: 1 where a is less than b, else 0: whether a count has dropped under a mark |
+| `b` | float | `0` | -1 to 1 (soft) | The b side as a number, used while input b is unconnected. Does something only with op add, subtract, multiply, divide, min, max, power, modulo, floor, equal, atan2, above or below. |
 
 ### chan.merge
 

@@ -513,12 +513,26 @@ impl Gpu {
         source: &str,
         params: &[penumbra_core::ParamSpec],
     ) -> Result<Arc<Pass>, Error> {
-        let key = pass::cache_key(source, params);
+        self.cached_pass_in(label, source, params, FORMAT)
+    }
+
+    /// [`Gpu::cached_pass`] rendering into targets of `format` ([`Pass::compile_in`]).
+    pub fn cached_pass_in(
+        &self,
+        label: &str,
+        source: &str,
+        params: &[penumbra_core::ParamSpec],
+        format: wgpu::TextureFormat,
+    ) -> Result<Arc<Pass>, Error> {
+        let mut key = pass::cache_key(source, params);
+        if format != FORMAT {
+            key ^= 0x9e37_79b9_7f4a_7c15;
+        }
         if let Some(p) = lock(&self.inner.passes).get(&key) {
             return Ok(p.clone());
         }
         // Compiled outside the lock; two threads racing compile twice, which is harmless.
-        let compiled = Arc::new(Pass::compile(self, label, source, params)?);
+        let compiled = Arc::new(Pass::compile_in(self, label, source, params, format)?);
         lock(&self.inner.passes).insert(key, compiled.clone());
         Ok(compiled)
     }

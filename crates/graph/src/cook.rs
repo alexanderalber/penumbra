@@ -729,6 +729,8 @@ pub struct Cooker {
     read_all: BTreeSet<NodeId>,
     /// The nodes cooked in every pass ([`NodeDesc::eager`]), as of the last sync.
     eager: Vec<NodeId>,
+    /// The nodes with a wired input that reads a previous result, as of the last sync.
+    feedback: Vec<NodeId>,
     /// Nodes are evaluated for thumbnails now, which does not count as use.
     for_thumbnails: bool,
     /// Time of the passes since the profile was last taken.
@@ -760,6 +762,7 @@ impl Cooker {
             read: BTreeSet::new(),
             read_all: BTreeSet::new(),
             eager: Vec::new(),
+            feedback: Vec::new(),
             for_thumbnails: false,
             spent: PassSpent::default(),
             exact: false,
@@ -870,6 +873,7 @@ impl Cooker {
         for id in self.eager.clone() {
             self.evaluate(id, time, &mut report);
         }
+        self.evaluate_fed_back(time, &mut report);
         let evaluated = Instant::now();
         self.for_thumbnails = true;
         self.cook_thumbnails(thumbnails, time, start, &mut report);
@@ -1012,11 +1016,51 @@ impl Cooker {
             .filter(|(_, rt)| rt.ty.as_ref().is_some_and(|t| t.desc().eager))
             .map(|(id, _)| *id)
             .collect();
+        self.feedback = self
+            .runtimes
+            .iter()
+            .filter(|(_, rt)| {
+                rt.def.inputs.iter().enumerate().any(|(i, p)| p.is_some() && rt.def.is_previous(i))
+            })
+            .map(|(id, _)| *id)
+            .collect();
         self.lazy = self
             .runtimes
             .values()
             .any(|rt| rt.ty.as_ref().is_some_and(|t| t.desc().outputs.iter().any(|o| o.lazy)));
         self.last_net = Some(net.clone());
+    }
+
+    /// Cooks what the nodes cooked in this pass read through a previous-result input (the end
+    /// of a feedback loop), when nothing else made it cook: such an input is no dependency, so
+    /// a source read only there would never cook, and the loop would stand still. The source
+    /// cooks after its reader, and the reader takes its result in the next pass.
+    fn evaluate_fed_back(&mut self, time: FrameTime, report: &mut CookReport) {
+        // Each round cooks at least one node that had not cooked in this pass.
+        for _ in 0..=self.feedback.len() {
+            let pass = self.pass;
+            let todo: Vec<NodeId> = self
+                .feedback
+                .iter()
+                .filter_map(|id| self.runtimes.get(id))
+                .filter(|rt| rt.evaluated_pass == pass)
+                .flat_map(|rt| {
+                    rt.def
+                        .inputs
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| rt.def.is_previous(*i))
+                        .filter_map(|(_, p)| p.map(|p| p.node))
+                })
+                .filter(|src| self.runtimes.get(src).is_some_and(|s| s.evaluated_pass != pass))
+                .collect();
+            if todo.is_empty() {
+                return;
+            }
+            for id in todo {
+                self.evaluate(id, time, report);
+            }
+        }
     }
 
     /// Works out which ports this pass reads ([`Cooker::read`]): everything wired into a node
@@ -2994,6 +3038,54 @@ mod tests {
         f.edit(&[Op::Unbind { param: ParamPath::parse("/dst.value").unwrap(), component: None }]);
         assert_eq!(f.cook(&["/dst"]), ["/dst"]);
         assert_eq!(f.value("/dst"), Some(7.0));
+    }
+
+    #[test]
+    fn a_source_read_only_through_a_previous_input_cooks_after_its_reader() {
+        let mut f = Fixture::new(&[
+            create("/count", "test.counter"),
+            create("/late", "test.previous"),
+            connect("/count", "/late", 0),
+        ]);
+        assert_eq!(f.cook(&["/late"]), ["/late", "/count"]);
+        assert_eq!(f.value("/late"), Some(0.0));
+        for want in 1..4 {
+            f.clock.advance(1);
+            f.cook(&["/late"]);
+            assert_eq!(f.value("/late"), Some(f64::from(want)), "the count of the pass before");
+        }
+    }
+
+    #[test]
+    fn a_binding_closes_a_loop_through_a_previous_input() {
+        let bind = |param: &str, from: &str| Op::Bind {
+            param: ParamPath::parse(param).unwrap(),
+            component: None,
+            from: pp(from),
+            channel: None,
+            cell: None,
+            format: None,
+        };
+        // /next = /start.value + 1, and /start.value follows /next of the frame before.
+        let mut f = Fixture::new(&[
+            create("/start", "test.const"),
+            create("/one", "test.const"),
+            create("/next", "test.add"),
+            create("/late", "test.previous"),
+            connect("/start", "/next", 0),
+            connect("/one", "/next", 1),
+            connect("/next", "/late", 0),
+        ]);
+        f.set("/one.value", Value::Float(1.0));
+        let refused = f.net.apply(&f.types, &[bind("/start.value", "/next")]).unwrap_err().to_string();
+        assert!(refused.contains("binding /start.value to /next would make a loop"), "{refused}");
+        assert!(refused.contains("chan.feedback"), "the way out is named: {refused}");
+        f.edit(&[bind("/start.value", "/late")]);
+        for want in 1..6 {
+            f.cook(&["/next"]);
+            assert_eq!(f.value("/next"), Some(f64::from(want)));
+            f.clock.advance(1);
+        }
     }
 
     #[test]

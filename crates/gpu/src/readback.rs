@@ -270,6 +270,17 @@ impl Gpu {
         self.read_async_as_stored(textures, spare, None)
     }
 
+    /// [`Gpu::read_async_exact`] calling `ready` once every buffer is mapped, as
+    /// [`Gpu::read_async_notify`] does.
+    pub fn read_async_exact_notify(
+        &self,
+        textures: &[&Tex],
+        spare: &mut ReadPool,
+        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Result<PendingRead, Error> {
+        self.read_async_as_stored(textures, spare, ready)
+    }
+
     fn read_async_as_stored(
         &self,
         textures: &[&Tex],

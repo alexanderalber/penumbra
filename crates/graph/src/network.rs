@@ -1111,10 +1111,17 @@ impl Applied {
                     return Err(Error::new(format!("{from} has no {what} output to bind to")));
                 }
                 if src == dst || net.depends_on(src, dst) {
-                    let why = format!(
+                    let mut why = format!(
                         "binding {param} to {from} would make a loop: {from} depends on {}",
                         param.node()
                     );
+                    // Channels can come round a frame later; tables have no such node.
+                    if reads == DataKind::Chan {
+                        why.push_str(&format!(
+                            ". To use {from} a frame later, wire it into the `previous` input of a \
+                             chan.feedback and bind to the chan.feedback"
+                        ));
+                    }
                     if self.params == Params::Keep {
                         self.left_out.push(why);
                         return Ok(());

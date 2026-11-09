@@ -8,9 +8,15 @@
 //! `auto`, takes channels named exactly `r`, `g`, `b` (and `a`), as `chan.from_tex` names them,
 //! as a colour, so a mean colour read at 1 x 1 comes back as a colour swatch.
 //!
-//! `chan.from_tex` averages its input down to `columns` x `rows` pixels on the GPU, reads that
-//! small picture back and hands it out as channels: one per row and colour component, a sample
-//! per column. At 1 x 1 it is the mean colour of the picture, ready to be bound to a parameter.
+//! `chan.from_tex` reduces its input to `columns` x `rows` areas on the GPU, reads that small
+//! picture back and hands it out as channels: one per row and colour component, a sample per
+//! column. Each value is the mean, sum, minimum or maximum over the area's pixels, or the share
+//! of them above a threshold. At 1 x 1 the mean is the mean colour of the picture, ready to be
+//! bound to a parameter. The reduction reads whole texels with `textureLoad` and adds them up in
+//! 32-bit floats where the GPU renders those: every pixel counts once, so the sum of a picture
+//! of 0 and 1 is an exact count up to 2^24 (16.7 million) pixels. Without 32-bit float targets
+//! one step writes half floats (exact for sums of 0 and 1, about three digits otherwise) and the
+//! rest is added up on the CPU in 64-bit floats.
 //! The readback waits up to [`WAIT`] within the cook, so with a quick GPU the channels belong to
 //! the frame that just arrived; when it takes longer the node cooks again once the copy is
 //! there, and a frame arriving in between is skipped rather than queued.
@@ -23,18 +29,18 @@ use std::time::{Duration, Instant};
 use half::f16;
 use half::slice::HalfFloatSliceExt;
 use penumbra_core::chan::{MAX_CHANNELS, MAX_SAMPLES};
-use penumbra_core::{Channel, Chans, Error, Name, ParamSpec};
+use penumbra_core::{Channel, Chans, Error, Name, ParamSpec, Value};
 use penumbra_gpu::{Gpu, PassInput, PendingRead, ReadPool, ReadState, Tex, TexRing};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
 
-use super::{PassCell, gpu, waiting};
+use super::{gpu, waiting};
 use crate::on_gpu;
 
 pub const FROM_CHAN: &str = "tex.from_chan";
 pub const FROM_TEX: &str = "chan.from_tex";
-const SHRINK: &str = include_str!("shrink.wgsl");
+const REDUCE: &str = include_str!("reduce.wgsl");
 /// How long a cook waits for the readback it just started.
 const WAIT: Duration = Duration::from_millis(4);
 /// A readback older than this is given up.
@@ -46,13 +52,11 @@ const STALE: Duration = Duration::from_secs(2);
 fn wait_for(cx: &CookContext<'_>) -> Duration {
     if cx.exact_frames() { STALE } else { WAIT }
 }
-/// Most a shrink pass reduces by along each axis while still averaging every texel
-/// (`pn_area` takes up to 8 bilinear samples, each the mean of 2 texels across).
-const SHRINK_STEP: u32 = 16;
+/// Most a reduction step reduces by along each axis: a texel of its output reads at most
+/// 16 x 16 texels.
+const REDUCE_STEP: u32 = 16;
 /// Largest half float; larger channel values are clipped to it rather than becoming infinite.
 const HALF_MAX: f64 = 65504.0;
-/// Rec. 709 weights for `luminance`, on linear values.
-const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
@@ -87,19 +91,37 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             FROM_TEX,
-            "Turns a picture into numbers: its average colour, or the colours of a few areas, as channels to drive things with",
+            "Turns a picture into numbers: its average colour, the sum, smallest or largest value, or how much of it is lit, as channels to drive things with. Also per area",
+        )
+        .param(
+            ParamSpec::choice("measure", &["mean", "sum", "min", "max", "coverage"])
+                .doc("What each channel says about the pixels of its area")
+                .choice_doc("mean", "the average value")
+                .choice_doc(
+                    "sum",
+                    "all values added up: in a picture of 0 and 1, the number of pixels that are 1, exact up to 16 million",
+                )
+                .choice_doc("min", "the smallest value")
+                .choice_doc("max", "the largest value")
+                .choice_doc("coverage", "the share of pixels above `threshold`: 0 for none, 1 for all"),
+        )
+        .param(
+            ParamSpec::float("threshold", 0.5)
+                .range(0.0, 1.0)
+                .doc("A pixel counts for coverage when its value is above this")
+                .applies_when("measure", &["coverage"]),
         )
         .param(
             ParamSpec::int("columns", 1)
                 .clamp(1.0, 4096.0)
                 .range(1.0, 256.0)
-                .doc("Samples per channel: the picture is averaged down to this many columns"),
+                .doc("Samples per channel: the picture is divided into this many columns"),
         )
         .param(
             ParamSpec::int("rows", 1)
                 .clamp(1.0, 1024.0)
                 .range(1.0, 64.0)
-                .doc("Rows the picture is averaged down to. With more than one row, the channels are numbered by row from the top (r0, r1, ...)"),
+                .doc("Rows the picture is divided into. With more than one row, the channels are numbered by row from the top (r0, r1, ...)"),
         )
         .param(
             ParamSpec::choice("components", &["rgba", "rgb", "red", "luminance"])
@@ -110,18 +132,40 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .choice_doc("luminance", "lum, the brightness as the eye weighs it (Rec. 709)"),
         )
         .input("in", DataKind::Tex)
-        .output("out", DataKind::Chan),
+        .output("out", DataKind::Chan)
+        .describe_output(
+            "out",
+            "Usually the values of the frame that just cooked. When the GPU is slow they come a frame \
+             or two later; while stepping or recording, always at once. A binding from them into the \
+             loop they measure goes through a chan.feedback",
+        ),
         || Box::new(FromTex::default()) as Box<dyn Operator>,
     )
     .warm_up(on_gpu(warm_up)))
 }
 
-fn shrink_pass(gpu: &Gpu) -> Result<Arc<penumbra_gpu::Pass>, Error> {
-    gpu.cached_pass(FROM_TEX, SHRINK, &[])
+/// The params of `reduce.wgsl`, set by the node for each step.
+fn reduce_params() -> [ParamSpec; 7] {
+    [
+        ParamSpec::int("cells_x", 1),
+        ParamSpec::int("cells_y", 1),
+        ParamSpec::int("mode", 0),
+        ParamSpec::int("first", 0),
+        ParamSpec::int("luminance", 0),
+        ParamSpec::int("above", 0),
+        ParamSpec::float("threshold", 0.5),
+    ]
+}
+
+/// The reduction pass, rendering into 32-bit floats when `exact` (the GPU must support it,
+/// [`Gpu::float_targets`]), else into half floats.
+fn reduce_pass(gpu: &Gpu, exact: bool) -> Result<Arc<penumbra_gpu::Pass>, Error> {
+    let format = if exact { penumbra_gpu::FLOAT_FORMAT } else { penumbra_gpu::FORMAT };
+    gpu.cached_pass_in(FROM_TEX, REDUCE, &reduce_params(), format)
 }
 
 fn warm_up(gpu: &Gpu) -> Result<(), Error> {
-    shrink_pass(gpu).map(|_| ())
+    reduce_pass(gpu, gpu.float_targets()).map(|_| ())
 }
 
 #[derive(Default)]
@@ -251,12 +295,13 @@ fn picture(chans: &Chans, layout: Layout, low: f64, high: f64, max: usize) -> Pi
 
 #[derive(Default)]
 struct FromTex {
-    pass: PassCell,
-    /// The shrink passes' targets, largest first; the last is read back.
+    /// The reduction pass, and whether it renders into 32-bit floats.
+    pass: Option<(bool, Arc<penumbra_gpu::Pass>)>,
+    /// The reduction steps' targets, largest first; the last is read back.
     levels: Vec<TexRing>,
     pool: ReadPool,
-    /// The readback in flight, when it started and the components it was started for.
-    pending: Option<(PendingRead, Instant, Components)>,
+    /// The readback in flight, when it started and what it was started for.
+    pending: Option<(PendingRead, Instant, Request)>,
     out: Option<Data>,
 }
 
@@ -286,13 +331,50 @@ impl Components {
             Components::Luminance => &["lum"],
         }
     }
+}
 
-    fn values(self, [r, g, b, a]: [f32; 4]) -> [f32; 4] {
-        match self {
-            Components::Luminance => [LUMA[0] * r + LUMA[1] * g + LUMA[2] * b, 0.0, 0.0, 0.0],
-            _ => [r, g, b, a],
+/// What each channel says about the pixels of its area (`measure`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Measure {
+    Mean,
+    Sum,
+    Min,
+    Max,
+    Coverage,
+}
+
+impl Measure {
+    fn parse(s: &str) -> Self {
+        match s {
+            "sum" => Measure::Sum,
+            "min" => Measure::Min,
+            "max" => Measure::Max,
+            "coverage" => Measure::Coverage,
+            _ => Measure::Mean,
         }
     }
+
+    /// The reduction's `mode`: 0 adds up, 1 keeps the smallest, 2 the largest.
+    fn mode(self) -> i64 {
+        match self {
+            Measure::Min => 1,
+            Measure::Max => 2,
+            _ => 0,
+        }
+    }
+}
+
+/// What a readback was started for: enough to turn the small picture into channels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Request {
+    components: Components,
+    measure: Measure,
+    /// Columns and rows.
+    cells: (u32, u32),
+    /// The input's size.
+    src: (u32, u32),
+    /// Texels per area in the picture read back (1 x 1 when every step ran on the GPU).
+    per: (u32, u32),
 }
 
 impl Operator for FromTex {
@@ -317,8 +399,8 @@ impl Operator for FromTex {
         };
         match ready {
             ReadState::Ready => {
-                if let Some((read, _, components)) = self.pending.take() {
-                    let chans = chans_of(&read, components, cx.rate().as_f64());
+                if let Some((read, _, request)) = self.pending.take() {
+                    let chans = chans_of(&read, &request, cx.rate().as_f64());
                     self.pool = read.recycle();
                     let out = Data::new(DataKind::Chan, chans.map_err(CookError::failed)?);
                     self.out = Some(out.clone());
@@ -345,13 +427,28 @@ impl Operator for FromTex {
 }
 
 impl FromTex {
-    /// Averages the input down in as few passes as keep every texel counted and starts reading
-    /// the result back; the node is woken when it arrives.
+    /// The reduction pass, rendering into 32-bit floats when `exact`.
+    fn pass(&mut self, gpu: &Gpu, exact: bool) -> Result<Arc<penumbra_gpu::Pass>, Error> {
+        if let Some((e, p)) = &self.pass
+            && *e == exact
+        {
+            return Ok(p.clone());
+        }
+        let p = reduce_pass(gpu, exact)?;
+        self.pass = Some((exact, p.clone()));
+        Ok(p)
+    }
+
+    /// Reduces the input on the GPU and starts reading the result back; the node is woken when
+    /// it arrives. With 32-bit float targets every step runs on the GPU and one texel per area
+    /// comes back. Without them the first step writes half floats and the rest is done here.
     fn start(&mut self, cx: &CookContext<'_>, gpu: &Gpu, src: &Tex) -> Result<(), CookError> {
         let side =
             |name: &str| -> Result<u32, CookError> { Ok(u32::try_from(cx.int(name)?).unwrap_or(1).max(1)) };
         let (columns, rows) = (side("columns")?, side("rows")?);
         let components = Components::parse(cx.text("components")?);
+        let measure = Measure::parse(cx.text("measure")?);
+        let threshold = cx.float("threshold")?;
         let per_row = components.names().len();
         let channels = rows as usize * per_row;
         if channels > MAX_CHANNELS || channels * columns as usize > MAX_SAMPLES {
@@ -360,72 +457,146 @@ impl FromTex {
                  fit ({MAX_CHANNELS} channels, {MAX_SAMPLES} samples)"
             )));
         }
-        let sizes = shrink_sizes(src.size(), (columns, rows));
-        self.levels.resize_with(sizes.len(), TexRing::new);
-        let pass = self.pass.get(gpu, shrink_pass)?;
+        let exact = gpu.float_targets();
+        let format = if exact { penumbra_gpu::FLOAT_FORMAT } else { penumbra_gpu::FORMAT };
+        let mut plan = reduce_plan(src.size(), (columns, rows));
+        if !exact {
+            plan.truncate(1);
+        }
+        self.levels.resize_with(plan.len(), TexRing::new);
+        let pass = self.pass(gpu, exact)?;
         let mut from = src.clone();
-        for (ring, (w, h)) in self.levels.iter_mut().zip(&sizes) {
-            let target = ring.next(gpu, *w, *h, FROM_TEX)?;
+        let mut per = (1, 1);
+        for (i, (ring, step)) in self.levels.iter_mut().zip(&plan).enumerate() {
+            per = *step;
+            let target = ring.next_in(gpu, columns * per.0, rows * per.1, format, FROM_TEX)?;
+            let param = |name: &str| -> Option<Value> {
+                Some(match name {
+                    "cells_x" => Value::Int(i64::from(columns)),
+                    "cells_y" => Value::Int(i64::from(rows)),
+                    "mode" => Value::Int(measure.mode()),
+                    "first" => Value::Int(i64::from(i == 0)),
+                    "luminance" => Value::Int(i64::from(components == Components::Luminance)),
+                    "above" => Value::Int(i64::from(measure == Measure::Coverage)),
+                    "threshold" => Value::Float(threshold),
+                    _ => return None,
+                })
+            };
             pass.render(
                 gpu,
                 &target,
-                &PassInput { inputs: &[Some(&from)], seconds: 0.0, frame: 0, param: &|_| None },
+                &PassInput { inputs: &[Some(&from)], seconds: 0.0, frame: 0, param: &param },
             )?;
             from = target;
         }
         let waker = cx.waker();
-        let read = gpu.read_async_notify(&[&from], &mut self.pool, Some(Arc::new(move || waker.wake())))?;
-        self.pending = Some((read, Instant::now(), components));
+        let ready: Option<Arc<dyn Fn() + Send + Sync>> = Some(Arc::new(move || waker.wake()));
+        let read = if exact {
+            gpu.read_async_exact_notify(&[&from], &mut self.pool, ready)?
+        } else {
+            gpu.read_async_notify(&[&from], &mut self.pool, ready)?
+        };
+        let request = Request { components, measure, cells: (columns, rows), src: src.size(), per };
+        self.pending = Some((read, Instant::now(), request));
         Ok(())
     }
 }
 
-/// The sizes of the shrink passes from `from` down to `to`, each at most [`SHRINK_STEP`] times
-/// smaller than the one before along each axis; always at least one pass (the last is `to`).
-fn shrink_sizes(from: (u32, u32), to: (u32, u32)) -> Vec<(u32, u32)> {
-    let step =
-        |cur: u32, target: u32| if cur > target * SHRINK_STEP { cur.div_ceil(SHRINK_STEP) } else { target };
-    let mut sizes = Vec::new();
-    let mut cur = from;
+/// Texels per area in the output of each reduction step, first step first. Each step reduces
+/// by at most [`REDUCE_STEP`] along each axis, and the last leaves one texel per area.
+fn reduce_plan(src: (u32, u32), cells: (u32, u32)) -> Vec<(u32, u32)> {
+    let widest = |s: u32, c: u32| s.div_ceil(c.max(1)).max(1);
+    let mut span = (widest(src.0, cells.0), widest(src.1, cells.1));
+    let mut plan = Vec::new();
     loop {
-        cur = (step(cur.0, to.0), step(cur.1, to.1));
-        sizes.push(cur);
-        if cur == to || sizes.len() > 16 {
+        let per = (span.0.div_ceil(REDUCE_STEP), span.1.div_ceil(REDUCE_STEP));
+        plan.push(per);
+        if per == (1, 1) || plan.len() > 16 {
             break;
         }
+        span = per;
     }
-    sizes
+    plan
 }
 
-/// The readback as channels: per row (top first) one channel per component, a sample per
-/// column.
-fn chans_of(read: &PendingRead, components: Components, rate: f64) -> Result<Chans, String> {
+/// How many source texels area `cell` of `cells` covers along an axis of `src` texels, as the
+/// reduction pass counts them: at least one.
+fn area_len(cell: u32, src: u32, cells: u32) -> u64 {
+    let (cell, src, cells) = (u64::from(cell), u64::from(src.max(1)), u64::from(cells.max(1)));
+    let a = (cell * src / cells).min(src - 1);
+    let b = ((cell + 1) * src / cells).max(a + 1);
+    b - a
+}
+
+/// The readback as channels: per row of areas (top first) one channel per component, a sample
+/// per column. Partial results of an area are combined here in 64-bit floats.
+fn chans_of(read: &PendingRead, request: &Request, rate: f64) -> Result<Chans, String> {
     let (w, h) = read.size(0).ok_or("nothing was read back")?;
-    let names = components.names();
-    let mut channels = Vec::with_capacity(h as usize * names.len());
-    let mut halves = Vec::with_capacity(w as usize * 4);
-    let mut floats = vec![0f32; w as usize * 4];
-    let mut y = 0usize;
+    let (columns, rows) = request.cells;
+    let (px, py) = request.per;
+    if (w, h) != (columns * px, rows * py) {
+        return Err(format!("read back {w} x {h} texels, expected {} x {}", columns * px, rows * py));
+    }
+    let float = read.pixel_bytes(0) == Some(16);
+    let mut texels: Vec<[f32; 4]> = Vec::with_capacity(w as usize * h as usize);
     read.rows(0, |row: &[u8]| -> Result<(), String> {
-        halves.clear();
-        halves.extend(row.as_chunks::<2>().0.iter().map(|b| f16::from_le_bytes(*b)));
-        floats.resize(halves.len(), 0.0);
-        halves.convert_to_f32_slice(&mut floats);
-        let pixels: Vec<[f32; 4]> = floats.as_chunks::<4>().0.iter().map(|p| components.values(*p)).collect();
-        for (i, name) in names.iter().enumerate() {
-            let name = if h == 1 { (*name).to_string() } else { format!("{name}{y}") };
-            channels.push(Channel {
-                name: Name::new(&name).map_err(|e| e.to_string())?,
-                samples: pixels.iter().map(|p| f64::from(p.get(i).copied().unwrap_or(0.0))).collect(),
-            });
+        if float {
+            for px in row.as_chunks::<16>().0 {
+                let (f, _) = px.as_chunks::<4>();
+                texels.push(std::array::from_fn(|i| f.get(i).map_or(0.0, |b| f32::from_le_bytes(*b))));
+            }
+        } else {
+            for px in row.as_chunks::<8>().0 {
+                let (f, _) = px.as_chunks::<2>();
+                texels
+                    .push(std::array::from_fn(|i| f.get(i).map_or(0.0, |b| f16::from_le_bytes(*b).to_f32())));
+            }
         }
-        y += 1;
         Ok(())
     })
     .map_err(|e| match e {
         penumbra_gpu::RowsError::Gpu(e) => e.to_string(),
         penumbra_gpu::RowsError::Sink(e) => e,
     })?;
+    let measure = request.measure;
+    let area = |cx: u32, cy: u32| -> [f64; 4] {
+        let start = match measure {
+            Measure::Min => f64::INFINITY,
+            Measure::Max => f64::NEG_INFINITY,
+            _ => 0.0,
+        };
+        let mut acc = [start; 4];
+        for y in cy * py..(cy + 1) * py {
+            for x in cx * px..(cx + 1) * px {
+                let Some(t) = texels.get(y as usize * w as usize + x as usize) else { continue };
+                for (a, v) in acc.iter_mut().zip(t) {
+                    let v = f64::from(*v);
+                    *a = match measure {
+                        Measure::Min => a.min(v),
+                        Measure::Max => a.max(v),
+                        _ => *a + v,
+                    };
+                }
+            }
+        }
+        let count = (area_len(cx, request.src.0, columns) * area_len(cy, request.src.1, rows)) as f64;
+        acc.map(|a| match measure {
+            Measure::Mean | Measure::Coverage => a / count,
+            _ => a,
+        })
+    };
+    let names = request.components.names();
+    let mut channels = Vec::with_capacity(rows as usize * names.len());
+    for cy in 0..rows {
+        let values: Vec<[f64; 4]> = (0..columns).map(|cx| area(cx, cy)).collect();
+        for (i, name) in names.iter().enumerate() {
+            let name = if rows == 1 { (*name).to_string() } else { format!("{name}{cy}") };
+            channels.push(Channel {
+                name: Name::new(&name).map_err(|e| e.to_string())?,
+                samples: values.iter().map(|v| v.get(i).copied().unwrap_or(0.0)).collect(),
+            });
+        }
+    }
     // Samples are pixels along a row, not moments.
     Chans::new(rate, channels)
         .map(|c| c.with_axis(penumbra_core::SampleAxis::Index))
@@ -520,10 +691,21 @@ mod tests {
     }
 
     #[test]
-    fn shrinking_takes_steps_of_at_most_sixteen() {
-        assert_eq!(shrink_sizes((1920, 1080), (1, 1)), [(120, 68), (8, 5), (1, 1)]);
-        assert_eq!(shrink_sizes((64, 64), (4, 4)), [(4, 4)]);
-        assert_eq!(shrink_sizes((8, 8), (32, 1)), [(32, 1)], "growing is one pass");
-        assert_eq!(shrink_sizes((4096, 1), (1, 1)), [(256, 1), (16, 1), (1, 1)]);
+    fn reducing_takes_steps_of_at_most_sixteen() {
+        assert_eq!(reduce_plan((1920, 1080), (1, 1)), [(120, 68), (8, 5), (1, 1)]);
+        assert_eq!(reduce_plan((64, 64), (4, 4)), [(1, 1)]);
+        assert_eq!(reduce_plan((8, 8), (32, 1)), [(1, 1)], "more columns than pixels is one step");
+        assert_eq!(reduce_plan((4096, 1), (1, 1)), [(256, 1), (16, 1), (1, 1)]);
+        assert_eq!(reduce_plan((1000, 600), (4, 2)), [(16, 19), (1, 2), (1, 1)]);
+    }
+
+    #[test]
+    fn areas_cover_every_pixel_once() {
+        for (src, cells) in [(1000, 7), (1920, 1), (5, 5), (17, 4)] {
+            let total: u64 = (0..cells).map(|c| area_len(c, src, cells)).sum();
+            assert_eq!(total, u64::from(src), "{src} pixels in {cells} areas");
+        }
+        // More areas than pixels: each still covers one.
+        assert!((0..8).all(|c| area_len(c, 3, 8) == 1));
     }
 }

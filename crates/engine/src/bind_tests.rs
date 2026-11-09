@@ -85,7 +85,7 @@ fn a_channel_is_written_as_text_and_picks_a_choice_by_place() {
     assert_eq!(names(&f, "/c"), ["n1"]);
     assert_eq!(bound(&f, "/m", "op"), "subtract");
     f.call("node.set", json!({"path": "/k", "params": {"value0": 99}}));
-    assert_eq!(bound(&f, "/m", "op"), "abs", "held at the last entry");
+    assert_eq!(bound(&f, "/m", "op"), "below", "held at the last entry");
     let info = f.call("node.info", json!({"path": "/c"}));
     assert_eq!(info["binds"], json!([{"param": "name0", "from": "/k", "format": "n{.0}"}]));
     eventually("autosave", || f.file().contains(r#"binds: {"name0": (node: "k", format: "n{.0}")}"#));

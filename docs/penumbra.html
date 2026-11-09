@@ -285,7 +285,7 @@ details.target { outline: 2px solid var(--accent); }
 <p>All three make the source cook first. A bound param recooks its node only when the value it takes changes. Wires may not form a loop, except into a feedback input (below). Bindings are explained <a href="#concepts-bindings">below</a>, references under <a href="#concepts-paths">Paths</a>.</p>
 <h4 id="concepts-inputs-and-nodes-that-cook-differently">Inputs and nodes that cook differently</h4>
 <ul>
-<li><strong>Feedback (<code>previous</code>).</strong> A <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a>'s <code>previous</code> input sees what its source made in the frame before. The wire into it may run backwards and close a loop; it is drawn dashed. This is the only way to build a loop.
+<li><strong>Feedback (<code>previous</code>).</strong> The <code>previous</code> input of a <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a> or a <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a> sees what its source made in the frame before. The wire into it may run backwards and close a loop; it is drawn dashed. This is the only way to build a loop. A binding closes a loop the same way: bind to a <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a>, and wire the end of the loop into its <code>previous</code>. The source of a <code>previous</code> input cooks in every frame its feedback node cooks, even when nothing else shows it.
 </li>
 <li><strong>Inputs a node skips.</strong> <a class="ref" href="#tex.switch"><code>tex.switch</code></a> with <code>inactive: skip</code> and <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> cook only the inputs they show. So do <a class="ref" href="#geo.merge"><code>geo.merge</code></a> and <a class="ref" href="#tex.composite"><code>tex.composite</code></a> with a <code>show</code> input: channel k of <code>show</code> says whether <code>in&lt;k&gt;</code> shows, and at 0 or below it does not. The chains behind the others stand still and cost nothing until they are shown again. A feedback loop, cache or time machine there carries on from where it stopped.
 </li>
@@ -328,7 +328,7 @@ details.target { outline: 2px solid var(--accent); }
 <ul>
 <li><strong><code>tex</code></strong>: pictures. Generators (noise, constant, text, image, video, a PSD layer), filters (level, blur, transform, ...), compositing, a shader node for anything else, <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a> for projection mapping, <a class="ref" href="#tex.render"><code>tex.render</code></a> for 3D.
 </li>
-<li><strong><code>chan</code></strong>: numbers that change over time. Generators (<code>lfo</code>, <code>noise</code>, <code>constant</code>), <code>math</code>, <code>filter</code>, <code>trail</code> (the last seconds of a channel as samples, to plot or to feed on; it starts empty and fills up), and OSC in and out. Channels drive params through <a href="#concepts-bindings">bindings</a>. A channel holds one or many samples, so a set of channels is a small grid of numbers: <a class="ref" href="#tex.from_chan"><code>tex.from_chan</code></a> turns it into a picture (a row per channel, a pixel per sample) for shaders to look values up in, and <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> averages a picture down to a few pixels and turns them into channels (at 1 x 1, its mean colour). Channels named <code>r</code>, <code>g</code>, <code>b</code> (and <code>a</code>), as <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> makes them, come back from <a class="ref" href="#tex.from_chan"><code>tex.from_chan</code></a> as a colour.
+<li><strong><code>chan</code></strong>: numbers that change over time. Generators (<code>lfo</code>, <code>noise</code>, <code>constant</code>), <code>math</code>, <code>filter</code>, <code>trail</code> (the last seconds of a channel as samples, to plot or to feed on; it starts empty and fills up), and OSC in and out. Channels drive params through <a href="#concepts-bindings">bindings</a>. A channel holds one or many samples, so a set of channels is a small grid of numbers: <a class="ref" href="#tex.from_chan"><code>tex.from_chan</code></a> turns it into a picture (a row per channel, a pixel per sample) for shaders to look values up in. <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> measures a picture, or a few areas of it, as channels: the mean (at 1 x 1, its mean colour), the sum, the smallest or largest value, or the share of pixels above a threshold. A sum of 0 and 1 counts pixels exactly (see <a href="#chan.from_tex">chan.from_tex</a>). Channels named <code>r</code>, <code>g</code>, <code>b</code> (and <code>a</code>), as <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> makes them, come back from <a class="ref" href="#tex.from_chan"><code>tex.from_chan</code></a> as a colour.
 </li>
 <li><strong><code>audio</code></strong>: sound. A device input, a test tone, a mix, ready-made instruments and drones. <a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> turns sound into channels (see <a href="#audio">Audio</a>).
 </li>
@@ -386,6 +386,7 @@ moss = #1b4332 #52b788
 <h3 id="concepts-bindings">Bindings</h3>
 <p>A param can follow a channel instead of its stored value: drag a wire from a <code>chan</code> output onto the param's row, or use the link button at the end of the row, which also offers a specific channel by name. A vector or colour binds per component: drop the wire on one field.</p>
 <p>A bound row shows its name in the channel colour, the live value, and the source. The stored value stays and comes back when the binding is removed; it is also used, with a warning, while the channel is missing. Integers round, booleans are on from 0.5, hard ranges clamp. The editor draws every binding as a dashed line into the top of the node, green from a channel. With &quot;All binding lines&quot; unticked in the editor's right-click menu, a binding shows as a short stub on the bound node, and as a line only while the source or the bound node is selected or under the pointer.</p>
+<p><strong>A binding into a loop.</strong> A param may not follow a channel that depends on the param's own node: <code>binding /loop.reset to /alive would make a loop</code>. To let a simulation restart when its measurement says it has died, put a <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a> between. Wire the measurement into the <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a>'s <code>previous</code> and bind the param to the <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a>. The param then follows the measurement a frame later. The recipe is on the <a href="#chan.from_tex">chan.from_tex</a> page.</p>
 <h4 id="concepts-text-and-choices">Text and choices</h4>
 <p>Text params and choices bind too, so a table or a <a class="ref" href="#script.python"><code>script.python</code></a> can change them during a show. The link button lists the chan nodes and the table nodes; a table offers its rows and then its cells. Dropping a chan wire on the row binds the whole param.</p>
 <ul>
@@ -3912,7 +3913,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-chan">
 <h3>chan</h3>
-<p class="kinds"><a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.beat_analysis">chan.beat_analysis</a> <a href="#chan.beat_grid">chan.beat_grid</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.data_in">chan.data_in</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.dropdown">chan.dropdown</a> <a href="#chan.envelope">chan.envelope</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.http_in">chan.http_in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.midi_in">chan.midi_in</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
+<p class="kinds"><a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.beat_analysis">chan.beat_analysis</a> <a href="#chan.beat_grid">chan.beat_grid</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.data_in">chan.data_in</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.dropdown">chan.dropdown</a> <a href="#chan.envelope">chan.envelope</a> <a href="#chan.feedback">chan.feedback</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.http_in">chan.http_in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.midi_in">chan.midi_in</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
 <details class="entry node" id="chan.audio_envelope"><summary><code class="name">chan.audio_envelope</code><span class="sum">How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</span></summary>
 <div class="body">
 <p>How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</p>
@@ -4245,6 +4246,33 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#audio-tips">Audio › Tips</a></p>
 </div></details>
+<details class="entry node" id="chan.feedback"><summary><code class="name">chan.feedback</code><span class="sum">Passes on the channels its input had in the frame before. A measurement of a loop can then drive the loop: bind a tex.feedback's <code>reset</code> to it, and a simulation starts over when it has died</span></summary>
+<div class="body">
+<p>Passes on the channels its input had in the frame before. A measurement of a loop can then drive the loop: bind a tex.feedback's <code>reset</code> to it, and a simulation starts over when it has died</p>
+<p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>previous</code> <span class="kind">chan</span>: The channels to pass on a frame later. Sees the previous frame, so it may close a loop.</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span>: The input's channels as they were in the frame before. No channels in the first frame and right after a reset</li>
+</ul>
+<div class="more">
+<h5 id="chan.feedback-what-it-is-for">What it is for</h5>
+<p>Wires and bindings may not form a loop: every node needs its sources cooked before it. A <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a> lets channels come round anyway, one frame late. Its <code>previous</code> input sees what its source made in the frame before. The wire into <code>previous</code> may run backwards, as the one into a <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a>'s <code>previous</code> does, and is drawn dashed.</p>
+<p>The usual case is a measurement that acts back on what it measures. A <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> counts what is alive in a simulation, and the simulation's <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a> should restart when the count falls to 0. Binding <code>reset</code> to the <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> is refused, because the count depends on the loop. Bound to a <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a> of the count, the loop restarts a frame after the count fell.</p>
+<h5 id="chan.feedback-wiring-it">Wiring it</h5>
+<ol>
+<li>Wire the channels to send back (the end of the measurement) into <code>previous</code>.
+</li>
+<li>Bind the param in the loop to the <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a>.
+</li>
+</ol>
+<p>The output has the input's channels and names. In the first frame, and right after a reset, it has no channels yet. A param bound to it then keeps its stored value for that frame.</p>
+</div>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-bindings">Concepts › Bindings</a></p>
+</div></details>
 <details class="entry node" id="chan.filter"><summary><code class="name">chan.filter</code><span class="sum">Smooths jumpy numbers over time: calms a sensor, softens a jump. From a plain lag to steeper filters, averages, a speed limit and an adaptive filter for tracking</span></summary>
 <div class="body">
 <p>Smooths jumpy numbers over time: calms a sensor, softens a jump. From a plain lag to steeper filters, averages, a speed limit and an adaptive filter for tracking</p>
@@ -4321,26 +4349,63 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-text-and-choices">Concepts › Text and choices</a></p>
 </div></details>
-<details class="entry node" id="chan.from_tex"><summary><code class="name">chan.from_tex</code><span class="sum">Turns a picture into numbers: its average colour, or the colours of a few areas, as channels to drive things with</span></summary>
+<details class="entry node" id="chan.from_tex"><summary><code class="name">chan.from_tex</code><span class="sum">Turns a picture into numbers: its average colour, the sum, smallest or largest value, or how much of it is lit, as channels to drive things with. Also per area</span></summary>
 <div class="body">
-<p>Turns a picture into numbers: its average colour, or the colours of a few areas, as channels to drive things with</p>
+<p>Turns a picture into numbers: its average colour, the sum, smallest or largest value, or how much of it is lit, as channels to drive things with. Also per area</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
 </ul>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">chan</span></li>
+<li><code>out</code> <span class="kind">chan</span>: Usually the values of the frame that just cooked. When the GPU is slow they come a frame or two later; while stepping or recording, always at once. A binding from them into the loop they measure goes through a chan.feedback</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>columns</code></td><td>int</td><td><code>1</code></td><td>1 to 256 (soft, held within 1 to 4096)</td><td>Samples per channel: the picture is averaged down to this many columns</td></tr>
-<tr><td><code>rows</code></td><td>int</td><td><code>1</code></td><td>1 to 64 (soft, held within 1 to 1024)</td><td>Rows the picture is averaged down to. With more than one row, the channels are numbered by row from the top (r0, r1, ...)</td></tr>
+<tr><td><code>measure</code></td><td>mean | sum | min | max | coverage</td><td><code>&quot;mean&quot;</code></td><td></td><td>What each channel says about the pixels of its area<ul><li><code>mean</code>: the average value</li><li><code>sum</code>: all values added up: in a picture of 0 and 1, the number of pixels that are 1, exact up to 16 million</li><li><code>min</code>: the smallest value</li><li><code>max</code>: the largest value</li><li><code>coverage</code>: the share of pixels above <code>threshold</code>: 0 for none, 1 for all</li></ul></td></tr>
+<tr><td><code>threshold</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1 (soft)</td><td>A pixel counts for coverage when its value is above this</td></tr>
+<tr><td><code>columns</code></td><td>int</td><td><code>1</code></td><td>1 to 256 (soft, held within 1 to 4096)</td><td>Samples per channel: the picture is divided into this many columns</td></tr>
+<tr><td><code>rows</code></td><td>int</td><td><code>1</code></td><td>1 to 64 (soft, held within 1 to 1024)</td><td>Rows the picture is divided into. With more than one row, the channels are numbered by row from the top (r0, r1, ...)</td></tr>
 <tr><td><code>components</code></td><td>rgba | rgb | red | luminance</td><td><code>&quot;rgba&quot;</code></td><td></td><td>Which channels a row gives; values are linear and premultiplied, as the picture holds them<ul><li><code>rgba</code>: r, g, b and a</li><li><code>rgb</code>: r, g and b</li><li><code>red</code>: r only</li><li><code>luminance</code>: lum, the brightness as the eye weighs it (Rec. 709)</li></ul></td></tr>
 </tbody>
 </table>
+<div class="more">
+<h5 id="chan.from_tex-what-it-is-for">What it is for</h5>
+<p><a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> turns a picture into a few numbers that can drive params. How bright is the camera picture? How much of the mask is lit? How many grains are left in a sand simulation? Is the simulation dead, or has it filled the screen?</p>
+<p><code>measure</code> says what each channel tells about the pixels:</p>
+<table>
+<thead><tr><th>measure</th><th>the channel is</th><th>for</th></tr></thead>
+<tbody>
+<tr><td><code>mean</code></td><td>the average value</td><td>the mean colour, a brightness to follow</td></tr>
+<tr><td><code>sum</code></td><td>all values added up</td><td>counting: in a picture of 0 and 1, the number of pixels that are 1</td></tr>
+<tr><td><code>min</code>, <code>max</code></td><td>the smallest or largest value</td><td>whether anything is left, the brightest spot's level</td></tr>
+<tr><td><code>coverage</code></td><td>the share of pixels above <code>threshold</code>, from 0 to 1</td><td>how much of the window is ice, how much of the mask is lit</td></tr>
+</tbody>
+</table>
+<p><code>components</code> picks the channels: <code>r g b a</code>, <code>r g b</code>, <code>r</code>, or <code>lum</code> (brightness as the eye weighs it). With <code>columns</code> and <code>rows</code> above 1 the picture is divided into areas, and each area is measured on its own: a sample per column, a channel per row (<code>r0</code>, <code>r1</code>, ...).</p>
+<h5 id="chan.from_tex-exact-counts">Exact counts</h5>
+<p>Every pixel counts once, and the sums are added up in 32-bit floats. So the <code>sum</code> of a picture of 0 and 1 is an exact count up to 16 million pixels: 1920 x 1080 is about 2 million. A mean is good to about 7 digits. A <a class="ref" href="#tex.shader"><code>tex.shader</code></a> with <code>format</code> 32f is measured at its full precision.</p>
+<p>A GPU that cannot render 32-bit floats reduces the first 16 x 16 pixels in half floats and adds up the rest on the CPU. Counts of 0 and 1 stay exact there; other sums keep about 3 digits.</p>
+<h5 id="chan.from_tex-when-the-numbers-arrive">When the numbers arrive</h5>
+<p>Usually the channels belong to the frame that just cooked. When the GPU is slow they come a frame or two later. While stepping or recording, they always belong to their frame. The node costs only while something uses its channels. At 1920 x 1080 it added about half a millisecond per frame in a stepped run, most of it waiting for the GPU.</p>
+<h5 id="chan.from_tex-driving-the-loop-it-measures">Driving the loop it measures</h5>
+<p>A binding from <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> into the loop that the picture comes from is refused as a loop. Put a <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a> between: wire <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> into its <code>previous</code> input and bind to the <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a>. The value then arrives a frame later. See the example.</p>
+<h5 id="chan.from_tex-example">Example</h5>
+<p>A simulation that starts over when it has died:</p>
+<ol>
+<li><a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> on the simulation's state, <code>measure</code> <code>coverage</code>, <code>components</code> <code>luminance</code>, <code>threshold</code> 0.05: the share of the picture that is alive.
+</li>
+<li><a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>op</code> <code>below</code> and <code>b</code> 0.001: 1 when almost nothing is alive.
+</li>
+<li><a class="ref" href="#chan.feedback"><code>chan.feedback</code></a> with the <a class="ref" href="#chan.math"><code>chan.math</code></a> wired into <code>previous</code>.
+</li>
+<li>Bind the loop's <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a> <code>reset</code> to the <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a>. When the population has died, the loop starts over from <code>initial</code> a frame later.
+</li>
+</ol>
+<p>For &quot;has filled the screen&quot;, add a second <a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>above</code> and combine both with <a class="ref" href="#chan.math"><code>chan.math</code></a> <code>max</code>.</p>
+</div>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#shaders-precision-16f-or-32f">Shaders › Precision: 16f or 32f</a>, <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
 </div></details>
 <details class="entry node" id="chan.http_in"><summary><code class="name">chan.http_in</code><span class="sum">A control page in the browser (a phone on the LAN) or another program sends JSON over HTTP or a WebSocket: every address a channel</span></summary>
@@ -4472,7 +4537,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>op</code></td><td>add | subtract | multiply | divide | min | max | power | modulo | floor | equal | atan2 | sin | cos | tan | abs</td><td><code>&quot;add&quot;</code></td><td></td><td>What is done with a and b, sample by sample. Angles are in radians: multiply degrees by 0.0174533 (pi / 180) first<ul><li><code>add</code>: a + b</li><li><code>subtract</code>: a - b</li><li><code>multiply</code>: a times b: b scales a</li><li><code>divide</code>: a divided by b</li><li><code>min</code>: the smaller of a and b: b is a ceiling</li><li><code>max</code>: the larger of a and b: b is a floor</li><li><code>power</code>: a to the power b</li><li><code>modulo</code>: a wrapped into 0 to b (b = 0 leaves a)</li><li><code>floor</code>: a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a)</li><li><code>equal</code>: 1 where a equals b (to within a millionth), else 0: whether the piece channel is 3</li><li><code>atan2</code>: the angle of the point x = b, y = a, from -pi to pi: the direction of a tracked movement (a and b both 0 give 0)</li><li><code>sin</code>: the sine of a, from -1 to 1: a swing as a goes round (b is not used)</li><li><code>cos</code>: the cosine of a, from -1 to 1: the sine a quarter turn ahead (b is not used)</li><li><code>tan</code>: the tangent of a; near a quarter turn it grows without bound (b is not used)</li><li><code>abs</code>: a without its sign: -3 becomes 3 (b is not used)</li></ul></td></tr>
+<tr><td><code>op</code></td><td>add | subtract | multiply | divide | min | max | power | modulo | floor | equal | atan2 | sin | cos | tan | abs | above | below</td><td><code>&quot;add&quot;</code></td><td></td><td>What is done with a and b, sample by sample. Angles are in radians: multiply degrees by 0.0174533 (pi / 180) first<ul><li><code>add</code>: a + b</li><li><code>subtract</code>: a - b</li><li><code>multiply</code>: a times b: b scales a</li><li><code>divide</code>: a divided by b</li><li><code>min</code>: the smaller of a and b: b is a ceiling</li><li><code>max</code>: the larger of a and b: b is a floor</li><li><code>power</code>: a to the power b</li><li><code>modulo</code>: a wrapped into 0 to b (b = 0 leaves a)</li><li><code>floor</code>: a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a)</li><li><code>equal</code>: 1 where a equals b (to within a millionth), else 0: whether the piece channel is 3</li><li><code>atan2</code>: the angle of the point x = b, y = a, from -pi to pi: the direction of a tracked movement (a and b both 0 give 0)</li><li><code>sin</code>: the sine of a, from -1 to 1: a swing as a goes round (b is not used)</li><li><code>cos</code>: the cosine of a, from -1 to 1: the sine a quarter turn ahead (b is not used)</li><li><code>tan</code>: the tangent of a; near a quarter turn it grows without bound (b is not used)</li><li><code>abs</code>: a without its sign: -3 becomes 3 (b is not used)</li><li><code>above</code>: 1 where a is greater than b, else 0: whether a level has passed a mark</li><li><code>below</code>: 1 where a is less than b, else 0: whether a count has dropped under a mark</li></ul></td></tr>
 <tr><td><code>b</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>The b side as a number, used while input b is unconnected</td></tr>
 </tbody>
 </table>

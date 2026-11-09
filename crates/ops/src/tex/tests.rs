@@ -1637,20 +1637,21 @@ fn feedback_keeps_a_restored_frame_until_the_loop_moves_on() {
     let kept = rig.cooker.kept();
     let [(_, penumbra_graph::Kept::State(items))] = kept.as_slice() else { panic!("{kept:?}") };
 
-    // A restart in which only the feedback cooks for a while (its loop's end is not looked at):
-    // it keeps passing the saved frame instead of falling back to `initial`.
+    // A restart in which only the feedback is looked at: it passes the saved frame instead of
+    // falling back to `initial`, and the loop's end cooks after it, so the loop carries on from
+    // the saved frame although nothing shows the end.
     let mut again = Rig::new(gpu, None, &ops);
     again.cooker.cook(&again.net, again.clock.now(), &[], &[]);
     again.cooker.restore(again.id("/fb"), penumbra_graph::Kept::State(items.clone())).unwrap();
-    for _ in 0..3 {
+    for k in 0..3 {
         again.clock.advance(1);
-        assert!((red(&mut again, "/fb") - saved).abs() < 0.01);
+        let got = red(&mut again, "/fb");
+        assert!((got - (saved + 0.1 * k as f32)).abs() < 0.01, "frame {k}: {got} after {saved}");
     }
-    // Once the end of the loop has made something from it, the loop carries on from there.
     let next = red(&mut again, "/acc");
-    assert!((next - (saved + 0.1)).abs() < 0.01, "{next} after {saved}");
+    assert!((next - (saved + 0.3)).abs() < 0.01, "{next} after {saved}");
     again.clock.advance(1);
-    assert!((red(&mut again, "/acc") - (saved + 0.2)).abs() < 0.01);
+    assert!((red(&mut again, "/acc") - (saved + 0.4)).abs() < 0.01);
     // A restore into a running loop shows the saved frame once the clock moves, then goes on.
     again.cooker.restore(again.id("/fb"), penumbra_graph::Kept::State(items.clone())).unwrap();
     again.clock.advance(1);
@@ -2863,6 +2864,7 @@ mod geo;
 mod layers;
 mod mesh_out;
 mod palettes;
+mod reduce;
 mod resample;
 mod shader_inputs;
 mod shader_iterations;
@@ -3181,11 +3183,13 @@ fn optical_flow_fills_in_plain_parts_of_a_moving_thing() {
     assert!(filled.0 < raw.0 * 0.6 && filled.1 < 0.5, "{raw:?} -> {filled:?}");
 }
 
-/// Cooks until `path` has channels.
+/// Cooks until `path` has channels, polling the GPU between cooks as the engine does once a
+/// frame (a readback wakes its node from there).
 fn chans_of(rig: &mut Rig, path: &str) -> penumbra_core::Chans {
     let id = rig.id(path);
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
+        rig.gpu.poll();
         rig.cook(path);
         if let Some(c) = rig
             .cooker

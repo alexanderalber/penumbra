@@ -139,7 +139,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "Calculates with channels: adds, multiplies or compares two inputs, or one input and a number",
         )
         .param(
-            ParamSpec::choice("op", &[MATH_BINARY, MATH_UNARY].concat())
+            ParamSpec::choice("op", &[MATH_BINARY, MATH_UNARY, MATH_COMPARE].concat())
             .doc("What is done with a and b, sample by sample. Angles are in radians: multiply degrees by 0.0174533 (pi / 180) first")
             .choice_doc("add", "a + b")
             .choice_doc("subtract", "a - b")
@@ -158,13 +158,15 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .choice_doc("sin", "the sine of a, from -1 to 1: a swing as a goes round (b is not used)")
             .choice_doc("cos", "the cosine of a, from -1 to 1: the sine a quarter turn ahead (b is not used)")
             .choice_doc("tan", "the tangent of a; near a quarter turn it grows without bound (b is not used)")
-            .choice_doc("abs", "a without its sign: -3 becomes 3 (b is not used)"),
+            .choice_doc("abs", "a without its sign: -3 becomes 3 (b is not used)")
+            .choice_doc("above", "1 where a is greater than b, else 0: whether a level has passed a mark")
+            .choice_doc("below", "1 where a is less than b, else 0: whether a count has dropped under a mark"),
         )
         .param(
             ParamSpec::float("b", 0.0)
                 .range(-1.0, 1.0)
                 .doc("The b side as a number, used while input b is unconnected")
-                .applies_when("op", MATH_BINARY),
+                .applies_when("op", &[MATH_BINARY, MATH_COMPARE].concat()),
         )
         .input("a", DataKind::Chan)
         .input("b", DataKind::Chan)
@@ -376,7 +378,40 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .output("out", DataKind::Chan),
         || Box::new(Null) as Box<dyn Operator>,
     ))?;
+    types.register(FnNodeType::new(
+        NodeDesc::new(
+            FEEDBACK,
+            "Passes on the channels its input had in the frame before. A measurement of a loop can then \
+             drive the loop: bind a tex.feedback's `reset` to it, and a simulation starts over when it has died",
+        )
+        .stateful()
+        .input_previous("previous", DataKind::Chan)
+        .describe_input("previous", "The channels to pass on a frame later.")
+        .output("out", DataKind::Chan)
+        .describe_output(
+            "out",
+            "The input's channels as they were in the frame before. No channels in the first frame and \
+             right after a reset",
+        )
+        .time_dependent(),
+        || Box::new(Feedback) as Box<dyn Operator>,
+    ))?;
     Ok(())
+}
+
+/// The kind that delays channels by a frame, so a binding may close a loop through it.
+pub const FEEDBACK: &str = "chan.feedback";
+
+/// `chan.feedback`: its input reads the source's result from the frame before.
+struct Feedback;
+
+impl Operator for Feedback {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        match cx.input(0) {
+            Some(data) if data.get::<Chans>().is_some() => Ok(Cooked::Outputs(vec![data.clone()])),
+            _ => out(Chans::empty(cx.rate().as_f64())?),
+        }
+    }
 }
 
 /// The kind of the constant, whose rows the param panel edits.
@@ -761,6 +796,10 @@ const MATH_BINARY: &[&str] =
 /// `chan.math`'s ops that work on a alone; b is not used.
 const MATH_UNARY: &[&str] = &["sin", "cos", "tan", "abs"];
 
+/// `chan.math`'s ops that compare a with b, 1 for true and 0 for false. After the others in the
+/// list, so a channel bound to `op` by number keeps its meaning.
+const MATH_COMPARE: &[&str] = &["above", "below"];
+
 struct Math;
 
 impl Operator for Math {
@@ -784,6 +823,8 @@ impl Operator for Math {
             "cos" => |a, _| a.cos(),
             "tan" => |a, _| a.tan(),
             "abs" => |a, _| a.abs(),
+            "above" => |a, b| if a > b { 1.0 } else { 0.0 },
+            "below" => |a, b| if a < b { 1.0 } else { 0.0 },
             _ => |a, b| a + b,
         };
         // The layout (names, length, rate) comes from a, else from b. An op on a alone takes
@@ -1293,6 +1334,23 @@ mod tests {
         assert!((after - want).abs() < 1e-9, "{before} -> {after}, want {want}");
         g.clock.advance(121);
         assert_eq!(g.value("/n"), before, "a steady frequency matches a fresh run");
+    }
+
+    #[test]
+    fn math_compares_a_with_b() {
+        for (op, a, want) in
+            [("above", 0.6, 1.0), ("above", 0.5, 0.0), ("below", 0.4, 1.0), ("below", 0.5, 0.0)]
+        {
+            let mut f = F::new(&[
+                create("/a", "chan.constant"),
+                set("/a.value0", a),
+                create("/m", "chan.math"),
+                set("/m.op", op),
+                set("/m.b", 0.5),
+                connect("/a", "/m", 0),
+            ]);
+            assert_eq!(f.value("/m"), want, "{a} {op} 0.5");
+        }
     }
 
     #[test]
