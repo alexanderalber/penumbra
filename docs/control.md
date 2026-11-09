@@ -134,7 +134,7 @@ Commands that only look, `cook.play` and OSC/DMX keep working. The exception amo
 ## Headless runs
 
 ```
-cargo run -p penumbra -- --headless script.jsonl [--project DIR] [--software] [--size WxH] [--scale F] [--speakers] [--no-save]
+cargo run -p penumbra -- --headless script.jsonl [--project DIR] [--software] [--size WxH] [--scale F] [--speakers] [--save]
 ```
 
 runs the real UI without a window and feeds it a script: one request per line
@@ -150,9 +150,14 @@ slashes), so a script kept beside `project.ron` names its files wherever the pro
 Each reply is printed as `method: {json}` on one line, as soon as its line of the script is
 done.
 Without `--project` it works on a fresh copy of the demo in the temp directory, so no project
-is touched. With `--project` the run saves the project as the app does: a param the script sets
-is in `project.ron` afterwards, and the next run starts with it. `--no-save` keeps the file as
-it was. The run then writes `project.ron` only where the script calls `project.save`.
+is touched. With `--project` the run leaves the project folder as it found it. A param the
+script sets is gone when the run ends, and the next run starts from the same file. The run
+writes `project.ron` only where the script calls `project.save`. It writes no `layout.ron` and
+no state snapshot, except where the script calls `state.save`. Files the script asks for
+(snapshots, recordings) are written as usual. A folder without a project gets a new
+`project.ron` at the start, as in the app. `--save` makes the run save as the app does:
+autosave, the save on closing, the editor layout and the state snapshot. `--no-save` is the
+default and is accepted, so older scripts still run.
 `--software` renders on a software adapter (WARP on Windows): slow but the same on
 every machine. `--size` is the window size in points. `--scale` is the number of pixels per
 point, from 0.5 to 4: `--size 1280x720 --scale 2` draws the 1280 by 720 layout at 2560 by 1440

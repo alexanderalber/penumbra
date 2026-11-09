@@ -17,8 +17,11 @@
 //! renders on WARP instead of the GPU, `--size WxH` sets the window size in points, `--scale F`
 //! the pixels per point (2 draws the same layout at twice the resolution each way). A headless
 //! run plays no sound on a device (its frames come too slowly for a speaker); `--speakers` lets
-//! `out.audio` open its devices after all. A headless run saves the project like the app does;
-//! with `--no-save` it writes `project.ron` only when the script calls `project.save`.
+//! `out.audio` open its devices after all. A headless run leaves the project folder as it found
+//! it: it writes `project.ron` only when the script calls `project.save`, and neither the editor
+//! layout nor a state snapshot unless the script asks for one. `--save` makes it save like the
+//! app does (autosave, the save on closing, the layout and the periodic state snapshot).
+//! `--no-save` names the default and is accepted for scripts written when saving was.
 //!
 //! When the GPU device is lost or the editor window fails, the app records it in
 //! `gpu-lost.json` in its data directory, shows a message box (not with
@@ -85,7 +88,9 @@ struct Args {
     fresh: bool,
     /// A headless run may play on the output devices.
     speakers: bool,
-    /// A headless run writes the project file only on `project.save`.
+    /// A headless run saves like the app does (`--save`); without it, only `project.save` writes.
+    save: bool,
+    /// `--no-save`: the headless default, said out loud.
     no_save: bool,
     /// Started again by show mode after this process crashed (`--after-crash-of PID`).
     after_crash_of: Option<u32>,
@@ -156,9 +161,9 @@ fn run() -> Result<(), String> {
             }
         },
     };
-    if args.no_save {
+    if args.headless.is_some() && !args.save {
         session.set_autosave(false);
-        log::info!("--no-save: the project file is written only by project.save");
+        log::info!("headless without --save: the project folder is written only where the script asks");
     }
     let dir = session.dir().to_path_buf();
     let session = Arc::new(session);
@@ -403,6 +408,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
         scale: None,
         fresh: false,
         speakers: false,
+        save: false,
         no_save: false,
         after_crash_of: None,
     };
@@ -421,6 +427,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--software" => parsed.software = true,
             "--fresh" => parsed.fresh = true,
             "--speakers" => parsed.speakers = true,
+            "--save" => parsed.save = true,
             "--no-save" => parsed.no_save = true,
             "--after-crash-of" => {
                 let value = args.next().ok_or("--after-crash-of needs a process id")?;
@@ -435,13 +442,16 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             other => {
                 return Err(format!(
                     "unknown argument `{other}`; usage: penumbra [--project DIR] [--port N] [--fresh] \
-                     [--headless SCRIPT [--software] [--size WxH] [--scale F] [--speakers] [--no-save]]"
+                     [--headless SCRIPT [--software] [--size WxH] [--scale F] [--speakers] [--save]]"
                 ));
             }
         }
     }
-    if parsed.no_save && parsed.headless.is_none() {
-        return Err("--no-save works in a headless run only (--headless SCRIPT)".into());
+    if (parsed.save || parsed.no_save) && parsed.headless.is_none() {
+        return Err("--save and --no-save work in a headless run only (--headless SCRIPT); the app with a window always saves".into());
+    }
+    if parsed.save && parsed.no_save {
+        return Err("--save and --no-save contradict each other; a headless run without either saves nothing by itself".into());
     }
     parsed.port = match port {
         Some(p) => p,
@@ -479,9 +489,13 @@ mod tests {
         assert!(parse_args(args(&["--scale", "x"])).is_err());
         assert_eq!(parse_args(args(&["--after-crash-of", "42"])).unwrap().after_crash_of, Some(42));
         assert!(parse_args(args(&["--after-crash-of", "x"])).is_err());
-        assert!(parse_args(args(&["--headless", "s", "--no-save"])).unwrap().no_save);
-        assert!(!parse_args(args(&["--headless", "s"])).unwrap().no_save);
+        assert!(parse_args(args(&["--headless", "s", "--save"])).unwrap().save);
+        assert!(!parse_args(args(&["--headless", "s"])).unwrap().save);
+        let quiet = parse_args(args(&["--headless", "s", "--no-save"])).unwrap();
+        assert!(!quiet.save, "the default, accepted");
+        assert!(parse_args(args(&["--save"])).is_err(), "only for a headless run");
         assert!(parse_args(args(&["--no-save"])).is_err(), "only for a headless run");
+        assert!(parse_args(args(&["--headless", "s", "--save", "--no-save"])).is_err());
         assert_eq!(
             restart_args(args(&["--project", "d", "--after-crash-of", "42", "--port", "1"])),
             ["--project", "d", "--port", "1"]

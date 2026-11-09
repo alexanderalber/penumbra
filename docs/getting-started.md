@@ -50,7 +50,7 @@ Other arguments:
 | `--project DIR` | the project directory (default: the project open last, else the demo) |
 | `--port N` | the control channel's port (default `PENUMBRA_PORT`, else 9880) |
 | `--fresh` | start without what feedback loops, caches and similar nodes kept from the last run (see [persistent state](helpers.md#state)) |
-| `--headless SCRIPT` | run without a window, driven by a script (see [Control](control.md#headless-runs)) |
+| `--headless SCRIPT` | run without a window, driven by a script (see [Control](control.md#headless-runs)). It saves the project only where the script calls `project.save`, or always with `--save` |
 
 The script node needs a Python 3.12 or newer installed, and numpy for pictures and meshes (see
 [Scripts](scripts.md)); everything else runs without them.

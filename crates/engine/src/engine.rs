@@ -382,7 +382,13 @@ impl CookState {
             gpu.poll();
         }
         let net = session.doc().snapshot();
-        self.state.after_pass(&self.cooker, &net, self.gpu.as_ref(), self.clock.now().frame);
+        self.state.after_pass(
+            &self.cooker,
+            &net,
+            self.gpu.as_ref(),
+            self.clock.now().frame,
+            session.autosave_on(),
+        );
     }
 
     /// What drives the show clock now.
@@ -536,7 +542,13 @@ impl CookState {
             gpu.poll();
         }
         let t_poll = Instant::now();
-        self.state.after_pass(&self.cooker, &net, self.gpu.as_ref(), self.clock.now().frame);
+        self.state.after_pass(
+            &self.cooker,
+            &net,
+            self.gpu.as_ref(),
+            self.clock.now().frame,
+            session.autosave_on(),
+        );
         let t_state = Instant::now();
         let free = self.draw_free_views(&net, &request.free);
         let t_free = Instant::now();
@@ -960,7 +972,10 @@ impl Engine {
     fn stop_threads(&self, save_state: bool) {
         let session = self.session();
         let snapshot = session.clone();
+        // A run that writes nothing by itself (headless without `--save`) takes no closing
+        // snapshot either; `state.save` still writes one.
         let due = save_state
+            && session.autosave_on()
             && match self.on_cook(move |st| st.state.due(&st.cooker, &snapshot.doc().snapshot())) {
                 Ok(due) => due,
                 Err(e) => {
@@ -1031,8 +1046,8 @@ impl Engine {
                 return Err(e);
             }
         };
-        // A run that writes no project file by itself (headless `--no-save`) keeps to that in
-        // the project it switches to.
+        // A run that writes no project file by itself (headless without `--save`) keeps to
+        // that in the project it switches to.
         if !self.session().autosave_on() {
             session.set_autosave(false);
         }

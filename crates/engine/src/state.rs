@@ -801,7 +801,15 @@ impl StateKeeper {
     }
 
     /// After every cook pass: moves a pending snapshot along and starts one when due.
-    pub fn after_pass(&mut self, cooker: &Cooker, net: &Network, gpu: Option<&Gpu>, frame: i64) {
+    /// `periodic` false leaves out the periodic snapshot; requested ones still run.
+    pub fn after_pass(
+        &mut self,
+        cooker: &Cooker,
+        net: &Network,
+        gpu: Option<&Gpu>,
+        frame: i64,
+        periodic: bool,
+    ) {
         let now = Instant::now();
         if let Some(p) = &self.pending {
             let state = p.job.read.as_ref().map_or(ReadState::Ready, PendingRead::state);
@@ -831,7 +839,7 @@ impl StateKeeper {
             return;
         }
         let config = self.shared.config();
-        let periodic = now >= self.last + config.interval && !self.shared.holding();
+        let periodic = periodic && now >= self.last + config.interval && !self.shared.holding();
         if !periodic && self.asked.is_empty() {
             return;
         }

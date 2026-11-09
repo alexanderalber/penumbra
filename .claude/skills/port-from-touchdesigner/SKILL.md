@@ -260,12 +260,15 @@ the type's list in `node.kinds`, from 0. A name there fails the whole batch. A f
 for the project folder:
 
     {"method": "node.batch", "params": {"ops": [...], "label": "port"}}
+    {"method": "project.save"}
     {"wait": 10}
     {"method": "node.snapshot", "params": {"path": "/out", "file": "$HERE/snap/out_10s.png"}}
     {"method": "node.list", "params": {"recursive": true}}
 
-An empty folder becomes a new project. Each reply is printed; read the errors and warnings of
-every node (`node.info {path}` shows a node's status).
+An empty folder becomes a new project. A headless run keeps its edits in memory: only
+`project.save` writes them into `project.ron`, so the port is there when the user opens the
+folder. Put it right after the batch, before the script sets params for a test. Each reply is
+printed; read the errors and warnings of every node (`node.info {path}` shows a node's status).
 
 Three things to know in a headless run:
 

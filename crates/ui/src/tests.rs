@@ -989,3 +989,72 @@ fn table_cells_show_four_significant_digits() {
         assert_eq!(shown(same), same);
     }
 }
+
+/// Every file in `dir` with its bytes, for comparing a folder before and after a run.
+fn folder_bytes(dir: &std::path::Path) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        for entry in std::fs::read_dir(&d).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                todo.push(path);
+            } else {
+                out.insert(path.strip_prefix(dir).unwrap().to_path_buf(), std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    out
+}
+
+/// A session that writes nothing by itself (a headless run without `--save`) leaves the
+/// project folder as it found it: no project file, no layout, no state snapshot at closing.
+/// `project.save` still writes the project file, and nothing else.
+#[test]
+fn a_run_without_autosave_leaves_the_project_folder_alone() {
+    let dir = ScratchDir::unborn("ui-no-autosave");
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let content = penumbra_project::parse(PROJECT, &types).unwrap();
+    // The project file as it exists before the run.
+    drop(Session::open(dir.path(), types.clone(), &content).unwrap());
+    let before = folder_bytes(dir.path());
+    assert_eq!(before.len(), 1, "{:?}", before.keys());
+
+    let script = |save: bool| {
+        let mut lines = vec![
+            json!({"method": "node.set", "params": {"path": "/c", "params": {"value0": 0.75}}}),
+            // A locked node makes a state snapshot due at closing.
+            json!({"method": "node.lock", "params": {"path": "/noise1", "locked": true}}),
+            json!({"method": "ui.options", "params": {"chan_bars": false}}),
+            json!({"wait": 1.5}),
+        ];
+        if save {
+            lines.push(json!({"method": "project.save", "params": {}}));
+        }
+        lines.iter().map(Json::to_string).collect::<Vec<_>>().join("\n")
+    };
+    let options = headless::Options { size: [800.0, 600.0], pixels_per_point: 1.0, software: true };
+    for save in [false, true] {
+        let session = Arc::new(Session::open(dir.path(), types.clone(), &content).unwrap());
+        session.set_autosave(false);
+        let engine = Engine::start(session).unwrap();
+        let replies = headless::run(engine.clone(), &script(save), &options).unwrap();
+        for (m, r) in &replies {
+            assert_eq!(r["ok"], true, "{m}: {r}");
+        }
+        engine.shutdown();
+        let after = folder_bytes(dir.path());
+        if save {
+            assert_eq!(
+                after.keys().collect::<Vec<_>>(),
+                before.keys().collect::<Vec<_>>(),
+                "only the project file"
+            );
+            let text = String::from_utf8_lossy(&after[std::path::Path::new(penumbra_project::FILE_NAME)])
+                .into_owned();
+            assert!(text.contains("0.75"), "project.save wrote the edit: {text}");
+        } else {
+            assert_eq!(after, before, "byte for byte as before");
+        }
+    }
+}

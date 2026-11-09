@@ -215,7 +215,7 @@ impl PenumbraApp {
         if options.spacenav {
             engine.spacenav().start();
         }
-        let layout = Layout::load(Some(engine.session().dir()));
+        let layout = project_layout(&engine.session());
         cc.egui_ctx.set_visuals(theme::visuals(0.0));
         Self {
             control: options.control,
@@ -282,7 +282,7 @@ impl PenumbraApp {
             self.layout.save_if_due(now, true);
         }
         self.starts_fresh = penumbra_engine::projects::starts_fresh(old.dir());
-        self.layout = Layout::load(Some(old.dir()));
+        self.layout = project_layout(&old);
         self.editor = Editor::default();
         self.params = ParamPanel::default();
         self.viewer = Viewer::default();
@@ -1799,6 +1799,13 @@ impl PenumbraApp {
 }
 
 /// What the status bar says after a trace: its message, then its warnings.
+/// The editor layout of `session`'s project. A session that writes nothing by itself (a
+/// headless run without `--save`) keeps its layout in memory too.
+fn project_layout(session: &penumbra_project::Session) -> Layout {
+    let layout = Layout::load(Some(session.dir()));
+    if session.autosave_on() { layout } else { layout.read_only() }
+}
+
 fn trace_message(r: &serde_json::Value) -> String {
     let text = r.get("message").and_then(|m| m.as_str()).unwrap_or("traced").to_string();
     let warnings: Vec<&str> = r

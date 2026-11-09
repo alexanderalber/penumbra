@@ -35,9 +35,10 @@
 //!   that makes no history entry, and the document counts as unsaved, so autosave writes them
 //!   into the file.
 //!
-//! - **Without autosave** ([`Session::set_autosave`], a headless run with `--no-save`): the
+//! - **Without autosave** ([`Session::set_autosave`], a headless run without `--save`): the
 //!   file is never written by itself, neither after a change nor on closing; `project.save`
-//!   still writes it. Edits of the file still merge.
+//!   still writes it. Edits of the file still merge. The engine and the editor read the flag
+//!   too and then write no state snapshot or layout by themselves.
 //!
 //! - **Locked for a show** ([`Session::set_locked`]): edits, undo and redo are refused with
 //!   [`LOCKED`], the file is neither read nor written, and `project.save` is refused. Param
@@ -401,7 +402,8 @@ impl Session {
     }
 
     /// Off: the file is written only by [`Session::save`], neither after a change nor by
-    /// [`Session::flush`]. On by default.
+    /// [`Session::flush`]. On by default. The other files the app keeps in the project folder
+    /// (the state snapshot, the editor layout) follow the same flag.
     pub fn set_autosave(&self, on: bool) {
         self.autosave.store(on, Ordering::Release);
     }

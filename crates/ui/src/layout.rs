@@ -316,9 +316,18 @@ pub struct Layout {
     unsent: Vec<NodeId>,
     dirty_since: Option<Instant>,
     last_text: Option<String>,
+    /// False: the file is read but never written ([`Layout::read_only`]).
+    writes: bool,
 }
 
 impl Layout {
+    /// Reads the file as [`Layout::load`] does but never writes it, for a run that leaves the
+    /// project folder as it found it.
+    pub fn read_only(mut self) -> Self {
+        self.writes = false;
+        self
+    }
+
     /// The layout of the project in `dir`; `None` keeps it in memory only. A missing or broken
     /// file gives an empty layout (logged), never an error: positions are only convenience.
     pub fn load(dir: Option<&Path>) -> Self {
@@ -342,6 +351,7 @@ impl Layout {
             unsent: Vec::new(),
             dirty_since: None,
             last_text: None,
+            writes: true,
         };
         let Some(file) = file else { return layout };
         match read(&file) {
@@ -644,7 +654,7 @@ impl Layout {
             return;
         }
         self.dirty_since = None;
-        let Some(file) = self.file.clone() else { return };
+        let Some(file) = self.file.clone().filter(|_| self.writes) else { return };
         // The file keeps the top level's view.
         let top = match self.level {
             None => self.view,
