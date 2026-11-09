@@ -2375,8 +2375,6 @@ Outputs: `out` (mat).
 
 [light.ambient](#lightambient), [light.directional](#lightdirectional), [light.environment](#lightenvironment), [light.merge](#lightmerge), [light.null](#lightnull), [light.point](#lightpoint), [light.projector](#lightprojector), [light.spot](#lightspot)
 
-*in the add dialog's `mapping` tab:* [light.projector](#lightprojector)
-
 ### light.ambient
 
 Even light from every side, also on surfaces that face away: lifts the shadows
@@ -2672,8 +2670,6 @@ Outputs:
 ## out
 
 [out.audio](#outaudio), [out.audio_file](#outaudio_file), [out.data](#outdata), [out.dmx](#outdmx), [out.mesh](#outmesh), [out.midi](#outmidi), [out.ndi](#outndi), [out.osc](#outosc), [out.projector](#outprojector), [out.spout](#outspout), [out.table](#outtable), [out.video](#outvideo)
-
-*in the add dialog's `mapping` tab:* [out.projector](#outprojector)
 
 ### out.audio
 

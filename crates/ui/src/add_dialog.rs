@@ -69,10 +69,11 @@ const GROUPS: [&[&str]; 7] = [
 /// leaves its family's tab. The families appear in the tab in the order they first come here.
 /// Component files join a topic's tab when the first level of their `shelf` is its name.
 ///
-/// `mapping` holds what setting up projectors needs: the output to a projector, the mapper,
-/// the scan and what draws on its result, the projector of the 3D scene. General tools that
-/// mapping also uses (`tex.remap`, `tex.transform`, `tex.primitive`, `view.camera`,
-/// `mat.occluder`) stay in their family, where TouchDesigner users look for them.
+/// `mapping` holds what setting up projectors needs: the mapper, the scan and what draws on its
+/// result. Both projectors stay in their family: `out.projector` is the output most projects
+/// use, mapped or not, and `light.projector` is looked for beside the other lights. General
+/// tools that mapping also uses (`tex.remap`, `tex.transform`, `tex.primitive`, `view.camera`,
+/// `mat.occluder`) stay in their family too, where TouchDesigner users look for them.
 /// `simulations` holds the types that simulate something over time. `vol` holds only the smoke's
 /// volumes, so it goes whole. Building blocks that are general tools (`tex.feedback`,
 /// `chan.feedback`, `tex.scatter`, `tex.optical_flow`) stay in their family.
@@ -80,7 +81,6 @@ pub const TOPICS: [(&str, &[&str]); 2] = [
     (
         "mapping",
         &[
-            "out.projector",
             "tex.mapper",
             "tex.blend_weight",
             "tex.face_content",
@@ -88,7 +88,6 @@ pub const TOPICS: [(&str, &[&str]); 2] = [
             "tex.scan_pattern",
             "tex.shape_content",
             "tex.shapes",
-            "light.projector",
         ],
     ),
     ("simulations", &["tex.fluid", "tex.render_volume", "vol"]),
@@ -1576,15 +1575,13 @@ mod tests {
         assert_eq!(
             of("mapping"),
             [
-                "out.projector",
                 "tex.mapper",
                 "tex.blend_weight",
                 "tex.face_content",
                 "tex.scan",
                 "tex.scan_pattern",
                 "tex.shape_content",
-                "tex.shapes",
-                "light.projector"
+                "tex.shapes"
             ]
         );
         assert_eq!(
@@ -1607,11 +1604,12 @@ mod tests {
         for stays in ["tex.remap", "tex.feedback", "tex.scatter", "tex.blob_track"] {
             assert!(tex.iter().any(|k| k == stays), "{stays} stays in tex");
         }
-        assert!(!of("out").iter().any(|k| k == "out.projector"));
+        assert!(of("out").iter().any(|k| k == "out.projector"), "the output stays in out");
         assert!(of("out").iter().any(|k| k == "out.video"));
         let rendering = of("geo");
         assert!(rendering.iter().any(|k| k == "light.spot"));
-        assert!(!rendering.iter().any(|k| k.starts_with("vol.") || k == "light.projector"));
+        assert!(rendering.iter().any(|k| k == "light.projector"), "beside the other lights");
+        assert!(!rendering.iter().any(|k| k.starts_with("vol.")));
         assert!(of("chan").iter().any(|k| k == "chan.feedback"));
     }
 
@@ -1651,7 +1649,7 @@ mod tests {
         let at = |wanted: &str| tabs[tab_for(&tabs, wanted)].key();
         assert_eq!(at("tex.noise"), "tex");
         assert_eq!(at("tex.scan"), "mapping");
-        assert_eq!(at("out.projector"), "mapping");
+        assert_eq!(at("out.projector"), "out");
         assert_eq!(at("out.video"), "out");
         assert_eq!(at("vol.smoke"), "simulations");
         assert_eq!(at("vol"), "simulations", "a family a topic takes whole");
@@ -1667,7 +1665,7 @@ mod tests {
         };
         assert_eq!(with("scan pattern"), ["mapping"]);
         assert_eq!(with("smoke"), ["simulations"]);
-        assert_eq!(with("projector"), ["mapping"], "both projectors live there");
+        assert_eq!(with("projector"), ["geo", "out", "mapping"], "both projectors, and the scan by its tag");
         for text in ["simulation", "physics"] {
             assert!(with(text).contains(&"simulations"), "{text}: {:?}", with(text));
         }

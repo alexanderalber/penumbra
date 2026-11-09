@@ -101,8 +101,8 @@ it.
 1. **Add a node:** press Tab, or double-click on empty canvas. The add dialog has a tab per
    family; small families share one: `rendering` holds the 3D ones, `system` the scripts,
    components and notes. Two tabs hold a topic instead of a family. `mapping` has what setting
-   up projectors needs: `out.projector`, `tex.mapper`, the scan and its shapes, the projector of
-   a 3D scene. `simulations` has `tex.fluid` and the smoke of `vol.smoke`. Each type is in one
+   up projectors needs: `tex.mapper`, the scan and its shapes (`out.projector` itself is
+   under `out`). `simulations` has `tex.fluid` and the smoke of `vol.smoke`. Each type is in one
    tab only, so `tex.scan` is under `mapping`, not `tex`. Tab cycles the tabs; while you type, it
    skips tabs without a match, so the search finds a type from any tab.
    Typing greys out the types that do not match, Enter takes the type named exactly as typed,
