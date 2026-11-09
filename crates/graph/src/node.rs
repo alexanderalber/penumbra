@@ -266,6 +266,12 @@ pub struct NodeDesc {
     /// on must see `run` turn off while its picture is not shown. Only for cheap nodes; what
     /// its bindings and inputs need cooks with it.
     pub eager: bool,
+    /// A text or choice param bound to it without naming a channel or a cell reads the first cell
+    /// of its first `table` output, not its channel: a dropdown hands out its entry's name, so a
+    /// choice follows it by name whatever the order of its own entries. A number param still
+    /// reads the channel.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub binds_by_name: bool,
     /// The runs among `inputs` ([`InputRun`]).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub runs: Vec<InputRun>,
@@ -291,6 +297,7 @@ impl NodeDesc {
             stateful: false,
             sampled: false,
             eager: false,
+            binds_by_name: false,
             runs: Vec::new(),
             renamed_inputs: Vec::new(),
         }
@@ -501,6 +508,12 @@ impl NodeDesc {
     /// Declares [`NodeDesc::eager`].
     pub fn eager(mut self) -> Self {
         self.eager = true;
+        self
+    }
+
+    /// Declares [`NodeDesc::binds_by_name`].
+    pub fn binds_by_name(mut self) -> Self {
+        self.binds_by_name = true;
         self
     }
 

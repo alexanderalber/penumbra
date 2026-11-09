@@ -738,7 +738,7 @@ Outputs: `out` (tex).
 | `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
-| `keys` | text | an example script |  | One key per line: position (0 to 1), then r g b and optionally a (linear, straight alpha; 1 when left out) |
+| `keys` | text | `0 0 0 0 1`, `1 1 1 1 1` (one per line) |  | One key per line: position (0 to 1), then r g b and optionally a (linear, straight alpha; 1 when left out) |
 | `palette` | palette |  |  | A palette or colormap instead of the keys, its colours spread evenly from 0 to 1 (a name, hex colours, or a number from a channel); empty uses the keys |
 | `steps` | bool | `false` |  | With a palette: equal bands, one per colour, instead of blending between them |
 | `shape` | horizontal \| vertical \| radial \| circular | `"horizontal"` |  | How the key positions 0 to 1 lie on the picture; horizontal: left (0) to right (1); vertical: bottom (0) to top (1); radial: the centre (0) out to the middle of the top edge (1), in rings; circular: once around the centre, counter-clockwise from the right (0) |
@@ -1200,7 +1200,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.envelope](#chanenvelope), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
+[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.dropdown](#chandropdown), [chan.envelope](#chanenvelope), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
 
 *inputs:* [chan.data_in](#chandata_in), [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.midi_in](#chanmidi_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
@@ -1432,6 +1432,25 @@ Outputs:
 | `interface` *(more)* | text |  |  | IP address of this machine's network card to listen on; empty listens on all (sACN multicast then joins on the system's default one) |
 | `port` *(more)* | int | `0` (the protocol's port) | 1024 to 65535 (soft, held within 0 to 65535) | UDP port to listen on; 0 is the protocol's own (Art-Net 6454, sACN 5568); 0: the protocol's port |
 
+### chan.dropdown
+
+A dropdown on the node itself: one entry picked from a list. A choice bound to it takes the entry of the same name
+
+Inputs: none.
+
+Outputs:
+
+- `out` (chan): One channel: the place of the entry picked, 0 for the first
+- `entry` (table): One cell: the name of the entry picked. A text or choice param bound to the node reads it
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `entries` | text | `a`, `b`, `c` (one per line) |  | The entries to pick from, one per line. Spaces around an entry and empty lines are left out |
+| `value` | text |  |  | The name of the entry picked. Empty: the first entry. Picking in the dropdown on the node sets it |
+| `label` | text |  |  | The dropdown's name on the show screen. Empty: the node's name |
+| `show` | bool | `false` |  | The control also appears on the show screen while show mode is on. There it steers the show without the editor. A change there makes no history entry and is saved when show mode ends |
+| `name` | text | `"value"` |  | Name of the channel it makes, as bindings and other nodes see it |
+
 ### chan.envelope
 
 Turns a gate or a trigger into a rise and fall (attack, decay, sustain, release): a flash on a beat, a light that swells while a button is held
@@ -1530,7 +1549,7 @@ Outputs:
 | `port` | int | `8090` | 1024 to 65535 (soft, held within 0 to 65535) | TCP port to listen on. The page opens at `http://localhost:8090/` for the default; http.status names the address and the port it got; 0: any free port |
 | `bind` | localhost \| lan | `"localhost"` |  | Who may connect; localhost: this machine only; lan: other devices too (a phone on the same network); Windows may ask to allow it |
 | `addresses` | text | `"*"` |  | Space-separated OSC patterns of the addresses to keep as channels: `/1/* /xy`; `*` all; `^/ping` leaves an address out |
-| `params` | controls \| off \| all | `"controls"` |  | Which params the addresses may set (live, outside the undo history); controls: the value of a chan.slider or chan.button flagged `show`: `/fader/value 0.5`; off: no param: the messages make channels only; all: any param the address names, as chan.osc_in's `params`: `/scene/speed 0.5` |
+| `params` | controls \| off \| all | `"controls"` |  | Which params the addresses may set (live, outside the undo history); controls: the value of a chan.slider, chan.button or chan.dropdown flagged `show`: `/fader/value 0.5`, `/look/value maze`; off: no param: the messages make channels only; all: any param the address names, as chan.osc_in's `params`: `/scene/speed 0.5` |
 | `folder` | text | `"www"` |  | Folder in the project whose files the page and its scripts come from; / opens its index.html. Empty: no files |
 | `page` | bool | `true` |  | Without an index.html in `folder`, / opens a built-in page with every control flagged `show`, as on the show screen. Off: / answers 404 then |
 | `rate` | float | `30` | 1 to 60 Hz (soft, held within 1 to 120 Hz) | State messages per second to each WebSocket client, at most (only when something changed) |

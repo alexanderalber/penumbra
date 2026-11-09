@@ -252,11 +252,12 @@ While show mode is on:
   for a script or cue software that does it on purpose.
 - **The editor:** shows a plain screen instead of the network. Without thumbnails and viewer
   the cook pass gets shorter.
-- **Controls on the show screen:** every `chan.button` and `chan.slider` with `show` ticked
-  appears below Unlock, top to bottom, then left to right as the nodes sit in the network.
-  A slider and a button without a `label` have their name above them (`label` or node name);
-  a button with a `label` shows it on its face. Pressing, switching and dragging work there as
-  on the node. `chan.press` and `node.set` on their `value` work too. These changes make no
+- **Controls on the show screen:** every `chan.button`, `chan.slider` and `chan.dropdown` with
+  `show` ticked appears below Unlock, top to bottom, then left to right as the nodes sit in the
+  network. A slider, a dropdown and a button without a `label` have their name above them
+  (`label` or node name); a button with a `label` shows it on its face. Pressing, switching,
+  dragging and picking work there as on the node. `chan.press`, `chan.pick` and `node.set` on
+  their `value` work too. These changes make no
   undo step and are not written into `project.ron` during the show. After `show.unlock` they
   stay and are saved at once. `show.status` lists the controls with their values.
 - **After a crash:** when the GPU device is lost or the editor fails (exit code 3), penumbra

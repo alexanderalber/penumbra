@@ -59,7 +59,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(
             ParamSpec::choice("params", &["controls", "off", "all"])
                 .doc("Which params the addresses may set (live, outside the undo history)")
-                .choice_doc("controls", "the value of a chan.slider or chan.button flagged `show`: `/fader/value 0.5`")
+                .choice_doc("controls", "the value of a chan.slider, chan.button or chan.dropdown flagged `show`: `/fader/value 0.5`, `/look/value maze`")
                 .choice_doc("off", "no param: the messages make channels only")
                 .choice_doc("all", "any param the address names, as chan.osc_in's `params`: `/scene/speed 0.5`"),
         )

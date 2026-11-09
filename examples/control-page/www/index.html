@@ -102,6 +102,8 @@ function build(list) {
     return;
   }
   for (const c of list) {
+    // This page draws sliders and buttons; the built-in page also draws dropdowns.
+    if (c.kind !== "chan.slider" && c.kind !== "chan.button") continue;
     const make = c.kind === "chan.slider" ? slider : button;
     const { element, update } = make(c);
     box.append(element);

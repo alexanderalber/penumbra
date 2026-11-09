@@ -619,6 +619,11 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
     {
         o.insert("button".into(), b);
     }
+    if let Some(d) = crate::buttons::dropdown_info(e, &node)
+        && let Some(o) = info.as_object_mut()
+    {
+        o.insert("dropdown".into(), d);
+    }
     if let Some(h) = crate::http::info(e, &node)
         && let Some(o) = info.as_object_mut()
     {

@@ -1,6 +1,6 @@
-//! The controls drawn on the body of a `chan.button` or `chan.slider` in the editor: what they
-//! show, where they sit, how a pointer position becomes a value and what a press does
-//! ([`interact`]). The node editor ([`crate::editor`]) and the show screen both draw and press
+//! The controls drawn on the body of a `chan.button`, `chan.slider` or `chan.dropdown` in the
+//! editor: what they show, where they sit, how a pointer position becomes a value and what a
+//! press does ([`interact`], and [`menu`] for a dropdown's entries). The node editor ([`crate::editor`]) and the show screen both draw and press
 //! them through this module; they only place them.
 //!
 //! The body has two parts: a line with the channel's value on top, the control below it. The
@@ -13,9 +13,11 @@ use egui::{
 };
 use penumbra_core::{GroupId, NodeId, ParamPath, Value};
 use penumbra_graph::{DataKind, NodeDef, NodeStatus, NodeTypes, Op};
-use penumbra_ops::chan::controls::{BUTTON, SLIDER, TOGGLE, slider_value};
+use penumbra_ops::chan::controls::{
+    BUTTON, DROPDOWN, SLIDER, TOGGLE, dropdown_entries, dropdown_pick, slider_value,
+};
 
-use crate::{Action, theme};
+use crate::{Action, automation, theme};
 
 /// Body height of a node with a control, in graph units: the value line and the control.
 pub const BODY: f32 = 46.0;
@@ -28,7 +30,7 @@ const STEPS: f64 = 1000.0;
 
 /// Whether nodes of `kind` carry a control on their body.
 pub fn has_control(kind: &str) -> bool {
-    kind == BUTTON || kind == SLIDER
+    kind == BUTTON || kind == SLIDER || kind == DROPDOWN
 }
 
 /// A control as it stands now.
@@ -48,6 +50,14 @@ pub enum Control {
         max: f64,
         bound: bool,
     },
+    Dropdown {
+        entries: Vec<String>,
+        /// The place of the entry `value` names; `None` while it names none.
+        place: Option<usize>,
+        /// `value` as it stands, for the face while it names no entry.
+        value: String,
+        bound: bool,
+    },
 }
 
 impl Control {
@@ -58,7 +68,9 @@ impl Control {
 
     pub fn bound(&self) -> bool {
         match self {
-            Control::Button { bound, .. } | Control::Slider { bound, .. } => *bound,
+            Control::Button { bound, .. }
+            | Control::Slider { bound, .. }
+            | Control::Dropdown { bound, .. } => *bound,
         }
     }
 }
@@ -92,6 +104,13 @@ pub fn of(
             let (min, max) = (float("min", 0.0), float("max", 1.0));
             let value = slider_value(float("value", 0.0), min, max);
             Some(Control::Slider { value, min, max, bound })
+        }
+        DROPDOWN => {
+            let text = |name: &str| param(name).and_then(Value::as_str).unwrap_or_default();
+            let (entries, _) = dropdown_entries(text("entries"));
+            let value = text("value").trim().to_string();
+            let place = dropdown_pick(&entries, &value);
+            Some(Control::Dropdown { entries, place, value, bound })
         }
         _ => None,
     }
@@ -251,7 +270,85 @@ pub fn draw(
             painter.rect_filled(handle, CornerRadius::ZERO, grip);
             painter.rect_stroke(r, round, Stroke::new(1.0, edge), StrokeKind::Inside);
         }
+        Control::Dropdown { .. } => {
+            let fill = if pressed {
+                Color32::from_gray(75)
+            } else if hovered && active {
+                Color32::from_gray(66)
+            } else {
+                Color32::from_gray(52)
+            };
+            painter.rect_filled(r, round, fill);
+            painter.rect_stroke(r, round, Stroke::new(1.0, edge), StrokeKind::Inside);
+            // The arrow at the right end, the entry's name in the room left of it.
+            let arrow = (r.height() * 0.22).min(5.0 * zoom);
+            let tip_x = r.max.x - 6.0 * zoom - arrow;
+            let c = pos2(tip_x, r.center().y + arrow * 0.35);
+            let arrow_color = if active { theme::TEXT } else { theme::TEXT_WEAK };
+            painter.add(egui::Shape::convex_polygon(
+                vec![pos2(c.x - arrow, c.y - arrow), pos2(c.x + arrow, c.y - arrow), c],
+                arrow_color,
+                Stroke::NONE,
+            ));
+            let (text, names_one) = face_text(control);
+            let color = match (names_one, active) {
+                (false, _) => theme::WARNING,
+                (true, true) => theme::TEXT,
+                (true, false) => theme::TEXT_WEAK,
+            };
+            let room = Rect::from_min_max(
+                pos2(r.min.x + 6.0 * zoom, r.min.y),
+                pos2((tip_x - arrow - 4.0 * zoom).max(r.min.x + 7.0 * zoom), r.max.y),
+            );
+            let galley = painter.layout_no_wrap(text, FontId::proportional(12.0 * zoom), color);
+            let at = pos2(room.min.x, room.center().y - galley.size().y / 2.0);
+            painter.with_clip_rect(room.intersect(painter.clip_rect())).galley(at, galley, color);
+        }
     }
+}
+
+/// What a dropdown's face shows: the entry picked, and whether `value` names one (else the
+/// face shows `value` with a question mark, or that there are no entries).
+fn face_text(control: &Control) -> (String, bool) {
+    let Control::Dropdown { entries, place, value, .. } = control else { return (String::new(), true) };
+    match place.and_then(|i| entries.get(i)) {
+        Some(e) => (e.clone(), true),
+        None if entries.is_empty() => ("no entries".to_string(), false),
+        None => (format!("{value}?"), false),
+    }
+}
+
+/// The menu of a dropdown's entries, opened by a click on its face (`resp`): picking one sets
+/// `param` (the node's `value`) to its name, one undo step. Each entry is listed for automation
+/// as `<prefix>.entry.<place>`. Nothing opens unless `active`.
+pub fn menu(
+    resp: &Response,
+    control: &Control,
+    param: Option<ParamPath>,
+    active: bool,
+    prefix: &str,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    let Control::Dropdown { entries, place, .. } = control else { return };
+    if !active {
+        return;
+    }
+    // Its own id: the node's context menu opens from the same response.
+    egui::Popup::menu(resp).id(resp.id.with("entries")).show(|ui| {
+        ui.set_min_width(resp.rect.width());
+        for (i, entry) in entries.iter().enumerate() {
+            let picked = *place == Some(i);
+            let r = ui.selectable_label(picked, entry);
+            auto.add(format!("{prefix}.entry.{i}"), r.rect, entry.clone());
+            if r.clicked() {
+                if !picked && let Some(param) = param.clone() {
+                    actions.push(Action::edit(vec![Op::Set { param, value: Value::Text(entry.clone()) }]));
+                }
+                ui.close();
+            }
+        }
+    });
 }
 
 /// A press on a control, from the primary button going down on it until it goes up.
@@ -350,6 +447,8 @@ pub fn interact(
                     *value = v;
                 }
             }
+            // The menu ([`menu`]) does the picking.
+            Control::Dropdown { .. } => {}
         }
     }
     let pressed = down || matches!(mine, Some(Pressed::Button | Pressed::Slider { .. }));
@@ -376,7 +475,7 @@ pub fn cursor(ui: &Ui, resp: &Response, control: &Control, active: bool) {
         let icon = match (control, active) {
             (_, false) => CursorIcon::NotAllowed,
             (Control::Slider { .. }, true) => CursorIcon::ResizeHorizontal,
-            (Control::Button { .. }, true) => CursorIcon::PointingHand,
+            (Control::Button { .. } | Control::Dropdown { .. }, true) => CursorIcon::PointingHand,
         };
         ui.ctx().set_cursor_icon(icon);
     }
@@ -394,6 +493,7 @@ pub fn shown_value(control: &Control, pressed: bool) -> f64 {
             }
         }
         Control::Slider { value, .. } => *value,
+        Control::Dropdown { place, .. } => place.unwrap_or(0) as f64,
     }
 }
 
@@ -403,6 +503,7 @@ pub fn line(name: &str, control: &Control, value: f64) -> String {
     let v = match control {
         Control::Button { .. } => if value > 0.5 { "1" } else { "0" }.to_string(),
         Control::Slider { .. } => crate::editor::format_value(value),
+        Control::Dropdown { .. } => format!("{value:.0}"),
     };
     if name == "value" { v } else { format!("{name} {v}") }
 }
@@ -417,6 +518,15 @@ pub fn tip(control: &Control, can_edit: bool, show: bool) -> String {
         Control::Button { toggle: false, .. } => "1 while the mouse button is held here".to_string(),
         Control::Button { .. } if show => format!("A click switches between on (1) and off (0). {kept}"),
         Control::Button { .. } => "A click switches between on (1) and off (0)".to_string(),
+        Control::Dropdown { place: None, entries, .. } if !entries.is_empty() => {
+            "value names no entry: pick one to set it".to_string()
+        }
+        Control::Dropdown { .. } => {
+            let undo = if show { kept } else { "One pick is one undo step" };
+            format!(
+                "Click to pick an entry. A choice bound to the node takes the entry of the same name. {undo}"
+            )
+        }
         Control::Slider { min, max, .. } => {
             let undo = if show { kept } else { "One drag is one undo step" };
             format!(

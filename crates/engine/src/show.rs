@@ -199,7 +199,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add(
         "show.status",
         "Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes, \
-         and the controls on the show screen (chan.button and chan.slider with `show` on) with their values",
+         and the controls on the show screen (chan.button, chan.slider and chan.dropdown with `show` on) with their values",
         show_status,
     );
 }

@@ -1,8 +1,8 @@
-//! The controls on the show screen: every `chan.button` and `chan.slider` with `show` on, as a
-//! row of widgets below Unlock ([`controls`]). They are drawn and pressed like the controls on
-//! a node body ([`node_controls`]), only larger and with a name above ([`caption`]). The
-//! order is the network's: top to bottom, then left to right. The engine lists them and sets
-//! their values while show mode locks the project
+//! The controls on the show screen: every `chan.button`, `chan.slider` and `chan.dropdown` with
+//! `show` on, as a row of widgets below Unlock ([`controls`]). They are drawn and pressed like
+//! the controls on a node body ([`node_controls`]), only larger and with a name above
+//! ([`caption`]). The order is the network's: top to bottom, then left to right. The engine
+//! lists them and sets their values while show mode locks the project
 //! ([`penumbra_engine::buttons::show_controls`], [`penumbra_engine::buttons::set_in_show`]).
 
 use std::collections::BTreeMap;
@@ -100,6 +100,8 @@ pub fn controls(
         auto.add(format!("show.control.{}", shown.path), rect, shown.kind.clone());
         let active = !control.bound();
         let param = shown.path.parse().ok().and_then(|p| ParamPath::new(p, Name::new("value").ok()?).ok());
+        let prefix = format!("show.control.{}", shown.path);
+        node_controls::menu(&resp, &control, param.clone(), active, &prefix, auto, actions);
         let pointer = node_controls::interact(
             ui,
             &resp,

@@ -1,4 +1,4 @@
-//! Controls on the node body: `chan.button` and `chan.slider`.
+//! Controls on the node body: `chan.button`, `chan.slider` and `chan.dropdown`.
 //!
 //! - **`chan.slider`** makes one channel, its param `value` limited to `min`..`max`. Dragging on
 //!   the node's body in the editor sets `value`; `node.set` does the same from outside. The
@@ -9,14 +9,19 @@
 //!   (`chan.http_in`); that is live state in the
 //!   [`Buttons`] hub, never an edit, so it works while Claude edits and leaves no history. A
 //!   press shorter than a frame still shows for one cook.
-//! - **`show`** (both): the control also appears on the show screen while show mode locks the
-//!   project. There a toggle's or a slider's `value` still changes, without a history entry and
-//!   unsaved until show mode ends.
+//! - **`chan.dropdown`** holds a list of `entries`, one per line, and `value`, the name of the
+//!   entry picked. Its channel is the picked entry's place, counted from 0; its table output is
+//!   one cell, the picked entry's name. A text or choice param bound to it reads that name
+//!   ([`NodeDesc::binds_by_name`]), so several nodes follow one dropdown even when their own
+//!   lists are in another order. The value is a param, like the slider's.
+//! - **`show`** (all three): the control also appears on the show screen while show mode locks
+//!   the project. There a toggle's, a slider's or a dropdown's `value` still changes, without a
+//!   history entry and unsaved until show mode ends.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use penumbra_core::{Channel, Chans, Error, Name, NodeId, ParamSpec, lock};
+use penumbra_core::{Channel, Chans, Error, Name, NodeId, ParamSpec, Table, lock};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator, Waker,
 };
@@ -26,6 +31,12 @@ use serde::Serialize;
 pub const BUTTON: &str = "chan.button";
 /// Kind of the slider node.
 pub const SLIDER: &str = "chan.slider";
+/// Kind of the dropdown node.
+pub const DROPDOWN: &str = "chan.dropdown";
+/// Most entries a dropdown takes; the rest are left out with a warning.
+pub const MAX_ENTRIES: usize = 256;
+/// Longest entry a dropdown takes, in bytes.
+pub const MAX_ENTRY: usize = 256;
 /// The param that puts a control on the show screen.
 pub const SHOW: &str = "show";
 /// The button's `mode` choices.
@@ -210,7 +221,75 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .describe_output("out", "One channel: `value`, kept between min and max"),
         || Box::new(Slider::default()) as Box<dyn Operator>,
     ))?;
+    types.register(FnNodeType::new(
+        NodeDesc::new(
+            DROPDOWN,
+            "A dropdown on the node itself: one entry picked from a list. A choice bound to it takes the entry of the same name",
+        )
+        .param(
+            ParamSpec::text("entries", "a\nb\nc")
+                .multiline()
+                .lines(4)
+                .doc("The entries to pick from, one per line. Spaces around an entry and empty lines are left out"),
+        )
+        .param(
+            ParamSpec::text("value", "")
+                .doc("The name of the entry picked. Empty: the first entry. Picking in the dropdown on the node sets it"),
+        )
+        .param(
+            ParamSpec::text("label", "").doc("The dropdown's name on the show screen. Empty: the node's name"),
+        )
+        .param(show_param())
+        .param(super::name_param())
+        .binds_by_name()
+        .output("out", DataKind::Chan)
+        .describe_output("out", "One channel: the place of the entry picked, 0 for the first")
+        .output("entry", DataKind::Table)
+        .describe_output(
+            "entry",
+            "One cell: the name of the entry picked. A text or choice param bound to the node reads it",
+        ),
+        || Box::new(Dropdown::default()) as Box<dyn Operator>,
+    ))?;
     Ok(())
+}
+
+/// A dropdown's entries from its `entries` text: one per line, trimmed, without empty lines and
+/// without repeats (case aside), at most [`MAX_ENTRIES`] of at most [`MAX_ENTRY`] bytes. The
+/// second part says what was left out, for a warning.
+pub fn dropdown_entries(text: &str) -> (Vec<String>, Vec<String>) {
+    let mut entries: Vec<String> = Vec::new();
+    let mut dropped = Vec::new();
+    for line in text.lines() {
+        let entry = line.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        if entry.len() > MAX_ENTRY || entry.chars().any(char::is_control) {
+            dropped.push(format!("an entry longer than {MAX_ENTRY} bytes or with control characters"));
+        } else if entries.iter().any(|e| e.eq_ignore_ascii_case(entry)) {
+            dropped.push(format!("\"{entry}\" a second time"));
+        } else if entries.len() >= MAX_ENTRIES {
+            dropped.push(format!("the entries after the first {MAX_ENTRIES}"));
+            break;
+        } else {
+            entries.push(entry.to_string());
+        }
+    }
+    (entries, dropped)
+}
+
+/// The place of the entry `value` names among `entries`, case and surrounding spaces aside; an
+/// empty `value` picks the first. `None`: no entry has that name, or there are none.
+pub fn dropdown_pick(entries: &[String], value: &str) -> Option<usize> {
+    let value = value.trim();
+    if entries.is_empty() {
+        return None;
+    }
+    if value.is_empty() {
+        return Some(0);
+    }
+    entries.iter().position(|e| e.eq_ignore_ascii_case(value))
 }
 
 fn show_param() -> ParamSpec {
@@ -283,9 +362,73 @@ impl Operator for Slider {
     }
 }
 
+#[derive(Default)]
+struct Dropdown {
+    /// The place and name handed out last.
+    out: Option<(usize, String)>,
+}
+
+impl Operator for Dropdown {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        let (entries, dropped) = dropdown_entries(cx.text("entries")?);
+        if !dropped.is_empty() {
+            cx.warn(format!("left out of `entries`: {}", dropped.join(", ")));
+        }
+        if entries.is_empty() {
+            return Err(CookError::failed(
+                "`entries` is empty: write the entries to pick from, one per line",
+            ));
+        }
+        let value = cx.text("value")?;
+        let place = match dropdown_pick(&entries, value) {
+            Some(i) => i,
+            None => {
+                // The entry handed out last stays while it is still listed, so bound nodes do not
+                // jump while the list is edited. Otherwise the first entry goes out.
+                let kept = self.out.as_ref().and_then(|(_, name)| dropdown_pick(&entries, name)).unwrap_or(0);
+                cx.warn(format!(
+                    "`value` \"{}\" is none of the entries ({}); the dropdown gives \"{}\" until `value` names one",
+                    value.trim().escape_debug(),
+                    entries.join(", "),
+                    entries.get(kept).map_or("", String::as_str)
+                ));
+                kept
+            }
+        };
+        let name = entries.get(place).cloned().unwrap_or_default();
+        if self.out.as_ref().is_some_and(|(p, n)| *p == place && *n == name)
+            && !cx.params_changed()
+            && !cx.first_cook()
+        {
+            return Ok(Cooked::Unchanged);
+        }
+        let channel = Name::new(cx.text("name")?.trim()).map_err(|e| e.context("`name`"))?;
+        let chans =
+            Chans::new(cx.rate().as_f64(), vec![Channel { name: channel, samples: vec![place as f64] }])?;
+        let table = Table::new(vec![vec![name.clone()]])?;
+        self.out = Some((place, name));
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Chan, chans), Data::new(DataKind::Table, table)]))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropdown_entries_are_trimmed_lines_without_repeats() {
+        let (entries, dropped) = dropdown_entries("  coral \n\nmaze\r\nMaze\nworms\n");
+        assert_eq!(entries, ["coral", "maze", "worms"]);
+        assert_eq!(dropped, ["\"Maze\" a second time"]);
+        assert_eq!(dropdown_pick(&entries, ""), Some(0), "empty picks the first");
+        assert_eq!(dropdown_pick(&entries, " WORMS "), Some(2), "case and spaces aside");
+        assert_eq!(dropdown_pick(&entries, "holes"), None);
+        assert_eq!(dropdown_pick(&[], ""), None);
+        let many: String = (0..300).map(|i| format!("e{i}\n")).collect();
+        let (entries, dropped) = dropdown_entries(&many);
+        assert_eq!(entries.len(), MAX_ENTRIES);
+        assert_eq!(dropped.len(), 1);
+    }
 
     #[test]
     fn slider_value_stays_in_range() {

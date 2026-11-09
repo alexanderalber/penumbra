@@ -107,6 +107,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("chan.clock", &["timer"]),
     ("chan.data_in", &["serial", "udp in", "tcp", "arduino", "com port", "socket", "json", "uart"]),
     ("chan.derivative", &["slope"]),
+    ("chan.dropdown", &["drop down menu", "menu", "combo box", "radio buttons", "preset"]),
     ("chan.envelope", &["trigger", "adsr"]),
     ("chan.filter", &["lag"]),
     ("chan.from_table", &["dat to"]),

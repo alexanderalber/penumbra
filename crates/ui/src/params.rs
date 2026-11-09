@@ -1008,6 +1008,10 @@ impl ParamPanel {
                 });
             }
             ParamKind::Text | ParamKind::File { .. } => {
+                if node.kind == penumbra_ops::chan::controls::DROPDOWN && spec.name == "value" {
+                    dropdown_box(ui, input, node, key, value, whole_bound, new);
+                    return;
+                }
                 if (node.kind == penumbra_ops::tex::TEXT || node.kind == penumbra_ops::geo_text::GEO_TEXT)
                     && let Some(options) = font_options(node, spec)
                 {
@@ -2021,6 +2025,40 @@ fn choice_box(ui: &mut Ui, key: &str, current: &str, options: &[&str], new: &mut
                 }
             }
         });
+}
+
+/// The `value` of a `chan.dropdown`: a box offering its entries. While `value` names none, the
+/// box shows `value` with a question mark.
+fn dropdown_box(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    node: &NodeDef,
+    key: &str,
+    value: &Value,
+    bound: bool,
+    new: &mut Option<Value>,
+) {
+    use penumbra_ops::chan::controls::{dropdown_entries, dropdown_pick};
+    let text = input.types.desc(&node.kind).and_then(|d| node.param(d, "entries")).and_then(Value::as_str);
+    let (entries, _) = dropdown_entries(text.unwrap_or_default());
+    let current = value.as_str().unwrap_or("");
+    let shown = match dropdown_pick(&entries, current).and_then(|i| entries.get(i)) {
+        Some(e) => e.clone(),
+        None => format!("{}?", current.trim()),
+    };
+    ui.add_enabled_ui(!bound, |ui| {
+        egui::ComboBox::from_id_salt(key)
+            .selected_text(shown.as_str())
+            .width(ui.available_width())
+            .height(400.0)
+            .show_ui(ui, |ui| {
+                for entry in &entries {
+                    if ui.selectable_label(*entry == shown, entry.as_str()).clicked() && *entry != shown {
+                        *new = Some(Value::Text(entry.clone()));
+                    }
+                }
+            });
+    });
 }
 
 /// What the `font` and `style` of `tex.text` and `geo.text` offer: the installed and bundled families, and the

@@ -273,6 +273,11 @@ then its cells. Dropping a chan wire on the row binds the whole param.
   that row's numbers, which a format turns into text.
 - **A channel into a choice** picks the entry by its place: 0 is the first, rounded, held at
   the first and the last.
+- **A `chan.dropdown` into a text or a choice** gives the name of its entry. A choice takes its
+  own entry of that name, wherever that entry stands in its list. So one dropdown can drive the
+  same choice in several nodes, shader params included, and the lists need not share an order.
+  A number param bound to the dropdown gets the entry's place, 0 for the first. To pick a
+  choice by place instead, name the channel: `node.bind {param, from, channel: "value"}`.
 - **A text a choice does not have** leaves the choice at its last entry, and the node shows a
   warning that names the text.
 
@@ -282,19 +287,23 @@ File paths, node references and scripts cannot be bound. From the control channe
 binding is written as `(node: "scores", cell: (row: 1, col: "name"))` or
 `(node: "lfo1", format: "{.1} m")`. A plain channel binding keeps the short form `"lfo1:x"`.
 
-### Buttons and sliders on the node
+### Buttons, sliders and dropdowns on the node
 
-`chan.button` and `chan.slider` are steered right on their node in the network editor, without
-selecting it. **Button:** with `mode` `momentary` its channel is 1 while the mouse button is held
+`chan.button`, `chan.slider` and `chan.dropdown` are steered right on their node in the network
+editor, without selecting it. **Button:** with `mode` `momentary` its channel is 1 while the mouse button is held
 on it; with `mode` `toggle` each click switches it between 1 and 0. **Slider:** dragging on it
 sets `value` between `min` and `max`. With Shift held, the slider moves a tenth of the mouse's
 way, for fine steps; pressing or letting go of Shift mid-drag does not make it jump. One drag
-is one undo step. The line above the control shows the channel's value: `1` or `0` for a
-button, three decimals for a slider. A toggle's state and a slider's
-value are params, saved with the project. A momentary press is no edit: it leaves no history
+is one undo step. **Dropdown:** a click opens the list of its `entries`, and picking one sets
+`value` to that entry's name. One pick is one undo step. `entries` holds one entry per line.
+The line above the control shows the channel's value: `1` or `0` for a
+button, three decimals for a slider, the entry's place for a dropdown (0 for the first). A
+toggle's state, a slider's value and a dropdown's `value` are params, saved with the project. A momentary press is no edit: it leaves no history
 and works while Claude edits. Bind params to their channel like to any other. From the control
 channel: `chan.press {path}` (or `{path, down}` to hold and let go) presses a button,
-`node.set` moves a slider.
+`node.set` moves a slider. `chan.pick {path, entry}` picks a dropdown's entry by its name
+(`"maze"`) or its place (`2`); `node.set` on `value` picks by name too. A `value` that names
+no entry leaves the dropdown at the entry it gave last, and the node shows a warning.
 With `show` ticked, the control also appears on the show screen while
 [show mode](getting-started.md#show-mode) is on. There it still works, but a change makes no
 undo step and is saved only after show mode ends. A crash restart in show mode keeps it.
@@ -380,9 +389,9 @@ second.
 
 `chan.http_in` makes a web page a control surface: a phone or tablet on the same network, or
 another program. **The built-in page:** add a `chan.http_in` and open `http://localhost:8090/`.
-The page shows every `chan.slider` and `chan.button` with `show` ticked, in the order of the
-show screen. Sliders drag, toggles switch, momentary buttons stay pressed while a finger is on
-them, several at once. All open pages and the show screen show the same values. A control that
+The page shows every `chan.slider`, `chan.button` and `chan.dropdown` with `show` ticked, in
+the order of the show screen. Sliders drag, toggles switch, dropdowns offer their entries,
+momentary buttons stay pressed while a finger is on them, several at once. All open pages and the show screen show the same values. A control that
 is bound or locked is greyed out. The node's `page` param switches the built-in page off.
 **Your own page:** the node serves the files in its `folder` (`www` in the project), so
 `www/index.html` replaces the built-in page. With `bind` at `lan`,
@@ -392,7 +401,7 @@ as `POST /set`, or as `GET /set?fader=0.5`. `{"/fader": 0.5}` makes channel `fad
 of numbers makes one channel per number (`xy_0`, `xy_1`); an array of arrays or of objects is a
 table on the `table` output. Bind params to the channels as for OSC. **Show controls:** with
 `params` at `controls` (the default), `{"/fade/value": 0.3}` moves the `chan.slider` `/fade`
-flagged `show`. **Buttons:** `{"press": {"/go": true}}` holds the momentary button `/go`,
+flagged `show`, and `{"/look/value": "maze"}` picks an entry of the `chan.dropdown` `/look`. **Buttons:** `{"press": {"/go": true}}` holds the momentary button `/go`,
 `{"press": {"/go": false}}` lets go. A page sends the press again every 250 ms while the finger
 is down. penumbra lets go of a press that is not renewed for a second, and of every press of a
 WebSocket that closes. A repeated press while held is no new press, so a held GO counts once.

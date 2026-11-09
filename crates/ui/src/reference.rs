@@ -104,8 +104,13 @@ fn param_range(spec: &ParamSpec) -> String {
 }
 
 fn param_default(spec: &ParamSpec) -> String {
-    if spec.default.as_str().is_some_and(|t| t.contains('\n')) {
-        return "an example script".into();
+    if let Some(t) = spec.default.as_str().filter(|t| t.contains('\n')) {
+        if spec.code {
+            return "an example script".into();
+        }
+        // A list, one entry per line (a dropdown's entries).
+        let lines: Vec<String> = t.lines().map(|l| format!("`{l}`")).collect();
+        return format!("{} (one per line)", lines.join(", "));
     }
     let text = spec.default.to_string();
     if text == "\"\"" {

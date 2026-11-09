@@ -1652,7 +1652,7 @@ impl Cooker {
                         continue;
                     }
                 };
-                let read = match self.read_bind(part, bind) {
+                let read = match self.read_bind(part, bind, target) {
                     Ok(read) => read,
                     Err(w) => {
                         warn(w);
@@ -1720,15 +1720,32 @@ impl Cooker {
         }
     }
 
-    /// What binding `bind` (of `part`) reads now: a channel's number or a table cell's text; a
-    /// warning when there is none.
-    fn read_bind<'s>(&'s self, part: &ParamPart, bind: &Bind) -> Result<BindRead<'s>, String> {
+    /// What binding `bind` (of `part`, driving a `target`) reads now: a channel's number or a
+    /// table cell's text; a warning when there is none. A text or choice bound to a node that
+    /// [binds by name](crate::NodeDesc::binds_by_name), naming neither a channel nor a cell,
+    /// reads that node's first cell.
+    fn read_bind<'s>(
+        &'s self,
+        part: &ParamPart,
+        bind: &Bind,
+        target: BindTarget,
+    ) -> Result<BindRead<'s>, String> {
         let output = |kind: DataKind| {
             let src = self.runtimes.get(&bind.node)?;
             let i = src.ty.as_ref()?.desc().outputs.iter().position(|o| o.kind == kind)?;
             src.outputs.as_ref()?.get(i)
         };
-        if let Some(cell) = &bind.cell {
+        let by_name = bind.channel.is_none()
+            && bind.cell.is_none()
+            && target != BindTarget::Number
+            && self
+                .runtimes
+                .get(&bind.node)
+                .and_then(|src| src.ty.as_ref())
+                .is_some_and(|t| t.desc().binds_by_name);
+        let first = bindv::Cell::default();
+        let cell = if by_name { Some(&first) } else { bind.cell.as_ref() };
+        if let Some(cell) = cell {
             let Some(table) = output(DataKind::Table).and_then(|d| d.get::<Table>()) else {
                 return Err(format!("`{part}` is bound to {}, which has no table yet", self.path(bind.node)));
             };

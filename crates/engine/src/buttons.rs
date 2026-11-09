@@ -1,7 +1,8 @@
 //! `chan.press`: presses a `chan.button` as a click on its node body does, for Claude, scripts
 //! and tests. A momentary button is held in the [`Buttons`] hub (live, no history); a toggle's
 //! press flips its `value` as an edit. A slider needs no command of its own: `node.set` sets its
-//! `value`.
+//! `value`. `chan.pick` picks an entry of a `chan.dropdown` by its name or its place, as a pick
+//! in its menu does; `node.set` on its `value` picks by name too.
 //!
 //! The controls flagged `show` also appear on the show screen ([`show_controls`]). While show
 //! mode locks the project, their values may still change ([`set_in_show`]): from the show
@@ -13,7 +14,10 @@ use std::sync::Arc;
 
 use penumbra_core::{Error, Name, NodeId, NodePath, ParamPath, Value};
 use penumbra_graph::{Network, NodeDef, NodeStatus, NodeTypes, Op};
-use penumbra_ops::chan::controls::{BUTTON, Buttons, Holder, MOMENTARY, SHOW, SLIDER, TOGGLE, slider_value};
+use penumbra_ops::chan::controls::{
+    BUTTON, Buttons, DROPDOWN, Holder, MOMENTARY, SHOW, SLIDER, TOGGLE, dropdown_entries, dropdown_pick,
+    slider_value,
+};
 use penumbra_project::Session;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
@@ -33,6 +37,96 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          flips `value` (an edit), `down: false` does nothing",
         chan_press,
     );
+    add(
+        "chan.pick",
+        "Pick an entry of a chan.dropdown as its menu does: {path, entry}, `entry` its name (case aside) or its \
+         place counted from 0. An edit, as `node.set` on its `value`; in show mode a change without history for \
+         a dropdown flagged `show`. The reply lists the entries",
+        chan_pick,
+    );
+}
+
+/// The entries of a `chan.dropdown` and the place of the one its `value` picks (`None`: it names
+/// none). `bound` gives the value a binding gives it, where there is one.
+pub fn dropdown_state(
+    types: &NodeTypes,
+    node: &NodeDef,
+    bound: Option<&Value>,
+) -> (Vec<String>, Option<usize>) {
+    let text = |name: &str| param(types, node, name).and_then(Value::as_str).unwrap_or_default();
+    let (entries, _) = dropdown_entries(text("entries"));
+    let value = bound.and_then(Value::as_str).unwrap_or_else(|| text("value"));
+    let place = dropdown_pick(&entries, value);
+    (entries, place)
+}
+
+/// What `node.info` adds for a `chan.dropdown`: its entries, its `value` and the place of the
+/// entry it picks (`null` when it names none).
+pub fn dropdown_info(e: &Engine, node: &NodeDef) -> Option<Json> {
+    if node.kind != DROPDOWN {
+        return None;
+    }
+    let (entries, place) = dropdown_state(e.types(), node, None);
+    let value = param(e.types(), node, "value").and_then(Value::as_str).unwrap_or_default();
+    Some(json!({"entries": entries, "value": value, "place": place}))
+}
+
+fn chan_pick(e: &Engine, p: &Json) -> CmdResult<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        path: NodePath,
+        entry: Json,
+    }
+    let a: A = args(p)?;
+    let net = e.session().doc().snapshot();
+    let id = require(&net, &a.path)?;
+    let Some(node) = net.node(id) else { return Err(format!("no node at {}", a.path).into()) };
+    if node.kind != DROPDOWN {
+        return Err(format!("{} is a {}, not a {DROPDOWN}", a.path, node.kind).into());
+    }
+    let (entries, _) = dropdown_state(e.types(), node, None);
+    if entries.is_empty() {
+        return Err(format!("{} has no entries: set its `entries`, one per line", a.path).into());
+    }
+    let listed = entries.join(", ");
+    let place = match &a.entry {
+        Json::String(name) => {
+            dropdown_pick(&entries, name).filter(|_| !name.trim().is_empty()).ok_or_else(|| {
+                format!("{} has no entry \"{}\"; its entries: {listed}", a.path, name.escape_debug())
+            })?
+        }
+        Json::Number(n) => {
+            n.as_u64().and_then(|i| usize::try_from(i).ok()).filter(|i| *i < entries.len()).ok_or_else(
+                || {
+                    format!(
+                        "{} has entries 0 to {}, so {n} picks none; its entries: {listed}",
+                        a.path,
+                        entries.len() - 1
+                    )
+                },
+            )?
+        }
+        _ => return Err("`entry` is the name of an entry or its place, counted from 0".into()),
+    };
+    if node.is_bound("value") {
+        return Err(format!("{}.value is bound: unbind it to pick an entry by hand", a.path).into());
+    }
+    let name = entries.get(place).cloned().unwrap_or_default();
+    let param = ParamPath::new(a.path.clone(), Name::new("value")?)?;
+    let ops = [Op::Set { param, value: Value::Text(name.clone()) }];
+    let mut reply = if set_in_show(&e.session(), &ops)? {
+        json!({"history": SHOW_HISTORY})
+    } else {
+        outcome(&edit(e, &ops, "")?)
+    };
+    if let Some(o) = reply.as_object_mut() {
+        o.insert("path".into(), json!(a.path.to_string()));
+        o.insert("value".into(), json!(name));
+        o.insert("place".into(), json!(place));
+        o.insert("entries".into(), json!(entries));
+    }
+    Ok(reply)
 }
 
 /// The button's `mode`: momentary or toggle.
@@ -126,12 +220,18 @@ pub struct ShowControl {
     /// The name on the show screen: `label`, else the node's name; inside a component the
     /// component's path comes first (`stage/fade`).
     pub label: String,
-    /// `momentary` or `toggle` for a button, `None` for a slider.
+    /// `momentary` or `toggle` for a button, `None` for a slider or a dropdown.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<&'static str>,
     /// The channel's value now as the control knows it: 1 or 0 for a button (a momentary one
-    /// while held), the slider's value kept between `min` and `max`.
+    /// while held), the slider's value kept between `min` and `max`, the place of a dropdown's
+    /// entry (0 while its `value` names none).
     pub value: f64,
+    /// A dropdown's entries, and the name of the one its `value` picks (`None`: it names none).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entries: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry: Option<String>,
     /// `value` follows a channel, so the control cannot set it.
     pub bound: bool,
 }
@@ -141,9 +241,9 @@ fn param<'a>(types: &'a NodeTypes, node: &'a NodeDef, name: &str) -> Option<&'a 
     types.desc(&node.kind).and_then(|d| node.param(d, name))
 }
 
-/// Whether `node` is a `chan.button` or `chan.slider` flagged `show`.
+/// Whether `node` is a `chan.button`, `chan.slider` or `chan.dropdown` flagged `show`.
 pub fn on_show_screen(types: &NodeTypes, node: &NodeDef) -> bool {
-    (node.kind == BUTTON || node.kind == SLIDER)
+    (node.kind == BUTTON || node.kind == SLIDER || node.kind == DROPDOWN)
         && param(types, node, SHOW).and_then(Value::as_bool).unwrap_or(false)
 }
 
@@ -188,7 +288,13 @@ pub fn show_controls(
                 Some(parent) => format!("{}/{own}", parent.to_string().trim_start_matches('/')),
                 None => own.to_string(),
             };
-            let (mode, value) = if n.kind == BUTTON {
+            let mut listed = None;
+            let (mode, value) = if n.kind == DROPDOWN {
+                let (entries, place) = dropdown_state(types, n, param("value"));
+                let entry = place.and_then(|i| entries.get(i).cloned());
+                listed = Some((entries, entry));
+                (None, place.unwrap_or(0) as f64)
+            } else if n.kind == BUTTON {
                 let toggle = text("mode") == TOGGLE;
                 let on = if toggle {
                     param("value").and_then(Value::as_bool).unwrap_or(false)
@@ -200,6 +306,10 @@ pub fn show_controls(
                 (None, slider_value(float("value", 0.0), float("min", 0.0), float("max", 1.0)))
             };
             let bound = n.is_bound("value") && mode != Some(MOMENTARY);
+            let (entries, entry) = match listed {
+                Some((entries, entry)) => (Some(entries), entry),
+                None => (None, None),
+            };
             let control = ShowControl {
                 id: n.id,
                 path: path.to_string(),
@@ -207,6 +317,8 @@ pub fn show_controls(
                 label,
                 mode,
                 value,
+                entries,
+                entry,
                 bound,
             };
             Some((key(n), control))
@@ -222,19 +334,23 @@ pub fn show_controls(
     found.into_iter().map(|(_, c)| c).collect()
 }
 
-/// The values that may change in show mode, by node path: the `value` of every toggle button
-/// and slider flagged `show` whose `value` follows no channel. A momentary button has no value
+/// The values that may change in show mode, by node path: the `value` of every toggle button,
+/// slider and dropdown flagged `show` whose `value` follows no channel. A momentary button has no value
 /// to keep (it is held, not set). Show mode keeps these across a crash ([`crate::show_values`]).
 pub fn kept_values(net: &Network, types: &NodeTypes) -> BTreeMap<String, Value> {
     net.nodes()
         .filter(|n| on_show_screen(types, n) && !n.is_bound("value"))
-        .filter(|n| n.kind == SLIDER || param(types, n, "mode").and_then(Value::as_str) == Some(TOGGLE))
+        .filter(|n| {
+            n.kind == SLIDER
+                || n.kind == DROPDOWN
+                || param(types, n, "mode").and_then(Value::as_str) == Some(TOGGLE)
+        })
         .filter_map(|n| Some((net.path_of(n.id)?.to_string(), param(types, n, "value")?.clone())))
         .collect()
 }
 
 /// While show mode locks `session`, sets the values `ops` set if each sets the `value` of a
-/// toggle button or slider flagged `show`: live, without a history entry, written to the file
+/// toggle button, slider or dropdown flagged `show`: live, without a history entry, written to the file
 /// after show mode ends. Returns `Ok(false)` and does nothing when the project is not locked
 /// or `ops` change anything else; the caller then edits as usual (and the locked project
 /// refuses it).

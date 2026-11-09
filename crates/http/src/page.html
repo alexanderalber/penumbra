@@ -29,6 +29,7 @@
   .fill { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(110, 210, 120, 0.75); }
   .grip { position: absolute; top: 0; bottom: 0; width: 4px; margin-left: -2px; background: var(--text); }
   .slider.down .grip { background: #fff; }
+  select.face { width: 100%; color: var(--text); font: inherit; font-size: 17px; padding: 0 12px; }
   .off { opacity: 0.45; cursor: default; }
   .off .fill { background: rgba(110, 210, 120, 0.4); }
   .why { font-size: 12px; color: var(--weak); }
@@ -41,12 +42,12 @@
 <div id="note"></div>
 <div id="controls"></div>
 <p id="empty" hidden>No control is flagged <code>show</code> yet. Set <code>show</code> on a
-<code>chan.slider</code> or <code>chan.button</code> in the editor, and it appears here and on the show screen.</p>
+<code>chan.slider</code>, <code>chan.button</code> or <code>chan.dropdown</code> in the editor, and it appears here and on the show screen.</p>
 <script>
 "use strict";
 // The built-in control page of chan.http_in. It draws the controls flagged `show` from the
 // state the WebSocket sends ({controls: [...], params}), sets a slider's or toggle's value by
-// its address ({"/fader/value": 0.5}) and holds momentary buttons with {"press": {"/go": true}}.
+// its address ({"/fader/value": 0.5}) and a dropdown's by the entry's name ({"/look/value": "maze"}) and holds momentary buttons with {"press": {"/go": true}}.
 // A held press is renewed every RENEW ms; the server lets go of one not renewed for a second,
 // and of all of them when the socket closes. This page lets go when the finger lifts, when the
 // page is hidden and when the socket closes.
@@ -144,7 +145,7 @@ function disabledWhy(c) {
 function receive(m) {
   params = m.params || "controls";
   controls = Array.isArray(m.controls) ? m.controls : [];
-  const s = JSON.stringify(controls.map((c) => [c.path, c.kind, c.mode, c.label, c.bound, c.locked, c.min, c.max])) + params;
+  const s = JSON.stringify(controls.map((c) => [c.path, c.kind, c.mode, c.label, c.bound, c.locked, c.min, c.max, c.entries])) + params;
   if (s !== shape) { shape = s; build(); }
   for (const c of controls) {
     const x = cells.get(c.path);
@@ -172,6 +173,25 @@ function build() {
     const face = document.createElement("div");
     const why = document.createElement("div");
     why.className = "why";
+    if (c.kind === "chan.dropdown") {
+      caption.textContent = c.label;
+      const select = document.createElement("select");
+      select.className = "face";
+      for (const entry of c.entries || []) {
+        const option = document.createElement("option");
+        option.value = entry;
+        option.textContent = entry;
+        select.append(option);
+      }
+      select.addEventListener("change", () => {
+        const x = cells.get(c.path);
+        if (x && usable(c.path)) sendValue(x.c.address, select.value);
+      });
+      cell.append(caption, line, select, why);
+      box.append(cell);
+      cells.set(c.path, { c, el: cell, face: select, line, why });
+      continue;
+    }
     if (c.kind === "chan.slider") {
       cell.classList.add("wide");
       caption.textContent = c.label;
@@ -265,6 +285,12 @@ function redraw(path) {
   const why = socket ? disabledWhy(c) : "not connected";
   x.face.classList.toggle("off", !!why);
   x.why.textContent = why;
+  if (c.kind === "chan.dropdown") {
+    x.face.disabled = !!why;
+    if (document.activeElement !== x.face && c.entry != null) x.face.value = c.entry;
+    x.line.textContent = c.entry == null ? "names no entry" : String(c.value);
+    return;
+  }
   if (c.kind === "chan.slider") {
     const span = c.max - c.min;
     const t = span !== 0 ? Math.min(1, Math.max(0, (c.value - c.min) / span)) : 0;

@@ -136,3 +136,45 @@ fn a_shift_drag_on_a_slider_is_fine_and_starts_without_a_jump() {
     assert_eq!(history, 2, "one entry per drag that changed the value");
     engine.shutdown();
 }
+
+#[test]
+fn a_dropdown_on_its_node_picks_an_entry_from_its_menu() {
+    let dir = ScratchDir::unborn("ui-controls-dropdown");
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let project = r#"(
+        version: 1,
+        nodes: {
+            "/d": (kind: "chan.dropdown", params: {"entries": "coral\nmaze\nworms"}, pos: [0, 0]),
+            "/m": (kind: "chan.math", binds: {"op": "d"}, pos: [300, 0]),
+        },
+    )"#;
+    let content = penumbra_project::parse(project, &types).unwrap();
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
+    let engine = Engine::start(session).unwrap();
+    let call = |method: &str, params: Json| json!({"method": method, "params": params});
+    let script = [
+        json!({"wait": 1.0}),
+        call("ui.click", json!({"id": "control./d"})),
+        call("ui.elements", json!({"prefix": "control./d.entry."})),
+        call("ui.click", json!({"id": "control./d.entry.2"})),
+        call("node.info", json!({"path": "/d"})),
+        call("ui.elements", json!({"prefix": "control./d.entry."})),
+        call("ui.state", json!({})),
+    ];
+    let script: Vec<String> = script.iter().map(Json::to_string).collect();
+    let options = headless::Options { size: [1200.0, 800.0], pixels_per_point: 1.0, software: true };
+    let replies = headless::run(engine.clone(), &script.join("\n"), &options).unwrap();
+    let ids = |r: &Json| -> Vec<String> {
+        r["elements"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap().to_string()).collect()
+    };
+    let open = ids(reply(&replies, "ui.elements", 0));
+    assert_eq!(open, ["control./d.entry.0", "control./d.entry.1", "control./d.entry.2"], "the menu is open");
+    let d = reply(&replies, "node.info", 0);
+    assert_eq!(param(d, "value"), json!("worms"), "{d}");
+    assert_eq!(d["dropdown"]["place"], 2, "{d}");
+    assert!(ids(reply(&replies, "ui.elements", 1)).is_empty(), "the pick closed the menu");
+    assert_eq!(reply(&replies, "ui.state", 0)["selection"], json!([]), "nothing got selected");
+    let history = engine.session().doc().with_history(|h| h.entries().len());
+    assert_eq!(history, 1, "one pick, one entry");
+    engine.shutdown();
+}

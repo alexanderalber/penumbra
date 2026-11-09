@@ -1413,10 +1413,11 @@ impl Editor {
         layout.set_view(view, now);
     }
 
-    /// The control on the body of a `chan.button` or `chan.slider` ([`node_controls`]). It lies
-    /// on top of the node: a press there holds the button or moves the slider, and neither
-    /// selects nor moves the node. A momentary press is live state in the engine; a toggle's
-    /// click and a slider's drag are edits, one undo step each. Returns the control's response
+    /// The control on the body of a `chan.button`, `chan.slider` or `chan.dropdown`
+    /// ([`node_controls`]). It lies on top of the node: a press there holds the button, moves
+    /// the slider or opens the dropdown's menu, and neither selects nor moves the node. A
+    /// momentary press is live state in the engine; a toggle's click, a slider's drag and a
+    /// dropdown's pick are edits, one undo step each. Returns the control's response
     /// and what to draw.
     fn body_control(
         &mut self,
@@ -1440,11 +1441,20 @@ impl Editor {
         let first = chans.and_then(|c| c.channels().first()).map(|c| c.value());
         let mut control = node_controls::of(node, input.types, input.status.get(&g.id), first)?;
         let body = Rect::from_min_max(pos2(g.rect.min.x, g.rect.min.y + HEADER * zoom), g.rect.max);
-        let rect = node_controls::rect(body, zoom, PORT_PICK);
+        let rect = node_controls::rect(body, zoom, control_margin(ui.painter(), g, zoom));
         let resp = ui.interact(rect, ui.id().with(("control", g.id)), Sense::click_and_drag());
         auto.add(format!("control.{path}"), rect, node.kind.clone());
         let active = !control.bound() && (input.can_edit || !control.edits());
         let param = net_param(input, g.id, "value");
+        node_controls::menu(
+            &resp,
+            &control,
+            param.clone(),
+            active,
+            &format!("control.{path}"),
+            auto,
+            actions,
+        );
         let pointer = node_controls::interact(
             ui,
             &resp,
@@ -1671,7 +1681,15 @@ impl Editor {
         let has_outputs = input.types.desc(&node.kind).is_some_and(|d| !d.outputs.is_empty());
         if let Some(c) = control {
             node_controls::draw(
-                painter, body_rect, &c.control, &c.line, c.pressed, c.hovered, c.active, zoom, PORT_PICK,
+                painter,
+                body_rect,
+                &c.control,
+                &c.line,
+                c.pressed,
+                c.hovered,
+                c.active,
+                zoom,
+                control_margin(painter, g, zoom),
             );
         }
         let shown = if control.is_some() { None } else { shown };
@@ -2687,6 +2705,21 @@ fn port_label_style(zoom: f32) -> (FontId, f32) {
 /// component, whose ports are named by their nodes.
 fn input_labels_shown(g: &Geo, zoom: f32) -> bool {
     (g.inputs.len() > 1 || g.comp) && zoom >= 0.6
+}
+
+/// Room a control on the body of `g` leaves at the right edge, in screen points: the output
+/// port, or the output labels where they are shown (a dropdown names its two outputs).
+fn control_margin(painter: &egui::Painter, g: &Geo, zoom: f32) -> f32 {
+    if !((g.outputs.len() > 1 || g.comp) && zoom >= 0.6) {
+        return PORT_PICK;
+    }
+    let (font, gap) = port_label_style(zoom);
+    let widest = g
+        .outputs
+        .iter()
+        .map(|p| painter.layout_no_wrap(p.name.clone(), font.clone(), theme::TEXT_WEAK).size().x)
+        .fold(0.0f32, f32::max);
+    PORT_PICK.max(gap + widest + 3.0)
 }
 
 /// How far the input labels of `g` reach into its body from the left edge, in screen points; 0

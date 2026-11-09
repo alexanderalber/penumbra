@@ -82,6 +82,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
+| `chan.pick` | Pick an entry of a chan.dropdown as its menu does: {path, entry}, `entry` its name (case aside) or its place counted from 0. An edit, as `node.set` on its `value`; in show mode a change without history for a dropdown flagged `show`. The reply lists the entries |
 | `chan.press` | Press a chan.button as a click on its node does: {path, down?}. Momentary: without `down` a tap (1 for one frame), `down: true` holds it until `down: false`; no history entry. Toggle: a press flips `value` (an edit), `down: false` does nothing |
 | `chan.read` | Cook a chan or audio node and read its channels (values now, for sound also peak and rms of the block; {samples: true} for all); {path, output?, samples?} |
 
@@ -342,7 +343,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `show.lock` | Show mode on: the project is locked against edits and moves, not written and not reloaded from disk; OSC, DMX and the control channel stay live, and so do the values of the show screen's controls (no history entry, kept across restarts, saved at unlock); after a crash (exit code 3) the app starts again with the clock running. Kept across restarts |
-| `show.status` | Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes, and the controls on the show screen (chan.button and chan.slider with `show` on) with their values |
+| `show.status` | Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes, and the controls on the show screen (chan.button, chan.slider and chan.dropdown with `show` on) with their values |
 | `show.unlock` | Show mode off: editing, saving and reloading as usual |
 
 ## spacenav

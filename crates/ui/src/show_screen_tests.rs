@@ -183,3 +183,38 @@ fn a_button_held_in_the_editor_is_let_go_when_the_show_begins() {
     drop(harness);
     engine.shutdown();
 }
+
+#[test]
+fn a_dropdown_on_the_show_screen_picks_without_history() {
+    let dir = ScratchDir::unborn("ui-show-dropdown");
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let project = r#"(
+        version: 1,
+        nodes: {
+            "/look": (kind: "chan.dropdown", params: {"entries": "ember\nabyss\nbio", "show": true}, pos: [0, 0]),
+            "/s": (kind: "chan.slider", params: {"show": true}, pos: [200, 0]),
+        },
+    )"#;
+    let content = penumbra_project::parse(project, &types).unwrap();
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
+    let engine = Engine::start(session).unwrap();
+    let call = |method: &str, params: Json| json!({"method": method, "params": params});
+    let script = [
+        call("show.lock", json!({})),
+        json!({"wait": 1.0}),
+        call("ui.click", json!({"id": "show.control./look"})),
+        call("ui.elements", json!({"prefix": "show.control./look.entry."})),
+        call("ui.click", json!({"id": "show.control./look.entry.1"})),
+        call("show.status", json!({})),
+        call("history.list", json!({"limit": 100})),
+    ];
+    let script: Vec<String> = script.iter().map(Json::to_string).collect();
+    let options = headless::Options { size: [1200.0, 800.0], pixels_per_point: 1.0, software: true };
+    let replies = headless::run(engine.clone(), &script.join("\n"), &options).unwrap();
+    assert_eq!(ids(reply(&replies, "ui.elements", 0)).len(), 3, "the menu lists the entries");
+    let status = reply(&replies, "show.status", 0);
+    assert_eq!(status["controls"][0]["entry"], "abyss", "{status}");
+    assert_eq!(status["controls"][0]["value"], 1.0, "{status}");
+    assert_eq!(reply(&replies, "history.list", 0)["entries"], json!([]), "no history entry");
+    engine.shutdown();
+}
