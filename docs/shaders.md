@@ -29,8 +29,17 @@ premultiplied RGBA; values above 1 are kept.
 
 Comment lines starting with `// @param` declare params. They appear in the node's param panel
 under "from the shader", and are set, bound to channels, saved and undone like any other.
-The node's own params (`file`, `resolution`, `width`, `height`, `keep_size`) are taken: a
-shader declaring one of those names does not load, so call a line width `line`, not `width`.
+Some names are taken, and a shader that declares one does not load:
+
+- **The node's own params:** `file`, `resolution`, `width`, `height`, `keep_size`,
+  `iterations`. Call a line width `line`, not `width`. The error lists them.
+- **WGSL's reserved words**, since every param becomes a field `params.<name>`: `active`,
+  `type`, `target`, `static`, `super`... and keywords such as `loop` or `default`. The error says
+  which word it is.
+
+Other `// @word` comments are ordinary comments (`// @todo`, `// @@LAB@@`). A word close to a
+header refuses the shader, since the param it meant to declare would be missing: `// @parm`,
+`// @Param`, `// @params`.
 
 ```
 // @param <name> <kind> [= <default>] [<min>..<max>] [-- <doc>]
@@ -40,7 +49,7 @@ shader declaring one of those names does not load, so call a line width `line`, 
 |---|---|
 | `float` | `f32` |
 | `int` | `i32` |
-| `bool` | `u32`, 0 or 1 |
+| `bool` | `u32`, 0 or 1: write `if params.flag != 0u`; `if params.flag` does not compile |
 | `vec2`, `vec3`, `vec4` | `vec2f` to `vec4f` |
 | `color` | `vec4f`, linear, straight alpha |
 | `choice(a\|b\|c)` | `i32`, plus a constant per entry: `const <name>_a: i32` |
@@ -118,6 +127,25 @@ fn pn_band(p: PnPalette, t: f32) -> vec4f     // 0..1 in equal bands, one per co
 
 A shader that reads `pn_time` cooks every frame; one that does not cooks only when its inputs
 or params change.
+
+`pn_hash` returns three numbers, a `vec3u`: `.w` does not compile. For more random numbers,
+hash its result again: `pn_hash(h ^ vec3u(7u))`.
+
+## On Windows (Direct3D 12)
+
+On Windows penumbra draws with Direct3D 12. naga first checks the WGSL, then translates it to
+HLSL for Direct3D's compiler, FXC. Some shaders pass naga and fail in FXC or on the GPU:
+
+- **FXC refuses the shader.** The node then shows FXC's message. Its line numbers count lines of
+  the HLSL, not of your file. The usual cause is a `return` inside `switch` cases or loops
+  (`X3507: Not all control paths return a value`, `X4000`, `X8000`). Give the function one
+  result variable, use `if` and `else if`, and `return` once at its end. A node that reads the
+  refused one has no picture either; `node.snapshot` of it names the refused node.
+- **`atan2(0.0, 0.0)` is NaN**, and NaN spreads through a feedback loop to every pixel. Guard
+  it: `select(0.0, atan2(g.y, g.x), dot(g, g) > 1e-8)`.
+- **`pack2x16float` and `unpack2x16float` do not compile** (naga wants a capability penumbra does
+  not ask for). To round `x` to the nearest half float by hand:
+  `let b = bitcast<u32>(x); let h = bitcast<f32>((b + 0xfffu + ((b >> 13u) & 1u)) & ~0x1fffu);`
 
 ## Size
 

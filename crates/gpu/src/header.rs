@@ -21,6 +21,11 @@
 //! for `res.analyze`. `@group <name>` puts the params declared after it in a section of the
 //! panel that is folded away until opened; `@group` alone goes back to the main rows. Lines may
 //! appear anywhere in the file.
+//!
+//! Any other `// @word` line is an ordinary comment (`// @@LAB@@`, `// @todo`), unless the word
+//! looks like a misspelt header: one of the three names in other letter case, with a letter or
+//! two more, fewer or different, or with letters after it (`@parm`, `@Param`, `@params`). Such
+//! a line refuses the shader, since the param it meant to declare would be missing.
 
 use penumbra_core::{Error, ParamSpec, Value};
 
@@ -59,12 +64,54 @@ pub fn parse(source: &str) -> Result<Header, Error> {
                 d.trim().parse::<f64>().ok().filter(|d| d.is_finite() && *d > 0.0).ok_or_else(|| {
                     Error::new(format!("@density wants a positive number, got `{}`", d.trim())).context(ctx())
                 })?;
-        } else {
-            return Err(Error::new(format!("unknown header `{word}`; known: @param, @group, @density"))
-                .context(ctx()));
+        } else if let Some(meant) = misspelt(word) {
+            return Err(Error::new(format!(
+                "`{word}` looks like a misspelt `{meant}`; headers are @param, @group and @density. Other words after `// @` are fine in a comment"
+            ))
+            .context(ctx()));
         }
     }
     Ok(header)
+}
+
+const HEADERS: [&str; 3] = ["@param", "@group", "@density"];
+
+/// The header `word` (with its `@`) seems to mean, when it is none but close to one.
+fn misspelt(word: &str) -> Option<&'static str> {
+    let lower = word.to_ascii_lowercase();
+    let letters = lower.strip_prefix('@')?;
+    if letters.len() < 3 || !letters.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return None;
+    }
+    HEADERS.into_iter().find(|h| {
+        let name = &h[1..];
+        // Three letters are too few for two edits: `@arm` is no `@param`.
+        let edits = if letters.len() > 3 { 2 } else { 1 };
+        letters.starts_with(name) || distance(letters, name) <= edits
+    })
+}
+
+/// Edits (insert, delete, replace one letter) from `a` to `b`, for ASCII words.
+fn distance(a: &str, b: &str) -> usize {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut diagonal = row.first().copied().unwrap_or(0);
+        if let Some(first) = row.first_mut() {
+            *first = i + 1;
+        }
+        for (j, cb) in b.iter().enumerate() {
+            let above = row.get(j + 1).copied().unwrap_or(usize::MAX);
+            let left = row.get(j).copied().unwrap_or(usize::MAX);
+            let here =
+                (diagonal + usize::from(ca != cb)).min(above.saturating_add(1)).min(left.saturating_add(1));
+            diagonal = above;
+            if let Some(cell) = row.get_mut(j + 1) {
+                *cell = here;
+            }
+        }
+    }
+    row.last().copied().unwrap_or(0)
 }
 
 fn param(decl: &str) -> Result<ParamSpec, Error> {
@@ -91,6 +138,10 @@ fn param(decl: &str) -> Result<ParamSpec, Error> {
     let (Some(name), Some(kind), None) = (words.next(), words.next(), words.next()) else {
         return Err(Error::new("expected `@param <name> <kind> [= default] [min..max] [-- doc]`"));
     };
+    // The name becomes a field of the shader's `params` struct.
+    if naga::keywords::wgsl::RESERVED.contains(&name) {
+        return Err(Error::new(format!("`{name}` is a reserved word in WGSL; give the param another name")));
+    }
     let default = default.filter(|d| !d.is_empty());
     let mut spec = match kind {
         "float" => ParamSpec::float(name, 0.0),
@@ -155,7 +206,12 @@ mod tests {
              // @group\n\
              // @param last bool\n\
              // @density 0.5\n\
-             // a normal comment",
+             // a normal comment\n\
+             // @@LAB@@ a marker\n\
+             // @todo tidy up\n\
+             // @ alone\n\
+             // @see pn_hash
+             // @arm and @hack",
         )
         .unwrap();
         assert_eq!(h.density, 0.5);
@@ -184,7 +240,12 @@ mod tests {
             ("// @param x float = abc", "line 1"),
             ("// @param x float\n// @param x int", "twice"),
             ("// @density -1", "positive"),
-            ("// @paramx float", "unknown header"),
+            ("// @paramx float", "misspelt `@param`"),
+            ("// @parm x float", "misspelt `@param`"),
+            ("// @Param x float", "misspelt `@param`"),
+            ("// @grup detail", "misspelt `@group`"),
+            ("// @densty 2", "misspelt `@density`"),
+            ("// @param active bool", "`active` is a reserved word in WGSL"),
             ("// @param mode choice(a|b) = c", "must be one of"),
             ("// @group a group name far longer than it may be\n// @param x float", "line 2"),
         ] {

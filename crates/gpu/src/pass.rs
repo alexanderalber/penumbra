@@ -479,6 +479,46 @@ pub(crate) fn ascii_frame(text: &str) -> String {
         .collect()
 }
 
+/// The message for a pipeline that wgpu refused after naga had accepted the shader. On Direct3D
+/// 12 that is mostly the FXC compiler refusing the HLSL that naga wrote. wgpu wraps its words in
+/// layers of context and prefixes every line with a made-up path; the message keeps the
+/// compiler's lines and says that their line numbers count the HLSL.
+pub(crate) fn pipeline_error(label: &str, wgpu: &str) -> String {
+    const MARK: &str = "D3DCompile error";
+    let Some(at) = wgpu.find(MARK) else { return format!("{label}: {wgpu}") };
+    // `FXC D3DCompile error (Unspecified error (0x80004005)): <the compiler's lines>`
+    let rest = &wgpu[at + MARK.len()..];
+    let lines = rest.find("): ").map_or(rest, |i| &rest[i + 3..]);
+    let mut out =
+        format!("{label}: the Direct3D shader compiler (FXC) refused this shader. naga accepted it.");
+    // The compiler's text may end in a NUL.
+    let trim = |l: &str| l.trim_matches(|c: char| c.is_whitespace() || c.is_control()).to_string();
+    for line in lines.lines().map(trim).filter(|l| !l.is_empty()) {
+        out.push('\n');
+        out.push_str(&hlsl_line(&line));
+    }
+    out.push_str("\nThe line numbers count lines of the HLSL that naga wrote, not of the WGSL file.");
+    if ["X3507", "X4000", "X8000"].iter().any(|code| lines.contains(code)) {
+        out.push_str(
+            "\nA frequent cause: a return inside switch cases or loops. Give the function one result variable, use if and else if, and return once at its end.",
+        );
+    }
+    out
+}
+
+/// `E:\dir\a.wgsl(89,11-33): error X3507: ...` as `HLSL line 89: error X3507: ...`.
+fn hlsl_line(line: &str) -> String {
+    let Some(colon) = line.find("): ") else { return line.to_string() };
+    let head = &line[..colon];
+    let Some(open) = head.rfind('(') else { return line.to_string() };
+    let position = &head[open + 1..];
+    let row = position.split(',').next().unwrap_or("");
+    if row.is_empty() || !row.bytes().all(|b| b.is_ascii_digit()) {
+        return line.to_string();
+    }
+    format!("HLSL line {row}: {}", &line[colon + 3..])
+}
+
 /// A compiled fullscreen pass.
 pub struct Pass {
     label: String,
@@ -580,7 +620,7 @@ impl Pass {
             })
         });
         if let Some(e) = error {
-            return Err(Error::new(format!("{label}: {e}")));
+            return Err(Error::new(pipeline_error(label, &e)));
         }
         Ok(Self {
             label: label.to_string(),
@@ -918,6 +958,27 @@ fn main(v: PnVertex) -> @location(0) vec4f {
             "error: no definition in scope\n  +- a.wgsl:3:10\n  |\n3 |   return nope;\n  |          ^^^^ here\n  :\n  +-- end"
         );
         assert_eq!(ascii_frame("ä ├┬┤"), "ä +++");
+    }
+
+    #[test]
+    fn a_refusal_of_fxc_keeps_the_compilers_lines() {
+        // As wgpu 30 words it on Direct3D 12.
+        let wgpu = "Validation Error\n\nCaused by:\n  In Device::create_render_pipeline, label = 'step.wgsl'\n    Internal error in ShaderStages(FRAGMENT) shader: FXC D3DCompile error (Unspecified error (0x80004005)): E:\\work\\step.wgsl(111,13-23): warning X4000: use of potentially uninitialized variable (seeded)\nerror X8000: Validation Error: source component 3 in temp r0 not initialized. Opcode #62 (count is 1-based)\n\0\n ";
+        let e = pipeline_error("step.wgsl", wgpu);
+        assert!(e.starts_with("step.wgsl: the Direct3D shader compiler (FXC) refused this shader."), "{e}");
+        assert!(
+            e.contains(
+                "\nHLSL line 111: warning X4000: use of potentially uninitialized variable (seeded)\n"
+            ),
+            "{e}"
+        );
+        assert!(e.contains("\nerror X8000: Validation Error: source component 3"), "{e}");
+        assert!(e.contains("one result variable"), "{e}");
+        assert!(!e.contains("Caused by") && !e.contains("E:\\work") && !e.contains('\0'), "{e}");
+        assert!(e.ends_with("return once at its end."), "{e}");
+        // Anything else is passed on as wgpu words it.
+        assert_eq!(pipeline_error("a.wgsl", "Validation Error: x"), "a.wgsl: Validation Error: x");
+        assert_eq!(hlsl_line("no position here"), "no position here");
     }
 
     #[test]
