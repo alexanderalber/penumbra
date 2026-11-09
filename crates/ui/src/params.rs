@@ -251,7 +251,7 @@ impl ParamPanel {
             if desc.is_some_and(|d| d.stateful || d.container) {
                 // Not an edit, so allowed while Claude edits too.
                 let tip = if desc.is_some_and(|d| d.container) {
-                    "Start over every stateful node inside this component (R over the editor)"
+                    "Start over every stateful node inside this component, once (R over the editor). The `reset` row below does the same in every frame while it is on, and takes a key"
                 } else {
                     "Start over: forget what this node holds from earlier frames (R over the editor)"
                 };
@@ -624,7 +624,7 @@ impl ParamPanel {
                 let r = ui.add(egui::Label::new(RichText::new(e).color(theme::WARNING)).wrap());
                 auto.add(format!("param.{key}.error.{i}"), r.rect, e.clone());
             }
-            let hint = "One line each: `@param speed float = 1 0..4 -- what it does` gives the component a param, `@expose speed = lfo1.rate` shows a param inside, `@group look` folds the lines after it.";
+            let hint = "One line each: `@param speed float = 1 0..4 -- what it does` gives the component a param, `@expose speed = lfo1.rate` shows a param inside, `@group look` folds the lines after it, `@reset preset seed` starts the component over when one of these params changes.";
             code_hint(ui, hint);
         });
         auto.add(format!("param.{key}.edit"), r.header_response.rect, "edit params");

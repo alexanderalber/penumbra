@@ -1680,7 +1680,7 @@ mod tests {
         assert_eq!(value("/c/sub/x"), Some(Value::Float(3.0)));
         assert!(!n.touched.contains(&c), "the component itself holds no value");
         let e = net.apply(&types, &[set("/c.nope", 1.0)]).unwrap_err().0;
-        assert!(e.contains("params: params, level, deep, bad"), "{e}");
+        assert!(e.contains("params: params, reset, level, deep, bad"), "{e}");
         assert!(net.apply(&types, &[set("/c.bad", 1.0)]).unwrap_err().0.contains("inside the component"));
         // Binding and resetting follow the alias too.
         let bound = n

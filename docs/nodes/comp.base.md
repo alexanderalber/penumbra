@@ -64,6 +64,8 @@ stay when you paste one:
 - **`@expose`** shows an inner param on the component: `@expose noise1.speed`, or with a name of
   its own, `@expose speed = noise1.speed`. Changing the exposed param changes the inner one,
   and you can bind it like any param. The inner node keeps the value and the range.
+- **`@reset`** names params whose change starts the component over: `@reset preset seed
+  width height`. More under "Starting over" below.
 - **Comments:** lines starting with `#`, and `//` lines without an `@`.
 - **Mistakes:** a line that declares nothing is listed right below the text with its line
   number and the reason; the rest still works. Each name may appear once. `params`, `shelf`, `about` and
@@ -83,3 +85,39 @@ top. Every follower takes the new value in the same frame, also when the compone
 param is bound to a dropdown or an LFO outside.
 
 More in the Components section of the concepts guide.
+
+## Starting over
+
+A simulation inside a component keeps its last frame in a feedback loop. A new preset then
+works on the old picture. Two things start the loop over from its seed:
+
+- **`reset`:** while it is on, every node inside that remembers earlier frames starts over in
+  each frame. These are `tex.feedback`, `chan.feedback`, `tex.fluid`, `vol.smoke`, trails,
+  clocks and the other nodes the `reset` button acts on, in nested components too. Held on,
+  the simulation stays at its start; it runs again when `reset` goes off. Bind it to a key or
+  any channel, as TouchDesigner users bind a pulse parameter. The `reset` button in the panel's
+  header does the same once.
+- **`@reset preset seed`:** when the value of one of these params changes, the component starts
+  over once. A value set by hand, by undo or through a binding counts. The new start already
+  uses the new value, in the same frame. Only `@param` names may stand there; for an exposed
+  param, make it an `@param` that the inner param follows ("Put on component").
+
+Nodes that only follow the clock, such as an LFO or a shader that reads `time`, do not start
+over. A locked node keeps what it holds.
+
+**Key 0 starts the simulation over:** add a `chan.keyboard_in` with `keys` at `0`, and bind the
+component's `reset` to its `key_0`:
+
+```text
+node.create {path: "/keys", kind: "chan.keyboard_in", params: {keys: "0"}}
+node.bind {param: "/sim.reset", from: "/keys", channel: "key_0"}
+```
+
+A tap restarts the simulation; held, it waits at the start. This also works while the show is
+locked: a key is no edit.
+
+**Restart when it has died:** measure the picture inside with `chan.from_tex`, compare with
+`chan.math` (`below` a mark), pass that through a `chan.feedback`, and bind `reset` to it. The
+feedback node hands the measurement on a frame later, so the binding makes no loop. The
+component starts over one frame after the measurement passes the mark.
+

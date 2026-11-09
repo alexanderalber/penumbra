@@ -21,9 +21,9 @@ use crate::node::{NodeDesc, NodeTypes};
 /// The text param of a component that declares its params, one per line (see the module).
 pub const PARAMS: &str = "params";
 
-/// Names a component's text may not declare beyond its kind's own params: words kept for
-/// params every component will have.
-pub const RESERVED: [&str; 1] = ["reset"];
+/// The bool param of a component that starts its stateful nodes over while it is on
+/// ([`crate::Cooker`]).
+pub const RESET: &str = "reset";
 
 /// One `@expose` line of a component.
 #[derive(Clone, Debug, PartialEq)]
@@ -39,21 +39,14 @@ pub fn declares(desc: &NodeDesc) -> bool {
 }
 
 /// What the [`PARAMS`] text among `params` declares for a node of kind `desc`; `None` for a
-/// kind that declares nothing. Names the kind has already, and [`RESERVED`] ones, are refused
-/// line by line.
+/// kind that declares nothing. Names the kind has already are refused line by line.
 pub fn declared_in(desc: &NodeDesc, params: &BTreeMap<Name, Value>) -> Option<Declared> {
     if !declares(desc) {
         return None;
     }
     let text = params.get(PARAMS).and_then(Value::as_str).unwrap_or("");
     Some(declare::component(text, |name| {
-        if desc.param_spec(name).is_some() {
-            Some(format!("`{name}` is a param of every {} already", desc.kind))
-        } else if RESERVED.contains(&name) {
-            Some(format!("`{name}` is kept for a param every {} will have", desc.kind))
-        } else {
-            None
-        }
+        desc.param_spec(name).is_some().then(|| format!("`{name}` is a param of every {} already", desc.kind))
     }))
 }
 
@@ -187,18 +180,11 @@ impl Network {
         Ok((comp, comp_path, declared))
     }
 
-    /// Why the component of kind `desc` cannot take `name`, if it cannot: a param of its kind,
-    /// or a reserved word.
-    fn kind_takes(desc: &NodeDesc, comp: &NodePath, name: &str) -> Option<Error> {
-        if desc.param_spec(name).is_some() {
-            return Some(Error::new(format!(
-                "`{name}` is a param of every {} already; give another name",
-                desc.kind
-            )));
-        }
-        RESERVED
-            .contains(&name)
-            .then(|| Error::new(format!("`{name}` is kept for a param {comp} will have; give another name")))
+    /// Why the component of kind `desc` cannot take `name`, if it cannot: a param of its kind.
+    fn kind_takes(desc: &NodeDesc, name: &str) -> Option<Error> {
+        desc.param_spec(name).is_some().then(|| {
+            Error::new(format!("`{name}` is a param of every {} already; give another name", desc.kind))
+        })
     }
 
     /// The edit that makes inner param `param` (of spec `spec`, now `value`) a param of its
@@ -243,7 +229,7 @@ impl Network {
                 spec.kind_label()
             )));
         }
-        if let Some(why) = Self::kind_takes(desc, &comp_path, name.as_str()) {
+        if let Some(why) = Self::kind_takes(desc, name.as_str()) {
             return Err(why);
         }
         let mut copy = spec.clone();
@@ -298,9 +284,8 @@ impl Network {
         }
         let desc =
             self.node(comp).and_then(|n| types.desc(&n.kind)).ok_or_else(|| Error::new("unknown kind"))?;
-        let taken = |n: &str| {
-            Self::kind_takes(desc, &comp_path, n).is_some() || declared.lines.iter().any(|d| d.name() == n)
-        };
+        let taken =
+            |n: &str| Self::kind_takes(desc, n).is_some() || declared.lines.iter().any(|d| d.name() == n);
         let name = match name {
             Some(n) if taken(n.as_str()) => {
                 return Err(Error::new(format!("{comp_path} has a param `{n}` already; give another name")));
@@ -424,7 +409,7 @@ mod tests {
         let e = net.apply(&types, &[set("/c.feed", text("fast"))]).unwrap_err().0;
         assert!(e.contains("`feed` expects"), "{e}");
         let e = net.apply(&types, &[set("/c.nope", Value::Float(1.0))]).unwrap_err().0;
-        assert!(e.contains("params: params, preset, feed, glow, level"), "{e}");
+        assert!(e.contains("params: params, reset, preset, feed, glow, level"), "{e}");
         let e = net.apply(&types, &[set("/c.expose", text("a = k.value"))]).unwrap_err().0;
         assert!(e.contains("@expose speed = lfo1.rate"), "{e}");
         let e = net.apply(&types, &[Op::Reset { param: pp("/c.nope") }]).unwrap_err().0;
@@ -490,7 +475,11 @@ mod tests {
             "{:?}",
             declared.errors
         );
-        assert!(declared.errors[1].contains("`reset` is kept"), "{:?}", declared.errors);
+        assert!(
+            declared.errors[1].contains("`reset` is a param of every test.comp already"),
+            "{:?}",
+            declared.errors
+        );
         assert!(
             declared.errors[2].contains("line 4: `level` is declared on line 3 already"),
             "{:?}",

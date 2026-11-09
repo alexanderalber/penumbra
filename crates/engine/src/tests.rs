@@ -1350,6 +1350,9 @@ mod follow_tests;
 #[path = "dropdown_tests.rs"]
 mod dropdown_tests;
 
+#[path = "restart_tests.rs"]
+mod restart_tests;
+
 #[path = "mouse_tests.rs"]
 mod mouse_tests;
 

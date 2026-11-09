@@ -660,9 +660,16 @@ first output of the kind it reads.
   (`step.feed`). A follower inside shows `parent.preset` in the components' turquoise; a click
   goes to the component. When a follower cannot take the value, the component lists the warning
   at the top of its panel and its node shows a warning badge.
+- **Starting over:** a component's `reset` starts every node inside that remembers earlier
+  frames over (feedback loops, simulations, trails, clocks), in each frame while it is on. Bind
+  it to a key, such as a `chan.keyboard_in`'s `key_0`, and the key restarts the simulation;
+  TouchDesigner users know this as a pulse parameter. A line `@reset preset seed` in the text
+  starts the component over once when one of these params changes, by hand, by undo or through
+  a binding. The new start uses the new value in the same frame. The `reset` button in the
+  panel's header restarts once. More in [comp.base](reference/nodes.md#compbase).
 - **Mistakes in the text:** a line that declares nothing shows right below the text, with its
   line number and the reason. The other lines still work. A name may be declared once, and not as
-  one of the component's own built-in params (`params`, `shelf`, `about`) or `reset`.
+  one of the component's own built-in params (`params`, `shelf`, `about`, `reset`).
 - **Rename:** renaming a node (the name field at the top of the param panel, or `node.rename`)
   also rewrites the `@expose` lines and node references (`tex.select`'s `node`) that name it or a
   node inside it. One undo takes all of it back. Wires and bindings follow a rename by

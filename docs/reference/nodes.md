@@ -2941,7 +2941,8 @@ Outputs: none.
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `params` *(more)* | text |  |  | The component's own params, one per line. `@param speed float = 1 0..4 -- doc` adds a param with its own value, in the grammar of a shader header. `@expose rate = lfo1.rate` shows an inner param on the component. `@group look` puts the params after it in a fold. The panel shows this text in the fold `edit params` under the component's rows |
+| `reset` | bool | `false` |  | While on, every node inside that remembers earlier frames starts over in each frame: feedback loops, simulations, trails, clocks. A held key keeps them at the start; they run again on release. Bind it to a key (a chan.keyboard_in's `key_0`) or to any channel, like a pulse. The `reset` button in the panel's header starts them over once |
+| `params` *(more)* | text |  |  | The component's own params, one per line. `@param speed float = 1 0..4 -- doc` adds a param with its own value, in the grammar of a shader header. `@expose rate = lfo1.rate` shows an inner param on the component. `@group look` puts the params after it in a fold. `@reset preset seed` starts the component over when one of these params changes. The panel shows this text in the fold `edit params` under the component's rows |
 | `shelf` *(more)* | text |  |  | Where this component stands in the add dialog's library tab: one or two levels, `dmx` or `dmx/safety`. Empty: only your own components' shelf `mine` shows it |
 | `about` *(more)* | text |  |  | One line on what this component does. The add dialog shows it under the pointer, and its search finds it |
 

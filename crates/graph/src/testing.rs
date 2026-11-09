@@ -151,6 +151,7 @@ pub fn test_types() -> NodeTypes {
         &mut t,
         NodeDesc::new("test.comp", "A component")
             .param(ParamSpec::text(crate::PARAMS, "").multiline())
+            .param(ParamSpec::bool(crate::RESET, false))
             .container(),
         |_| Ok(Cooked::Outputs(vec![])),
     );
@@ -277,6 +278,18 @@ pub fn test_types() -> NodeTypes {
     ))
     .unwrap();
     t.register(FnNodeType::new(
+        NodeDesc::new(
+            "test.sim",
+            "Starts at its input's value and adds 1 each cook (time-dependent); stateful",
+        )
+        .stateful()
+        .time_dependent()
+        .input("seed", DataKind::Chan)
+        .output("out", DataKind::Chan),
+        || Box::new(Sim(None)) as Box<dyn Operator>,
+    ))
+    .unwrap();
+    t.register(FnNodeType::new(
         NodeDesc::new("test.trims", "Puts out how often it was trimmed before this cook")
             .param(ParamSpec::float("value", 0.0))
             .output("out", DataKind::Chan),
@@ -356,6 +369,21 @@ impl Operator for Trims {
 }
 
 /// Counts cooks; the count is its state, saved as text.
+/// `test.sim`: its first cook takes the seed, every later one adds 1.
+struct Sim(Option<f64>);
+
+impl Operator for Sim {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        let _ = cx.time();
+        let v = match self.0 {
+            None => input(cx, 0),
+            Some(v) => v + 1.0,
+        };
+        self.0 = Some(v);
+        chan(v)
+    }
+}
+
 struct Counter(u64);
 
 impl Operator for Counter {

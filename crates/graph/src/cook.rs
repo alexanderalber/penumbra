@@ -636,6 +636,11 @@ struct Runtime {
     /// When the operator last panicked; it is made anew only when something about the node
     /// changed or after [`PANIC_RETRY`].
     panicked: Option<Instant>,
+    /// A component's `@reset` params with the values in effect at the last check
+    /// ([`Cooker::check_restart`]); `None` before the first.
+    restart_seen: Option<Vec<(Name, Value)>>,
+    /// The pass of that check.
+    restart_pass: u64,
 }
 
 impl Runtime {
@@ -721,8 +726,47 @@ impl Runtime {
             restored_place: None,
             seen_wanted: Vec::new(),
             panicked: None,
+            restart_seen: None,
+            restart_pass: 0,
         }
     }
+
+    /// The value param `name` takes in this pass: its bound value when bound, else the stored
+    /// one, else the default of the kind or of the component's declaration. Call after the
+    /// node's cook in the pass.
+    fn in_effect(&self, name: &str) -> Option<Value> {
+        if self.def.is_bound(name)
+            && let Some(v) = self.seen_bound.get(name)
+        {
+            return Some(v.clone());
+        }
+        if let Some(v) = self.def.params.get(name) {
+            return Some(v.clone());
+        }
+        let desc = self.ty.as_ref()?.desc();
+        match desc.param_spec(name) {
+            Some(spec) => Some(spec.default.clone()),
+            None => self.declared.as_ref()?.param(name).map(|s| s.default.clone()),
+        }
+    }
+}
+
+/// Whether two values in effect are the same: numbers by value, so an int stored and the same
+/// number bound count as one.
+fn same_value(a: &Value, b: &Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(x), Some(y)) => x == y,
+        _ => a == b,
+    }
+}
+
+/// A component that can start its stateful nodes over: `reset` is on or bound, or its text
+/// names `@reset` params ([`Cooker::check_restart`]).
+#[derive(Clone, Debug)]
+struct Restarter {
+    comp: NodeId,
+    /// The stateful nodes inside, at any depth, in nested components too.
+    inside: Vec<NodeId>,
 }
 
 /// Show places waiting for nodes the cooker has not seen yet, at most.
@@ -753,6 +797,9 @@ pub struct Cooker {
     eager: Vec<NodeId>,
     /// The nodes with a wired input that reads a previous result, as of the last sync.
     feedback: Vec<NodeId>,
+    /// Components that may start their nodes over, as of the last sync. They are evaluated
+    /// first in each pass, before anything inside them cooks.
+    restarters: Vec<Restarter>,
     /// Nodes are evaluated for thumbnails now, which does not count as use.
     for_thumbnails: bool,
     /// Time of the passes since the profile was last taken.
@@ -785,6 +832,7 @@ impl Cooker {
             read_all: BTreeSet::new(),
             eager: Vec::new(),
             feedback: Vec::new(),
+            restarters: Vec::new(),
             for_thumbnails: false,
             spent: PassSpent::default(),
             exact: false,
@@ -889,6 +937,13 @@ impl Cooker {
         let synced = Instant::now();
         self.find_reads(outputs, thumbnails, shown);
         let found = Instant::now();
+        // A component that starts over does so before its nodes cook, so the picture of this
+        // pass already starts from the new values.
+        for i in 0..self.restarters.len() {
+            if let Some(id) = self.restarters.get(i).map(|r| r.comp) {
+                self.evaluate(id, time, &mut report);
+            }
+        }
         for &id in outputs.iter().chain(shown.iter().map(|p| &p.node)) {
             self.evaluate(id, time, &mut report);
         }
@@ -1051,7 +1106,85 @@ impl Cooker {
             .runtimes
             .values()
             .any(|rt| rt.ty.as_ref().is_some_and(|t| t.desc().outputs.iter().any(|o| o.lazy)));
+        self.restarters = self.find_restarters(net);
         self.last_net = Some(net.clone());
+    }
+
+    /// The components that may start over ([`Restarter`]), each with the stateful nodes inside
+    /// it: the nodes a reset of the component by command starts over.
+    fn find_restarters(&self, net: &Network) -> Vec<Restarter> {
+        let mut out: Vec<Restarter> = self
+            .runtimes
+            .iter()
+            .filter(|(_, rt)| {
+                let Some(desc) = rt.ty.as_ref().map(|t| t.desc()) else { return false };
+                if !desc.container || desc.param_spec(crate::RESET).is_none() {
+                    return false;
+                }
+                rt.def.is_bound(crate::RESET)
+                    || rt.def.params.get(crate::RESET).and_then(Value::as_bool) == Some(true)
+                    || rt.declared.as_ref().is_some_and(|d| !d.resets.is_empty())
+            })
+            .map(|(&comp, _)| Restarter { comp, inside: Vec::new() })
+            .collect();
+        if out.is_empty() {
+            return out;
+        }
+        for (&id, rt) in &self.runtimes {
+            let Some(desc) = rt.ty.as_ref().map(|t| t.desc()) else { continue };
+            if !desc.stateful || desc.container {
+                continue;
+            }
+            // Up through the components around the node; a broken parent chain cannot loop
+            // longer than the network has nodes.
+            let mut up = rt.def.parent;
+            let mut steps = 0;
+            while let Some(parent) = up
+                && steps <= self.runtimes.len()
+            {
+                if let Some(r) = out.iter_mut().find(|r| r.comp == parent) {
+                    r.inside.push(id);
+                }
+                up = net.node(parent).and_then(|n| n.parent);
+                steps += 1;
+            }
+        }
+        out
+    }
+
+    /// After component `id` cooked in this pass: when its `reset` is on, or the value in effect
+    /// of one of its `@reset` params changed since the last pass, every stateful node inside
+    /// starts over ([`Runtime::start_over`]) before it cooks in this pass. Locked nodes keep
+    /// what they hold. Nothing starts over at the first check, for a param named anew, or when
+    /// only the text changed.
+    fn check_restart(&mut self, id: NodeId) {
+        let Some(at) = self.restarters.iter().position(|r| r.comp == id) else { return };
+        let pass = self.pass;
+        let Some(rt) = self.runtimes.get(&id) else { return };
+        if rt.restart_pass == pass {
+            return;
+        }
+        let on = rt.in_effect(crate::RESET).and_then(|v| v.as_bool()) == Some(true);
+        let names: &[Name] = rt.declared.as_ref().map_or(&[], |d| d.resets.as_slice());
+        let now: Vec<(Name, Value)> =
+            names.iter().filter_map(|n| Some((n.clone(), rt.in_effect(n.as_str())?))).collect();
+        let changed = rt.restart_seen.as_ref().is_some_and(|seen| {
+            now.iter().any(|(n, v)| seen.iter().any(|(m, old)| m == n && !same_value(old, v)))
+        });
+        let Some(rt) = self.runtimes.get_mut(&id) else { return };
+        rt.restart_pass = pass;
+        rt.restart_seen = Some(now);
+        if !(on || changed) {
+            return;
+        }
+        let inside = self.restarters.get(at).map(|r| r.inside.clone()).unwrap_or_default();
+        for node in inside {
+            if let Some(rt) = self.runtimes.get_mut(&node)
+                && !rt.def.locked
+            {
+                rt.start_over();
+            }
+        }
     }
 
     /// Cooks what the nodes cooked in this pass read through a previous-result input (the end
@@ -1149,6 +1282,7 @@ impl Cooker {
                 Visit::Cook => {
                     let started = Instant::now();
                     self.cook_one(id, time, report);
+                    self.check_restart(id);
                     let took = started.elapsed();
                     if let Some(rt) = self.runtimes.get_mut(&id) {
                         rt.spent.visits += 1;
@@ -3289,6 +3423,85 @@ mod tests {
         assert!(
             f.status("/c/k").warning.unwrap().contains("follows parent.gone, but /c has no param `gone`")
         );
+    }
+
+    #[test]
+    fn a_component_starts_its_stateful_nodes_over_before_they_cook() {
+        let bind = |param: &str, from: &str, name: Option<&str>| Op::Bind {
+            param: ParamPath::parse(param).unwrap(),
+            component: None,
+            from: pp(from),
+            channel: None,
+            cell: None,
+            format: None,
+            from_param: name.map(|n| Name::new(n).unwrap()),
+        };
+        // `sim` cooks before anything reads the component in a pass of its own: `show` reads
+        // `sim` first, and only its second input follows the component.
+        let mut f = Fixture::new(&[
+            create("/c", "test.comp"),
+            create("/c/k", "test.const"),
+            create("/c/sim", "test.sim"),
+            create("/c/p", "test.const"),
+            create("/c/show", "test.add"),
+            connect("/c/k", "/c/sim", 0),
+            connect("/c/sim", "/c/show", 0),
+            connect("/c/p", "/c/show", 1),
+            create("/c/d", "test.comp"),
+            create("/c/d/sim", "test.sim"),
+            create("/lfo", "test.const"),
+            create("/key", "test.const"),
+        ]);
+        f.set("/c.params", Value::Text("@param preset float = 100\n@param look float\n@reset preset".into()));
+        f.set("/c/d.params", Value::Text("@param q float\n@reset q".into()));
+        f.edit(&[bind("/c/p.value", "/c", Some("preset"))]);
+        let step = |f: &mut Fixture| {
+            f.cook(&["/c/show", "/c/d/sim"]);
+            f.clock.advance(1);
+            (f.value("/c/sim").unwrap(), f.value("/c/show").unwrap(), f.value("/c/d/sim").unwrap())
+        };
+        assert_eq!(step(&mut f), (0.0, 100.0, 0.0), "no restart at the first cook");
+        assert_eq!(step(&mut f), (1.0, 101.0, 1.0));
+        // A new preset: the picture of the same pass starts from the seed with the new value.
+        f.set("/c.preset", Value::Float(200.0));
+        assert_eq!(step(&mut f), (0.0, 200.0, 0.0), "nested components start over with their parent");
+        assert_eq!(step(&mut f), (1.0, 201.0, 1.0));
+        // A param not named by @reset, a text change and the same value again start nothing.
+        f.set("/c.look", Value::Float(3.0));
+        f.set(
+            "/c.params",
+            Value::Text("@param preset float = 100\n@param look float\n\n@reset preset look".into()),
+        );
+        assert_eq!(step(&mut f), (2.0, 202.0, 2.0));
+        f.set("/c.preset", Value::Float(200.0));
+        assert_eq!(step(&mut f), (3.0, 203.0, 3.0));
+        // A nested component's own @reset starts over only what is inside it.
+        f.set("/c/d.q", Value::Float(1.0));
+        assert_eq!(step(&mut f), (4.0, 204.0, 0.0));
+        // A bound value that changes counts as a change, and undo does too.
+        f.set("/lfo.value", Value::Float(7.0));
+        f.edit(&[bind("/c.preset", "/lfo", None)]);
+        assert_eq!(step(&mut f), (0.0, 7.0, 0.0));
+        assert_eq!(step(&mut f), (1.0, 8.0, 1.0));
+        let before = f.net.clone();
+        f.set("/lfo.value", Value::Float(8.0));
+        assert_eq!(step(&mut f), (0.0, 8.0, 0.0));
+        f.net = before;
+        assert_eq!(step(&mut f), (0.0, 7.0, 0.0));
+        assert_eq!(step(&mut f), (1.0, 8.0, 1.0));
+        // `reset` holds them at the start while on, bound like any param.
+        f.edit(&[bind("/c.reset", "/key", None)]);
+        f.set("/key.value", Value::Float(1.0));
+        for _ in 0..3 {
+            assert_eq!(step(&mut f), (0.0, 7.0, 0.0));
+        }
+        f.set("/key.value", Value::Float(0.0));
+        assert_eq!(step(&mut f), (1.0, 8.0, 1.0));
+        assert_eq!(step(&mut f), (2.0, 9.0, 2.0));
+        // A locked node keeps what it holds.
+        f.edit(&[Op::Lock { path: pp("/c/d/sim"), locked: true }]);
+        f.set("/key.value", Value::Float(1.0));
+        assert_eq!(step(&mut f), (0.0, 7.0, 2.0));
     }
 
     #[test]

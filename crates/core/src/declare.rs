@@ -22,6 +22,9 @@
 //! A component's text has one more kind of line, `@expose <name> = <node>.<param>` (or
 //! `@expose <node>.<param>`, shown under the param's own name): one inner param shown on the
 //! component, its value and spec kept inside. [`component`] reads such a text.
+//!
+//! And `@reset <name> <name> ...`: a change of any of these `@param` values starts the stateful
+//! nodes inside over, so a new preset starts from its own seed.
 
 use crate::{Error, Name, ParamKind, ParamSpec, Value};
 
@@ -31,6 +34,8 @@ pub const PARAM: &str = "@param";
 pub const GROUP: &str = "@group";
 /// Shows an inner param on a component.
 pub const EXPOSE: &str = "@expose";
+/// Names params of a component whose change starts its stateful nodes over.
+pub const RESET: &str = "@reset";
 
 /// The `@word` of a declaration line and the text after it, when `line` is one. The line may
 /// start with `//`, so header lines of a shader can be pasted; with `comment_only` it must (a
@@ -161,7 +166,7 @@ fn distance(a: &str, b: &str) -> usize {
 }
 
 /// The words a component's text takes.
-const COMPONENT_WORDS: [&str; 3] = [PARAM, GROUP, EXPOSE];
+const COMPONENT_WORDS: [&str; 4] = [PARAM, GROUP, EXPOSE, RESET];
 
 /// An `@expose` line: the name shown on the component and the inner param it stands for, as
 /// written (`lfo1.rate`, `inner/lfo.rate`), relative to the component.
@@ -196,6 +201,9 @@ impl Declaration {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Declared {
     pub lines: Vec<Declaration>,
+    /// The params whose change starts the component over (`@reset` lines), each once, in the
+    /// order they are first named. Only names of `@param` lines.
+    pub resets: Vec<Name>,
     pub errors: Vec<String>,
 }
 
@@ -230,6 +238,8 @@ pub fn component(text: &str, taken: impl Fn(&str) -> Option<String>) -> Declared
     let mut group = String::new();
     // The line each declared name came from, to name it in a clash.
     let mut seen: Vec<(String, usize)> = Vec::new();
+    // The `@reset` lines, checked once every `@param` line is known: a name may come first.
+    let mut resets: Vec<(usize, Vec<Name>)> = Vec::new();
     for (i, raw) in text.lines().enumerate() {
         let n = i + 1;
         let trimmed = raw.trim();
@@ -241,7 +251,7 @@ pub fn component(text: &str, taken: impl Fn(&str) -> Option<String>) -> Declared
                 continue;
             }
             out.errors.push(format!(
-                "line {n}: `{}` declares nothing; a line starts with @param, @group or @expose, or with # for a comment",
+                "line {n}: `{}` declares nothing; a line starts with @param, @group, @expose or @reset, or with # for a comment",
                 short(trimmed)
             ));
             continue;
@@ -265,10 +275,19 @@ pub fn component(text: &str, taken: impl Fn(&str) -> Option<String>) -> Declared
             EXPOSE => {
                 expose(args).map(|line| Declaration::Expose(ExposeLine { group: group.clone(), ..line }))
             }
+            RESET => {
+                match reset_names(args) {
+                    Ok(names) => resets.push((n, names)),
+                    Err(e) => out.errors.push(format!("line {n}: {e}")),
+                }
+                continue;
+            }
             other => Err(Error::new(match misspelt(other, &COMPONENT_WORDS) {
                 Some(meant) => format!("`{other}` looks like a misspelt `{meant}`"),
                 None => {
-                    format!("`{other}` is no declaration here; a component takes @param, @group and @expose")
+                    format!(
+                        "`{other}` is no declaration here; a component takes @param, @group, @expose and @reset"
+                    )
                 }
             })),
         };
@@ -292,7 +311,53 @@ pub fn component(text: &str, taken: impl Fn(&str) -> Option<String>) -> Declared
         seen.push((name, n));
         out.lines.push(declaration);
     }
+    for (n, names) in resets {
+        let mut bad: Vec<String> = Vec::new();
+        for name in names {
+            match out.lines.iter().find(|d| d.name() == name.as_str()) {
+                Some(Declaration::Param(_)) => {
+                    if !out.resets.contains(&name) {
+                        out.resets.push(name);
+                    }
+                }
+                Some(Declaration::Expose(_)) => bad.push(format!(
+                    "`{name}` is shown from inside by @expose, and only a value the component holds can start it over;                      make it an @param line that the inner param follows (Put on component)"
+                )),
+                None => bad.push(format!("`{name}` is declared by no @param line")),
+            }
+        }
+        if !bad.is_empty() {
+            // In line order among the others.
+            let at = out
+                .errors
+                .iter()
+                .position(|e| error_line(e).is_some_and(|l| l > n))
+                .unwrap_or(out.errors.len());
+            out.errors.insert(at, format!("line {n}: {}", bad.join("; ")));
+        }
+    }
     out
+}
+
+/// The line number an error of [`component`] starts with.
+fn error_line(error: &str) -> Option<usize> {
+    error.strip_prefix("line ")?.split(':').next()?.parse().ok()
+}
+
+/// The names after `@reset`, separated by spaces or commas; `#` starts a comment.
+fn reset_names(args: &str) -> Result<Vec<Name>, Error> {
+    let line = args.split('#').next().unwrap_or("");
+    let names: Vec<Name> = line
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|w| !w.is_empty())
+        .map(Name::new)
+        .collect::<Result<_, _>>()?;
+    if names.is_empty() {
+        return Err(Error::new(
+            "expected `@reset <param> <param> ...`, the params whose change starts the component over",
+        ));
+    }
+    Ok(names)
 }
 
 /// The text after `@expose`.
@@ -487,6 +552,39 @@ mod tests {
         for (e, (line, needle)) in d.errors.iter().zip(expect) {
             assert!(e.starts_with(line) && e.contains(needle), "{e}: wants {line} {needle}");
         }
+    }
+
+    #[test]
+    fn reset_lines_name_params_the_component_holds() {
+        let d = component(
+            "@reset preset, seed  # restarts
+             @param preset choice(a|b)
+             @param seed int
+             @expose glow = show.glow
+             @reset seed size glow
+             @reset
+             @reste preset",
+            none,
+        );
+        let resets: Vec<&str> = d.resets.iter().map(Name::as_str).collect();
+        assert_eq!(resets, ["preset", "seed"]);
+        assert_eq!(d.errors.len(), 3, "{:?}", d.errors);
+        assert!(
+            d.errors[1].starts_with("line 6:") && d.errors[1].contains("expected `@reset"),
+            "{:?}",
+            d.errors
+        );
+        assert!(
+            d.errors[2].starts_with("line 7:") && d.errors[2].contains("misspelt `@reset`"),
+            "{:?}",
+            d.errors
+        );
+        let line5 = &d.errors[0];
+        assert!(line5.starts_with("line 5:"), "{line5}");
+        assert!(line5.contains("`size` is declared by no @param line"), "{line5}");
+        assert!(line5.contains("`glow` is shown from inside by @expose"), "{line5}");
+        assert!(!line5.contains("`seed`"), "{line5}");
+        assert_eq!(d.lines.len(), 3);
     }
 
     #[test]
