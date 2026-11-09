@@ -377,6 +377,17 @@ impl PenumbraApp {
                     self.editor.select(set);
                     Ok(())
                 }
+                Action::Reveal(id) => {
+                    let level = session.doc().snapshot().node(id).and_then(|n| n.parent);
+                    self.editor.enter(level, &mut self.layout, now);
+                    self.editor.select([id]);
+                    Ok(())
+                }
+                Action::PutParam { param, show } => {
+                    penumbra_engine::components::put_param(&self.engine, Actor::User, &param, None, show)
+                        .map(|done| self.message = Some((done.message(), now)))
+                        .map_err(|e| penumbra_core::Error::new(e.0))
+                }
                 Action::Pin(id) => {
                     self.viewer.pinned = id;
                     Ok(())
@@ -1229,6 +1240,7 @@ impl PenumbraApp {
                                 types: session.types(),
                                 node: id,
                                 status: view.status.get(&id),
+                                statuses: &view.status,
                                 instance: detail.map(Vec::as_slice),
                                 inner: &view.inner_params,
                                 can_edit,

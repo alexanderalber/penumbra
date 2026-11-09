@@ -22,6 +22,9 @@ type Result<T> = std::result::Result<T, CommandError>;
 
 /// Largest component file read.
 const MAX_FILE_BYTES: u64 = penumbra_project::file::MAX_FILE_BYTES;
+/// How far apart two nodes' places must be, across and down, for one not to cover the other
+/// (graph units; a node is 150 wide and 118 high with its thumbnail).
+const NODE_SPAN: [f32; 2] = [150.0, 118.0];
 /// Directory inside a project for its own components.
 pub const PROJECT_DIR: &str = "components";
 
@@ -47,6 +50,16 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "comp.library",
         "Component files in the project's components/, the user's library and penumbra's own library, each with its shelf, one line on what it does and its picture",
         comp_library,
+    );
+    add(
+        "comp.put_param",
+        "Make an inner param a param of its component that it follows: an @param line copied from it, its value moved up, a binding to parent.<name>; a param of that name the component has already is followed when it fits; {param, name?}",
+        comp_put_param,
+    );
+    add(
+        "comp.show_param",
+        "Show an inner param on its component as a row: an @expose line; value and spec stay inside; {param, name?}",
+        comp_show_param,
     );
     add(
         "comp.remove",
@@ -506,7 +519,19 @@ pub fn load(
         }
     };
     let base = content(&net)?;
-    let next = component::instantiate(&base, types, &comp, &at)?;
+    let mut next = component::instantiate(&base, types, &comp, &at)?;
+    // The file keeps the place the component had where it was saved. On a node there (often
+    // the original), the copy goes unplaced: the editor finds it a free spot.
+    let covers =
+        |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < NODE_SPAN[0] && (a[1] - b[1]).abs() < NODE_SPAN[1];
+    let taken = |pos: [f32; 2]| {
+        base.nodes.iter().any(|(p, n)| p.parent() == at.parent() && n.pos.is_some_and(|q| covers(pos, q)))
+    };
+    if let Some(top) = next.nodes.get_mut(&at)
+        && top.pos.is_some_and(taken)
+    {
+        top.pos = None;
+    }
     let (copied, kept) = bring_files(e, &file)?;
     let ops = diff(&base, &next);
     let outcome = edit_as(e, actor, &ops, &format!("add component {at}"))?;
@@ -561,6 +586,117 @@ fn comp_library(e: &Engine, p: &Json) -> Result<Json> {
         })
         .collect();
     Ok(json!({"dirs": dirs, "components": list}))
+}
+
+/// The spec of param `param` and its value now: the kind's or the node's own declaration, else
+/// what the node declares for itself once it has read its file (a shader's header).
+fn spec_and_value(
+    e: &Engine,
+    net: &Network,
+    param: &penumbra_core::ParamPath,
+) -> Result<(penumbra_core::ParamSpec, penumbra_core::Value)> {
+    let id = require(net, param.node())?;
+    let node = net.node(id).ok_or("the node vanished")?;
+    let desc = e.types().desc(&node.kind).ok_or_else(|| format!("unknown node kind `{}`", node.kind))?;
+    let name = param.param().as_str();
+    let spec = match node.spec(desc, name) {
+        Some(spec) => spec.into_owned(),
+        None => {
+            let specs = e.on_cook(move |st| st.cooker.status(id).and_then(|s| s.params)).ok().flatten();
+            specs.and_then(|list| list.into_iter().find(|s| s.name == name)).ok_or_else(|| {
+                format!(
+                    "{} has no param `{name}` (a shader's params are known once it has compiled)",
+                    param.node()
+                )
+            })?
+        }
+    };
+    let value = node.params.get(name).cloned().unwrap_or_else(|| spec.default.clone());
+    Ok((spec, value))
+}
+
+/// What putting an inner param on its component did.
+pub struct PutDone {
+    pub planned: penumbra_graph::Planned,
+    pub outcome: EditOutcome,
+}
+
+impl PutDone {
+    /// One line for the status bar.
+    pub fn message(&self) -> String {
+        let (comp, name) = (&self.planned.comp, &self.planned.name);
+        match self.planned.put {
+            penumbra_graph::Put::Declared => {
+                format!("{comp} has a new param `{name}`; this param follows it")
+            }
+            penumbra_graph::Put::Followed => {
+                format!("{comp} had a param `{name}` already; this param follows it")
+            }
+            penumbra_graph::Put::Replaced => {
+                format!("`{name}` on {comp} is a param of its own now; this param follows it")
+            }
+            penumbra_graph::Put::Shown => format!("{comp} shows this param as `{name}`"),
+        }
+    }
+
+    fn json(&self) -> Json {
+        let how = match self.planned.put {
+            penumbra_graph::Put::Declared => "declared",
+            penumbra_graph::Put::Followed => "followed",
+            penumbra_graph::Put::Replaced => "replaced",
+            penumbra_graph::Put::Shown => "shown",
+        };
+        json!({
+            "component": self.planned.comp,
+            "name": self.planned.name,
+            "how": how,
+            "message": self.message(),
+            "history": history(&self.outcome),
+        })
+    }
+}
+
+/// Puts inner param `param` on its component as a param it follows (`show`: false) or as an
+/// `@expose` row (`show`: true), as `actor`, in one undo step.
+pub fn put_param(
+    e: &Engine,
+    actor: Actor,
+    param: &penumbra_core::ParamPath,
+    name: Option<&Name>,
+    show: bool,
+) -> Result<PutDone> {
+    let net = e.session().doc().snapshot();
+    let types = e.types();
+    let planned = if show {
+        net.show_param(types, param, name)?
+    } else {
+        let (spec, value) = spec_and_value(e, &net, param)?;
+        net.put_param(types, param, &spec, &value, name)?
+    };
+    let label = if show {
+        format!("show {param} on {}", planned.comp)
+    } else {
+        format!("put {param} on {}", planned.comp)
+    };
+    let outcome = edit_as(e, actor, &planned.ops, &label)?;
+    Ok(PutDone { planned, outcome })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PutArgs {
+    param: penumbra_core::ParamPath,
+    name: Option<Name>,
+}
+
+fn comp_put_param(e: &Engine, p: &Json) -> Result<Json> {
+    let a: PutArgs = args(p)?;
+    Ok(put_param(e, Actor::Claude, &a.param, a.name.as_ref(), false)?.json())
+}
+
+fn comp_show_param(e: &Engine, p: &Json) -> Result<Json> {
+    let a: PutArgs = args(p)?;
+    Ok(put_param(e, Actor::Claude, &a.param, a.name.as_ref(), true)?.json())
 }
 
 /// The value of param `name` that node `n` (`id`) declares itself (a shader's header): its own
@@ -643,10 +779,25 @@ pub fn info(e: &Engine, net: &Network, id: NodeId) -> Option<Json> {
             json!({"name": x.name, "target": target, "value": value, "error": error})
         })
         .collect();
+    // What the params following this component's params warn about, as their nodes said.
+    let nodes: Vec<NodeId> = net.followers(id).into_values().flatten().map(|(n, _)| n).collect();
+    let status = e
+        .on_cook(move |st| {
+            nodes
+                .into_iter()
+                .filter_map(|n| Some((n, st.cooker.status_brief(n)?)))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let followers: Vec<Json> = penumbra_graph::follow::problems(net, &status, id)
+        .into_iter()
+        .map(|(n, w)| json!({"node": net.path_of(n), "warning": w}))
+        .collect();
     Some(json!({
         "inputs": ins.into_iter().filter_map(port).collect::<Vec<_>>(),
         "outputs": outs.into_iter().filter_map(port).collect::<Vec<_>>(),
         "exposed": exposed,
         "errors": errors,
+        "follower_warnings": followers,
     }))
 }

@@ -12,6 +12,9 @@ pub const ACCENT: Color32 = Color32::from_rgb(90, 160, 255);
 /// Claude's colour: the editing-mode tint, its change-log entries, nodes it just touched.
 pub const CLAUDE: Color32 = Color32::from_rgb(110, 170, 255);
 pub const FILE: Color32 = Color32::from_rgb(90, 200, 180);
+/// Components' turquoise: their header, and a param that takes its value from its component
+/// (its row, the link above the node).
+pub const COMPONENT: Color32 = Color32::from_rgb(60, 190, 180);
 pub const ERROR: Color32 = Color32::from_rgb(235, 80, 70);
 pub const WARNING: Color32 = Color32::from_rgb(240, 180, 60);
 /// A single channel's value bar while the value is negative.
@@ -152,7 +155,7 @@ pub fn family_color(family: &str) -> Color32 {
         // Components hold nodes of every family: a colour of their own, turquoise, away from
         // tex's violet (the two looked alike).
         // The library tab of the add dialog holds component files: their colour.
-        "comp" | "library" => Color32::from_rgb(60, 190, 180),
+        "comp" | "library" => COMPONENT,
         // Notes: the sand of their box.
         "ui" => Color32::from_rgb(200, 180, 120),
         _ => Color32::from_gray(120),

@@ -70,6 +70,14 @@ pub enum Action {
     Redo,
     TakeOver,
     SelectNodes(BTreeSet<NodeId>),
+    /// Show the level a node sits on and select it there.
+    Reveal(NodeId),
+    /// Put an inner param on its component (`comp.put_param`), or show it there with `show`
+    /// (`comp.show_param`).
+    PutParam {
+        param: penumbra_core::ParamPath,
+        show: bool,
+    },
     /// Pin the viewer to a node, or follow the selection with `None`.
     Pin(Option<NodeId>),
     Play(bool),
@@ -168,6 +176,8 @@ impl Action {
     }
 }
 
+#[cfg(test)]
+mod component_tests;
 #[cfg(test)]
 mod node_controls_tests;
 #[cfg(test)]

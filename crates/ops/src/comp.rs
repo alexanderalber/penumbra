@@ -32,7 +32,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(COMP_KIND, "A box of nodes: groups part of a network into one node, with inputs and outputs of its own (the in and out nodes inside)")
             .param(ParamSpec::text(PARAMS, "").multiline().more().doc(
-                "The component's own params, one per line. `@param speed float = 1 0..4 -- doc` adds a param with its own value, in the grammar of a shader header. `@expose rate = lfo1.rate` shows an inner param on the component. `@group look` puts the params after it in a fold",
+                "The component's own params, one per line. `@param speed float = 1 0..4 -- doc` adds a param with its own value, in the grammar of a shader header. `@expose rate = lfo1.rate` shows an inner param on the component. `@group look` puts the params after it in a fold. The panel shows this text in the fold `edit params` under the component's rows",
             ))
             .param(ParamSpec::text(SHELF, "").more().doc(
                 "Where this component stands in the add dialog's library tab: one or two levels, `dmx` or `dmx/safety`. Empty: only your own components' shelf `mine` shows it",

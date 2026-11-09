@@ -169,6 +169,8 @@ const COMPONENT_WORDS: [&str; 3] = [PARAM, GROUP, EXPOSE];
 pub struct ExposeLine {
     pub name: Name,
     pub target: String,
+    /// The `@group` it sits in, empty for the main rows.
+    pub group: String,
 }
 
 /// One declaration of a component's text.
@@ -260,7 +262,9 @@ pub fn component(text: &str, taken: impl Fn(&str) -> Option<String>) -> Declared
                 }
                 continue;
             }
-            EXPOSE => expose(args).map(Declaration::Expose),
+            EXPOSE => {
+                expose(args).map(|line| Declaration::Expose(ExposeLine { group: group.clone(), ..line }))
+            }
             other => Err(Error::new(match misspelt(other, &COMPONENT_WORDS) {
                 Some(meant) => format!("`{other}` looks like a misspelt `{meant}`"),
                 None => {
@@ -303,7 +307,94 @@ fn expose(args: &str) -> Result<ExposeLine, Error> {
     };
     let param = target.rsplit_once('.').map(|(_, p)| p).unwrap_or("");
     let name = Name::new(name.unwrap_or(param))?;
-    Ok(ExposeLine { name, target: target.to_string() })
+    Ok(ExposeLine { name, target: target.to_string(), group: String::new() })
+}
+
+/// The `@param` line that declares `spec` (its group aside): kind, default, range and the first
+/// line of its doc. Refused for what a line cannot say: a text or a file, a choice whose entries
+/// hold spaces or `|`, a default or doc that would read back as something else. Unit, curve,
+/// special values and a hard range are not carried: a declared range only scales the slider.
+pub fn line(spec: &ParamSpec) -> Result<String, Error> {
+    let name = &spec.name;
+    let kind = match &spec.kind {
+        ParamKind::Float => "float".to_string(),
+        ParamKind::Int => "int".to_string(),
+        ParamKind::Bool => "bool".to_string(),
+        ParamKind::Vec(n @ 2..=4) => format!("vec{n}"),
+        ParamKind::Color => "color".to_string(),
+        ParamKind::Palette => "palette".to_string(),
+        ParamKind::Choice(entries) => format!("choice({})", entries.join("|")),
+        ParamKind::Vec(_) | ParamKind::Text | ParamKind::File { .. } => {
+            return Err(Error::new(format!(
+                "`{name}` is {}, which a component cannot declare",
+                spec.kind_label()
+            )));
+        }
+    };
+    let default = match (&spec.kind, &spec.default) {
+        (ParamKind::Choice(_) | ParamKind::Palette, Value::Text(t)) => t.clone(),
+        (_, v) => v.to_string(),
+    };
+    let mut out = format!("{PARAM} {name} {kind}");
+    if !default.is_empty() {
+        out.push_str(&format!(" = {default}"));
+    }
+    if let Some(r) = spec.range {
+        out.push_str(&format!(" {}..{}", r.min, r.max));
+    }
+    let doc = spec.doc.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    if !doc.is_empty() {
+        out.push_str(&format!(" -- {doc}"));
+    }
+    // Read back: what the line says must be the param.
+    let back = split(&out, false).ok_or_else(|| Error::new("the line declares nothing"))?;
+    let read = param(back.1, |_| Ok(()))
+        .map_err(|e| Error::new(format!("`{name}` cannot be written as a line: {e}")))?;
+    let same_range = match (read.range, spec.range) {
+        (Some(a), Some(b)) => a.min == b.min && a.max == b.max,
+        (None, None) => true,
+        _ => false,
+    };
+    if read.name != *name || read.kind != spec.kind || read.default != spec.default || !same_range {
+        return Err(Error::new(format!("`{name}` cannot be written as a line that reads back the same")));
+    }
+    Ok(out)
+}
+
+/// `text` with `line` added among the main rows: before the first `@group` line that opens a
+/// section, else at the end.
+pub fn add_line(text: &str, line: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let opens =
+        |raw: &str| split(raw, false).is_some_and(|(word, args)| word == GROUP && !args.trim().is_empty());
+    match lines.iter().position(|l| opens(l)) {
+        Some(at) => {
+            let mut out = lines;
+            out.insert(at, line);
+            out.join("\n")
+        }
+        None if text.trim().is_empty() => line.to_string(),
+        None => format!("{}\n{line}", text.trim_end_matches('\n')),
+    }
+}
+
+/// `text` with the `@expose` line that shows `name` replaced by `line`, in its place; `None`
+/// when no such line is there.
+pub fn replace_expose(text: &str, name: &str, line: &str) -> Option<String> {
+    let mut found = false;
+    let out: Vec<&str> = text
+        .lines()
+        .map(|raw| {
+            let hit = !found
+                && split(raw, false)
+                    .filter(|(word, _)| *word == EXPOSE)
+                    .and_then(|(_, args)| expose(args).ok())
+                    .is_some_and(|x| x.name.as_str() == name);
+            found |= hit;
+            if hit { line } else { raw }
+        })
+        .collect();
+    found.then(|| out.join("\n"))
 }
 
 /// At most 40 characters of a line in an error message.
@@ -396,6 +487,54 @@ mod tests {
         for (e, (line, needle)) in d.errors.iter().zip(expect) {
             assert!(e.starts_with(line) && e.contains(needle), "{e}: wants {line} {needle}");
         }
+    }
+
+    #[test]
+    fn a_spec_becomes_a_line_that_reads_back_the_same() {
+        let spec = ParamSpec::float("feed", 0.05).range(0.005, 0.11).doc("how fast U is fed in\nmore");
+        assert_eq!(line(&spec).unwrap(), "@param feed float = 0.05 0.005..0.11 -- how fast U is fed in");
+        let pick = ParamSpec::choice("preset", &["coral", "maze"]);
+        assert_eq!(line(&pick).unwrap(), "@param preset choice(coral|maze) = coral");
+        let colour = ParamSpec::color("tint", [1.0, 0.5, 0.0, 1.0]);
+        assert_eq!(line(&colour).unwrap(), "@param tint color = [1, 0.5, 0, 1]");
+        assert_eq!(line(&ParamSpec::int("n", -3).range(-8.0, 8.0)).unwrap(), "@param n int = -3 -8..8");
+        assert_eq!(
+            line(&ParamSpec::palette("colors", "31aaa9 f8e0a4")).unwrap(),
+            "@param colors palette = 31aaa9 f8e0a4"
+        );
+        for spec in [spec, pick, colour, ParamSpec::bool("on", true), ParamSpec::vec2("at", [0.25, -1.0])] {
+            let text = line(&spec).unwrap();
+            let d = component(&text, none);
+            assert_eq!(
+                d.param(&spec.name).map(|s| (&s.kind, &s.default)),
+                Some((&spec.kind, &spec.default)),
+                "{text}"
+            );
+        }
+        assert!(line(&ParamSpec::text("label", "")).unwrap_err().0.contains("cannot declare"));
+        assert!(line(&ParamSpec::choice("font", &["Sans Bold", "Mono"])).is_err());
+    }
+
+    #[test]
+    fn a_line_goes_among_the_main_rows_or_in_place_of_an_expose_line() {
+        assert_eq!(add_line("", "@param a bool"), "@param a bool");
+        assert_eq!(add_line("@param x bool\n", "@param a bool"), "@param x bool\n@param a bool");
+        assert_eq!(
+            add_line("@param x bool\n@group look\n@param y bool", "@param a bool"),
+            "@param x bool\n@param a bool\n@group look\n@param y bool"
+        );
+        let d = component(&add_line("@group look\n@param y bool\n@expose z = n.z", "@param a bool"), none);
+        assert_eq!(d.param("a").unwrap().group, "");
+        assert_eq!(d.exposed().next().unwrap().group, "look");
+        assert_eq!(
+            replace_expose(
+                "@param x bool\n@expose feed = step.feed\n@expose f2 = s.f",
+                "feed",
+                "@param feed float"
+            ),
+            Some("@param x bool\n@param feed float\n@expose f2 = s.f".to_string())
+        );
+        assert_eq!(replace_expose("@param feed float", "feed", "x"), None);
     }
 
     #[test]

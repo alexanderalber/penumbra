@@ -532,6 +532,18 @@ pub struct NodeStatus {
     /// ([`Operator::reads_inputs`]): bit `i` is input `i`.
     #[serde(skip_serializing_if = "is_zero")]
     pub reads: u64,
+    /// The warnings about params that follow a param of the node's component (also part of
+    /// `warning`): what the component shows of its followers' problems.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub follow_warnings: Vec<String>,
+}
+
+/// The warnings of a node's bindings at a cook: all of them, and those about params following
+/// a component's param.
+#[derive(Default)]
+struct BindWarnings {
+    all: Vec<String>,
+    follow: Vec<String>,
 }
 
 fn is_zero(v: &u64) -> bool {
@@ -590,6 +602,8 @@ struct Runtime {
     declared: Option<Declared>,
     /// Why bindings could not be applied at the last cook, apart from the operator's warning.
     bind_warning: Option<String>,
+    /// The part of those warnings about params that follow a component's param.
+    follow_warnings: Vec<String>,
     seen_tick: Option<Tick>,
     fresh: bool,
     params_changed: bool,
@@ -687,6 +701,7 @@ impl Runtime {
             seen_inputs: Vec::new(),
             seen_bound: BTreeMap::new(),
             bind_warning: None,
+            follow_warnings: Vec::new(),
             seen_tick: None,
             fresh: true,
             params_changed: false,
@@ -1255,9 +1270,9 @@ impl Cooker {
         // and an unchanged text costs no allocation.
         let mut bound = std::mem::take(&mut rt.seen_bound);
         let Some(rt) = self.runtimes.get(&id) else { return };
-        let mut bind_warnings = Vec::new();
+        let mut bind_warnings = BindWarnings::default();
         let bound_changed = self.update_bound(rt, &mut bound, Some(&mut bind_warnings));
-        let bind_warning = (!bind_warnings.is_empty()).then(|| bind_warnings.join("; "));
+        let bind_warning = (!bind_warnings.all.is_empty()).then(|| bind_warnings.all.join("; "));
         let needed = self.needed(rt, &bound);
         let mut inputs = Vec::with_capacity(rt.def.inputs.len());
         let mut signature = Vec::with_capacity(rt.def.inputs.len());
@@ -1345,6 +1360,9 @@ impl Cooker {
         rt.seen_bound = bound;
         if rt.bind_warning != bind_warning {
             rt.bind_warning = bind_warning;
+        }
+        if rt.follow_warnings != bind_warnings.follow {
+            rt.follow_warnings = bind_warnings.follow;
         }
         let since_last_use = if self.for_thumbnails {
             None
@@ -1646,7 +1664,7 @@ impl Cooker {
         &self,
         rt: &Runtime,
         bound: &mut BTreeMap<Name, Value>,
-        warnings: Option<&mut Vec<String>>,
+        warnings: Option<&mut BindWarnings>,
     ) -> bool {
         let before = bound.len();
         bound.retain(|name, _| rt.def.is_bound(name.as_str()));
@@ -1671,7 +1689,7 @@ impl Cooker {
     fn each_bound(
         &self,
         rt: &Runtime,
-        mut warnings: Option<&mut Vec<String>>,
+        mut warnings: Option<&mut BindWarnings>,
         mut f: impl FnMut(&Name, Resolved<'_>),
     ) {
         if rt.def.binds.is_empty() {
@@ -1679,10 +1697,14 @@ impl Cooker {
         }
         let Some(desc) = rt.ty.as_ref().map(|t| t.desc()) else { return };
         // Params a shader declares in its header; asked for only when the type lacks one.
-        let mut instance: Option<Vec<ParamSpec>> = None;
-        let mut warn = |w: String| {
+        // `None` inside while the instance has not said yet (a shader that has not compiled).
+        let mut instance: Option<Option<Vec<ParamSpec>>> = None;
+        let mut warn = |w: String, follows: bool| {
             if let Some(ws) = warnings.as_deref_mut() {
-                ws.push(w);
+                if follows {
+                    ws.follow.push(w.clone());
+                }
+                ws.all.push(w);
             }
         };
         let mut parts = rt.def.binds.iter().peekable();
@@ -1692,19 +1714,30 @@ impl Cooker {
                 (Some(spec), _) => Some(spec),
                 // A component's own params, declared in its text.
                 (None, Some(own)) => own.param(name.as_str()),
-                (None, None) => instance
-                    .get_or_insert_with(|| {
-                        rt.op
-                            .as_ref()
-                            .and_then(|op| self.ask(rt.def.id, "params", || op.params()).flatten())
-                            .unwrap_or_default()
-                    })
-                    .iter()
-                    .find(|s| s.name == name.as_str()),
+                (None, None) => {
+                    let known = instance.get_or_insert_with(|| {
+                        let asked =
+                            rt.op.as_ref().and_then(|op| self.ask(rt.def.id, "params", || op.params()));
+                        match asked.flatten() {
+                            Some(list) => Some(list),
+                            // A kind with params of its own per instance says nothing until it
+                            // has read its file: no warning until then.
+                            None if desc.extra_params => None,
+                            None => Some(Vec::new()),
+                        }
+                    });
+                    match known {
+                        Some(list) => list.iter().find(|s| s.name == name.as_str()),
+                        None => {
+                            while parts.next_if(|(p, _)| &p.param == name).is_some() {}
+                            continue;
+                        }
+                    }
+                }
             };
             let Some(spec) = spec else {
-                while let Some((part, _)) = parts.next_if(|(p, _)| &p.param == name) {
-                    warn(format!("`{part}` is bound, but the node has no such param"));
+                while let Some((part, bind)) = parts.next_if(|(p, _)| &p.param == name) {
+                    warn(format!("`{part}` is bound, but the node has no such param"), bind.param.is_some());
                 }
                 continue;
             };
@@ -1717,16 +1750,18 @@ impl Cooker {
                     let v = match self.read_param(rt, bind, from) {
                         Ok(v) => v,
                         Err(w) => {
-                            warn(format!("`{part}` {w}"));
+                            warn(format!("`{part}` {w}"), true);
                             continue;
                         }
                     };
                     match follow::follow(spec, part.component, value.as_ref().unwrap_or(stored), v) {
                         Follow::Value(v) => value = Some(v),
                         Follow::Resolved(r) => resolved = Some(r),
-                        Follow::Refused(w) => warn(format!("`{part}` follows {}: {w}", self.label(rt, bind))),
+                        Follow::Refused(w) => {
+                            warn(format!("`{part}` follows {}: {w}", self.label(rt, bind)), true);
+                        }
                         Follow::Kept(w) => {
-                            warn(format!("`{part}` follows {}: {w}", self.label(rt, bind)));
+                            warn(format!("`{part}` follows {}: {w}", self.label(rt, bind)), true);
                             resolved = Some(Resolved::Keep);
                         }
                     }
@@ -1735,14 +1770,14 @@ impl Cooker {
                 let target = match spec.bind_target(part.component) {
                     Ok(t) => t,
                     Err(e) => {
-                        warn(format!("`{part}`: {e}"));
+                        warn(format!("`{part}`: {e}"), false);
                         continue;
                     }
                 };
                 let read = match self.read_bind(part, bind, target) {
                     Ok(read) => read,
                     Err(w) => {
-                        warn(w);
+                        warn(w, false);
                         continue;
                     }
                 };
@@ -1754,22 +1789,28 @@ impl Cooker {
                             BindRead::Text(t) => match bindv::cell_number(t) {
                                 Some(x) => x,
                                 None => {
-                                    warn(format!(
-                                        "`{part}`: {} gives \"{}\", which is no number",
-                                        source(),
-                                        short(t)
-                                    ));
+                                    warn(
+                                        format!(
+                                            "`{part}`: {} gives \"{}\", which is no number",
+                                            source(),
+                                            short(t)
+                                        ),
+                                        false,
+                                    );
                                     continue;
                                 }
                             },
                         };
                         match spec.bind_value(value.as_ref().unwrap_or(stored), part.component, x) {
                             Ok(v) => value = Some(v),
-                            Err(e) => warn(format!("`{part}`: {e}")),
+                            Err(e) => warn(format!("`{part}`: {e}"), false),
                         }
                     }
                     (BindTarget::Text, BindRead::Text(t)) if t.len() > MAX_TEXT => {
-                        warn(format!("`{part}`: the cell of {} is longer than {MAX_TEXT} bytes", source()));
+                        warn(
+                            format!("`{part}`: the cell of {} is longer than {MAX_TEXT} bytes", source()),
+                            false,
+                        );
                     }
                     (BindTarget::Text, BindRead::Text(t)) => resolved = Some(Resolved::Text(t)),
                     (BindTarget::Text, BindRead::Number(x)) => {
@@ -1785,12 +1826,15 @@ impl Cooker {
                         resolved = Some(match (entry, read) {
                             (Some(e), _) => Resolved::Text(e),
                             (None, BindRead::Text(t)) => {
-                                warn(format!(
-                                    "`{part}`: {} gives \"{}\", which is none of {}; it keeps its last entry",
-                                    source(),
-                                    short(t),
-                                    choices.join(", ")
-                                ));
+                                warn(
+                                    format!(
+                                        "`{part}`: {} gives \"{}\", which is none of {}; it keeps its last entry",
+                                        source(),
+                                        short(t),
+                                        choices.join(", ")
+                                    ),
+                                    false,
+                                );
                                 Resolved::Keep
                             }
                             (None, BindRead::Number(_)) => Resolved::Stored,
@@ -2079,6 +2123,7 @@ impl Cooker {
                 None
             },
             bound: rt.seen_bound.clone(),
+            follow_warnings: rt.follow_warnings.clone(),
             reads: rt
                 .op
                 .as_ref()
@@ -3238,11 +3283,37 @@ mod tests {
         assert_eq!(f.value("/c/k"), Some(4.0));
         let w = f.status("/c/k").warning.unwrap();
         assert_eq!(w, "`value` follows parent.level, but /c has no param `level`; it keeps its own value");
+        assert_eq!(f.status("/c/k").follow_warnings, [w], "the component shows it");
         f.keep(&[follow("/c/k.value", "/c", "gone")]);
         f.cook(&["/c/k"]);
         assert!(
             f.status("/c/k").warning.unwrap().contains("follows parent.gone, but /c has no param `gone`")
         );
+    }
+
+    #[test]
+    fn a_binding_onto_a_param_not_read_yet_waits_without_a_warning() {
+        let bind = |param: &str, from: &str| Op::Bind {
+            param: ParamPath::parse(param).unwrap(),
+            component: None,
+            from: pp(from),
+            channel: None,
+            cell: None,
+            format: None,
+            from_param: None,
+        };
+        // `test.late` declares `gain` only once it has cooked, as a shader does once compiled.
+        let mut f = Fixture::new(&[create("/src", "test.const"), create("/l", "test.late")]);
+        f.set("/src.value", Value::Float(5.0));
+        f.edit(&[bind("/l.gain", "/src"), bind("/l.nope", "/src")]);
+        f.cook(&["/l"]);
+        assert_eq!(f.value("/l"), Some(1.0), "the default until the param is known");
+        assert_eq!(f.status("/l").warning, None, "no warning before the node has said what it has");
+        f.cook(&["/l"]);
+        assert_eq!(f.value("/l"), Some(5.0));
+        let w = f.status("/l").warning.unwrap();
+        assert_eq!(w, "`nope` is bound, but the node has no such param");
+        assert!(f.status("/l").follow_warnings.is_empty(), "a channel binding is no follower");
     }
 
     #[test]

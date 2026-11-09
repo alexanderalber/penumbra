@@ -94,8 +94,10 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `comp.expand` | Dissolve a component, its nodes move up beside it; {path} |
 | `comp.library` | Component files in the project's components/, the user's library and penumbra's own library, each with its shelf, one line on what it does and its picture |
 | `comp.load` | Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/<name>/ first; {file, path?} |
+| `comp.put_param` | Make an inner param a param of its component that it follows: an @param line copied from it, its value moved up, a binding to parent.<name>; a param of that name the component has already is followed when it fits; {param, name?} |
 | `comp.remove` | Take a component file out of the library (into its removed/ folder); {name, place?: project \| library} |
 | `comp.save` | Write a component to a file (default: the library, <name>.comp.ron); {path, file?} |
+| `comp.show_param` | Show an inner param on its component as a row: an @expose line; value and spec stay inside; {param, name?} |
 
 ## cook
 

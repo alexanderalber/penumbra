@@ -691,7 +691,7 @@ fn shipped_components_bring_their_files() {
     std::fs::write(
         folder.join("glowy.comp.ron"),
         r#"(version: 2, nodes: {
-            "/glowy": (kind: "comp.base", params: {"shelf": "looks/soft", "about": "A soft glow."}),
+            "/glowy": (kind: "comp.base", params: {"shelf": "looks/soft", "about": "A soft glow."}, pos: [100.0, 50.0]),
             "/glowy/look": (kind: "tex.shader", params: {"file": "library/glowy/look.wgsl"}),
             "/glowy/out": (kind: "tex.out", inputs: {"in": "look"}),
         })"#,
@@ -725,6 +725,9 @@ fn shipped_components_bring_their_files() {
     let again = f.call("comp.load", json!({"file": "glowy"}));
     assert_eq!(again["kept"], json!(["library/glowy/look.wgsl"]), "{again}");
     assert_eq!(again["path"], "/glowy1");
+    // The first copy takes the place the file names; the second, on top of it, goes unplaced.
+    assert_eq!(f.call("node.info", json!({"path": "/glowy"}))["pos"], json!([100.0, 50.0]));
+    assert_eq!(f.call("node.info", json!({"path": "/glowy1"}))["pos"], json!(null));
     assert_eq!(std::fs::read_to_string(&copy).unwrap(), "// mine\n");
     // penumbra's own stay where they are.
     assert!(f.fail("comp.remove", json!({"name": "glowy"})).contains("ships with penumbra"));

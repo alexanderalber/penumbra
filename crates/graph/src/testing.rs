@@ -184,6 +184,16 @@ pub fn test_types() -> NodeTypes {
     .unwrap();
     t.register(FnNodeType::new(
         NodeDesc::new(
+            "test.late",
+            "Declares `gain` once it has cooked, as a shader once compiled; puts out gain",
+        )
+        .extra_params()
+        .output("out", DataKind::Chan),
+        || Box::new(Late(false)) as Box<dyn Operator>,
+    ))
+    .unwrap();
+    t.register(FnNodeType::new(
+        NodeDesc::new(
             "test.slow",
             "value * 2 after `ms` milliseconds, off the cook thread; a negative value fails",
         )
@@ -403,6 +413,20 @@ impl Operator for Open {
 
     fn density(&self, _def: &crate::NodeDef, _desc: &NodeDesc, _input: usize) -> crate::Density {
         crate::Density::needs([2.0; 2])
+    }
+}
+
+/// Knows its params only after its first cook.
+struct Late(bool);
+
+impl Operator for Late {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        self.0 = true;
+        chan(cx.param("gain").and_then(penumbra_core::Value::as_f64).unwrap_or(1.0))
+    }
+
+    fn params(&self) -> Option<Vec<ParamSpec>> {
+        self.0.then(|| vec![ParamSpec::float("gain", 1.0)])
     }
 }
 

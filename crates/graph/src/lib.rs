@@ -26,7 +26,7 @@ pub use cook::{
     CookContext, CookReport, CookStats, Cooker, InputChoice, Kept, NodeSpent, NodeStatus, PassSpent, Profile,
     ResetOutcome, ThumbnailMode, ThumbnailPolicy, Waker,
 };
-pub use declared::{Exposed, PARAMS, RESERVED, declared_in, declares, exposed_of, spec_in};
+pub use declared::{Exposed, PARAMS, Planned, Put, RESERVED, declared_in, declares, exposed_of, spec_in};
 pub use document::{Document, EditOutcome};
 pub use history::{Entry, History, Recorded, Source};
 pub use job::{AsyncSlot, Job, JobContext, JobPool, JobStatus};

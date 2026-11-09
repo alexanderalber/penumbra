@@ -518,13 +518,17 @@ water      15
 </li>
 <li><strong>Dissolve:</strong> the node menu moves the nodes back up.
 </li>
-<li><strong>Params of its own:</strong> the component's <code>params</code> text (under more) declares them, one per line. TouchDesigner calls these custom parameters. <code>@param preset choice(coral|maze) = coral -- the pattern</code> makes a param that the component holds, in the grammar of a shader header (the <code>//</code> may stay). It has a default, a range and a doc, and <a class="ref" href="#node.set"><code>node.set</code></a> and <a class="ref" href="#node.bind"><code>node.bind</code></a> treat it like any param: a value it does not take is refused at once. <code>@group look</code> puts the params after it into a fold.
+<li><strong>Params of its own, by menu:</strong> inside a component, the link button of a param opens a section named after the component. &quot;Put on component&quot; gives the component a param of that name, kind, range and value, and the inner param follows it. &quot;Show on component&quot; shows the inner param as a row of the component; the value stays inside. &quot;follow preset&quot; makes the param follow the component's <code>preset</code>. Each is one undo step (<a class="ref" href="#comp.put_param"><code>comp.put_param</code></a>, <a class="ref" href="#comp.show_param"><code>comp.show_param</code></a>, <a class="ref" href="#node.bind"><code>node.bind</code></a>).
+</li>
+<li><strong>Params of its own, by text:</strong> the component's <code>params</code> text (&quot;edit params&quot; under its rows) declares them, one per line. TouchDesigner calls these custom parameters. <code>@param preset choice(coral|maze) = coral -- the pattern</code> makes a param that the component holds, in the grammar of a shader header (the <code>//</code> may stay). It has a default, a range and a doc, and <a class="ref" href="#node.set"><code>node.set</code></a> and <a class="ref" href="#node.bind"><code>node.bind</code></a> treat it like any param: a value it does not take is refused at once. <code>@group look</code> puts the params after it into a fold.
 </li>
 <li><strong>Inner nodes follow it:</strong> bind an inner param to <code>parent.preset</code>, the param <code>preset</code> of the component the node sits in. TouchDesigner writes this <code>parent().par.Preset</code>. Every follower takes the component's value in the same frame, also when that param is bound itself. More under <a href="#concepts-following-a-components-param">Following a component's param</a>.
 </li>
 <li><strong>Exposed params:</strong> an <code>@expose speed = noise1.speed</code> line (or just <code>@expose noise1.speed</code>) in the same text shows an inner param on the component. Setting it sets the inner param, which keeps the value and the range. Files from before this text existed listed these lines in a param <code>expose</code>; they load into <code>params</code>.
 </li>
-<li><strong>Mistakes in the text:</strong> a line that declares nothing shows below the rows, with its line number and the reason. The other lines still work. A name may be declared once, and not as one of the component's own built-in params (<code>params</code>, <code>shelf</code>, <code>about</code>) or <code>reset</code>.
+<li><strong>The component's rows</strong> follow the order of the text. At the right end of each row, &quot;used by step&quot; names who follows it (a click lists them and goes there), and &quot;unused&quot; marks a param nothing follows yet: it changes nothing. A shown row names the inner param it sets (<code>step.feed</code>). A follower inside shows <code>parent.preset</code> in the components' turquoise; a click goes to the component. When a follower cannot take the value, the component lists the warning at the top of its panel and its node shows a warning badge.
+</li>
+<li><strong>Mistakes in the text:</strong> a line that declares nothing shows right below the text, with its line number and the reason. The other lines still work. A name may be declared once, and not as one of the component's own built-in params (<code>params</code>, <code>shelf</code>, <code>about</code>) or <code>reset</code>.
 </li>
 <li><strong>Rename:</strong> renaming a node (the name field at the top of the param panel, or <a class="ref" href="#node.rename"><code>node.rename</code></a>) also rewrites the <code>@expose</code> lines and node references (<a class="ref" href="#tex.select"><code>tex.select</code></a>'s <code>node</code>) that name it or a node inside it. One undo takes all of it back. Wires and bindings follow a rename by themselves. Params that name a node in plain text, such as <a class="ref" href="#tex.scan"><code>tex.scan</code></a>'s <code>projector</code>, keep the old name: fix them by hand.
 </li>
@@ -6349,7 +6353,7 @@ def cook(cx):
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
 <tr class="section"><th colspan="5">more</th></tr>
-<tr><td><code>params</code></td><td>text</td><td></td><td></td><td>The component's own params, one per line. <code>@param speed float = 1 0..4 -- doc</code> adds a param with its own value, in the grammar of a shader header. <code>@expose rate = lfo1.rate</code> shows an inner param on the component. <code>@group look</code> puts the params after it in a fold</td></tr>
+<tr><td><code>params</code></td><td>text</td><td></td><td></td><td>The component's own params, one per line. <code>@param speed float = 1 0..4 -- doc</code> adds a param with its own value, in the grammar of a shader header. <code>@expose rate = lfo1.rate</code> shows an inner param on the component. <code>@group look</code> puts the params after it in a fold. The panel shows this text in the fold <code>edit params</code> under the component's rows</td></tr>
 <tr><td><code>shelf</code></td><td>text</td><td></td><td></td><td>Where this component stands in the add dialog's library tab: one or two levels, <code>dmx</code> or <code>dmx/safety</code>. Empty: only your own components' shelf <code>mine</code> shows it</td></tr>
 <tr><td><code>about</code></td><td>text</td><td></td><td></td><td>One line on what this component does. The add dialog shows it under the pointer, and its search finds it</td></tr>
 </tbody>
@@ -6371,7 +6375,17 @@ def cook(cx):
 <h5 id="comp.base-ports">Ports</h5>
 <p>Wires enter and leave a component only through ports, which are nodes inside it. Each data kind has a pair: <a class="ref" href="#tex.in"><code>tex.in</code></a> and <a class="ref" href="#tex.out"><code>tex.out</code></a>, <a class="ref" href="#chan.in"><code>chan.in</code></a> and <a class="ref" href="#chan.out"><code>chan.out</code></a>, and the same for <code>table</code>, <code>geo</code>, <code>mat</code>, <code>light</code> and <code>view</code>. The <code>.in</code> nodes are the component's inputs, the <code>.out</code> nodes its outputs. What is wired to an input outside comes out of the matching <code>.in</code> node inside; what is wired into a <code>.out</code> node inside comes out of the component. Bindings and <a class="ref" href="#tex.select"><code>tex.select</code></a> are not wires: they may reach in and out of components by path.</p>
 <h5 id="comp.base-params-of-its-own">Params of its own</h5>
-<p>The <code>params</code> text (under more) gives the component params, one per line. TouchDesigner calls these custom parameters. A line uses the grammar of a shader header, and the <code>//</code> in front may stay when you paste one:</p>
+<p>The quickest way is the menu. Inside the component, the link button of a param has a section named after the component:</p>
+<ul>
+<li><strong>Put on component:</strong> the component gets a param of that name, kind, range and value, and the inner param follows it. Other nodes inside can follow it too. Use it for a value several nodes share, such as a preset or a size.
+</li>
+<li><strong>Show on component:</strong> the inner param gets a row on the component. The value and the range stay with the inner node. Use it for a value only that node reads.
+</li>
+<li><strong>follow preset:</strong> the param follows the component's <code>preset</code>.
+</li>
+</ul>
+<p>The component's rows say at their right end who follows them (&quot;used by step&quot;, a click lists them) or which inner param they set (<code>step.feed</code>). &quot;unused&quot; marks a param nothing follows yet.</p>
+<p>Behind the menu is the <code>params</code> text (&quot;edit params&quot; under the rows), one line per param. TouchDesigner calls these custom parameters. A line uses the grammar of a shader header, and the <code>//</code> in front may stay when you paste one:</p>
 <pre><code class="lang-text">@param preset choice(coral|maze|worms) = coral -- the pattern
 @param feed float = 0.055 0..0.1
 @group look
@@ -6387,12 +6401,12 @@ def cook(cx):
 </li>
 <li><strong>Comments:</strong> lines starting with <code>#</code>, and <code>//</code> lines without an <code>@</code>.
 </li>
-<li><strong>Mistakes:</strong> a line that declares nothing is listed below the rows with its line number and the reason; the rest still works. Each name may appear once. <code>params</code>, <code>shelf</code>, <code>about</code> and <code>reset</code> are taken.
+<li><strong>Mistakes:</strong> a line that declares nothing is listed right below the text with its line number and the reason; the rest still works. Each name may appear once. <code>params</code>, <code>shelf</code>, <code>about</code> and <code>reset</code> are taken.
 </li>
 </ul>
 <p>Files written before <code>params</code> existed listed the exposed params in a param <code>expose</code>. They load as <code>@expose</code> lines and are saved in the new form.</p>
 <h5 id="comp.base-inner-nodes-follow">Inner nodes follow</h5>
-<p>Bind an inner param to the component's param: <a class="ref" href="#node.bind"><code>node.bind {param: &quot;/rd/step.preset&quot;, from: &quot;parent.preset&quot;}</code></a>, written <code>binds: {&quot;preset&quot;: &quot;parent.preset&quot;}</code> in the file. <code>parent</code> is the component the node sits in, whatever it is called, so a copy from the library follows its own component. Every follower takes the new value in the same frame, also when the component's param is bound to a dropdown or an LFO outside.</p>
+<p>Bind an inner param to the component's param: <a class="ref" href="#node.bind"><code>node.bind {param: &quot;/rd/step.preset&quot;, from: &quot;parent.preset&quot;}</code></a>, written <code>binds: {&quot;preset&quot;: &quot;parent.preset&quot;}</code> in the file. <code>parent</code> is the component the node sits in, whatever it is called, so a copy from the library follows its own component. The follower's row shows <code>parent.preset</code>; a click on it goes to the component. When a follower cannot take a value (a choice it lacks), the component's panel lists the warning at the top. Every follower takes the new value in the same frame, also when the component's param is bound to a dropdown or an LFO outside.</p>
 <p>More in the Components section of the concepts guide.</p>
 </div>
 <p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
@@ -6899,6 +6913,11 @@ def cook(cx):
 <p>Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/&lt;name&gt;/ first; {file, path?}</p>
 <p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
 </div></details>
+<details class="entry command" id="comp.put_param"><summary><code class="name">comp.put_param</code><span class="sum">Make an inner param a param of its component that it follows: an @param line copied from it, its value moved up, a binding to parent.&lt;name&gt;; a param of that name the component has already is followed when it fits</span></summary>
+<div class="body">
+<p>Make an inner param a param of its component that it follows: an @param line copied from it, its value moved up, a binding to parent.&lt;name&gt;; a param of that name the component has already is followed when it fits; {param, name?}</p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
+</div></details>
 <details class="entry command" id="comp.remove"><summary><code class="name">comp.remove</code><span class="sum">Take a component file out of the library (into its removed/ folder)</span></summary>
 <div class="body">
 <p>Take a component file out of the library (into its removed/ folder); {name, place?: project | library}</p>
@@ -6906,6 +6925,11 @@ def cook(cx):
 <details class="entry command" id="comp.save"><summary><code class="name">comp.save</code><span class="sum">Write a component to a file (default: the library, &lt;name&gt;.comp.ron)</span></summary>
 <div class="body">
 <p>Write a component to a file (default: the library, &lt;name&gt;.comp.ron); {path, file?}</p>
+</div></details>
+<details class="entry command" id="comp.show_param"><summary><code class="name">comp.show_param</code><span class="sum">Show an inner param on its component as a row: an @expose line; value and spec stay inside</span></summary>
+<div class="body">
+<p>Show an inner param on its component as a row: an @expose line; value and spec stay inside; {param, name?}</p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
 </div></details>
 </div>
 <div class="group" id="group-cook">

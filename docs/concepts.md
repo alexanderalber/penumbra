@@ -634,8 +634,14 @@ first output of the kind it reads.
 - **Enter and leave:** I or a double-click goes in, U or the breadcrumb at the top left goes
   up. Wires from outside the level shown end in a stub labelled with where they go.
 - **Dissolve:** the node menu moves the nodes back up.
-- **Params of its own:** the component's `params` text (under more) declares them, one per
-  line. TouchDesigner calls these custom parameters. `@param preset choice(coral|maze) = coral
+- **Params of its own, by menu:** inside a component, the link button of a param opens a
+  section named after the component. "Put on component" gives the component a param of that
+  name, kind, range and value, and the inner param follows it. "Show on component" shows the
+  inner param as a row of the component; the value stays inside. "follow preset" makes the
+  param follow the component's `preset`. Each is one undo step (`comp.put_param`,
+  `comp.show_param`, `node.bind`).
+- **Params of its own, by text:** the component's `params` text ("edit params" under its rows)
+  declares them, one per line. TouchDesigner calls these custom parameters. `@param preset choice(coral|maze) = coral
   -- the pattern` makes a param that the component holds, in the grammar of a shader header
   (the `//` may stay). It has a default, a range and a doc, and `node.set` and `node.bind` treat
   it like any param: a value it does not take is refused at once. `@group look` puts the params
@@ -648,8 +654,14 @@ first output of the kind it reads.
   in the same text shows an inner param on the component. Setting it sets the inner param,
   which keeps the value and the range. Files from before this text existed listed these lines
   in a param `expose`; they load into `params`.
-- **Mistakes in the text:** a line that declares nothing shows below the rows, with its line
-  number and the reason. The other lines still work. A name may be declared once, and not as
+- **The component's rows** follow the order of the text. At the right end of each row, "used
+  by step" names who follows it (a click lists them and goes there), and "unused" marks a param
+  nothing follows yet: it changes nothing. A shown row names the inner param it sets
+  (`step.feed`). A follower inside shows `parent.preset` in the components' turquoise; a click
+  goes to the component. When a follower cannot take the value, the component lists the warning
+  at the top of its panel and its node shows a warning badge.
+- **Mistakes in the text:** a line that declares nothing shows right below the text, with its
+  line number and the reason. The other lines still work. A name may be declared once, and not as
   one of the component's own built-in params (`params`, `shelf`, `about`) or `reset`.
 - **Rename:** renaming a node (the name field at the top of the param panel, or `node.rename`)
   also rewrites the `@expose` lines and node references (`tex.select`'s `node`) that name it or a

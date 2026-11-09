@@ -59,6 +59,14 @@ fn inner_params_follow_the_components_params() {
     assert_eq!(bound(&f, "/rd/m", "op"), "add");
     let w = warning(&f, "/rd/m");
     assert!(w.contains("`op` follows parent.preset: it follows \"screen\", which is none of add,"), "{w}");
+    // The component tells of it too.
+    let info = f.call("node.info", json!({"path": "/rd"}));
+    let told = &info["component"]["follower_warnings"];
+    assert_eq!(told[0]["node"], "/rd/m", "{info}");
+    assert!(
+        told[0]["warning"].as_str().is_some_and(|t| t.starts_with("`op` follows parent.preset")),
+        "{info}"
+    );
 
     // What is refused.
     let e = f.fail("node.bind", json!({"param": "/rd/m.op", "from": "parent.nope"}));
@@ -86,4 +94,54 @@ fn inner_params_follow_the_components_params() {
     });
     f.call("node.unbind", json!({"param": "/rd/m.op"}));
     assert!(f.call("node.info", json!({"path": "/rd/m"}))["binds"].as_array().is_some_and(Vec::is_empty));
+}
+
+/// The row named `name` in the list `list` of `/path`'s `node.info`.
+fn row(f: &Fixture, path: &str, list: &str, name: &str) -> serde_json::Value {
+    let info = f.call("node.info", json!({"path": path}));
+    let rows = info[list].as_array().cloned().unwrap_or_default();
+    rows.into_iter().find(|r| r["name"] == name).unwrap_or_default()
+}
+
+#[test]
+fn an_inner_param_goes_onto_its_component_by_one_command() {
+    let f = Fixture::new("put_param");
+    f.call(
+        "node.create",
+        json!({"path": "/rd", "kind": "comp.base", "params": {"params": "@param feed float = 0.05"}}),
+    );
+    f.call("node.create", json!({"path": "/rd/m", "kind": "chan.math", "params": {"op": "multiply"}}));
+    f.call("node.create", json!({"path": "/rd/n", "kind": "chan.math"}));
+    let r = f.call("comp.put_param", json!({"param": "/rd/m.op"}));
+    assert_eq!(r["how"], "declared", "{r}");
+    assert_eq!(r["message"], "/rd has a new param `op`; this param follows it");
+    let text = row(&f, "/rd", "params", "params")["value"].as_str().unwrap_or_default().to_string();
+    assert!(text.starts_with("@param feed float = 0.05\n@param op choice("), "{text}");
+    assert_eq!(row(&f, "/rd", "instance_params", "op")["value"], "multiply", "the value moved up");
+    assert_eq!(bound(&f, "/rd/m", "op"), "multiply");
+    // The same name on another node: it follows the param declared now.
+    let r = f.call("comp.put_param", json!({"param": "/rd/n.op"}));
+    assert_eq!(r["how"], "followed", "{r}");
+    assert_eq!(row(&f, "/rd", "instance_params", "op")["followed_by"], json!(["/rd/m.op", "/rd/n.op"]));
+    // One undo step each.
+    f.call("history.undo", json!({}));
+    f.call("history.undo", json!({}));
+    assert_eq!(row(&f, "/rd", "params", "params")["value"], "@param feed float = 0.05");
+    assert!(f.call("node.info", json!({"path": "/rd/m"}))["binds"].as_array().is_some_and(Vec::is_empty));
+
+    // Shown instead: an @expose line, nothing copied.
+    let r = f.call("comp.show_param", json!({"param": "/rd/m.b"}));
+    assert_eq!((r["how"].as_str(), r["name"].as_str()), (Some("shown"), Some("b")), "{r}");
+    assert_eq!(row(&f, "/rd", "params", "params")["value"], "@param feed float = 0.05\n@expose m.b");
+    let e = f.fail("comp.show_param", json!({"param": "/rd/m.b"}));
+    assert!(e.contains("/rd shows `b` as `b` already"), "{e}");
+    // Refused: the top level, a name of another kind, a param that is bound.
+    f.call("node.create", json!({"path": "/top", "kind": "chan.math"}));
+    let e = f.fail("comp.put_param", json!({"param": "/top.op"}));
+    assert!(e.contains("/top sits at the top level"), "{e}");
+    let e = f.fail("comp.put_param", json!({"param": "/rd/m.op", "name": "feed"}));
+    assert!(e.contains("/rd has a param `feed` already, and it is a number"), "{e}");
+    f.call("node.bind", json!({"param": "/rd/n.op", "from": "/top"}));
+    let e = f.fail("comp.put_param", json!({"param": "/rd/n.op"}));
+    assert!(e.contains("is bound to /top; unbind it first"), "{e}");
 }

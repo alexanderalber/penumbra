@@ -123,6 +123,44 @@ pub fn check(target: &ParamSpec, component: Option<u8>, source: &ParamSpec) -> R
     )))
 }
 
+/// The problems of the params that follow component `comp`'s params, as their nodes reported
+/// them at their last cook ([`crate::NodeStatus::follow_warnings`]): each follower's node and
+/// one warning, ordered by node.
+pub fn problems(
+    net: &Network,
+    status: &std::collections::BTreeMap<NodeId, crate::NodeStatus>,
+    comp: NodeId,
+) -> Vec<(NodeId, String)> {
+    let mut nodes: Vec<NodeId> = net.followers(comp).into_values().flatten().map(|(id, _)| id).collect();
+    nodes.sort_unstable();
+    nodes.dedup();
+    nodes
+        .into_iter()
+        .flat_map(|id| {
+            let warnings = status.get(&id).map(|s| s.follow_warnings.clone()).unwrap_or_default();
+            warnings.into_iter().map(move |w| (id, w))
+        })
+        .collect()
+}
+
+/// Whether `target` may follow `source` ([`check`]) and both are of a like kind: a bool, int or
+/// float with one of its own kind, a choice or text with a choice or text, a vector with a vector of its size, a
+/// colour or palette with its own kind. What the panel offers to follow, and what putting a
+/// param on a component follows instead of declaring: a choice picked by a number's place, or
+/// a float rounded into an int, is allowed by [`check`], but seldom meant.
+pub fn alike(target: &ParamSpec, source: &ParamSpec) -> bool {
+    let like = match (&target.kind, &source.kind) {
+        (ParamKind::Bool, ParamKind::Bool) | (ParamKind::Int, ParamKind::Int) => true,
+        (ParamKind::Float, ParamKind::Float) => true,
+        (a, b) if wordy(a) && wordy(b) => true,
+        (ParamKind::Palette, ParamKind::Palette | ParamKind::Choice(_) | ParamKind::Text) => true,
+        (ParamKind::Vec(n), ParamKind::Vec(m)) => n == m,
+        (ParamKind::Color, ParamKind::Color) => true,
+        _ => false,
+    };
+    like && check(target, None, source).is_ok()
+}
+
 /// What a follower takes from the value it follows now.
 pub(crate) enum Follow<'a> {
     /// The param (or the component of it) comes out as this value.

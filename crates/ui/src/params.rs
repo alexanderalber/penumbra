@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use egui::{RichText, Ui};
+use penumbra_core::declare::Declaration;
 use penumbra_core::{
     Cell, Chans, GroupId, Index, Name, NodeId, ParamKind, ParamPath, ParamSpec, Table, Value, palette,
 };
@@ -30,6 +31,8 @@ pub struct Inputs<'a> {
     pub types: &'a NodeTypes,
     pub node: NodeId,
     pub status: Option<&'a NodeStatus>,
+    /// Every node's status: a component shows what its followers warn about.
+    pub statuses: &'a BTreeMap<NodeId, NodeStatus>,
     /// Params the instance declares (a shader's header), when the cook thread published them.
     pub instance: Option<&'a [ParamSpec]>,
     /// For a component: the params the inner nodes its exposed params lead to declare
@@ -148,6 +151,24 @@ pub struct ParamPanel {
     /// The project's own palettes, when they were read and from which directory: read again
     /// after a second, so an edit of the file shows without reading it every frame.
     palettes: Option<(std::time::Instant, Option<std::path::PathBuf>, Vec<palette::Palette>)>,
+    /// What the row being drawn says at its right end about where its value goes or lives (a
+    /// component's rows).
+    tag: Option<Tag>,
+    /// The components whose `params` box is open.
+    box_open: std::collections::BTreeSet<NodeId>,
+    /// The row being drawn is a component's row of an inner param (an `@expose` line): its link
+    /// menu offers no component section, the row being on the component already.
+    on_component: bool,
+}
+
+/// The note at the right end of a component's row.
+enum Tag {
+    /// A param the component holds (an `@param` line), and the params that follow it: their
+    /// nodes and how the row names them (`step.preset`).
+    Used(Vec<(NodeId, String)>),
+    /// An inner param shown on the component (an `@expose` line): its node and how the row
+    /// names it (`step.feed`).
+    Inside(NodeId, String),
 }
 
 impl ParamPanel {
@@ -216,6 +237,9 @@ impl ParamPanel {
             if let Some(w) = &s.warning {
                 ui.colored_label(theme::WARNING, w);
             }
+        }
+        if desc.is_some_and(|d| d.container) {
+            follower_problems(ui, input, node, auto, actions);
         }
         ui.horizontal(|ui| {
             let mut locked = node.locked;
@@ -324,14 +348,20 @@ impl ParamPanel {
                 let main: Vec<&ParamSpec> =
                     desc.params.iter().filter(|s| s.group.is_empty()).filter(general).collect();
                 self.rows(ui, input, node, "params", &main, auto, actions);
+                // A component's own rows come first; its text is edited under them, not among
+                // the kind's rarely used params.
+                let declares = penumbra_graph::declares(desc);
+                if declares {
+                    self.component_rows(ui, input, node, auto, actions);
+                }
                 if constant {
                     self.constant_rows(ui, input, node, auto, actions);
+                } else if declares {
+                    let kind: Vec<ParamSpec> =
+                        desc.params.iter().filter(|s| s.name != penumbra_graph::PARAMS).cloned().collect();
+                    self.groups(ui, input, node, "", &kind, auto, actions);
                 } else {
                     self.groups(ui, input, node, "", &desc.params, auto, actions);
-                }
-                if desc.container {
-                    self.declared(ui, input, node, auto, actions);
-                    self.exposed(ui, input, node, auto, actions);
                 }
                 if constant {
                     // Its rows are its declared params.
@@ -352,8 +382,11 @@ impl ParamPanel {
         actions.append(&mut self.pending);
     }
 
-    /// A component's own params (its `@param` lines): rows like any node's, their groups folded.
-    fn declared(
+    /// A component's rows, in the order of its `params` text: the params it holds (`@param`
+    /// lines) and the inner params it shows (`@expose` lines), the main rows first, then each
+    /// `@group` folded. Each row says at its right end who follows it or where it lives. Below
+    /// them, the text itself in a fold, with the lines that declare nothing.
+    fn component_rows(
         &mut self,
         ui: &mut Ui,
         input: &Inputs<'_>,
@@ -361,92 +394,245 @@ impl ParamPanel {
         auto: &mut automation::Registry,
         actions: &mut Vec<Action>,
     ) {
-        let Some(own) = input.types.desc(&node.kind).and_then(|d| node.declared(d)) else { return };
-        let specs: Vec<ParamSpec> = own.params().cloned().collect();
-        if specs.is_empty() {
-            return;
-        }
-        ui.add_space(6.0);
-        ui.label(RichText::new("own params").color(theme::TEXT_WEAK).small());
-        let main: Vec<&ParamSpec> = specs.iter().filter(|s| s.group.is_empty()).collect();
-        self.rows(ui, input, node, "params_declared", &main, auto, actions);
-        self.groups(ui, input, node, "declared.", &specs, auto, actions);
-    }
-
-    /// A component's exposed params: rows of the inner params they stand for, under the exposed
-    /// names. Below them, the lines of its `params` text that declare nothing.
-    fn exposed(
-        &mut self,
-        ui: &mut Ui,
-        input: &Inputs<'_>,
-        node: &NodeDef,
-        auto: &mut automation::Registry,
-        actions: &mut Vec<Action>,
-    ) {
-        let mut errors = Vec::new();
-        let list = input.net.exposed_with_errors(input.types, node.id, &mut errors);
-        let declares =
-            input.types.desc(&node.kind).and_then(|d| node.declared(d)).is_some_and(|d| !d.lines.is_empty());
-        ui.add_space(6.0);
-        if list.is_empty() && errors.is_empty() {
-            if !declares {
-                let hint = "No params of its own yet. Add lines under more > params: `@param speed float = 1 0..4` for a param of the component, `@expose speed = lfo1.rate` to show an inner one.";
-                ui.label(RichText::new(hint).color(theme::TEXT_WEAK).small());
+        let Some(desc) = input.types.desc(&node.kind) else { return };
+        let Some(declared) = node.declared(desc) else { return };
+        let Some(path) = input.net.path_of(node.id) else { return };
+        let followers = input.net.followers(node.id);
+        let exposed = penumbra_graph::exposed_of(&path, &declared);
+        let mut groups: Vec<&str> = vec![""];
+        for d in &declared.lines {
+            let g = declaration_group(d);
+            if !groups.contains(&g) {
+                groups.push(g);
             }
-            return;
         }
-        if !list.is_empty() {
-            ui.label(RichText::new("exposed").color(theme::TEXT_WEAK).small());
-        }
-        let mut problems: Vec<String> = errors.into_iter().map(|e| format!("params {e}")).collect();
-        egui::Grid::new("params_exposed").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-            for x in &list {
-                let target =
-                    x.target.clone().and_then(|t| input.net.resolve_alias(input.types, &t).map_err(|e| e.0));
-                let found = target.as_ref().ok().and_then(|t| {
-                    let id = input.net.resolve(t.node())?;
-                    let inner = input.net.node(id)?;
-                    let name = t.param().as_str();
-                    let spec = match input.types.desc(&inner.kind)?.param_spec(name) {
-                        Some(spec) => spec.clone(),
-                        // A param the inner node's file declares (a shader's header).
-                        None => input.inner.get(&id)?.iter().find(|s| s.name == name)?.clone(),
-                    };
-                    Some((inner.clone(), spec))
-                });
-                match (found, target) {
-                    (Some((inner, spec)), _)
-                        if crate::model_map::greyed(input.net, input.types, node.id, x.name.as_str()) =>
-                    {
-                        ui.add_enabled(false, egui::Label::new(x.name.to_string()));
-                        let value = input.types.desc(&inner.kind).and_then(|d| inner.param(d, &spec.name));
-                        ui.add_enabled(false, egui::Label::new(crate::model_map::value_text(value)));
-                        ui.end_row();
-                    }
-                    (Some((inner, spec)), _) => {
-                        self.label = Some(x.name.to_string());
-                        self.row(ui, input, &inner, &spec, auto, actions);
-                        self.label = None;
-                    }
-                    (None, Ok(t)) => {
-                        let declared_by_file = input
-                            .net
-                            .resolve(t.node())
-                            .and_then(|id| input.net.node(id))
-                            .and_then(|n| input.types.desc(&n.kind))
-                            .is_some_and(|d| d.extra_params);
-                        problems.push(if declared_by_file {
-                            format!("{}: {t} is not declared by its file (yet)", x.name)
-                        } else {
-                            format!("{}: {t} does not exist", x.name)
-                        });
-                    }
-                    (None, Err(e)) => problems.push(format!("{}: {e}", x.name)),
-                }
+        let mut problems: Vec<String> = Vec::new();
+        ui.add_space(4.0);
+        for group in groups {
+            let lines: Vec<&Declaration> =
+                declared.lines.iter().filter(|d| declaration_group(d) == group).collect();
+            if lines.is_empty() {
+                continue;
             }
-        });
+            let mut draw = |me: &mut Self, ui: &mut Ui, problems: &mut Vec<String>| {
+                egui::Grid::new(("params_component", group)).num_columns(2).spacing([8.0, 6.0]).show(
+                    ui,
+                    |ui| {
+                        for d in &lines {
+                            match d {
+                                Declaration::Param(spec) => {
+                                    let list = followers
+                                        .get(spec.name.as_str())
+                                        .map(|l| {
+                                            l.iter()
+                                                .filter_map(|(id, part)| {
+                                                    follower_label(input, &path, *id, part)
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default();
+                                    me.tag = Some(Tag::Used(list));
+                                    me.row(ui, input, node, spec, auto, actions);
+                                    me.tag = None;
+                                }
+                                Declaration::Expose(line) => {
+                                    let Some(x) = exposed.iter().find(|x| x.name == line.name) else {
+                                        continue;
+                                    };
+                                    me.exposed_row(ui, input, node, x, &line.target, problems, auto, actions);
+                                }
+                            }
+                        }
+                    },
+                );
+            };
+            if group.is_empty() {
+                draw(self, ui, &mut problems);
+            } else {
+                let id = format!("declared.{group}");
+                let r = egui::CollapsingHeader::new(RichText::new(group).color(theme::TEXT_WEAK))
+                    .id_salt(("param_group", node.kind.as_str(), id.as_str()))
+                    .show(ui, |ui| draw(self, ui, &mut problems));
+                auto.add(format!("param.group.{id}"), r.header_response.rect, group);
+            }
+        }
         for p in problems {
             ui.colored_label(theme::WARNING, p);
+        }
+        self.params_box(ui, input, node, desc, &declared, auto, actions);
+    }
+
+    /// The row of an inner param a component shows (an `@expose` line `x`, written `target_text`),
+    /// or why there is none into `problems`.
+    #[allow(clippy::too_many_arguments)]
+    fn exposed_row(
+        &mut self,
+        ui: &mut Ui,
+        input: &Inputs<'_>,
+        comp: &NodeDef,
+        x: &penumbra_graph::Exposed,
+        target_text: &str,
+        problems: &mut Vec<String>,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) {
+        let target = x.target.clone().and_then(|t| input.net.resolve_alias(input.types, &t).map_err(|e| e.0));
+        let found = target.as_ref().ok().and_then(|t| {
+            let id = input.net.resolve(t.node())?;
+            let inner = input.net.node(id)?;
+            let name = t.param().as_str();
+            let spec = match input.types.desc(&inner.kind)?.param_spec(name) {
+                Some(spec) => spec.clone(),
+                // A param the inner node's file declares (a shader's header).
+                None => input.inner.get(&id)?.iter().find(|s| s.name == name)?.clone(),
+            };
+            Some((inner.clone(), spec))
+        });
+        match (found, target) {
+            (Some((inner, spec)), _)
+                if crate::model_map::greyed(input.net, input.types, comp.id, x.name.as_str()) =>
+            {
+                ui.add_enabled(false, egui::Label::new(x.name.to_string()));
+                let value = input.types.desc(&inner.kind).and_then(|d| inner.param(d, &spec.name));
+                ui.add_enabled(false, egui::Label::new(crate::model_map::value_text(value)));
+                ui.end_row();
+            }
+            (Some((inner, spec)), _) => {
+                self.label = Some(x.name.to_string());
+                self.tag = Some(Tag::Inside(inner.id, target_text.to_string()));
+                self.on_component = true;
+                self.row(ui, input, &inner, &spec, auto, actions);
+                self.on_component = false;
+                self.tag = None;
+                self.label = None;
+            }
+            (None, Ok(t)) => {
+                let id = input.net.resolve(t.node());
+                let declared_by_file = id
+                    .and_then(|id| input.net.node(id))
+                    .and_then(|n| input.types.desc(&n.kind))
+                    .is_some_and(|d| d.extra_params);
+                if !declared_by_file {
+                    problems.push(format!("{}: {t} does not exist", x.name));
+                } else if id.is_some_and(|id| input.inner.contains_key(&id)) {
+                    // A shader's params are known once it has compiled: no alarm before that.
+                    problems.push(format!(
+                        "{}: the file of {} declares no `{}`",
+                        x.name,
+                        t.node(),
+                        t.param()
+                    ));
+                }
+            }
+            (None, Err(e)) => problems.push(format!("{}: {e}", x.name)),
+        }
+    }
+
+    /// A component's `params` text in a fold under its rows ("edit params", open or closed per
+    /// component for the run), sized to its lines up to [`BOX_MAX_LINES`], committed when the focus leaves.
+    /// The lines that declare nothing are listed right below it, as typed; the fold's header
+    /// counts them while it is closed.
+    #[allow(clippy::too_many_arguments)]
+    fn params_box(
+        &mut self,
+        ui: &mut Ui,
+        input: &Inputs<'_>,
+        node: &NodeDef,
+        desc: &penumbra_graph::NodeDesc,
+        declared: &penumbra_core::declare::Declared,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) {
+        let Some(path) = input.net.path_of(node.id) else { return };
+        let Ok(param) = named(&path, penumbra_graph::PARAMS) else { return };
+        let key = param.to_string();
+        let current =
+            node.params.get(penumbra_graph::PARAMS).and_then(Value::as_str).unwrap_or_default().to_string();
+        if declared.lines.is_empty() && declared.errors.is_empty() {
+            let hint = "No params yet. To give this component one, open the link menu of a param inside and pick \"Show on component\" or \"Put on component\", or type a line under \"edit params\".";
+            ui.add(egui::Label::new(RichText::new(hint).color(theme::TEXT_WEAK)).wrap());
+        }
+        let field = self.fields.entry(key.clone()).or_insert_with(|| Typed::new(&current));
+        // While typing, the lines are checked as they stand.
+        let errors: Vec<String> = if field.text == current {
+            declared.errors.clone()
+        } else {
+            let mut params = node.params.clone();
+            params.insert(param.param().clone(), Value::Text(field.text.clone()));
+            penumbra_graph::declared_in(desc, &params).map(|d| d.errors).unwrap_or_default()
+        };
+        let open = self.box_open.contains(&node.id);
+        let title = match (open, errors.len()) {
+            (false, 1) => RichText::new("edit params (1 line declares nothing)").color(theme::WARNING),
+            (false, n) if n > 1 => {
+                RichText::new(format!("edit params ({n} lines declare nothing)")).color(theme::WARNING)
+            }
+            _ => RichText::new("edit params").color(theme::TEXT_WEAK),
+        };
+        let lines = current.lines().count().max(field.text.lines().count()) + 1;
+        let rows = lines.clamp(BOX_MIN_LINES, BOX_MAX_LINES);
+        let mut commit: Option<String> = None;
+        let r = egui::CollapsingHeader::new(title).id_salt(("params_box", node.id)).open(Some(open)).show(ui, |ui| {
+            let mono = egui::TextStyle::Monospace;
+            let pad = ui.spacing().button_padding.y.max(4.0);
+            // One line more than the rows: room for the margin and a horizontal scroll bar.
+            let height = ui.text_style_height(&mono) * (rows + 1) as f32 + 2.0 * pad;
+            // Line numbers beside the lines, as the errors below name them; a line runs on to
+            // the right rather than wrapping, so each line of text is one row.
+            let numbers: String =
+                (1..=field.text.lines().count().max(1)).map(|n| n.to_string()).collect::<Vec<_>>().join("\n");
+            let r = egui::ScrollArea::vertical()
+                .id_salt(("params_box_scroll", node.id))
+                .max_height(height)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.add_space(0.0);
+                        ui.vertical(|ui| {
+                            ui.add_space(pad);
+                            ui.label(RichText::new(numbers).text_style(mono.clone()).color(theme::TEXT_IDLE));
+                        });
+                        let font = mono.resolve(ui.style());
+                        let color = ui.visuals().text_color();
+                        let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, _wrap: f32| {
+                            let job =
+                                egui::text::LayoutJob::simple(text.as_str().to_string(), font.clone(), color, f32::INFINITY);
+                            ui.painter().layout_job(job)
+                        };
+                        egui::ScrollArea::horizontal()
+                            .id_salt(("params_box_wide", node.id))
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                let width = ui.available_width();
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut field.text)
+                                        .code_editor()
+                                        .desired_rows(rows)
+                                        .desired_width(width)
+                                        .layouter(&mut layouter),
+                                )
+                            })
+                            .inner
+                    })
+                    .inner
+                })
+                .inner;
+            auto.add(format!("param.{key}"), r.rect, "params");
+            commit = field.settle(&r, &current);
+            for (i, e) in errors.iter().enumerate() {
+                let r = ui.add(egui::Label::new(RichText::new(e).color(theme::WARNING)).wrap());
+                auto.add(format!("param.{key}.error.{i}"), r.rect, e.clone());
+            }
+            let hint = "One line each: `@param speed float = 1 0..4 -- what it does` gives the component a param, `@expose speed = lfo1.rate` shows a param inside, `@group look` folds the lines after it.";
+            code_hint(ui, hint);
+        });
+        auto.add(format!("param.{key}.edit"), r.header_response.rect, "edit params");
+        if r.header_response.clicked() && !self.box_open.remove(&node.id) {
+            self.box_open.insert(node.id);
+        }
+        if let Some(text) = commit {
+            actions.push(Action::edit(vec![Op::Set { param, value: Value::Text(text) }]));
         }
     }
 
@@ -625,6 +811,13 @@ impl ParamPanel {
         let live = input.status.and_then(|s| s.bound.get(spec.name.as_str()));
         let value = live.filter(|_| !bound.is_empty()).unwrap_or(&stored).clone();
         let name_edit = self.name_edit.take();
+        let tag = self.tag.take();
+        let on_component = self.on_component;
+        // Bound only by following a component's param: told apart from a channel's binding.
+        let follows_only =
+            node.binds.iter().filter(|(k, _)| k.param.as_str() == spec.name).all(|(_, b)| b.param.is_some());
+        // A component's param that no node follows does nothing.
+        let unused = matches!(&tag, Some(Tag::Used(list)) if list.is_empty());
         let removable = self.removable;
         let mut remove_clicked = false;
         let mut label = RichText::new(self.label.as_deref().unwrap_or(&spec.name));
@@ -643,8 +836,12 @@ impl ParamPanel {
             label = label.color(theme::TEXT_WEAK).italics();
         } else if idle.is_some() {
             label = label.color(theme::TEXT_IDLE);
+        } else if !bound.is_empty() && follows_only {
+            label = label.color(theme::COMPONENT);
         } else if !bound.is_empty() {
             label = label.color(theme::kind_color(DataKind::Chan));
+        } else if unused {
+            label = label.color(theme::TEXT_IDLE);
         } else if explicit.is_none() {
             label = label.color(theme::TEXT_WEAK);
         }
@@ -704,7 +901,7 @@ impl ParamPanel {
         let cell = |ui: &mut Ui| {
             if replaced {
                 ui.disable();
-            } else if idle.is_some() {
+            } else if idle.is_some() || unused {
                 ui.multiply_opacity(IDLE_OPACITY);
             }
             if let Some(k) = removable {
@@ -716,8 +913,15 @@ impl ParamPanel {
                 .add_visible(explicit.is_some(), |ui: &mut Ui| icons::small_button(ui, Icon::Reset))
                 .on_hover_text("reset to the default");
             auto.add(format!("param.{key}.reset"), reset.rect, "reset");
+            if let Some(tag) = &tag {
+                row_tag(ui, input, &key, tag, auto, actions);
+            }
             let binds: Vec<_> = node.binds.iter().filter(|(k, _)| k.param.as_str() == spec.name).collect();
             for (part, b) in binds.into_iter().rev() {
+                if let Some(name) = &b.param {
+                    follower_source(ui, input, node, &key, part.component, b.node, name, auto, actions);
+                    continue;
+                }
                 let from = input.net.path_of(b.node).map_or("?".to_string(), |p| {
                     if let Some(name) = &b.param {
                         return if node.parent == Some(b.node) {
@@ -746,7 +950,7 @@ impl ParamPanel {
                 ui.label(RichText::new(text).color(theme::kind_color(kind)).small());
             }
             if spec.bindable() {
-                bind_menu(ui, input, node, &param, spec, auto, actions);
+                bind_menu(ui, input, node, &param, spec, !on_component, auto, actions);
             }
             if is_color {
                 let lines = color_lines(ui);
@@ -1861,6 +2065,10 @@ fn constant_remove_ops(
     ops
 }
 
+/// Lines a component's `params` box shows at least and at most; longer texts scroll.
+const BOX_MIN_LINES: usize = 4;
+const BOX_MAX_LINES: usize = 24;
+
 /// Lines of a multiline text param's box, unless the param asks for more ([`ParamSpec::lines`]).
 const MULTILINE_ROWS: usize = 6;
 
@@ -2313,6 +2521,7 @@ fn bind_menu(
     node: &NodeDef,
     param: &ParamPath,
     spec: &ParamSpec,
+    offer_component: bool,
     auto: &mut automation::Registry,
     actions: &mut Vec<Action>,
 ) {
@@ -2346,6 +2555,9 @@ fn bind_menu(
     let r = icons::small_button(ui, Icon::Bind).on_hover_text(hover);
     auto.add(format!("param.{key}.bind"), r.rect, "bind");
     egui::Popup::menu(&r).id(id).show(|ui| {
+        if offer_component && component_section(ui, input, node, param, spec, auto, actions) {
+            ui.separator();
+        }
         let n = spec.bind_components();
         if cells {
             source_list(ui, input, &sources, param, None, auto, actions);
@@ -2384,7 +2596,7 @@ fn bind_menu(
         let r = ui
             .add_enabled(listening && input.can_edit, egui::Button::new("learn from OSC"))
             .on_hover_text(if listening {
-                "Bind to the next OSC address that arrives with a number (a vector: one number per component),                  to the next MIDI control moved that a chan.midi_in reads, to the next key a chan.keyboard_in lists, or to the 3D mouse's button or axis moved most"
+                "Bind to the next OSC address that arrives with a number (a vector: one number per component), to the next MIDI control moved that a chan.midi_in reads, to the next key a chan.keyboard_in lists, or to the 3D mouse's button or axis moved most"
             } else {
                 needs
             })
@@ -2414,6 +2626,317 @@ fn bind_menu(
         }
     });
 }
+
+/// A weak hint whose parts in backticks are set in the code font, as the text box shows them
+/// (the panel's font would join `--` into a dash).
+fn code_hint(ui: &mut Ui, text: &str) {
+    let mut job = egui::text::LayoutJob::default();
+    let plain = egui::TextStyle::Body.resolve(ui.style());
+    let code = egui::TextStyle::Monospace.resolve(ui.style());
+    for (i, part) in text.split('`').enumerate() {
+        let font = if i % 2 == 1 { code.clone() } else { plain.clone() };
+        let format = egui::TextFormat { font_id: font, color: theme::TEXT_WEAK, ..Default::default() };
+        job.append(part, 0.0, format);
+    }
+    job.wrap.max_width = ui.available_width();
+    ui.add(egui::Label::new(job).wrap());
+}
+
+/// The `@group` a line of a component's text sits in.
+fn declaration_group(d: &Declaration) -> &str {
+    match d {
+        Declaration::Param(spec) => spec.group.as_str(),
+        Declaration::Expose(line) => line.group.as_str(),
+    }
+}
+
+/// How a component's row names a param that follows it: `step.preset` for one inside, a path
+/// from the component for one further away.
+fn follower_label(
+    input: &Inputs<'_>,
+    comp: &penumbra_core::NodePath,
+    id: NodeId,
+    part: &penumbra_core::ParamPart,
+) -> Option<(NodeId, String)> {
+    let path = input.net.path_of(id)?;
+    let name = comp.write_ref(&path);
+    let name = name.strip_prefix("./").unwrap_or(&name).to_string();
+    Some((id, format!("{name}.{part}")))
+}
+
+/// A click on `r` goes to node `id`: the level it sits on, the node selected there.
+fn reveal_on_click(ui: &Ui, r: &egui::Response, id: NodeId, actions: &mut Vec<Action>) {
+    if r.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if r.clicked() {
+        actions.push(Action::Reveal(id));
+    }
+}
+
+/// The note at the right end of a component's row (`param.<path>.used`, `param.<path>.inside`):
+/// who follows a param it holds, with a list to go to them, or which inner param a shown row
+/// sets.
+fn row_tag(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    key: &str,
+    tag: &Tag,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    // One width for all, so the link buttons of a component's rows stand in one column.
+    let size = egui::vec2(TAG_WIDTH, ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_min_size(size);
+        tag_cell(ui, input, key, tag, auto, actions);
+    });
+}
+
+/// What [`row_tag`] puts into its cell.
+fn tag_cell(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    key: &str,
+    tag: &Tag,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    match tag {
+        Tag::Used(list) if list.is_empty() => {
+            let r = ui.add(egui::Label::new(RichText::new("unused").color(theme::TEXT_IDLE)).truncate());
+            auto.add(format!("param.{key}.used"), r.rect, "unused");
+            r.on_hover_text(
+                "No node inside follows this param, so it changes nothing yet. To use it, open the link menu of a param inside and pick it under \"component\".",
+            );
+        }
+        Tag::Used(list) => {
+            let nodes: Vec<&str> = list.iter().map(|(_, l)| l.split('.').next().unwrap_or(l)).collect();
+            let text = match nodes.as_slice() {
+                [one] => format!("used by {one}"),
+                _ => format!("used by {}", list.len()),
+            };
+            let r = ui.add(
+                egui::Label::new(RichText::new(text).color(theme::COMPONENT))
+                    .truncate()
+                    .sense(egui::Sense::click()),
+            );
+            auto.add(format!("param.{key}.used"), r.rect, "followers");
+            if r.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            let names: Vec<&str> = list.iter().map(|(_, l)| l.as_str()).collect();
+            let r = r.on_hover_text(format!(
+                "Followed by {}. Click to list them and go to one.",
+                names.join(", ")
+            ));
+            egui::Popup::menu(&r).id(ui.make_persistent_id(("used", key))).show(|ui| {
+                for (i, (id, label)) in list.iter().enumerate() {
+                    let b = ui.button(label);
+                    auto.add(format!("param.{key}.used.{i}"), b.rect, label.clone());
+                    if b.clicked() {
+                        actions.push(Action::Reveal(*id));
+                        ui.close();
+                    }
+                }
+            });
+        }
+        Tag::Inside(id, text) => {
+            let r = ui.add(
+                egui::Label::new(RichText::new(text).color(theme::TEXT_WEAK))
+                    .truncate()
+                    .sense(egui::Sense::click()),
+            );
+            auto.add(format!("param.{key}.inside"), r.rect, text.clone());
+            let node = input.net.node(*id).map_or_else(String::new, |n| n.name.to_string());
+            let r = r.on_hover_text(format!(
+                "This row sets {text}, a param of {node} inside the component; the value is kept there. Click to go to {node}."
+            ));
+            reveal_on_click(ui, &r, *id, actions);
+        }
+    }
+}
+
+/// Where a param that follows a component's param takes its value from (`param.<path>.from`):
+/// `parent.preset` in the components' colour, a click away from the component.
+#[allow(clippy::too_many_arguments)]
+fn follower_source(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    node: &NodeDef,
+    key: &str,
+    component: Option<u8>,
+    source: NodeId,
+    name: &Name,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    let comp = input.net.node(source).map_or_else(|| "?".to_string(), |n| n.name.to_string());
+    let (text, hover) = if node.parent == Some(source) {
+        (
+            format!("{}.{name}", penumbra_graph::follow::PARENT),
+            format!(
+                "Takes its value from `{name}` of {comp}, the component this node sits in (its parent). Click to go to {comp}."
+            ),
+        )
+    } else {
+        let path = input.net.path_of(source).map_or_else(|| "?".to_string(), |p| p.to_string());
+        (
+            format!("{path}.{name}"),
+            format!("Takes its value from `{name}` of the component {path}. Click to go there."),
+        )
+    };
+    let text = match component {
+        Some(c) => format!("{c}: {text}"),
+        None => text,
+    };
+    let r =
+        ui.add(egui::Label::new(RichText::new(&text).color(theme::COMPONENT)).sense(egui::Sense::click()));
+    auto.add(format!("param.{key}.from"), r.rect, text.clone());
+    let r = r.on_hover_text(hover);
+    reveal_on_click(ui, &r, source, actions);
+}
+
+/// The link menu's section for a param inside a component: the component's params it can
+/// follow (`bind.parent.<name>`), and the two ways to put it on the component, each with a line
+/// on what it does (`bind.show`, `bind.put`). Whether there was a section.
+fn component_section(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    node: &NodeDef,
+    param: &ParamPath,
+    spec: &ParamSpec,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) -> bool {
+    let Some(comp) = node.parent else { return false };
+    let Some(cnode) = input.net.node(comp) else { return false };
+    let Some(cdesc) = input.types.desc(&cnode.kind) else { return false };
+    let Some(declared) = cnode.declared(cdesc) else { return false };
+    let Some(comp_path) = input.net.path_of(comp) else { return false };
+    let cname = cnode.name.to_string();
+    ui.set_max_width(MENU_TEXT_WIDTH);
+    let hint = |ui: &mut Ui, text: String| code_hint(ui, &text);
+    let r = ui.label(RichText::new(format!("component {cname}")).color(theme::COMPONENT).strong());
+    auto.add("bind.parent", r.rect, format!("component {cname}"));
+    let following = node
+        .binds
+        .iter()
+        .find(|(k, b)| k.param.as_str() == spec.name && k.component.is_none() && b.node == comp)
+        .and_then(|(_, b)| b.param.clone());
+    let fitting: Vec<&ParamSpec> =
+        declared.params().filter(|s| penumbra_graph::follow::alike(spec, s)).collect();
+    for s in &fitting {
+        let on = following.as_ref().is_some_and(|f| f.as_str() == s.name);
+        let r = ui.add_enabled(input.can_edit, egui::Button::selectable(on, format!("follow {}", s.name)));
+        auto.add(format!("bind.parent.{}", s.name), r.rect, format!("follow {}", s.name));
+        let r = r.on_hover_text(format!("This param takes its value from `{}` on {cname}", s.name));
+        if r.clicked()
+            && !on
+            && let Ok(name) = s.name.parse::<Name>()
+        {
+            actions.push(Action::edit(vec![Bind::follow(comp, name).op(
+                param.clone(),
+                None,
+                comp_path.clone(),
+            )]));
+            ui.close();
+        }
+    }
+    if fitting.is_empty() {
+        hint(ui, format!("{cname} has no param of this kind to follow."));
+    }
+    ui.add_space(4.0);
+    let value = node.params.get(spec.name.as_str()).cloned().unwrap_or_else(|| spec.default.clone());
+    let show = input.net.show_param(input.types, param, None);
+    let r = ui.add_enabled(input.can_edit && show.is_ok(), egui::Button::new("Show on component"));
+    auto.add("bind.show", r.rect, "Show on component");
+    if r.clicked() {
+        actions.push(Action::PutParam { param: param.clone(), show: true });
+        ui.close();
+    }
+    hint(
+        ui,
+        match &show {
+            Ok(p) => format!("A row `{}` on {cname} sets this param. The value stays here.", p.name),
+            Err(e) => format!("{e}."),
+        },
+    );
+    let put = input.net.put_param(input.types, param, spec, &value, None);
+    let r = ui.add_enabled(input.can_edit && put.is_ok(), egui::Button::new("Put on component"));
+    auto.add("bind.put", r.rect, "Put on component");
+    if r.clicked() {
+        actions.push(Action::PutParam { param: param.clone(), show: false });
+        ui.close();
+    }
+    hint(
+        ui,
+        match &put {
+            Ok(p) if p.put == penumbra_graph::Put::Followed => {
+                format!("{cname} has a param `{}` already. This param follows it.", p.name)
+            }
+            Ok(p) if p.put == penumbra_graph::Put::Replaced => {
+                format!(
+                    "The row `{}` on {cname} becomes a param {cname} holds. This param follows it.",
+                    p.name
+                )
+            }
+            Ok(p) => format!(
+                "{cname} gets a param `{}` that holds the value. This param follows it, and other params inside can too.",
+                p.name
+            ),
+            Err(e) => format!("{e}."),
+        },
+    );
+    true
+}
+
+/// What the params that follow a component's params warn about, at the top of its panel: one
+/// line per warning, cut to the panel's width and whole on hover, naming the node; a click goes
+/// there (`param.<path>.follower.<i>`). At most [`MAX_FOLLOWER_LINES`], then a count.
+fn follower_problems(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    node: &NodeDef,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    let Some(path) = input.net.path_of(node.id) else { return };
+    let problems = penumbra_graph::follow::problems(input.net, input.statuses, node.id);
+    for (i, (id, warning)) in problems.iter().enumerate().take(MAX_FOLLOWER_LINES) {
+        let at = input.net.path_of(*id).map_or_else(
+            || "?".to_string(),
+            |p| {
+                let r = path.write_ref(&p);
+                r.strip_prefix("./").unwrap_or(&r).to_string()
+            },
+        );
+        let text = format!("{at}: {warning}");
+        let r = ui.add(
+            egui::Label::new(RichText::new(&text).color(theme::WARNING))
+                .truncate()
+                .sense(egui::Sense::click()),
+        );
+        auto.add(format!("param.{path}.follower.{i}"), r.rect, text.clone());
+        let r = r
+            .on_hover_text(format!("{text}\n\nA param of {at} follows this component. Click to go to {at}."));
+        reveal_on_click(ui, &r, *id, actions);
+    }
+    if problems.len() > MAX_FOLLOWER_LINES {
+        let more = problems.len() - MAX_FOLLOWER_LINES;
+        ui.colored_label(theme::WARNING, format!("and {more} more inside"));
+    }
+}
+
+/// Most warnings of followers a component's panel lists one by one.
+const MAX_FOLLOWER_LINES: usize = 4;
+
+/// How wide the note at the right end of a component's row is; a longer one is cut short, its
+/// hover text says it whole.
+const TAG_WIDTH: f32 = 92.0;
+
+/// How wide the text in the link menu's component section may run before it wraps.
+const MENU_TEXT_WIDTH: f32 = 300.0;
 
 /// Chan nodes to bind to, each with its channels when the view has its output (automation ids
 /// `bind.<i>` for a node's first channel, `bind.<i>.<channel>` for a named one).

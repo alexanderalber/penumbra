@@ -21,7 +21,7 @@ use egui::{
     Align2, Color32, CornerRadius, CursorIcon, FontId, Key, Modifiers, PointerButton, Pos2, Rect, Sense,
     Shape, Stroke, StrokeKind, Ui, Vec2, pos2, vec2,
 };
-use penumbra_core::{GroupId, NodeId, NodePath, ParamPath, Value};
+use penumbra_core::{GroupId, Name, NodeId, NodePath, ParamPath, Value};
 use penumbra_graph::{Data, DataKind, Network, NodeDesc, NodeStatus, NodeTypes, Op};
 
 use crate::add_dialog::{AddDialog, Outcome};
@@ -510,6 +510,9 @@ struct Bindings {
     cells: BTreeSet<(NodeId, NodeId)>,
     /// (source outside, reader): a stub above the reader.
     from_outside: BTreeSet<(NodeId, NodeId)>,
+    /// Of those, the pairs whose bindings all follow params of the reader's component (the
+    /// source), with the params followed: the stub says `parent.preset`.
+    follows: BTreeMap<(NodeId, NodeId), Vec<Name>>,
     /// The readers outside by their source: a stub below the source.
     to_outside: BTreeMap<NodeId, BTreeSet<NodeId>>,
 }
@@ -618,8 +621,10 @@ impl<'a> Placed<'a> {
             pairs: BTreeSet::new(),
             cells: BTreeSet::new(),
             from_outside: BTreeSet::new(),
+            follows: BTreeMap::new(),
             to_outside: BTreeMap::new(),
         };
+        let mut other_outside = BTreeSet::new();
         let mut chans = BTreeSet::new();
         for node in self.net.nodes().filter(|n| !n.binds.is_empty()) {
             let Some(reader) = self.shown(node.id) else {
@@ -643,11 +648,20 @@ impl<'a> Placed<'a> {
                     Some(_) => {}
                     None => {
                         b.from_outside.insert((bind.node, reader));
+                        match &bind.param {
+                            Some(p) if node.parent == Some(bind.node) => {
+                                b.follows.entry((bind.node, reader)).or_default().push(p.clone());
+                            }
+                            _ => {
+                                other_outside.insert((bind.node, reader));
+                            }
+                        }
                     }
                 }
             }
         }
         b.cells.retain(|pair| !chans.contains(pair));
+        b.follows.retain(|pair, _| !other_outside.contains(pair));
         b
     }
 }
@@ -1870,7 +1884,10 @@ impl Editor {
             let mut right = help.min.x - 2.0 * zoom;
             let error = status.and_then(|s| s.error.as_deref());
             let warning = status.and_then(|s| s.warning.as_deref());
-            if error.is_some() || warning.is_some() {
+            // A component warns for the params inside that follow it and cannot.
+            let followers_warn =
+                g.comp && !penumbra_graph::follow::problems(input.net, input.status, g.id).is_empty();
+            if error.is_some() || warning.is_some() || followers_warn {
                 let c = if error.is_some() { theme::ERROR } else { theme::WARNING };
                 let center = pos2(right - 6.0 * zoom, header.center().y);
                 painter.circle_filled(center, 6.5 * zoom, c);
@@ -1938,6 +1955,12 @@ impl Editor {
                 }
                 if let Some(w) = &s.warning {
                     tip.push_str(&format!("\nwarning: {w}"));
+                }
+            }
+            if g.comp {
+                for (id, w) in penumbra_graph::follow::problems(input.net, input.status, g.id) {
+                    let at = input.net.node(id).map_or_else(String::new, |n| n.name.to_string());
+                    tip.push_str(&format!("\nwarning from {at} inside: {w}"));
                 }
             }
             let outputs = input.outputs.get(&g.id).into_iter().flatten();
@@ -3045,6 +3068,20 @@ fn dashed(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32, zoom: f32) 
     painter.extend(egui::Shape::dashed_line(&[a, b], Stroke::new(width, color), 6.0 * zoom, 4.0 * zoom));
 }
 
+/// The stub above a node following params of its component: `parent.preset` for one,
+/// `parent: 3 params` for more.
+fn follow_stub_text(names: &[Name]) -> String {
+    let mut names: Vec<&str> = names.iter().map(Name::as_str).collect();
+    names.sort_unstable();
+    names.dedup();
+    let parent = penumbra_graph::follow::PARENT;
+    match names.as_slice() {
+        [] => parent.to_string(),
+        [one] => format!("{parent}.{one}"),
+        more => format!("{parent}: {} params", more.len()),
+    }
+}
+
 /// Bindings: a dashed line from the source's first chan output to the top of the node whose
 /// param it drives, one per pair of nodes. Unless every line is asked for, only the lines of the
 /// selected nodes and the one under the pointer are drawn: one channel often drives many nodes,
@@ -3081,18 +3118,21 @@ fn draw_bindings(
         let Some(to) = placed.geo(*reader) else { continue };
         let b = pos2(to.rect.center().x, to.rect.min.y);
         let a = b - vec2(0.0, 28.0 * zoom);
-        let color = theme::kind_color(DataKind::Chan).gamma_multiply(0.7);
+        // A node following its component's params says so as its param rows do: `parent.x`,
+        // in the components' colour.
+        let follows = bindings.follows.get(&(*src, *reader));
+        let color = match follows {
+            Some(_) => theme::COMPONENT.gamma_multiply(0.8),
+            None => theme::kind_color(DataKind::Chan).gamma_multiply(0.7),
+        };
         dashed(painter, a, b, color, zoom);
         painter.circle_filled(b, 3.0 * zoom, color);
         if zoom > 0.45 {
-            let text = placed.stub_text(&[*src]);
-            painter.text(
-                a - vec2(0.0, 2.0),
-                Align2::CENTER_BOTTOM,
-                text,
-                placed.stub_font(),
-                theme::TEXT_WEAK,
-            );
+            let (text, text_color) = match follows {
+                Some(names) => (follow_stub_text(names), theme::COMPONENT),
+                None => (placed.stub_text(&[*src]), theme::TEXT_WEAK),
+            };
+            painter.text(a - vec2(0.0, 2.0), Align2::CENTER_BOTTOM, text, placed.stub_font(), text_color);
         }
     }
     for (src, reader) in bindings.pairs {

@@ -30,7 +30,20 @@ they may reach in and out of components by path.
 
 ## Params of its own
 
-The `params` text (under more) gives the component params, one per line. TouchDesigner calls
+The quickest way is the menu. Inside the component, the link button of a param has a section
+named after the component:
+
+- **Put on component:** the component gets a param of that name, kind, range and value, and
+  the inner param follows it. Other nodes inside can follow it too. Use it for a value several
+  nodes share, such as a preset or a size.
+- **Show on component:** the inner param gets a row on the component. The value and the range
+  stay with the inner node. Use it for a value only that node reads.
+- **follow preset:** the param follows the component's `preset`.
+
+The component's rows say at their right end who follows them ("used by step", a click lists
+them) or which inner param they set (`step.feed`). "unused" marks a param nothing follows yet.
+
+Behind the menu is the `params` text ("edit params" under the rows), one line per param. TouchDesigner calls
 these custom parameters. A line uses the grammar of a shader header, and the `//` in front may
 stay when you paste one:
 
@@ -52,8 +65,8 @@ stay when you paste one:
   its own, `@expose speed = noise1.speed`. Changing the exposed param changes the inner one,
   and you can bind it like any param. The inner node keeps the value and the range.
 - **Comments:** lines starting with `#`, and `//` lines without an `@`.
-- **Mistakes:** a line that declares nothing is listed below the rows with its line number and
-  the reason; the rest still works. Each name may appear once. `params`, `shelf`, `about` and
+- **Mistakes:** a line that declares nothing is listed right below the text with its line
+  number and the reason; the rest still works. Each name may appear once. `params`, `shelf`, `about` and
   `reset` are taken.
 
 Files written before `params` existed listed the exposed params in a param `expose`. They load
@@ -64,7 +77,9 @@ as `@expose` lines and are saved in the new form.
 Bind an inner param to the component's param: `node.bind {param: "/rd/step.preset", from:
 "parent.preset"}`, written `binds: {"preset": "parent.preset"}` in the file. `parent` is the
 component the node sits in, whatever it is called, so a copy from the library follows its own
-component. Every follower takes the new value in the same frame, also when the component's
+component. The follower's row shows `parent.preset`; a click on it goes to the component. When a
+follower cannot take a value (a choice it lacks), the component's panel lists the warning at the
+top. Every follower takes the new value in the same frame, also when the component's
 param is bound to a dropdown or an LFO outside.
 
 More in the Components section of the concepts guide.
