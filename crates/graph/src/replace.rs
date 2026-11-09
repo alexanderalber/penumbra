@@ -220,6 +220,7 @@ mod tests {
                 channel: None,
                 cell: None,
                 format: None,
+                from_param: None,
             },
             Op::Place { path: p("/c"), pos: Some([120.0, -40.0]) },
         ];

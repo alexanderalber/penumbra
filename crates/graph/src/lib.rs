@@ -10,6 +10,7 @@ pub mod broken;
 pub mod cook;
 pub mod declared;
 pub mod document;
+pub mod follow;
 pub mod history;
 pub mod job;
 pub mod network;

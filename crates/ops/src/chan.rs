@@ -1429,6 +1429,7 @@ mod tests {
             channel: None,
             cell: None,
             format: None,
+            from_param: None,
         };
         f.net = Arc::new(
             f.net
@@ -1657,6 +1658,7 @@ mod tests {
                     channel: Some(penumbra_core::Name::new("attack").unwrap()),
                     cell: None,
                     format: None,
+                    from_param: None,
                 },
                 connect("/gate", "/e", 0),
             ]);
@@ -1768,6 +1770,7 @@ mod tests {
                 channel: None,
                 cell: None,
                 format: None,
+                from_param: None,
             },
         ]);
         let seconds = |f: &mut F| f.chans("/clock").value(Some("seconds")).unwrap();

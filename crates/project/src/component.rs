@@ -12,10 +12,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use penumbra_core::{Error, Name, NodePath, Value};
-use penumbra_graph::{DataKind, NodeTypes, PortRole, natural_cmp};
+use penumbra_core::{Error, Name, NodePath, ParamPart, Value};
+use penumbra_graph::{DataKind, NodeTypes, PortRole, follow, natural_cmp, spec_in};
 
-use crate::content::{Content, NodeContent, PortRef};
+use crate::content::{BindRef, Content, NodeContent, PortRef};
 use crate::file;
 
 /// What a component file is called: `<name>.comp.ron`.
@@ -373,15 +373,42 @@ pub fn expand(base: &Content, types: &NodeTypes, comp: &NodePath) -> Result<Expa
             *slot =
                 slot.clone().and_then(through).map(|p| PortRef { node: remap(&p.node), output: p.output });
         }
-        let mut binds = BTreeMap::new();
-        for (part, b) in &node.binds {
+        let source = |b: &BindRef| {
             let src = if ports.contains(&b.node) {
                 through(PortRef { node: b.node.clone(), output: 0 }).map(|p| p.node)
             } else {
                 Some(b.node.clone())
             };
-            if let Some(src) = src {
-                binds.insert(part.clone(), b.with_node(remap(&src)));
+            src.map(|s| b.with_node(remap(&s)))
+        };
+        let mut binds = BTreeMap::new();
+        for (part, b) in &node.binds {
+            match &b.param {
+                // A param that follows the component takes the value it has now, and its binding
+                // when it is bound.
+                Some(name) if &b.node == comp => {
+                    if let Some(v) = held(types, base, comp, name) {
+                        settle(types, &mut node.params, &node.kind, part, &v);
+                    }
+                    for (cpart, cb) in base.nodes.get(comp).map(|c| &c.binds).into_iter().flatten() {
+                        if &cpart.param != name {
+                            continue;
+                        }
+                        let taken = match (part.component, cpart.component) {
+                            (None, c) => ParamPart::new(part.param.clone(), c),
+                            (Some(c), None) => ParamPart::new(part.param.clone(), Some(c)),
+                            (Some(_), Some(_)) => continue,
+                        };
+                        if let Some(cb) = source(cb) {
+                            binds.insert(taken, cb);
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(b) = source(b) {
+                        binds.insert(part.clone(), b);
+                    }
+                }
             }
         }
         node.binds = binds;
@@ -390,6 +417,33 @@ pub fn expand(base: &Content, types: &NodeTypes, comp: &NodePath) -> Result<Expa
     let back: BTreeMap<NodePath, NodePath> = moved.iter().map(|(o, n)| (n.clone(), o.clone())).collect();
     fix_refs(types, &mut out, &back, &moved);
     Ok(Expanded { content: out, moved })
+}
+
+/// The value param `name` of component `comp` holds: stored, else its declared default.
+fn held(types: &NodeTypes, content: &Content, comp: &NodePath, name: &Name) -> Option<Value> {
+    let node = content.nodes.get(comp)?;
+    let desc = types.desc(&node.kind)?;
+    node.params
+        .get(name)
+        .cloned()
+        .or_else(|| Some(spec_in(desc, &node.params, name.as_str())?.default.clone()))
+}
+
+/// Stores `v`, the value a param followed, as the own value of `part` among `params` of a node
+/// of `kind`, converted as the binding did ([`penumbra_graph::follow`]). A param whose spec is
+/// not known yet (a shader's) takes the value as it is.
+fn settle(types: &NodeTypes, params: &mut BTreeMap<Name, Value>, kind: &str, part: &ParamPart, v: &Value) {
+    let spec = types.desc(kind).and_then(|d| spec_in(d, params, part.param.as_str()));
+    let value = match spec {
+        Some(spec) => {
+            let current = params.get(&part.param).unwrap_or(&spec.default);
+            follow::value(&spec, part.component, current, v)
+        }
+        None => part.component.is_none().then(|| v.clone()),
+    };
+    if let Some(value) = value {
+        params.insert(part.param.clone(), value);
+    }
 }
 
 /// What [`extract`] left out: references from inside the component to nodes outside it, which a
@@ -530,7 +584,7 @@ pub fn instantiate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::content::diff;
+    use crate::content::{BindRef, diff};
     use crate::testing::{content, test_types};
     use penumbra_graph::Network;
 
@@ -707,5 +761,124 @@ mod tests {
         // Not a component file.
         let two = file::print(&chain(), &types).unwrap();
         assert!(parse(&two, &types).unwrap_err().0.contains("exactly one"));
+    }
+
+    /// `/c` declares `mode` and `level`; `/c/l` follows both (a choice by name, a number into
+    /// a text), `/c/k` follows `level`. `/d` declares `level` too, `/e` declares nothing.
+    fn followers() -> Content {
+        let mut c = content(&[
+            ("/src", "test.const", &[("value", 7.0)], &[], false),
+            ("/c", "test.comp", &[], &[], false),
+            ("/c/l", "test.label", &[], &[], false),
+            ("/c/k", "test.const", &[], &[], false),
+            ("/d", "test.comp", &[], &[], false),
+            ("/e", "test.comp", &[], &[], false),
+        ]);
+        let declare = |c: &mut Content, at: &str, text: &str| {
+            c.nodes
+                .get_mut(&p(at))
+                .unwrap()
+                .params
+                .insert("params".parse().unwrap(), Value::Text(text.into()));
+        };
+        declare(&mut c, "/c", "@param mode choice(add|over) = add\n@param level float = 2");
+        declare(&mut c, "/d", "@param level float = 3");
+        let follow = |c: &mut Content, at: &str, param: &str, from: &str, name: &str| {
+            c.nodes
+                .get_mut(&p(at))
+                .unwrap()
+                .binds
+                .insert(ParamPart::parse(param).unwrap(), BindRef::follow(p(from), name.parse().unwrap()));
+        };
+        follow(&mut c, "/c/l", "mode", "/c", "mode");
+        follow(&mut c, "/c/l", "label", "/c", "level");
+        follow(&mut c, "/c/k", "value", "/c", "level");
+        c
+    }
+
+    #[test]
+    fn followers_write_parent_and_keep_their_source_through_every_move() {
+        let types = test_types();
+        let base = apply(&Content::default(), &followers());
+        let text = file::print(&base, &types).unwrap();
+        assert!(text.contains(r#""/c/k": (kind: "test.const", binds: {"value": "parent.level"})"#), "{text}");
+        assert_eq!(file::parse(&text, &types).unwrap(), base);
+
+        // Grouped into a new component, a follower stays on the old one, named in full.
+        let grouped = collapse(&base, &types, &[p("/c/k")], &p("/c/g"), "test.comp").unwrap().content;
+        let grouped = apply(&base, &grouped);
+        let text = file::print(&grouped, &types).unwrap();
+        assert!(text.contains(r#"binds: {"value": "/c.level"}"#), "{text}");
+
+        // A component file says `parent`, so a second copy follows its own component.
+        let (comp, dropped) = extract(&base, &types, &p("/c")).unwrap();
+        assert!(dropped.lines.is_empty(), "{dropped:?}");
+        let read = parse(&print(&comp, &types).unwrap(), &types).unwrap();
+        let twice = apply(&base, &instantiate(&base, &types, &read, &p("/c2")).unwrap());
+        let k2 = &twice.nodes[&p("/c2/k")].binds[&ParamPart::parse("value").unwrap()];
+        assert_eq!(k2, &BindRef::follow(p("/c2"), "level".parse().unwrap()));
+
+        // Pasted into a component that declares the param, it follows that one; elsewhere the
+        // binding stays behind and the paste says so.
+        let clip = crate::clipboard::copy(&base, &[p("/c/k")]).unwrap();
+        let clip = crate::clipboard::parse(&crate::clipboard::print(&clip, &types).unwrap(), &types).unwrap();
+        let into_d = crate::clipboard::paste(&base, &types, &clip, &p("/d")).unwrap();
+        let got = apply(&base, &into_d.content);
+        assert_eq!(
+            got.nodes[&p("/d/k")].binds.values().next(),
+            Some(&BindRef::follow(p("/d"), "level".parse().unwrap()))
+        );
+        let into_e = crate::clipboard::paste(&base, &types, &clip, &p("/e")).unwrap();
+        assert!(into_e.content.nodes[&p("/e/k")].binds.is_empty());
+        assert_eq!(
+            into_e.dropped,
+            ["/e/k.value follows parent.level, but /e has no param `level`; it keeps its own value"]
+        );
+        let top = crate::clipboard::paste(&base, &types, &clip, &NodePath::root()).unwrap();
+        assert!(top.dropped[0].contains("at the top level no component is around it"), "{:?}", top.dropped);
+        apply(&base, &top.content);
+
+        // Dissolved, followers keep the value they had; a bound component param hands its
+        // binding on.
+        let open = expand(&base, &types, &p("/c")).unwrap().content;
+        let open = apply(&base, &open);
+        assert_eq!(open.nodes[&p("/l")].params.get("mode"), Some(&Value::Text("add".into())));
+        assert_eq!(open.nodes[&p("/l")].params.get("label"), Some(&Value::Text("2".into())));
+        assert_eq!(open.nodes[&p("/k")].params.get("value"), Some(&Value::Float(2.0)));
+        assert!(open.nodes.values().all(|n| n.binds.is_empty()));
+        let mut bound = base.clone();
+        let c = bound.nodes.get_mut(&p("/c")).unwrap();
+        c.params.insert("mode".parse().unwrap(), Value::Text("over".into()));
+        c.binds.insert(ParamPart::parse("level").unwrap(), BindRef::chan(p("/src"), None));
+        let bound = apply(&base, &bound);
+        let open = apply(&bound, &expand(&bound, &types, &p("/c")).unwrap().content);
+        assert_eq!(open.nodes[&p("/l")].params.get("mode"), None, "over is the default of test.label");
+        assert_eq!(open.nodes[&p("/k")].binds.values().next(), Some(&BindRef::chan(p("/src"), None)));
+    }
+
+    #[test]
+    fn a_follower_file_reads_forms_and_drops_parent_at_the_top() {
+        let types = test_types();
+        let text = r#"(version: 2, nodes: {
+            "/c": (kind: "test.comp", params: {"params": "@param level float = 2"}),
+            "/c/parent": (kind: "test.comp", params: {"params": "@param x float = 5"}),
+            "/c/k": (kind: "test.const", binds: {"value": "parent.x"}),
+            "/c/j": (kind: "test.const", binds: {"value": "/c/parent.x"}),
+            "/top": (kind: "test.const", binds: {"value": "parent.level"}),
+            "/lost": (kind: "test.const", binds: {"value": "/c.nope"}),
+        })"#;
+        let read = file::parse(text, &types).unwrap();
+        let bind = |path: &str| read.nodes[&p(path)].binds.values().next().cloned();
+        assert_eq!(bind("/c/k"), Some(BindRef::follow(p("/c"), "x".parse().unwrap())));
+        assert_eq!(bind("/c/j"), Some(BindRef::follow(p("/c/parent"), "x".parse().unwrap())));
+        assert_eq!(bind("/top"), None, "dropped with a warning");
+        // A missing name loads; the follower warns when it cooks.
+        let net = Network::new()
+            .apply_with(&types, &diff(&Content::default(), &read), penumbra_graph::Params::Keep)
+            .unwrap()
+            .network;
+        let back = file::print(&Content::from_network(&net).unwrap(), &types).unwrap();
+        assert!(back.contains(r#""/c/j": (kind: "test.const", binds: {"value": "/c/parent.x"})"#), "{back}");
+        assert!(back.contains(r#""/lost": (kind: "test.const", binds: {"value": "c.nope"})"#), "{back}");
     }
 }

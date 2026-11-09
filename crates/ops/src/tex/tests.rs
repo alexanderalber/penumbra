@@ -3871,6 +3871,7 @@ fn bind(param: &str, from: &str, channel: &str) -> Op {
         channel: Some(penumbra_core::Name::new(channel).unwrap()),
         cell: None,
         format: None,
+        from_param: None,
     }
 }
 

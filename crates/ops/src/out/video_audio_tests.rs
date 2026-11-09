@@ -319,6 +319,7 @@ fn flash_and_tone(gpu: Gpu, name: &str, extra: &[Op]) -> (Status, Vec<usize>, Ve
             channel: None,
             cell: None,
             format: None,
+            from_param: None,
         });
     }
     ops.extend_from_slice(extra);

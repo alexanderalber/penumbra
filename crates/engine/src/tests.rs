@@ -1341,6 +1341,9 @@ mod buttons_tests;
 #[path = "bind_tests.rs"]
 mod bind_tests;
 
+#[path = "follow_tests.rs"]
+mod follow_tests;
+
 #[path = "dropdown_tests.rs"]
 mod dropdown_tests;
 

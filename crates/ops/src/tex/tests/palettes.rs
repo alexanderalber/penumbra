@@ -110,6 +110,7 @@ fn shaders_take_the_projects_palettes_and_channels_pick_them() {
             channel: Some(Name::new("pick").unwrap()),
             cell: None,
             format: None,
+            from_param: None,
         },
     ]);
     until_colour(&mut rig, "/s", linear(0x8ad6d1));

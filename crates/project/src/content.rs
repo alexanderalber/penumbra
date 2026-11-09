@@ -18,25 +18,38 @@ pub struct PortRef {
     pub output: u32,
 }
 
-/// What a bound parameter reads, by path: a channel of the first `chan` output of `node`, or a
-/// cell of its first `table` output ([`penumbra_graph::Bind`]).
+/// What a bound parameter reads, by path: a channel of the first `chan` output of `node`, a
+/// cell of its first `table` output, or with `param` that param of `node`
+/// ([`penumbra_graph::Bind`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BindRef {
     pub node: NodePath,
     pub channel: Option<Name>,
     pub cell: Option<Cell>,
     pub format: Option<NumberFormat>,
+    pub param: Option<Name>,
 }
 
 impl BindRef {
     /// Channel `channel` of `node` (its first when `None`).
     pub fn chan(node: NodePath, channel: Option<Name>) -> Self {
-        Self { node, channel, cell: None, format: None }
+        Self { node, channel, cell: None, format: None, param: None }
+    }
+
+    /// Param `param` of `node`, followed as a whole value.
+    pub fn follow(node: NodePath, param: Name) -> Self {
+        Self { node, channel: None, cell: None, format: None, param: Some(param) }
     }
 
     /// `bind` read from `node` instead of its source.
     pub fn of(node: NodePath, bind: &Bind) -> Self {
-        Self { node, channel: bind.channel.clone(), cell: bind.cell.clone(), format: bind.format.clone() }
+        Self {
+            node,
+            channel: bind.channel.clone(),
+            cell: bind.cell.clone(),
+            format: bind.format.clone(),
+            param: bind.param.clone(),
+        }
     }
 
     /// The same binding, read from `node`.
@@ -244,6 +257,7 @@ fn bind(path: &NodePath, part: &ParamPart, src: &BindRef) -> Option<Op> {
         channel: src.channel.clone(),
         cell: src.cell.clone(),
         format: src.format.clone(),
+        from_param: src.param.clone(),
     })
 }
 

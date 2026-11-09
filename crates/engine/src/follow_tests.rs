@@ -1,0 +1,89 @@
+//! Params that follow a component's own params, end to end: `node.bind` with `parent.x` and
+//! `/rd.x`, values reaching the followers in the same cook (by set, by an outside binding, by
+//! undo), a choice by name, the refusals, `node.info` on both sides and the file form.
+
+use serde_json::json;
+
+use super::{Fixture, eventually};
+
+/// The value bound param `param` of `/path` took at its last cook.
+fn bound(f: &Fixture, path: &str, param: &str) -> serde_json::Value {
+    f.call("chan.read", json!({"path": path}));
+    f.call("node.info", json!({"path": path}))["status"]["bound"][param].clone()
+}
+
+fn warning(f: &Fixture, path: &str) -> String {
+    f.call("node.info", json!({"path": path}))["status"]["warning"].as_str().unwrap_or_default().to_string()
+}
+
+#[test]
+fn inner_params_follow_the_components_params() {
+    let f = Fixture::new("follow_parent");
+    f.call("node.create", json!({"path": "/rd", "kind": "comp.base"}));
+    let text = "@param preset choice(add|multiply|screen) = multiply -- what the inside does\n\
+                @param feed float = 0.05 0..0.1\n\
+                @expose shown = c.value0";
+    f.call("node.set", json!({"path": "/rd", "params": {"params": text}}));
+    f.call("node.create", json!({"path": "/rd/c", "kind": "chan.constant"}));
+    f.call("node.create", json!({"path": "/rd/m", "kind": "chan.math"}));
+    f.call("node.connect", json!({"from": "/rd/c", "to": "/rd/m"}));
+    // chan.math lists add before multiply; the choice follows by name.
+    f.call("node.bind", json!({"param": "/rd/m.op", "from": "parent.preset"}));
+    f.call("node.bind", json!({"param": "/rd/c.value0", "from": "/rd.feed"}));
+    f.call("node.bind", json!({"param": "/rd/c.name0", "from": "parent.preset"}));
+    assert_eq!(bound(&f, "/rd/m", "op"), "multiply");
+    assert_eq!(bound(&f, "/rd/c", "value0"), 0.05);
+    assert_eq!(bound(&f, "/rd/c", "name0"), "multiply", "a choice into a text gives its name");
+
+    // A set reaches the followers in the next cook, and undo takes it back.
+    f.call("node.set", json!({"path": "/rd", "params": {"preset": "add", "feed": 0.07}}));
+    assert_eq!(bound(&f, "/rd/m", "op"), "add");
+    assert_eq!(bound(&f, "/rd/c", "value0"), 0.07);
+    f.call("history.undo", json!({}));
+    assert_eq!(bound(&f, "/rd/m", "op"), "multiply");
+    assert_eq!(bound(&f, "/rd/c", "value0"), 0.05);
+
+    // The component's param bound from outside hands the bound value on.
+    let entries = "screen\nmultiply\nadd";
+    f.call("node.create", json!({"path": "/d", "kind": "chan.dropdown", "params": {"entries": entries}}));
+    f.call("node.bind", json!({"param": "/rd.preset", "from": "/d"}));
+    f.call("chan.pick", json!({"path": "/d", "entry": "add"}));
+    assert_eq!(bound(&f, "/rd/m", "op"), "add");
+    f.call("node.create", json!({"path": "/k", "kind": "chan.constant", "params": {"value0": 0.02}}));
+    f.call("node.bind", json!({"param": "/rd.feed", "from": "/k"}));
+    assert_eq!(bound(&f, "/rd/c", "value0"), 0.02);
+    f.call("node.set", json!({"path": "/k", "params": {"value0": 0.03}}));
+    assert_eq!(bound(&f, "/rd/c", "value0"), 0.03);
+    // A name the follower lacks keeps its last entry, with a warning on the follower.
+    f.call("chan.pick", json!({"path": "/d", "entry": "screen"}));
+    assert_eq!(bound(&f, "/rd/m", "op"), "add");
+    let w = warning(&f, "/rd/m");
+    assert!(w.contains("`op` follows parent.preset: it follows \"screen\", which is none of add,"), "{w}");
+
+    // What is refused.
+    let e = f.fail("node.bind", json!({"param": "/rd/m.op", "from": "parent.nope"}));
+    assert!(e.contains("/rd has no param `nope`; its params: preset, feed"), "{e}");
+    f.call("node.create", json!({"path": "/top", "kind": "chan.constant"}));
+    let e = f.fail("node.bind", json!({"param": "/top.value0", "from": "parent.feed"}));
+    assert!(e.contains("`parent` is the component a node sits in, and /top sits at the top level"), "{e}");
+    let e = f.fail("node.bind", json!({"param": "/rd.feed", "from": "/rd/c"}));
+    assert!(e.contains("would make a loop"), "{e}");
+    let e = f.fail("node.bind", json!({"param": "/top.value0", "from": "/rd.shown"}));
+    assert!(e.contains("an @expose line"), "{e}");
+    let e = f.fail("node.bind", json!({"param": "/top.value0", "from": "/rd.preset"}));
+    assert!(e.contains("`value0` is a number and cannot follow `preset`, which is a choice"), "{e}");
+
+    // node.info on both sides, and the file.
+    let info = f.call("node.info", json!({"path": "/rd/m"}));
+    assert_eq!(info["binds"], json!([{"param": "op", "from": "parent.preset", "value": "add"}]), "{info}");
+    let info = f.call("node.info", json!({"path": "/rd"}));
+    let own = info["instance_params"].as_array().cloned().unwrap_or_default();
+    assert_eq!(own[0]["followed_by"], json!(["/rd/c.name0", "/rd/m.op"]), "{info}");
+    assert_eq!(own[1]["followed_by"], json!(["/rd/c.value0"]), "{info}");
+    eventually("autosave", || {
+        f.file()
+            .contains(r#""/rd/m": (kind: "chan.math", inputs: {"a": "c"}, binds: {"op": "parent.preset"}"#)
+    });
+    f.call("node.unbind", json!({"param": "/rd/m.op"}));
+    assert!(f.call("node.info", json!({"path": "/rd/m"}))["binds"].as_array().is_some_and(Vec::is_empty));
+}

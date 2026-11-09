@@ -412,6 +412,7 @@ fn the_grid_follows_a_scrubbed_position() {
             channel: Some(penumbra_core::Name::new("pos").unwrap()),
             cell: None,
             format: None,
+            from_param: None,
         },
     ]);
     let mut f = fixture(&ops, &dir.join("cache"));
@@ -490,6 +491,7 @@ fn the_sections_of_the_example_track() {
             channel: Some(penumbra_core::Name::new("pos").unwrap()),
             cell: None,
             format: None,
+            from_param: None,
         },
     ]);
     let mut f = fixture(&ops, &dir.join("cache"));
@@ -685,6 +687,7 @@ fn a_cue_list_follows_the_sections_of_the_example_track() {
         channel: Some(penumbra_core::Name::new(channel).unwrap()),
         cell: None,
         format: None,
+        from_param: None,
     };
     ops.extend([
         create("/k", "chan.constant"),
@@ -810,6 +813,7 @@ fn the_music_bus_of_the_example_track() {
             channel: Some(penumbra_core::Name::new("pos").unwrap()),
             cell: None,
             format: None,
+            from_param: None,
         },
     ]);
     let mut f = fixture(&ops, &dir.join("cache"));
@@ -922,6 +926,7 @@ fn the_character_of_the_example_track() {
             channel: Some(penumbra_core::Name::new("pos").unwrap()),
             cell: None,
             format: None,
+            from_param: None,
         },
     ]);
     let mut f = fixture(&ops, &dir.join("cache"));

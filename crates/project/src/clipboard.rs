@@ -16,7 +16,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use penumbra_core::{Error, Name, NodePath};
-use penumbra_graph::{NodeTypes, PortRole, natural_cmp};
+use penumbra_graph::follow::PARENT;
+use penumbra_graph::{NodeTypes, PortRole, declared_in, follow, natural_cmp, spec_in};
 
 use crate::component::{children_names, fix_refs, is_within, rebase};
 use crate::content::{Content, PortRef};
@@ -210,6 +211,37 @@ pub fn paste(base: &Content, types: &NodeTypes, clip: &Clip, into: &NodePath) ->
         }
         let mut binds = BTreeMap::new();
         for (part, b) in &node.binds {
+            // A param that follows the component it was copied out of follows the one it is
+            // pasted into.
+            if let Some(name) = &b.param
+                && b.node == clip.from
+                && path.parent().as_ref() == Some(&clip.from)
+                && &clip.from != into
+            {
+                let source = base.nodes.get(into).and_then(|n| {
+                    declared_in(types.desc(&n.kind)?, &n.params)?.param(name.as_str()).cloned()
+                });
+                let own = types.desc(&node.kind).and_then(|d| spec_in(d, &node.params, part.param.as_str()));
+                let fits = match (&source, own) {
+                    (Some(source), Some(own)) => follow::check(&own, part.component, source).map_err(|e| e.0),
+                    _ => Ok(()),
+                };
+                match (into.is_root(), source, fits) {
+                    (true, _, _) => dropped.push(format!(
+                        "{new_path}.{part} follows {PARENT}.{name}, but at the top level no component is around it"
+                    )),
+                    (false, None, _) => dropped.push(format!(
+                        "{new_path}.{part} follows {PARENT}.{name}, but {into} has no param `{name}`; it keeps its own value"
+                    )),
+                    (false, Some(_), Err(why)) => {
+                        dropped.push(format!("{new_path}.{part} no longer follows {PARENT}.{name}: {why}"))
+                    }
+                    (false, Some(_), Ok(())) => {
+                        binds.insert(part.clone(), b.with_node(into.clone()));
+                    }
+                }
+                continue;
+            }
             match moved.get(&b.node) {
                 Some(n) => {
                     binds.insert(part.clone(), b.with_node(n.clone()));

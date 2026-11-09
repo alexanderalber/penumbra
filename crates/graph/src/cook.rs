@@ -43,6 +43,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use penumbra_core::bind as bindv;
+use penumbra_core::declare::Declared;
 use penumbra_core::param::MAX_TEXT;
 use penumbra_core::{
     BindTarget, Chans, FrameTime, Name, NodeId, ParamKind, ParamPart, ParamSpec, Rate, Table, Tick, Value,
@@ -50,6 +51,7 @@ use penumbra_core::{
 use serde::{Deserialize, Serialize};
 
 use crate::bound::{self, BindRead, Resolved, short};
+use crate::follow::{self, Follow};
 use crate::job::{Job, JobContext, JobPool, JobStatus, panic_message};
 use crate::network::{Bind, Network, NodeDef, Port};
 use crate::node::{
@@ -583,6 +585,9 @@ struct Runtime {
     seen_inputs: Vec<Option<(Port, u64)>>,
     /// Values of bound parameters at the last cook; a change counts as a parameter change.
     seen_bound: BTreeMap<Name, Value>,
+    /// What a component declares in its text ([`crate::PARAMS`]), read when its params change;
+    /// `None` for other kinds.
+    declared: Option<Declared>,
     /// Why bindings could not be applied at the last cook, apart from the operator's warning.
     bind_warning: Option<String>,
     seen_tick: Option<Tick>,
@@ -670,9 +675,11 @@ impl Runtime {
 
     fn new(def: Arc<NodeDef>, types: &NodeTypes) -> Self {
         let ty = types.get(&def.kind).cloned();
+        let declared = ty.as_ref().and_then(|t| def.declared(t.desc()));
         Self {
             def,
             ty,
+            declared,
             op: None,
             outputs: None,
             version: 0,
@@ -999,6 +1006,7 @@ impl Cooker {
                 Some(rt) if rt.def.kind == def.kind => {
                     if rt.def.params != def.params {
                         rt.params_changed = true;
+                        rt.declared = rt.ty.as_ref().and_then(|t| def.declared(t.desc()));
                     }
                     rt.def = def.clone();
                 }
@@ -1670,8 +1678,7 @@ impl Cooker {
             return;
         }
         let Some(desc) = rt.ty.as_ref().map(|t| t.desc()) else { return };
-        // Params a shader declares in its header, or a component in its text; asked for only
-        // when the type lacks one.
+        // Params a shader declares in its header; asked for only when the type lacks one.
         let mut instance: Option<Vec<ParamSpec>> = None;
         let mut warn = |w: String| {
             if let Some(ws) = warnings.as_deref_mut() {
@@ -1681,16 +1688,16 @@ impl Cooker {
         let mut parts = rt.def.binds.iter().peekable();
         while let Some((first, _)) = parts.peek() {
             let name = &first.param;
-            let spec = match desc.param_spec(name.as_str()) {
-                Some(spec) => Some(spec),
-                None => instance
-                    .get_or_insert_with(|| match rt.def.declared(desc) {
-                        Some(own) => own.params().cloned().collect(),
-                        None => rt
-                            .op
+            let spec = match (desc.param_spec(name.as_str()), &rt.declared) {
+                (Some(spec), _) => Some(spec),
+                // A component's own params, declared in its text.
+                (None, Some(own)) => own.param(name.as_str()),
+                (None, None) => instance
+                    .get_or_insert_with(|| {
+                        rt.op
                             .as_ref()
                             .and_then(|op| self.ask(rt.def.id, "params", || op.params()).flatten())
-                            .unwrap_or_default(),
+                            .unwrap_or_default()
                     })
                     .iter()
                     .find(|s| s.name == name.as_str()),
@@ -1706,6 +1713,25 @@ impl Cooker {
             let mut resolved = None;
             // All parts of one param: a vector bound per component builds one value.
             while let Some((part, bind)) = parts.next_if(|(p, _)| &p.param == name) {
+                if let Some(from) = &bind.param {
+                    let v = match self.read_param(rt, bind, from) {
+                        Ok(v) => v,
+                        Err(w) => {
+                            warn(format!("`{part}` {w}"));
+                            continue;
+                        }
+                    };
+                    match follow::follow(spec, part.component, value.as_ref().unwrap_or(stored), v) {
+                        Follow::Value(v) => value = Some(v),
+                        Follow::Resolved(r) => resolved = Some(r),
+                        Follow::Refused(w) => warn(format!("`{part}` follows {}: {w}", self.label(rt, bind))),
+                        Follow::Kept(w) => {
+                            warn(format!("`{part}` follows {}: {w}", self.label(rt, bind)));
+                            resolved = Some(Resolved::Keep);
+                        }
+                    }
+                    continue;
+                }
                 let target = match spec.bind_target(part.component) {
                     Ok(t) => t,
                     Err(e) => {
@@ -1825,6 +1851,39 @@ impl Cooker {
                 bind.channel.as_ref().map_or_else(|| "any channel".into(), |c| format!("channel `{c}`"));
             format!("`{part}`: {} has no {which} (it has {has})", self.path(bind.node))
         })
+    }
+
+    /// The value of the param a binding of `rt` follows ([`Bind::param`]) as it is now: the
+    /// bound value when the source's param is bound itself (the source cooked first), else its
+    /// stored value or the declared default. Else why there is none, as the end of a sentence
+    /// starting with the bound param.
+    fn read_param<'s>(&'s self, rt: &Runtime, bind: &Bind, name: &Name) -> Result<&'s Value, String> {
+        let missing = || {
+            let path = self.path(bind.node);
+            format!(
+                "follows {}, but {path} has no param `{name}`; it keeps its own value",
+                self.label(rt, bind)
+            )
+        };
+        let src = self.runtimes.get(&bind.node).ok_or_else(missing)?;
+        let spec = src.declared.as_ref().and_then(|d| d.param(name.as_str())).ok_or_else(missing)?;
+        if src.def.is_bound(name.as_str())
+            && let Some(v) = src.seen_bound.get(name)
+        {
+            return Ok(v);
+        }
+        Ok(src.def.params.get(name).unwrap_or(&spec.default))
+    }
+
+    /// How a message names the param a binding of `rt` follows: `parent.preset` for its own
+    /// component's, else `/rd.preset`.
+    fn label(&self, rt: &Runtime, bind: &Bind) -> String {
+        let name = bind.param.as_ref().map_or("", Name::as_str);
+        if rt.def.parent == Some(bind.node) {
+            format!("parent.{name}")
+        } else {
+            format!("{}.{name}", self.path(bind.node))
+        }
     }
 
     /// The path of node `id` for a message.
@@ -3015,6 +3074,7 @@ mod tests {
             channel: channel.map(|c| Name::new(c).unwrap()),
             cell: None,
             format: None,
+            from_param: None,
         };
         let mut f = Fixture::new(&[create("/src", "test.const"), create("/dst", "test.const")]);
         f.set("/dst.value", Value::Float(7.0));
@@ -3074,6 +3134,7 @@ mod tests {
             channel: None,
             cell: None,
             format: None,
+            from_param: None,
         };
         // /next = /start.value + 1, and /start.value follows /next of the frame before.
         let mut f = Fixture::new(&[
@@ -3098,6 +3159,93 @@ mod tests {
     }
 
     #[test]
+    fn a_param_follows_its_components_param_in_the_same_cook() {
+        let follow = |param: &str, from: &str, name: &str| Op::Bind {
+            param: ParamPath::parse(param).unwrap(),
+            component: None,
+            from: pp(from),
+            channel: None,
+            cell: None,
+            format: None,
+            from_param: Some(Name::new(name).unwrap()),
+        };
+        let mut f = Fixture::new(&[
+            create("/c", "test.comp"),
+            create("/c/k", "test.const"),
+            create("/lfo", "test.const"),
+        ]);
+        f.set("/c.params", Value::Text("@param level float = 2\n@expose shown = k.value".into()));
+        f.edit(&[follow("/c/k.value", "/c", "level")]);
+        f.cook(&["/c/k"]);
+        assert_eq!(f.value("/c/k"), Some(2.0), "the declared default");
+        assert!(f.cook(&["/c/k"]).is_empty(), "nothing changed, nothing cooks");
+        // A set reaches the follower in the same cook, and so does going back to the network
+        // before it (what undo does).
+        let before = f.net.clone();
+        f.set("/c.level", Value::Float(5.0));
+        assert!(f.cook(&["/c/k"]).contains(&"/c/k".to_string()));
+        assert_eq!(f.value("/c/k"), Some(5.0));
+        f.net = before;
+        f.cook(&["/c/k"]);
+        assert_eq!(f.value("/c/k"), Some(2.0));
+        // A component param bound from outside hands its bound value on in the same cook.
+        f.set("/lfo.value", Value::Float(9.0));
+        f.edit(&[Op::Bind {
+            param: ParamPath::parse("/c.level").unwrap(),
+            component: None,
+            from: pp("/lfo"),
+            channel: None,
+            cell: None,
+            format: None,
+            from_param: None,
+        }]);
+        f.cook(&["/c/k"]);
+        assert_eq!(f.value("/c/k"), Some(9.0));
+        f.set("/lfo.value", Value::Float(10.0));
+        assert_eq!(f.cook(&["/c/k"]), ["/lfo", "/c", "/c/k"]);
+        assert_eq!(f.value("/c/k"), Some(10.0));
+        // The component param bound to the node that follows it is a loop.
+        let e = f
+            .net
+            .apply(
+                &f.types,
+                &[Op::Bind {
+                    param: ParamPath::parse("/c.level").unwrap(),
+                    component: None,
+                    from: pp("/c/k"),
+                    channel: None,
+                    cell: None,
+                    format: None,
+                    from_param: None,
+                }],
+            )
+            .unwrap_err()
+            .0;
+        assert!(e.contains("would make a loop: /c/k depends on /c"), "{e}");
+        // An exposed param is no source; an undeclared one is refused with the list.
+        let e = f.net.apply(&f.types, &[follow("/lfo.value", "/c", "shown")]).unwrap_err().0;
+        assert!(e.contains("shows the inner param k.value (an @expose line)"), "{e}");
+        let e = f.net.apply(&f.types, &[follow("/lfo.value", "/c", "nope")]).unwrap_err().0;
+        assert!(e.ends_with("/c has no param `nope`; its params: level"), "{e}");
+        let e = f.net.apply(&f.types, &[follow("/c/k.value", "/lfo", "value")]).unwrap_err().0;
+        assert!(e.contains("/lfo is a test.const; a param can follow only a component's own params"), "{e}");
+        // A file may name a param the component lacks: the follower keeps its own value and
+        // warns, as it does when the line is taken out of the component.
+        f.edit(&[Op::Unbind { param: ParamPath::parse("/c.level").unwrap(), component: None }]);
+        f.set("/c/k.value", Value::Float(4.0));
+        f.set("/c.params", Value::Text("@param other float".into()));
+        f.cook(&["/c/k"]);
+        assert_eq!(f.value("/c/k"), Some(4.0));
+        let w = f.status("/c/k").warning.unwrap();
+        assert_eq!(w, "`value` follows parent.level, but /c has no param `level`; it keeps its own value");
+        f.keep(&[follow("/c/k.value", "/c", "gone")]);
+        f.cook(&["/c/k"]);
+        assert!(
+            f.status("/c/k").warning.unwrap().contains("follows parent.gone, but /c has no param `gone`")
+        );
+    }
+
+    #[test]
     fn a_time_dependent_source_drives_a_static_node() {
         let mut f = Fixture::new(&[create("/t", "test.time"), create("/dst", "test.const")]);
         f.edit(&[Op::Bind {
@@ -3107,6 +3255,7 @@ mod tests {
             channel: None,
             cell: None,
             format: None,
+            from_param: None,
         }]);
         f.cook(&["/dst"]);
         f.clock.advance(30);
@@ -3277,6 +3426,7 @@ mod tests {
                 channel: None,
                 cell: None,
                 format: None,
+                from_param: None,
             },
         ]);
         assert_eq!(f.cook(&["/pick"]), ["/idx", "/a", "/pick"]);

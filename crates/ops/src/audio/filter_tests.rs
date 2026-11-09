@@ -473,6 +473,7 @@ fn write_filter_files() {
             channel: Some(Name::new("hz").unwrap()),
             cell: None,
             format: None,
+            from_param: None,
         },
     ]);
     let mut f = F::new(&ops);

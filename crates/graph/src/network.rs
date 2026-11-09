@@ -64,10 +64,11 @@ pub struct Port {
     pub output: u32,
 }
 
-/// What a bound parameter reads from node `node`: with `cell`, that cell of its first `table`
-/// output; else channel `channel` of its first `chan` output, or its first channel when
-/// `channel` is `None`. `format` writes a channel's number as text for a text param (`None`:
-/// [`NumberFormat::default`]). How each kind of param takes what it reads:
+/// What a bound parameter reads from node `node`: with `param`, that param of the node as a
+/// whole value (a component's own param, [`crate::follow`]); with `cell`, that cell of its
+/// first `table` output; else channel `channel` of its first `chan` output, or its first
+/// channel when `channel` is `None`. `format` writes a channel's number as text for a text
+/// param (`None`: [`NumberFormat::default`]). How each kind of param takes what it reads:
 /// [`penumbra_core::bind`]. The binding is a dependency like an input: the source cooks first,
 /// a loop is refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,12 +77,19 @@ pub struct Bind {
     pub channel: Option<Name>,
     pub cell: Option<Cell>,
     pub format: Option<NumberFormat>,
+    /// The param of `node` this one follows; excludes `channel`, `cell` and `format`.
+    pub param: Option<Name>,
 }
 
 impl Bind {
     /// Channel `channel` of `node` (its first when `None`).
     pub fn chan(node: NodeId, channel: Option<Name>) -> Self {
-        Self { node, channel, cell: None, format: None }
+        Self { node, channel, cell: None, format: None, param: None }
+    }
+
+    /// Param `param` of `node`, followed as a whole value.
+    pub fn follow(node: NodeId, param: Name) -> Self {
+        Self { node, channel: None, cell: None, format: None, param: Some(param) }
     }
 
     /// The edit that binds `param` (component `component`) to node `from` the way this binding
@@ -94,12 +102,19 @@ impl Bind {
             channel: self.channel.clone(),
             cell: self.cell.clone(),
             format: self.format.clone(),
+            from_param: self.param.clone(),
         }
     }
 
-    /// The data kind of the output the binding reads.
-    pub fn reads(&self) -> DataKind {
-        if self.cell.is_some() { DataKind::Table } else { DataKind::Chan }
+    /// The data kind of the output the binding reads; `None` when it follows a param.
+    pub fn reads(&self) -> Option<DataKind> {
+        if self.param.is_some() {
+            None
+        } else if self.cell.is_some() {
+            Some(DataKind::Table)
+        } else {
+            Some(DataKind::Chan)
+        }
     }
 }
 
@@ -234,7 +249,8 @@ pub enum Op {
     /// Drive parameter `param` (component `component` of a vector or colour) with channel
     /// `channel` of node `from` (its first channel when `None`), or with cell `cell` of its
     /// first table output, replacing an earlier binding. `format` writes the channel's number
-    /// as text for a text param ([`Bind`]).
+    /// as text for a text param. With `from_param` the param follows that param of `from`
+    /// instead ([`Bind`]).
     Bind {
         param: ParamPath,
         #[serde(default)]
@@ -246,6 +262,9 @@ pub enum Op {
         cell: Option<Cell>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         format: Option<NumberFormat>,
+        /// Follow this param of `from` as a whole value instead of reading an output.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from_param: Option<Name>,
     },
     /// Back to the stored value. Unbinding something not bound changes nothing (a merged file
     /// edit may unbind what the user unbound already).
@@ -282,8 +301,11 @@ impl Op {
             Op::Disconnect { to, input } => format!("disconnect {to}:{input}"),
             Op::Lock { path, locked: true } => format!("lock {path}"),
             Op::Lock { path, locked: false } => format!("unlock {path}"),
-            Op::Bind { param, component, from, channel, cell, .. } => {
+            Op::Bind { param, component, from, channel, cell, from_param, .. } => {
                 let to = part_label(param, *component);
+                if let Some(p) = from_param {
+                    return format!("bind {to} to {from}.{p}");
+                }
                 match (channel, cell) {
                     (_, Some(cell)) => format!("bind {to} to {from}, {cell}"),
                     (Some(c), None) => format!("bind {to} to {from}:{c}"),
@@ -805,7 +827,7 @@ impl Applied {
                 let p = self.network.resolve_alias(types, param)?;
                 (&p != param).then_some(Op::Reset { param: p })
             }
-            Op::Bind { param, component, from, channel, cell, format } => {
+            Op::Bind { param, component, from, channel, cell, format, from_param } => {
                 let p = self.network.resolve_alias(types, param)?;
                 (&p != param).then(|| Op::Bind {
                     param: p,
@@ -814,6 +836,7 @@ impl Applied {
                     channel: channel.clone(),
                     cell: cell.clone(),
                     format: format.clone(),
+                    from_param: from_param.clone(),
                 })
             }
             Op::Unbind { param, component } => {
@@ -1040,7 +1063,7 @@ impl Applied {
                 }
                 self.node_mut(id)?.locked = *locked;
             }
-            Op::Bind { param, component, from, channel, cell, format } => {
+            Op::Bind { param, component, from, channel, cell, format, from_param } => {
                 let dst = net.require(param.node())?;
                 let src = net.require(from)?;
                 self.guard(dst, param.node())?;
@@ -1048,29 +1071,63 @@ impl Applied {
                 let desc = desc_of(net, types, dst)?;
                 let name = param.param();
                 let node = net.nodes.get(&dst).ok_or_else(|| Error::new(format!("node {dst} vanished")))?;
-                let target = match node.spec(desc, name.as_str()) {
-                    Some(spec) => spec.bind_target(*component)?,
-                    // Checked against the instance's own declaration when it cooks.
-                    None if desc.extra_params || self.params == Params::Keep => BindTarget::Text,
-                    None => return Err(unknown_param(desc, node, name)),
+                let keep = self.params == Params::Keep;
+                if let Some(source) = from_param {
+                    if channel.is_some() || cell.is_some() || format.is_some() {
+                        return Err(Error::new(
+                            "a binding to a param takes its whole value; it names no channel, cell or format",
+                        ));
+                    }
+                    // A file may name a param the component no longer has: the binding stays,
+                    // and the follower warns when it cooks.
+                    match crate::follow::source_spec(net, types, src, from, source) {
+                        Ok(source_spec) => match node.spec(desc, name.as_str()) {
+                            Some(spec) => match crate::follow::check(&spec, *component, &source_spec) {
+                                Err(_) if keep => {}
+                                checked => checked?,
+                            },
+                            // Checked against the instance's own declaration when it cooks.
+                            None if desc.extra_params || keep => {}
+                            None => return Err(unknown_param(desc, node, name)),
+                        },
+                        Err(_) if keep => {}
+                        Err(e) => return Err(e),
+                    }
+                } else {
+                    let target = match node.spec(desc, name.as_str()) {
+                        Some(spec) => spec.bind_target(*component)?,
+                        // Checked against the instance's own declaration when it cooks.
+                        None if desc.extra_params || keep => BindTarget::Text,
+                        None => return Err(unknown_param(desc, node, name)),
+                    };
+                    check_bind_read(target, channel.as_ref(), cell.as_ref(), format.as_ref())?;
+                }
+                let bind = Bind {
+                    node: src,
+                    channel: channel.clone(),
+                    cell: cell.clone(),
+                    format: format.clone(),
+                    param: from_param.clone(),
                 };
-                check_bind_read(target, channel.as_ref(), cell.as_ref(), format.as_ref())?;
-                let bind =
-                    Bind { node: src, channel: channel.clone(), cell: cell.clone(), format: format.clone() };
                 let reads = bind.reads();
-                if !self.kept_broken(src)
+                if let Some(reads) = reads
+                    && !self.kept_broken(src)
                     && !desc_of(net, types, src)?.outputs.iter().any(|o| o.kind == reads)
                 {
                     let what = if reads == DataKind::Table { "table" } else { "chan" };
                     return Err(Error::new(format!("{from} has no {what} output to bind to")));
                 }
                 if src == dst || net.depends_on(src, dst) {
+                    let source = match from_param {
+                        Some(p) => format!("{from}.{p}"),
+                        None => from.to_string(),
+                    };
                     let mut why = format!(
-                        "binding {param} to {from} would make a loop: {from} depends on {}",
+                        "binding {param} to {source} would make a loop: {from} depends on {}",
                         param.node()
                     );
                     // Channels can come round a frame later; tables have no such node.
-                    if reads == DataKind::Chan {
+                    if reads == Some(DataKind::Chan) {
                         why.push_str(&format!(
                             ". To use {from} a frame later, wire it into the `previous` input of a \
                              chan.feedback and bind to the chan.feedback"
@@ -1360,6 +1417,7 @@ mod tests {
             channel: None,
             cell: None,
             format: None,
+            from_param: None,
         };
         let base = Network::new()
             .apply(
@@ -1396,6 +1454,7 @@ mod tests {
             channel: None,
             cell: None,
             format: None,
+            from_param: None,
         };
         assert!(base.apply(&types, &[comp]).unwrap_err().0.contains("as a whole"));
         // Deleting the source drops the binding; unbinding something unbound changes nothing.
@@ -1636,6 +1695,7 @@ mod tests {
                         channel: None,
                         cell: None,
                         format: None,
+                        from_param: None,
                     },
                     Op::Reset { param: pp("/c.deep") },
                 ],

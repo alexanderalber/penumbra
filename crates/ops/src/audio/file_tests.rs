@@ -377,6 +377,7 @@ fn scrubbed(file: &str, at: f64) -> Vec<Op> {
             channel: Some(penumbra_core::Name::new("pos").unwrap()),
             cell: None,
             format: None,
+            from_param: None,
         },
     ]);
     ops

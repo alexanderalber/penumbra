@@ -43,6 +43,7 @@
 use std::collections::BTreeMap;
 
 use penumbra_core::{BindTarget, Cell, Error, Name, NodePath, NumberFormat, ParamPart, Value};
+use penumbra_graph::follow::PARENT;
 use penumbra_graph::{
     DataKind, Network, NodeDesc, NodeTypes, Params, broken, check_bind_read, check_param, check_pos,
     check_setting,
@@ -165,6 +166,19 @@ impl<'de> Deserialize<'de> for BindRepr {
 impl BindRepr {
     /// The short form where it says everything, else the structured one.
     fn write(level: &NodePath, b: &BindRef) -> Self {
+        if let Some(param) = &b.param {
+            // `parent` names the component the node sits in, whatever it is called.
+            let from = if !level.is_root() && &b.node == level {
+                PARENT.to_string()
+            } else {
+                match level.write_ref(&b.node) {
+                    // A node beside it named `parent` is written in full.
+                    r if r == PARENT => b.node.to_string(),
+                    r => r,
+                }
+            };
+            return BindRepr::Short(format!("{from}.{param}"));
+        }
         let from = level.write_ref(&b.node);
         if b.cell.is_none() && b.format.is_none() {
             return BindRepr::Short(match &b.channel {
@@ -178,6 +192,21 @@ impl BindRepr {
             cell: b.cell.clone(),
             format: b.format.clone(),
         })
+    }
+}
+
+impl BindRepr {
+    /// `("parent", "preset")` for `"parent.preset"`, `("/rd", "preset")` for `"/rd.preset"`:
+    /// the node and the param a short entry follows. Node names hold no `.`, so a `.` after
+    /// the last `/` starts the param; `..` is no param.
+    fn follows(&self) -> Option<(&str, &str)> {
+        let BindRepr::Short(text) = self else { return None };
+        if text.contains(':') {
+            return None;
+        }
+        let (from, param) = text.rsplit_once('.')?;
+        let ok = !from.is_empty() && !from.ends_with('.') && !param.contains('/') && !param.is_empty();
+        ok.then_some((from, param))
     }
 }
 
@@ -464,6 +493,10 @@ fn check_own<'t>(
         }
     }
     for (part, bind) in &node.binds {
+        // What a param follows is checked against the param when the network takes it.
+        if bind.follows().is_some() {
+            continue;
+        }
         let ctx = || format!("{path} bind `{part}`");
         let target = match spec(part.param.as_str()) {
             Some(spec) => spec.bind_target(part.component).map_err(|e| e.context(ctx()))?,
@@ -527,9 +560,17 @@ fn load_node(
     let mut binds = BTreeMap::new();
     for (part, source) in &node.binds {
         let ctx = || format!("{path} bind `{part}`");
+        if level.is_root() && source.follows().is_some_and(|(from, _)| from == PARENT) {
+            dropped.push(format!(
+                "{}: `{PARENT}` is the component a node sits in, and {path} sits at the top level;                  the binding is left out",
+                ctx()
+            ));
+            continue;
+        }
         let src = parse_bind(&level, source, nodes, outside).map_err(|e| e.context(ctx()))?;
         let reads = if src.cell.is_some() { DataKind::Table } else { DataKind::Chan };
-        if let Some(from) = nodes.get(&src.node).filter(|_| !failed.contains_key(&src.node))
+        if src.param.is_none()
+            && let Some(from) = nodes.get(&src.node).filter(|_| !failed.contains_key(&src.node))
             && let from = types.desc(&from.kind)
             && !from.is_some_and(|f| f.outputs.iter().any(|o| o.kind == reads))
         {
@@ -573,7 +614,12 @@ fn parse_bind(
     nodes: &BTreeMap<NodePath, NodeRepr>,
     outside: bool,
 ) -> Result<BindRef, Error> {
+    let follows = repr.follows();
     let bind = match repr {
+        BindRepr::Short(_) if let Some((from, param)) = follows => {
+            let node = if from == PARENT { level.clone() } else { level.resolve_ref(from)? };
+            BindRef::follow(node, Name::new(param).map_err(|e| e.context("param"))?)
+        }
         BindRepr::Short(text) => {
             let (path, channel) = match text.split_once(':') {
                 Some((p, c)) => (p, Some(Name::new(c).map_err(|e| e.context("channel"))?)),
@@ -586,6 +632,7 @@ fn parse_bind(
             channel: f.channel.clone(),
             cell: f.cell.clone(),
             format: f.format.clone(),
+            param: None,
         },
     };
     if !outside && !nodes.contains_key(&bind.node) {

@@ -137,6 +137,7 @@ fn iterations_follow_a_bound_channel() {
         channel: None,
         cell: None,
         format: None,
+        from_param: None,
     };
     let ops =
         [create("/k", "chan.constant", &[("value0", Value::Float(7.0))]), count(Value::Int(2), None), bind];

@@ -403,7 +403,32 @@ moss = #1b4332 #52b788
 <li><strong>A text a choice does not have</strong> leaves the choice at its last entry, and the node shows a warning that names the text.
 </li>
 </ul>
-<p>File paths, node references and scripts cannot be bound. From the control channel: <a class="ref" href="#node.bind"><code>node.bind {param, from, cell: {row, col}}</code></a> for a cell and <a class="ref" href="#node.bind"><code>node.bind {param, from, format: &quot;{.1} m&quot;}</code></a> for a formatted channel. In <code>project.ron</code> such a binding is written as <code>(node: &quot;scores&quot;, cell: (row: 1, col: &quot;name&quot;))</code> or <code>(node: &quot;lfo1&quot;, format: &quot;{.1} m&quot;)</code>. A plain channel binding keeps the short form <code>&quot;lfo1:x&quot;</code>.</p>
+<p>File paths, node references and scripts cannot be bound. From the control channel: <a class="ref" href="#node.bind"><code>node.bind {param, from, cell: {row, col}}</code></a> for a cell and <a class="ref" href="#node.bind"><code>node.bind {param, from, format: &quot;{.1} m&quot;}</code></a> for a formatted channel. In <code>project.ron</code> such a binding is written as <code>(node: &quot;scores&quot;, cell: (row: 1, col: &quot;name&quot;))</code> or <code>(node: &quot;lfo1&quot;, format: &quot;{.1} m&quot;)</code>. A plain channel binding keeps the short form <code>&quot;lfo1:x&quot;</code>. A follower is written <code>&quot;parent.preset&quot;</code>, by command <a class="ref" href="#node.bind"><code>node.bind {param: &quot;/rd/step.preset&quot;, from: &quot;parent.preset&quot;}</code></a>.</p>
+<h4 id="concepts-following-a-components-param">Following a component's param</h4>
+<p>A param can follow a param that a component declares with an <code>@param</code> line. The follower takes the value whole, in the same frame:</p>
+<ul>
+<li><strong>Numbers:</strong> a bool, int or float goes into a bool, int or float. Ints round, a bool counts 0 or 1. One field of a vector or colour takes a number too.
+</li>
+<li><strong>Vectors and colours</strong> go whole into a vector of as many numbers. A colour takes a colour or three or four numbers.
+</li>
+<li><strong>Choices</strong> go by name, so the two lists need not share an order. A name the follower lacks leaves it at its last entry, with a warning. A number picks the entry by place.
+</li>
+<li><strong>Text</strong> takes a choice's name or a text, and writes a number with <code>{}</code>.
+</li>
+</ul>
+<p>Other pairs are refused when you bind. In <code>project.ron</code> and by command the source is <code>parent.preset</code> for the node's own component, or a path such as <code>/rd.preset</code> for another one. <code>parent</code> reaches one level up: a component inside a component passes a value down by declaring a param of its own that follows <code>parent.preset</code>. An <code>@expose</code> param cannot be followed; bind to the inner param it shows instead.</p>
+<ul>
+<li><strong>Saved to the library, copied, renamed:</strong> <code>parent</code> names whatever component the node sits in, so every copy follows its own.
+</li>
+<li><strong>Pasted into another component:</strong> the node follows that component's param of the same name. When there is none, the paste leaves the binding out and says so.
+</li>
+<li><strong>Grouped (Ctrl+G):</strong> the nodes go on following the old component, written as <code>/rd.preset</code>.
+</li>
+<li><strong>Dissolved:</strong> each follower keeps the value it had. When the component's param was bound, the follower takes over that binding.
+</li>
+<li><strong>A param the component does not declare:</strong> a command is refused and lists the component's params. A file still loads: the follower keeps its own value and warns, for example &quot;follows parent.preset, but /rd has no param <code>preset</code>&quot;.
+</li>
+</ul>
 <h4 id="concepts-buttons-sliders-and-dropdowns-on-the-node">Buttons, sliders and dropdowns on the node</h4>
 <p><a class="ref" href="#chan.button"><code>chan.button</code></a>, <a class="ref" href="#chan.slider"><code>chan.slider</code></a> and <a class="ref" href="#chan.dropdown"><code>chan.dropdown</code></a> are steered right on their node in the network editor, without selecting it. <strong>Button:</strong> with <code>mode</code> <code>momentary</code> its channel is 1 while the mouse button is held on it; with <code>mode</code> <code>toggle</code> each click switches it between 1 and 0. <strong>Slider:</strong> dragging on it sets <code>value</code> between <code>min</code> and <code>max</code>. With Shift held, the slider moves a tenth of the mouse's way, for fine steps; pressing or letting go of Shift mid-drag does not make it jump. One drag is one undo step. <strong>Dropdown:</strong> a click opens the list of its <code>entries</code>, and picking one sets <code>value</code> to that entry's name. One pick is one undo step. <code>entries</code> holds one entry per line. The line above the control shows the channel's value: <code>1</code> or <code>0</code> for a button, three decimals for a slider, the entry's place for a dropdown (0 for the first). A toggle's state, a slider's value and a dropdown's <code>value</code> are params, saved with the project. A momentary press is no edit: it leaves no history and works while Claude edits. Bind params to their channel like to any other. From the control channel: <a class="ref" href="#chan.press"><code>chan.press {path}</code></a> (or <code>{path, down}</code> to hold and let go) presses a button, <a class="ref" href="#node.set"><code>node.set</code></a> moves a slider. <a class="ref" href="#chan.pick"><code>chan.pick {path, entry}</code></a> picks a dropdown's entry by its name (<code>&quot;maze&quot;</code>) or its place (<code>2</code>); <a class="ref" href="#node.set"><code>node.set</code></a> on <code>value</code> picks by name too. A <code>value</code> that names no entry leaves the dropdown at the entry it gave last, and the node shows a warning. With <code>show</code> ticked, the control also appears on the show screen while <a href="#getting-started-show-mode">show mode</a> is on. There it still works, but a change makes no undo step and is saved only after show mode ends. A crash restart in show mode keeps it.</p>
 <h4 id="concepts-keys">Keys</h4>
@@ -493,7 +518,9 @@ water      15
 </li>
 <li><strong>Dissolve:</strong> the node menu moves the nodes back up.
 </li>
-<li><strong>Params of its own:</strong> the component's <code>params</code> text (under more) declares them, one per line. TouchDesigner calls these custom parameters. <code>@param preset choice(coral|maze) = coral -- the pattern</code> makes a param that the component holds, in the grammar of a shader header (the <code>//</code> may stay). It has a default, a range and a doc, and <a class="ref" href="#node.set"><code>node.set</code></a> and <a class="ref" href="#node.bind"><code>node.bind</code></a> treat it like any param: a value it does not take is refused at once. <code>@group look</code> puts the params after it into a fold. Inner nodes do not follow such a param yet.
+<li><strong>Params of its own:</strong> the component's <code>params</code> text (under more) declares them, one per line. TouchDesigner calls these custom parameters. <code>@param preset choice(coral|maze) = coral -- the pattern</code> makes a param that the component holds, in the grammar of a shader header (the <code>//</code> may stay). It has a default, a range and a doc, and <a class="ref" href="#node.set"><code>node.set</code></a> and <a class="ref" href="#node.bind"><code>node.bind</code></a> treat it like any param: a value it does not take is refused at once. <code>@group look</code> puts the params after it into a fold.
+</li>
+<li><strong>Inner nodes follow it:</strong> bind an inner param to <code>parent.preset</code>, the param <code>preset</code> of the component the node sits in. TouchDesigner writes this <code>parent().par.Preset</code>. Every follower takes the component's value in the same frame, also when that param is bound itself. More under <a href="#concepts-following-a-components-param">Following a component's param</a>.
 </li>
 <li><strong>Exposed params:</strong> an <code>@expose speed = noise1.speed</code> line (or just <code>@expose noise1.speed</code>) in the same text shows an inner param on the component. Setting it sets the inner param, which keeps the value and the range. Files from before this text existed listed these lines in a param <code>expose</code>; they load into <code>params</code>.
 </li>
@@ -6352,7 +6379,7 @@ def cook(cx):
 @expose speed = noise1.speed
 </code></pre>
 <ul>
-<li><strong><code>@param</code></strong> makes a param the component holds: <code>name kind = default min..max -- doc</code>. Kinds are <code>float</code>, <code>int</code>, <code>bool</code>, <code>vec2</code>, <code>vec3</code>, <code>vec4</code>, <code>color</code>, <code>palette</code> and <code>choice(a|b)</code>. Set and bind it like any param; a value it does not take is refused at once. Inner nodes do not follow it yet.
+<li><strong><code>@param</code></strong> makes a param the component holds: <code>name kind = default min..max -- doc</code>. Kinds are <code>float</code>, <code>int</code>, <code>bool</code>, <code>vec2</code>, <code>vec3</code>, <code>vec4</code>, <code>color</code>, <code>palette</code> and <code>choice(a|b)</code>. Set and bind it like any param; a value it does not take is refused at once. Inner nodes follow it through a binding to <code>parent.preset</code> (TouchDesigner: <code>parent().par.Preset</code>). They take the value whole, a choice by name.
 </li>
 <li><strong><code>@group</code></strong> puts the params after it into a fold of the panel. <code>@group</code> alone ends the fold.
 </li>
@@ -6364,6 +6391,8 @@ def cook(cx):
 </li>
 </ul>
 <p>Files written before <code>params</code> existed listed the exposed params in a param <code>expose</code>. They load as <code>@expose</code> lines and are saved in the new form.</p>
+<h5 id="comp.base-inner-nodes-follow">Inner nodes follow</h5>
+<p>Bind an inner param to the component's param: <a class="ref" href="#node.bind"><code>node.bind {param: &quot;/rd/step.preset&quot;, from: &quot;parent.preset&quot;}</code></a>, written <code>binds: {&quot;preset&quot;: &quot;parent.preset&quot;}</code> in the file. <code>parent</code> is the component the node sits in, whatever it is called, so a copy from the library follows its own component. Every follower takes the new value in the same frame, also when the component's param is bound to a dropdown or an LFO outside.</p>
 <p>More in the Components section of the concepts guide.</p>
 </div>
 <p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
@@ -7117,9 +7146,9 @@ def cook(cx):
 <p>Apply ops as one all-or-nothing batch; {ops: [{op, ...}], label?}</p>
 <p class="mentions">Mentioned in: <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
-<details class="entry command" id="node.bind"><summary><code class="name">node.bind</code><span class="sum">Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format (&quot;{.1} m&quot;), a choice its entry by name or place</span></summary>
+<details class="entry command" id="node.bind"><summary><code class="name">node.bind</code><span class="sum">Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format (&quot;{.1} m&quot;), a choice its entry by name or place. <code>from</code> naming a param makes it follow a component's own param whole: &quot;parent.preset&quot; for the component it sits in, &quot;/rd.preset&quot; for another</span></summary>
 <div class="body">
-<p>Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format (&quot;{.1} m&quot;), a choice its entry by name or place; {param, from, channel?, cell?: {row?, col?}, format?}</p>
+<p>Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format (&quot;{.1} m&quot;), a choice its entry by name or place. <code>from</code> naming a param makes it follow a component's own param whole: &quot;parent.preset&quot; for the component it sits in, &quot;/rd.preset&quot; for another; {param, from, channel?, cell?: {row?, col?}, format?}</p>
 <p class="mentions">Mentioned in: <a href="#concepts-text-and-choices">Concepts › Text and choices</a>, <a href="#concepts-components">Concepts › Components</a>, <a href="#shaders-several-steps-per-frame">Shaders › Several steps per frame</a></p>
 </div></details>
 <details class="entry command" id="node.connect"><summary><code class="name">node.connect</code><span class="sum">Connect an output to an input; without input: the first of its kind, or the next free one of a run (a composite's layers)</span></summary>

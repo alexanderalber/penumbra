@@ -44,8 +44,9 @@ stay when you paste one:
 
 - **`@param`** makes a param the component holds: `name kind = default min..max -- doc`. Kinds
   are `float`, `int`, `bool`, `vec2`, `vec3`, `vec4`, `color`, `palette` and `choice(a|b)`. Set
-  and bind it like any param; a value it does not take is refused at once. Inner nodes do not
-  follow it yet.
+  and bind it like any param; a value it does not take is refused at once. Inner nodes follow
+  it through a binding to `parent.preset` (TouchDesigner: `parent().par.Preset`). They take the
+  value whole, a choice by name.
 - **`@group`** puts the params after it into a fold of the panel. `@group` alone ends the fold.
 - **`@expose`** shows an inner param on the component: `@expose noise1.speed`, or with a name of
   its own, `@expose speed = noise1.speed`. Changing the exposed param changes the inner one,
@@ -57,5 +58,13 @@ stay when you paste one:
 
 Files written before `params` existed listed the exposed params in a param `expose`. They load
 as `@expose` lines and are saved in the new form.
+
+## Inner nodes follow
+
+Bind an inner param to the component's param: `node.bind {param: "/rd/step.preset", from:
+"parent.preset"}`, written `binds: {"preset": "parent.preset"}` in the file. `parent` is the
+component the node sits in, whatever it is called, so a copy from the library follows its own
+component. Every follower takes the new value in the same frame, also when the component's
+param is bound to a dropdown or an LFO outside.
 
 More in the Components section of the concepts guide.

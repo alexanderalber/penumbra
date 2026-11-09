@@ -216,7 +216,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `node.batch` | Apply ops as one all-or-nothing batch; {ops: [{op, ...}], label?} |
-| `node.bind` | Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format ("{.1} m"), a choice its entry by name or place; {param, from, channel?, cell?: {row?, col?}, format?} |
+| `node.bind` | Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format ("{.1} m"), a choice its entry by name or place. `from` naming a param makes it follow a component's own param whole: "parent.preset" for the component it sits in, "/rd.preset" for another; {param, from, channel?, cell?: {row?, col?}, format?} |
 | `node.connect` | Connect an output to an input; without input: the first of its kind, or the next free one of a run (a composite's layers); {from, output?, to, input?} |
 | `node.copy` | Copy side-by-side nodes with everything inside them; returns the text; {paths} |
 | `node.create` | Create a node; {path, kind, params?} |

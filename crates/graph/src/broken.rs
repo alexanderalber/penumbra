@@ -128,6 +128,7 @@ mod tests {
                 channel: None,
                 cell: None,
                 format: None,
+                from_param: None,
             },
         ];
         let e = Network::new().apply(&types, &ops).unwrap_err();

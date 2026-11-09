@@ -296,7 +296,39 @@ File paths, node references and scripts cannot be bound. From the control channe
 `node.bind {param, from, cell: {row, col}}` for a cell and
 `node.bind {param, from, format: "{.1} m"}` for a formatted channel. In `project.ron` such a
 binding is written as `(node: "scores", cell: (row: 1, col: "name"))` or
-`(node: "lfo1", format: "{.1} m")`. A plain channel binding keeps the short form `"lfo1:x"`.
+`(node: "lfo1", format: "{.1} m")`. A plain channel binding keeps the short form `"lfo1:x"`. A
+follower is written `"parent.preset"`, by command `node.bind {param: "/rd/step.preset", from:
+"parent.preset"}`.
+
+### Following a component's param
+
+A param can follow a param that a component declares with an `@param` line. The follower takes
+the value whole, in the same frame:
+
+- **Numbers:** a bool, int or float goes into a bool, int or float. Ints round, a bool counts 0
+  or 1. One field of a vector or colour takes a number too.
+- **Vectors and colours** go whole into a vector of as many numbers. A colour takes a colour or
+  three or four numbers.
+- **Choices** go by name, so the two lists need not share an order. A name the follower lacks
+  leaves it at its last entry, with a warning. A number picks the entry by place.
+- **Text** takes a choice's name or a text, and writes a number with `{}`.
+
+Other pairs are refused when you bind. In `project.ron` and by command the source is
+`parent.preset` for the node's own component, or a path such as `/rd.preset` for another one.
+`parent` reaches one level up: a component inside a component passes a value down by declaring
+a param of its own that follows `parent.preset`. An `@expose` param cannot be followed; bind to
+the inner param it shows instead.
+
+- **Saved to the library, copied, renamed:** `parent` names whatever component the node sits in,
+  so every copy follows its own.
+- **Pasted into another component:** the node follows that component's param of the same name.
+  When there is none, the paste leaves the binding out and says so.
+- **Grouped (Ctrl+G):** the nodes go on following the old component, written as `/rd.preset`.
+- **Dissolved:** each follower keeps the value it had. When the component's param was bound,
+  the follower takes over that binding.
+- **A param the component does not declare:** a command is refused and lists the component's
+  params. A file still loads: the follower keeps its own value and warns, for example
+  "follows parent.preset, but /rd has no param `preset`".
 
 ### Buttons, sliders and dropdowns on the node
 
@@ -607,7 +639,11 @@ first output of the kind it reads.
   -- the pattern` makes a param that the component holds, in the grammar of a shader header
   (the `//` may stay). It has a default, a range and a doc, and `node.set` and `node.bind` treat
   it like any param: a value it does not take is refused at once. `@group look` puts the params
-  after it into a fold. Inner nodes do not follow such a param yet.
+  after it into a fold.
+- **Inner nodes follow it:** bind an inner param to `parent.preset`, the param `preset` of the
+  component the node sits in. TouchDesigner writes this `parent().par.Preset`. Every follower
+  takes the component's value in the same frame, also when that param is bound itself. More
+  under [Following a component's param](#following-a-components-param).
 - **Exposed params:** an `@expose speed = noise1.speed` line (or just `@expose noise1.speed`)
   in the same text shows an inner param on the component. Setting it sets the inner param,
   which keeps the value and the range. Files from before this text existed listed these lines

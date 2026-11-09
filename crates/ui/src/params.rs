@@ -719,6 +719,13 @@ impl ParamPanel {
             let binds: Vec<_> = node.binds.iter().filter(|(k, _)| k.param.as_str() == spec.name).collect();
             for (part, b) in binds.into_iter().rev() {
                 let from = input.net.path_of(b.node).map_or("?".to_string(), |p| {
+                    if let Some(name) = &b.param {
+                        return if node.parent == Some(b.node) {
+                            format!("{}.{name}", penumbra_graph::follow::PARENT)
+                        } else {
+                            format!("{p}.{name}")
+                        };
+                    }
                     let p = level_of(input.net, node.id).write_ref(&p);
                     let p = match (&b.channel, &b.cell) {
                         (_, Some(cell)) => format!("{p}, {cell}"),
@@ -2529,7 +2536,7 @@ fn table_list(
         && let (Ok(row), Ok(col)) = (u32::try_from(row), u32::try_from(col))
     {
         let cell = Cell { row: Index::At(row), col: Index::At(col) };
-        let bind = Bind { node: id, channel: None, cell: Some(cell), format: None };
+        let bind = Bind { node: id, channel: None, cell: Some(cell), format: None, param: None };
         actions.push(Action::edit(vec![bind.op(param.clone(), None, from)]));
         ui.close();
     }
@@ -3211,6 +3218,7 @@ mod tests {
                         channel: None,
                         cell: None,
                         format: None,
+                        from_param: None,
                     },
                 ],
             )

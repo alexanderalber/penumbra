@@ -244,6 +244,7 @@ mod tests {
             channel: None,
             cell: None,
             format: None,
+            from_param: None,
         };
         let n = net.apply(&types, &[bind("/c.feed", None)]).unwrap().network;
         let c = n.resolve(&"/c".parse().unwrap()).unwrap();

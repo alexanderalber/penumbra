@@ -666,6 +666,7 @@ fn beats_cues(e: &Engine, p: &Json) -> CmdResult<Json> {
             channel: Some(Name::new("seconds").map_err(|err| CommandError(err.to_string()))?),
             cell: None,
             format: None,
+            from_param: None,
         },
     ]);
     let label = format!("cue list from the sections of {name}");
@@ -729,6 +730,7 @@ fn bind_to(param: ParamPath, from: &NodePath, channel: &str) -> CmdResult<Op> {
         channel: Some(name_of(channel)?),
         cell: None,
         format: None,
+        from_param: None,
     })
 }
 

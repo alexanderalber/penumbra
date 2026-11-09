@@ -16,6 +16,7 @@ use penumbra_core::{
     Cell, Chans, Error, Name, NodeId, NodePath, NumberFormat, ParamPart, ParamPath, Table, Value,
 };
 use penumbra_gpu::{Geo, Tex};
+use penumbra_graph::follow::PARENT;
 use penumbra_graph::{
     Data, EditOutcome, JobStatus, Network, NodeDesc, NodeStatus, Op, Port, PortRole, Recorded, ThumbnailMode,
 };
@@ -105,7 +106,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "node.bind",
-        "Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format (\"{.1} m\"), a choice its entry by name or place; {param, from, channel?, cell?: {row?, col?}, format?}",
+        "Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format (\"{.1} m\"), a choice its entry by name or place. `from` naming a param makes it follow a component's own param whole: \"parent.preset\" for the component it sits in, \"/rd.preset\" for another; {param, from, channel?, cell?: {row?, col?}, format?}",
         node_bind,
     );
     add("node.unbind", "Back to the param's stored value; {param}", node_unbind);
@@ -484,9 +485,11 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
         .binds
         .iter()
         .map(|(part, b)| {
-            let from = net.path_of(b.node).map(|p| match &b.channel {
-                Some(c) => format!("{p}:{c}"),
-                None => p.to_string(),
+            let from = net.path_of(b.node).map(|p| match (&b.param, &b.channel) {
+                (Some(name), _) if node.parent == Some(b.node) => format!("{PARENT}.{name}"),
+                (Some(name), _) => format!("{p}.{name}"),
+                (None, Some(c)) => format!("{p}:{c}"),
+                (None, None) => p.to_string(),
             });
             let mut j = json!({"param": part.to_string(), "from": from});
             if let Some(o) = j.as_object_mut() {
@@ -505,6 +508,16 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
         (st.cooker.status(id), watched)
     })?;
     let (status, watched) = status;
+    // A param that follows another shows the value it takes now.
+    let mut binds = binds;
+    for (j, (part, b)) in binds.iter_mut().zip(&node.binds) {
+        if b.param.is_some()
+            && let Some(v) = status.as_ref().and_then(|s| s.bound.get(part.param.as_str()))
+            && let Some(o) = j.as_object_mut()
+        {
+            o.insert("value".into(), json!(v));
+        }
+    }
     // Of a run of inputs, the wired slots (and those the node reads unwired) and the next free
     // one, as the editor shows them.
     let reads = status.as_ref().map_or(0, |s| s.reads);
@@ -572,14 +585,30 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
             }
         }
     } else {
-        // A component's own params, declared in its text.
+        // A component's own params, declared in its text, with the params that follow them.
         let own = node.declared(desc).unwrap_or_default();
+        let mut followers: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+        for n in net.nodes().filter(|n| n.binds.values().any(|b| b.node == id && b.param.is_some())) {
+            for (part, b) in n.binds.iter().filter(|(_, b)| b.node == id) {
+                if let (Some(name), Some(path)) = (&b.param, net.path_of(n.id)) {
+                    followers.entry(name.as_str()).or_default().push(format!("{path}.{part}"));
+                }
+            }
+        }
         for spec in own.params() {
             let explicit = node.params.get(spec.name.as_str());
-            instance.push(json!({
+            let mut v = json!({
                 "name": spec.name, "kind": spec.kind, "value": explicit.unwrap_or(&spec.default),
                 "default": spec.default, "range": spec.range, "doc": spec.doc, "group": spec.group,
-            }));
+            });
+            if let (Some(list), Some(o)) = (followers.remove(spec.name.as_str()), v.as_object_mut()) {
+                o.insert("followed_by".into(), json!(list));
+            }
+            instance.push(v);
+        }
+        // Followers of a param the component no longer declares warn; they are listed too.
+        for (name, list) in followers {
+            instance.push(json!({"name": name, "declared": false, "followed_by": list}));
         }
         // Values kept from the project file that nothing declares.
         let stray = |n: &str| desc.param_spec(n).is_none() && own.param(n).is_none();
@@ -942,15 +971,37 @@ fn node_bind(e: &Engine, p: &Json) -> Result<Json> {
     #[serde(deny_unknown_fields)]
     struct A {
         param: String,
-        from: NodePath,
+        from: String,
         channel: Option<Name>,
         cell: Option<Cell>,
         format: Option<NumberFormat>,
     }
     let a: A = args(p)?;
     let (param, component) = param_part(&a.param)?;
-    let op = Op::Bind { param, component, from: a.from, channel: a.channel, cell: a.cell, format: a.format };
+    let (from, from_param) = bind_source(param.node(), &a.from)?;
+    let op =
+        Op::Bind { param, component, from, channel: a.channel, cell: a.cell, format: a.format, from_param };
     Ok(outcome(&edit(e, &[op], "")?))
+}
+
+/// What `from` of node.bind names for a param of the node at `owner`: a node (`/lfo1`), or a
+/// param to follow, `parent.preset` (the component the node sits in) or `/rd.preset`.
+pub(crate) fn bind_source(owner: &NodePath, from: &str) -> Result<(NodePath, Option<Name>)> {
+    let from = from.trim();
+    let Some((node, param)) = from.rsplit_once('.') else {
+        return Ok((NodePath::parse(from)?, None));
+    };
+    let param = Name::new(param).map_err(|e| format!("`{from}`: {}", e.0))?;
+    if node == PARENT {
+        return match owner.parent() {
+            Some(comp) if !comp.is_root() => Ok((comp, Some(param))),
+            _ => Err(format!(
+                "`{PARENT}` is the component a node sits in, and {owner} sits at the top level; name the node                  whose param it follows, like /rd.{param}"
+            )
+            .into()),
+        };
+    }
+    Ok((NodePath::parse(node)?, Some(param)))
 }
 
 fn node_unbind(e: &Engine, p: &Json) -> Result<Json> {
