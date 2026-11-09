@@ -1564,7 +1564,7 @@ Outputs: `out` (chan).
 
 ### chan.from_table
 
-Turns a table of numbers into channels, so its cells can drive params through bindings
+Turns a table of numbers into channels, so its cells can drive params through bindings. `key` picks one row by its first cell, such as the name of a look
 
 Inputs:
 
@@ -1577,6 +1577,7 @@ Outputs: `out` (chan).
 | `layout` | columns \| rows | `"columns"` |  | Which cells make up one channel; columns: each column is a channel, its samples read top to bottom; rows: each row is a channel, its samples read left to right |
 | `names` | bool | `true` |  | On, the first cell of each column (or row) is the channel's name; off, the channels are called chan0, chan1, ... and every cell is a value. On, a column of words alone (a label per row) makes no channel |
 | `row` | int | `-1` (all) | -1 to 20 (soft, held within -1 to 1000000000) | Only this row, counted from 0 under the names: one value per channel. Bind it to the step of a chan.sequence, and each cue reads its own row of a cue sheet. Past the last row: the last. With layout rows: this column. -1: all; -1: all |
+| `key` | text |  |  | Only the row whose first cell is this text, case and spaces aside: one value per channel. Bind it to a choice, such as parent.look inside a component, and each entry reads its own row in the same frame. A key that no row has gives the first row and a warning. Empty: row decides. With layout rows: the column whose top cell is the key |
 
 ### chan.from_tex
 
@@ -1594,8 +1595,8 @@ Outputs:
 |---|---|---|---|---|
 | `measure` | mean \| sum \| min \| max \| coverage | `"mean"` |  | What each channel says about the pixels of its area; mean: the average value; sum: all values added up: in a picture of 0 and 1, the number of pixels that are 1, exact up to 16 million; min: the smallest value; max: the largest value; coverage: the share of pixels above `threshold`: 0 for none, 1 for all |
 | `threshold` | float | `0.5` | 0 to 1 (soft) | A pixel counts for coverage when its value is above this. Does something only with measure coverage. |
-| `columns` | int | `1` | 1 to 256 (soft, held within 1 to 4096) | Samples per channel: the picture is divided into this many columns |
-| `rows` | int | `1` | 1 to 64 (soft, held within 1 to 1024) | Rows the picture is divided into. With more than one row, the channels are numbered by row from the top (r0, r1, ...) |
+| `columns` | int | `1` | 1 to 256 (soft, held within 1 to 4096) | Samples of each channel. The picture is cut into this many columns, and each channel gets one sample per column, left to right. A binding reads the last sample: the right-hand column. For a channel per area, use rows |
+| `rows` | int | `1` | 1 to 64 (soft, held within 1 to 1024) | Separate channels. The picture is cut into this many rows, and each row gives its own channels, numbered from the top: r0, r1, ... (g0, lum0 likewise). To read several pixels as channels of their own, stack them in one column and set rows to their number |
 | `components` | rgba \| rgb \| red \| luminance | `"rgba"` |  | Which channels a row gives; values are linear and premultiplied, as the picture holds them; rgba: r, g, b and a; rgb: r, g and b; red: r only; luminance: lum, the brightness as the eye weighs it (Rec. 709) |
 
 ### chan.http_in

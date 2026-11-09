@@ -144,7 +144,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("chan.dropdown", &["drop down menu", "menu", "combo box", "radio buttons", "preset"]),
     ("chan.envelope", &["trigger", "adsr"]),
     ("chan.filter", &["lag"]),
-    ("chan.from_table", &["dat to"]),
+    ("chan.from_table", &["dat to", "lookup", "select dat"]),
     ("chan.feedback", &["delay", "previous frame"]),
     ("chan.from_tex", &["top to", "analyze"]),
     ("chan.http_in", &["web server", "websocket"]),

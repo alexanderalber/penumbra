@@ -15,7 +15,14 @@ the simulation dead, or has it filled the screen?
 
 `components` picks the channels: `r g b a`, `r g b`, `r`, or `lum` (brightness as the eye
 weighs it). With `columns` and `rows` above 1 the picture is divided into areas, and each area is
-measured on its own: a sample per column, a channel per row (`r0`, `r1`, ...).
+measured on its own.
+
+- **`rows` makes channels.** Each row gives its own channels, numbered from the top: `r0`, `r1`, ...
+- **`columns` makes samples.** Each channel gets one sample per column, left to right. A binding
+  reads the last sample, the right-hand column.
+
+So `columns` 3 and `rows` 1 gives one `r` channel of three samples, and a binding sees only the
+third. To read three pixels as three channels, stack them in one column and set `rows` to 3.
 
 ## Exact counts
 

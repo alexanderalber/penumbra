@@ -396,6 +396,8 @@ moss = #1b4332 #52b788
 </li>
 <li><strong>A row per cue.</strong> A cell binding names a fixed cell. For a value that changes with the cue, bind the <code>row</code> of a <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a> to a <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a>'s <code>step</code>: its channels then hold that row's numbers, which a format turns into text.
 </li>
+<li><strong>A row per entry of a choice.</strong> Bind the <code>key</code> of a <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a> to the choice, for example <code>parent.look</code>. Its channels then hold the numbers of the row whose first cell is the entry's name, in the same frame. A param that only takes a number, such as <code>iterations</code>, binds to one of those channels. Lines to copy are on the <a href="#chan.from_table">chan.from_table</a> page.
+</li>
 <li><strong>A channel into a choice</strong> picks the entry by its place: 0 is the first, rounded, held at the first and the last.
 </li>
 <li><strong>A <a class="ref" href="#chan.dropdown"><code>chan.dropdown</code></a> into a text or a choice</strong> gives the name of its entry. A choice takes its own entry of that name, wherever that entry stands in its list. So one dropdown can drive the same choice in several nodes, shader params included, and the lists need not share an order. A number param bound to the dropdown gets the entry's place, 0 for the first. To pick a choice by place instead, name the channel: <a class="ref" href="#node.bind"><code>node.bind {param, from, channel: &quot;value&quot;}</code></a>.
@@ -4496,9 +4498,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#audio-tips">Audio › Tips</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
-<details class="entry node" id="chan.from_table"><summary><code class="name">chan.from_table</code><span class="sum">Turns a table of numbers into channels, so its cells can drive params through bindings</span></summary>
+<details class="entry node" id="chan.from_table"><summary><code class="name">chan.from_table</code><span class="sum">Turns a table of numbers into channels, so its cells can drive params through bindings. <code>key</code> picks one row by its first cell, such as the name of a look</span></summary>
 <div class="body">
-<p>Turns a table of numbers into channels, so its cells can drive params through bindings</p>
+<p>Turns a table of numbers into channels, so its cells can drive params through bindings. <code>key</code> picks one row by its first cell, such as the name of a look</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">table</span></li>
@@ -4512,10 +4514,34 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
 <tr><td><code>layout</code></td><td>columns | rows</td><td><code>&quot;columns&quot;</code></td><td></td><td>Which cells make up one channel<ul><li><code>columns</code>: each column is a channel, its samples read top to bottom</li><li><code>rows</code>: each row is a channel, its samples read left to right</li></ul></td></tr>
-<tr><td><code>names</code></td><td>bool</td><td><code>true</code></td><td></td><td>On, the first cell of each column (or row) is the channel's name; off, the channels              are called chan0, chan1, ... and every cell is a value. On, a column of words alone (a label per row) makes no channel</td></tr>
+<tr><td><code>names</code></td><td>bool</td><td><code>true</code></td><td></td><td>On, the first cell of each column (or row) is the channel's name; off, the channels are called chan0, chan1, ... and every cell is a value. On, a column of words alone (a label per row) makes no channel</td></tr>
 <tr><td><code>row</code></td><td>int</td><td><code>-1</code> (all)</td><td>-1 to 20 (soft, held within -1 to 1000000000)</td><td>Only this row, counted from 0 under the names: one value per channel. Bind it to the step of a chan.sequence, and each cue reads its own row of a cue sheet. Past the last row: the last. With layout rows: this column. -1: all<ul><li>-1: all</li></ul></td></tr>
+<tr><td><code>key</code></td><td>text</td><td></td><td></td><td>Only the row whose first cell is this text, case and spaces aside: one value per channel. Bind it to a choice, such as parent.look inside a component, and each entry reads its own row in the same frame. A key that no row has gives the first row and a warning. Empty: row decides. With layout rows: the column whose top cell is the key</td></tr>
 </tbody>
 </table>
+<div class="more">
+<h5 id="chan.from_table-a-row-of-numbers-per-entry-of-a-choice">A row of numbers per entry of a choice</h5>
+<p>A simulation's looks often need a few plain numbers each: the steps per frame for a <a class="ref" href="#tex.shader"><code>tex.shader</code></a>'s <code>iterations</code>, a hold time for a <a class="ref" href="#chan.clock"><code>chan.clock</code></a>. Write them as a table with one row per entry and the entry's name in the first cell. Bind the <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a>'s <code>key</code> to the choice. The node then gives that row's numbers as channels, named by the header row.</p>
+<ul>
+<li><strong>By name.</strong> The key matches the first cell, case and surrounding spaces aside. The rows may stand in any order, and an entry added to the choice moves no other row.
+</li>
+<li><strong>Same frame.</strong> A new entry reaches every param bound to the channels in the frame of the change. Nothing runs on the GPU.
+</li>
+<li><strong>A missing row</strong> gives the first row's numbers, and the node shows a warning that lists the keys the table has.
+</li>
+<li>The first column holds words only, so it makes no channel.
+</li>
+</ul>
+<h5 id="chan.from_table-example">Example</h5>
+<p>Inside a component <code>growth</code> with <code>@param look choice(window|snowflake|coral)</code> and <code>@param speed float = 1 0..4</code>:</p>
+<pre><code>&quot;/growth/look_table&quot;: (kind: &quot;table.text&quot;, params: {&quot;format&quot;: &quot;csv&quot;, &quot;text&quot;: &quot;look,steps,hold\nwindow,12,5\nsnowflake,32,20\ncoral,16,5&quot;}),
+&quot;/growth/look_values&quot;: (kind: &quot;chan.from_table&quot;, inputs: {&quot;in&quot;: &quot;look_table&quot;}, binds: {&quot;key&quot;: &quot;parent.look&quot;}),
+&quot;/growth/steps&quot;: (kind: &quot;chan.math&quot;, params: {&quot;op&quot;: &quot;multiply&quot;}, inputs: {&quot;a&quot;: &quot;look_values&quot;}, binds: {&quot;b&quot;: &quot;parent.speed&quot;}),
+&quot;/growth/step&quot;: (kind: &quot;tex.shader&quot;, ..., binds: {&quot;iterations&quot;: &quot;steps:steps&quot;}),
+&quot;/growth/full_hold&quot;: (kind: &quot;chan.clock&quot;, params: {&quot;mode&quot;: &quot;once&quot;}, binds: {&quot;length&quot;: &quot;look_values:hold&quot;}),
+</code></pre>
+<p>The same by command: <a class="ref" href="#node.bind"><code>node.bind {param: &quot;/growth/look_values.key&quot;, from: &quot;parent.look&quot;}</code></a>. Outside a component, bind <code>key</code> to a <a class="ref" href="#chan.dropdown"><code>chan.dropdown</code></a>: a text param bound to a dropdown takes the entry's name.</p>
+</div>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-text-and-choices">Concepts › Text and choices</a></p>
 </div></details>
 <details class="entry node" id="chan.from_tex"><summary><code class="name">chan.from_tex</code><span class="sum">Turns a picture into numbers: its average colour, the sum, smallest or largest value, or how much of it is lit, as channels to drive things with. Also per area</span></summary>
@@ -4535,8 +4561,8 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tbody>
 <tr><td><code>measure</code></td><td>mean | sum | min | max | coverage</td><td><code>&quot;mean&quot;</code></td><td></td><td>What each channel says about the pixels of its area<ul><li><code>mean</code>: the average value</li><li><code>sum</code>: all values added up: in a picture of 0 and 1, the number of pixels that are 1, exact up to 16 million</li><li><code>min</code>: the smallest value</li><li><code>max</code>: the largest value</li><li><code>coverage</code>: the share of pixels above <code>threshold</code>: 0 for none, 1 for all</li></ul></td></tr>
 <tr><td><code>threshold</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1 (soft)</td><td>A pixel counts for coverage when its value is above this</td></tr>
-<tr><td><code>columns</code></td><td>int</td><td><code>1</code></td><td>1 to 256 (soft, held within 1 to 4096)</td><td>Samples per channel: the picture is divided into this many columns</td></tr>
-<tr><td><code>rows</code></td><td>int</td><td><code>1</code></td><td>1 to 64 (soft, held within 1 to 1024)</td><td>Rows the picture is divided into. With more than one row, the channels are numbered by row from the top (r0, r1, ...)</td></tr>
+<tr><td><code>columns</code></td><td>int</td><td><code>1</code></td><td>1 to 256 (soft, held within 1 to 4096)</td><td>Samples of each channel. The picture is cut into this many columns, and each channel gets one sample per column, left to right. A binding reads the last sample: the right-hand column. For a channel per area, use rows</td></tr>
+<tr><td><code>rows</code></td><td>int</td><td><code>1</code></td><td>1 to 64 (soft, held within 1 to 1024)</td><td>Separate channels. The picture is cut into this many rows, and each row gives its own channels, numbered from the top: r0, r1, ... (g0, lum0 likewise). To read several pixels as channels of their own, stack them in one column and set rows to their number</td></tr>
 <tr><td><code>components</code></td><td>rgba | rgb | red | luminance</td><td><code>&quot;rgba&quot;</code></td><td></td><td>Which channels a row gives; values are linear and premultiplied, as the picture holds them<ul><li><code>rgba</code>: r, g, b and a</li><li><code>rgb</code>: r, g and b</li><li><code>red</code>: r only</li><li><code>luminance</code>: lum, the brightness as the eye weighs it (Rec. 709)</li></ul></td></tr>
 </tbody>
 </table>
@@ -4553,7 +4579,14 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>coverage</code></td><td>the share of pixels above <code>threshold</code>, from 0 to 1</td><td>how much of the window is ice, how much of the mask is lit</td></tr>
 </tbody>
 </table>
-<p><code>components</code> picks the channels: <code>r g b a</code>, <code>r g b</code>, <code>r</code>, or <code>lum</code> (brightness as the eye weighs it). With <code>columns</code> and <code>rows</code> above 1 the picture is divided into areas, and each area is measured on its own: a sample per column, a channel per row (<code>r0</code>, <code>r1</code>, ...).</p>
+<p><code>components</code> picks the channels: <code>r g b a</code>, <code>r g b</code>, <code>r</code>, or <code>lum</code> (brightness as the eye weighs it). With <code>columns</code> and <code>rows</code> above 1 the picture is divided into areas, and each area is measured on its own.</p>
+<ul>
+<li><strong><code>rows</code> makes channels.</strong> Each row gives its own channels, numbered from the top: <code>r0</code>, <code>r1</code>, ...
+</li>
+<li><strong><code>columns</code> makes samples.</strong> Each channel gets one sample per column, left to right. A binding reads the last sample, the right-hand column.
+</li>
+</ul>
+<p>So <code>columns</code> 3 and <code>rows</code> 1 gives one <code>r</code> channel of three samples, and a binding sees only the third. To read three pixels as three channels, stack them in one column and set <code>rows</code> to 3.</p>
 <h5 id="chan.from_tex-exact-counts">Exact counts</h5>
 <p>Every pixel counts once, and the sums are added up in 32-bit floats. So the <code>sum</code> of a picture of 0 and 1 is an exact count up to 16 million pixels: 1920 x 1080 is about 2 million. A mean is good to about 7 digits. A <a class="ref" href="#tex.shader"><code>tex.shader</code></a> with <code>format</code> 32f is measured at its full precision.</p>
 <p>A GPU that cannot render 32-bit floats reduces the first 16 x 16 pixels in half floats and adds up the rest on the CPU. Counts of 0 and 1 stay exact there; other sums keep about 3 digits.</p>

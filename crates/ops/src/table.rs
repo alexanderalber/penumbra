@@ -1,6 +1,8 @@
 //! `table` nodes: rows of text cells on the CPU. `table.text` holds its text in a parameter,
 //! `table.file` reads a file off the cook thread and reloads it when it changes on disk.
-//! `chan.from_table` turns a table of numbers into channels, so cells can drive params.
+//! `chan.from_table` turns a table of numbers into channels, so cells can drive params. Its
+//! `key` picks one row by the text in its first cell; bound to a choice, each entry of the
+//! choice reads its own row of numbers in the same frame, with no GPU and no readback.
 
 use std::collections::BTreeSet;
 
@@ -70,7 +72,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             FROM_TABLE,
-            "Turns a table of numbers into channels, so its cells can drive params through bindings",
+            "Turns a table of numbers into channels, so its cells can drive params through bindings. `key` picks one row by its first cell, such as the name of a look",
         )
         .param(
             ParamSpec::choice("layout", &["columns", "rows"])
@@ -79,13 +81,19 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .choice_doc("rows", "each row is a channel, its samples read left to right"),
         )
         .param(ParamSpec::bool("names", true).doc(
-            "On, the first cell of each column (or row) is the channel's name; off, the channels              are called chan0, chan1, ... and every cell is a value. On, a column of words alone (a \
+            "On, the first cell of each column (or row) is the channel's name; off, the channels are called chan0, chan1, ... and every cell is a value. On, a column of words alone (a \
              label per row) makes no channel",
         ))
         .param(ParamSpec::int("row", -1).clamp(-1.0, 1e9).range(-1.0, 20.0).special(-1.0, "all").doc(
             "Only this row, counted from 0 under the names: one value per channel. Bind it to the \
              step of a chan.sequence, and each cue reads its own row of a cue sheet. Past the last \
              row: the last. With layout rows: this column. -1: all",
+        ))
+        .param(ParamSpec::text("key", "").doc(
+            "Only the row whose first cell is this text, case and spaces aside: one value per \
+             channel. Bind it to a choice, such as parent.look inside a component, and each entry \
+             reads its own row in the same frame. A key that no row has gives the first row and a \
+             warning. Empty: row decides. With layout rows: the column whose top cell is the key",
         ))
         .input("in", DataKind::Table)
         .output("out", DataKind::Chan),
@@ -168,10 +176,15 @@ impl Operator for File {
 /// Empty cells and missing cells of a short row are 0; text that is no number is 0 too, with a
 /// warning. Columns (or rows) without a single filled cell are left out, so a trailing comma
 /// makes no channel; so are named ones holding words alone, such as a label per row.
+/// A row is picked by `key` (matched like a choice's entry: trimmed, ASCII case aside) or by
+/// `row`; a missing key falls back to the first row, so a bound param still gets a number.
 struct FromTable;
 
 /// Names a `twice` warning lists before it only counts the rest.
 const SHOWN_TWICE: usize = 8;
+
+/// Keys a warning about a missing key lists before it only counts the rest.
+const SHOWN_KEYS: usize = 8;
 
 impl Operator for FromTable {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
@@ -188,8 +201,17 @@ impl Operator for FromTable {
         };
         let first = usize::from(named);
         let len = cells.saturating_sub(first).max(1);
-        // One sample of each channel, when `row` picks one.
-        let pick = usize::try_from(cx.int("row")?).ok().map(|r| r.min(len - 1));
+        // One sample of each channel, when `key` or `row` picks one.
+        let key = cx.text("key")?.trim();
+        let pick = if key.is_empty() {
+            usize::try_from(cx.int("row")?).ok().map(|r| r.min(len - 1))
+        } else {
+            let found = (first..cells).find(|&k| cell(0, k).0.eq_ignore_ascii_case(key));
+            if found.is_none() {
+                cx.warn(missing_key(key, (first..cells).map(|k| cell(0, k).0), by_rows));
+            }
+            Some(found.map_or(0, |k| k - first))
+        };
         let mut channels: Vec<Channel> = Vec::new();
         let mut names: BTreeSet<String> = BTreeSet::new();
         // The first cell that is no number, and how many there are.
@@ -283,6 +305,22 @@ impl Operator for FromTable {
         let chans = Chans::new(rate, channels)?.with_axis(axis);
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Chan, chans)]))
     }
+}
+
+/// The warning for a `key` that no row (or column) of the table starts with: the keys it has,
+/// the first few of them, and what applies instead.
+fn missing_key<'a>(key: &str, keys: impl Iterator<Item = &'a str>, by_rows: bool) -> String {
+    let keys: Vec<&str> = keys.filter(|k| !k.is_empty()).collect();
+    let what = if by_rows { "column" } else { "row" };
+    let has = match keys.len() {
+        0 => format!("the table has no {what}s"),
+        n if n <= SHOWN_KEYS => format!("its keys: {}", keys.join(", ")),
+        n => {
+            let shown: Vec<&str> = keys.iter().take(SHOWN_KEYS).copied().collect();
+            format!("its keys: {} and {} more", shown.join(", "), n - SHOWN_KEYS)
+        }
+    };
+    format!("no {what} has the key `{}`, so the first {what} applies; {has}", short(key))
 }
 
 /// A channel name made from a header cell: characters a name cannot hold become `_`, a leading
@@ -501,5 +539,45 @@ mod tests {
         assert_eq!(c.get("cue").unwrap().samples, [3.0]);
         let (c, _) = from_table("a,1,2\nb,3,4", &[set("/c.layout", "rows"), set("/c.row", 0)]);
         assert_eq!(c.get("b").unwrap().samples, [3.0], "with layout rows: a column");
+    }
+
+    #[test]
+    fn a_key_picks_the_row_whose_first_cell_it_is() {
+        let looks = "look,steps,full\nwindow,12,1\nsnowflake,32,0.49\ncoral,16,0.16";
+        let (c, warning) = from_table(looks, &[set("/c.key", " SNOWFLAKE ")]);
+        assert_eq!(names(&c), ["steps", "full"], "the column of keys makes no channel");
+        assert_eq!(c.get("steps").unwrap().samples, [32.0]);
+        assert_eq!(c.value(Some("full")), Some(0.49));
+        assert_eq!(c.axis(), SampleAxis::Time);
+        assert_eq!(warning, None);
+        // The key wins over row; an empty key leaves the choice to row.
+        let (c, _) = from_table(looks, &[set("/c.key", "coral"), set("/c.row", 0)]);
+        assert_eq!(c.value(Some("steps")), Some(16.0));
+        let (c, _) = from_table(looks, &[set("/c.key", ""), set("/c.row", 0)]);
+        assert_eq!(c.value(Some("steps")), Some(12.0));
+
+        // A key no row has: the first row, and a warning that lists the keys.
+        let (c, warning) = from_table(looks, &[set("/c.key", "custom")]);
+        assert_eq!(c.get("steps").unwrap().samples, [12.0]);
+        assert_eq!(
+            warning.as_deref(),
+            Some("no row has the key `custom`, so the first row applies; its keys: window, snowflake, coral")
+        );
+        let many: String = (0..12).map(|i| format!("k{i},{i}\n")).collect();
+        let (c, warning) = from_table(&format!("key,v\n{many}"), &[set("/c.key", "nope")]);
+        assert_eq!(c.value(Some("v")), Some(0.0));
+        assert!(warning.unwrap().ends_with("k6, k7 and 4 more"));
+        let (c, warning) = from_table("look,steps", &[set("/c.key", "a")]);
+        assert_eq!(c.value(Some("steps")), Some(0.0));
+        assert!(warning.unwrap().contains("the table has no rows"));
+
+        // Without names every row counts; with layout rows the key names a column.
+        let (c, _) = from_table("a,1\nb,2", &[set("/c.names", false), set("/c.key", "b")]);
+        assert_eq!(c.value(Some("chan1")), Some(2.0));
+        let (c, warning) =
+            from_table("look,window,fern\nsteps,12,32", &[set("/c.layout", "rows"), set("/c.key", "fern")]);
+        assert_eq!(names(&c), ["steps"]);
+        assert_eq!(c.value(Some("steps")), Some(32.0));
+        assert_eq!(warning, None);
     }
 }

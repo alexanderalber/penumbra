@@ -115,13 +115,13 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::int("columns", 1)
                 .clamp(1.0, 4096.0)
                 .range(1.0, 256.0)
-                .doc("Samples per channel: the picture is divided into this many columns"),
+                .doc("Samples of each channel. The picture is cut into this many columns, and each channel gets one sample per column, left to right. A binding reads the last sample: the right-hand column. For a channel per area, use rows"),
         )
         .param(
             ParamSpec::int("rows", 1)
                 .clamp(1.0, 1024.0)
                 .range(1.0, 64.0)
-                .doc("Rows the picture is divided into. With more than one row, the channels are numbered by row from the top (r0, r1, ...)"),
+                .doc("Separate channels. The picture is cut into this many rows, and each row gives its own channels, numbered from the top: r0, r1, ... (g0, lum0 likewise). To read several pixels as channels of their own, stack them in one column and set rows to their number"),
         )
         .param(
             ParamSpec::choice("components", &["rgba", "rgb", "red", "luminance"])

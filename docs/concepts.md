@@ -282,6 +282,11 @@ then its cells. Dropping a chan wire on the row binds the whole param.
 - **A row per cue.** A cell binding names a fixed cell. For a value that changes with the cue,
   bind the `row` of a `chan.from_table` to a `chan.sequence`'s `step`: its channels then hold
   that row's numbers, which a format turns into text.
+- **A row per entry of a choice.** Bind the `key` of a `chan.from_table` to the choice, for
+  example `parent.look`. Its channels then hold the numbers of the row whose first cell is the
+  entry's name, in the same frame. A param that only takes a number, such as `iterations`,
+  binds to one of those channels. Lines to copy are on the
+  [chan.from_table](reference/nodes.md#chanfrom_table) page.
 - **A channel into a choice** picks the entry by its place: 0 is the first, rounded, held at
   the first and the last.
 - **A `chan.dropdown` into a text or a choice** gives the name of its entry. A choice takes its

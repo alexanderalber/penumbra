@@ -145,3 +145,58 @@ fn an_inner_param_goes_onto_its_component_by_one_command() {
     let e = f.fail("comp.put_param", json!({"param": "/rd/n.op"}));
     assert!(e.contains("is bound to /top; unbind it first"), "{e}");
 }
+
+#[test]
+fn a_table_row_follows_a_components_choice_by_name_in_the_same_cook() {
+    let f = Fixture::new("follow_table_key");
+    let text = "@param look choice(window|fern|coral|custom) = window -- what grows\n\
+                @param speed float = 1 0..4";
+    f.call("node.create", json!({"path": "/g", "kind": "comp.base", "params": {"params": text}}));
+    // Rows in another order than the choice's entries, and `custom` missing.
+    let table = "look,steps,hold\ncoral,16,5\nwindow,12,5\n Fern ,32,20";
+    let params = json!({"text": table, "format": "csv"});
+    f.call("node.create", json!({"path": "/g/table", "kind": "table.text", "params": params}));
+    f.call("node.create", json!({"path": "/g/numbers", "kind": "chan.from_table"}));
+    f.call("node.connect", json!({"from": "/g/table", "to": "/g/numbers"}));
+    f.call("node.bind", json!({"param": "/g/numbers.key", "from": "parent.look"}));
+    f.call("node.create", json!({"path": "/g/steps", "kind": "chan.math", "params": {"op": "multiply"}}));
+    f.call("node.connect", json!({"from": "/g/numbers", "to": "/g/steps"}));
+    f.call("node.bind", json!({"param": "/g/steps.b", "from": "parent.speed"}));
+    f.call("node.create", json!({"path": "/g/hold", "kind": "chan.clock", "params": {"mode": "once"}}));
+    f.call("node.bind", json!({"param": "/g/hold.length", "from": "/g/numbers", "channel": "hold"}));
+    f.call("node.create", json!({"path": "/g/n", "kind": "chan.constant"}));
+    f.call("node.bind", json!({"param": "/g/n.value0", "from": "/g/steps", "channel": "steps"}));
+
+    // Channels named by the header; the column of keys makes none.
+    let read = f.call("chan.read", json!({"path": "/g/numbers"}));
+    let names: Vec<&str> =
+        read["channels"].as_array().unwrap().iter().filter_map(|c| c["name"].as_str()).collect();
+    assert_eq!(names, ["steps", "hold"], "{read}");
+    assert_eq!(bound(&f, "/g/n", "value0"), 12.0);
+    assert_eq!(bound(&f, "/g/hold", "length"), 5.0);
+
+    // One set, one cook: the row of the new entry, by name, already scaled.
+    f.call("node.set", json!({"path": "/g", "params": {"look": "fern", "speed": 2.0}}));
+    assert_eq!(bound(&f, "/g/n", "value0"), 64.0, "the new row in the same cook");
+    assert_eq!(bound(&f, "/g/hold", "length"), 20.0, "a key matches case and spaces aside");
+    assert_eq!(warning(&f, "/g/numbers"), "");
+
+    // A missing row: the first row and a warning naming the keys there are.
+    f.call("node.set", json!({"path": "/g", "params": {"look": "custom", "speed": 1.0}}));
+    assert_eq!(bound(&f, "/g/n", "value0"), 16.0, "the first row");
+    let w = warning(&f, "/g/numbers");
+    assert_eq!(w, "no row has the key `custom`, so the first row applies; its keys: coral, window, Fern");
+
+    // An entry from outside the component: a dropdown bound to the component's choice.
+    f.call(
+        "node.create",
+        json!({"path": "/d", "kind": "chan.dropdown", "params": {"entries": "coral\nwindow"}}),
+    );
+    f.call("node.bind", json!({"param": "/g.look", "from": "/d"}));
+    f.call("chan.pick", json!({"path": "/d", "entry": "window"}));
+    assert_eq!(bound(&f, "/g/n", "value0"), 12.0);
+    assert_eq!(warning(&f, "/g/numbers"), "");
+
+    // The file keeps the key as an ordinary follower.
+    eventually("autosave", || f.file().contains(r#"binds: {"key": "parent.look"}"#));
+}
