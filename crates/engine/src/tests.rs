@@ -1353,6 +1353,9 @@ mod dropdown_tests;
 #[path = "restart_tests.rs"]
 mod restart_tests;
 
+#[path = "preset_tests.rs"]
+mod preset_tests;
+
 #[path = "mouse_tests.rs"]
 mod mouse_tests;
 

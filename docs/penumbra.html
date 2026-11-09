@@ -532,6 +532,8 @@ water      15
 </li>
 <li><strong>Starting over:</strong> a component's <code>reset</code> starts every node inside that remembers earlier frames over (feedback loops, simulations, trails, clocks), in each frame while it is on. Bind it to a key, such as a <a class="ref" href="#chan.keyboard_in"><code>chan.keyboard_in</code></a>'s <code>key_0</code>, and the key restarts the simulation; TouchDesigner users know this as a pulse parameter. A line <code>@reset preset seed</code> in the text starts the component over once when one of these params changes, by hand, by undo or through a binding. The new start uses the new value in the same frame. The <code>reset</code> button in the panel's header restarts once. More in <a href="#comp.base">comp.base</a>.
 </li>
+<li><strong>Presets:</strong> <code>@preset preset=maze feed=0.029 kill=0.057</code> lines give the values that choosing an entry of a choice writes into the params. A <code>preset=*</code> line lists the params the presets write and the value every entry starts from. Choosing writes in the same edit, so one undo takes it back. Afterwards the values are ordinary values: tune them, and they are saved. Opening a project writes nothing. More in <a href="#comp.base">comp.base</a>.
+</li>
 <li><strong>Mistakes in the text:</strong> a line that declares nothing shows right below the text, with its line number and the reason. The other lines still work. A name may be declared once, and not as one of the component's own built-in params (<code>params</code>, <code>shelf</code>, <code>about</code>, <code>reset</code>).
 </li>
 <li><strong>Rename:</strong> renaming a node (the name field at the top of the param panel, or <a class="ref" href="#node.rename"><code>node.rename</code></a>) also rewrites the <code>@expose</code> lines and node references (<a class="ref" href="#tex.select"><code>tex.select</code></a>'s <code>node</code>) that name it or a node inside it. One undo takes all of it back. Wires and bindings follow a rename by themselves. Params that name a node in plain text, such as <a class="ref" href="#tex.scan"><code>tex.scan</code></a>'s <code>projector</code>, keep the old name: fix them by hand.
@@ -6389,7 +6391,7 @@ def cook(cx):
 <tbody>
 <tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>While on, every node inside that remembers earlier frames starts over in each frame: feedback loops, simulations, trails, clocks. A held key keeps them at the start; they run again on release. Bind it to a key (a chan.keyboard_in's <code>key_0</code>) or to any channel, like a pulse. The <code>reset</code> button in the panel's header starts them over once</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
-<tr><td><code>params</code></td><td>text</td><td></td><td></td><td>The component's own params, one per line. <code>@param speed float = 1 0..4 -- doc</code> adds a param with its own value, in the grammar of a shader header. <code>@expose rate = lfo1.rate</code> shows an inner param on the component. <code>@group look</code> puts the params after it in a fold. <code>@reset preset seed</code> starts the component over when one of these params changes. The panel shows this text in the fold <code>edit params</code> under the component's rows</td></tr>
+<tr><td><code>params</code></td><td>text</td><td></td><td></td><td>The component's own params, one per line. <code>@param speed float = 1 0..4 -- doc</code> adds a param with its own value, in the grammar of a shader header. <code>@expose rate = lfo1.rate</code> shows an inner param on the component. <code>@group look</code> puts the params after it in a fold. <code>@reset preset seed</code> starts the component over when one of these params changes. <code>@preset preset=maze feed=0.029</code> gives the values that choosing <code>maze</code> writes; a <code>preset=*</code> line lists the params presets write, with the value every entry starts from. The panel shows this text in the fold <code>edit params</code> under the component's rows</td></tr>
 <tr><td><code>shelf</code></td><td>text</td><td></td><td></td><td>Where this component stands in the add dialog's library tab: one or two levels, <code>dmx</code> or <code>dmx/safety</code>. Empty: only your own components' shelf <code>mine</code> shows it</td></tr>
 <tr><td><code>about</code></td><td>text</td><td></td><td></td><td>One line on what this component does. The add dialog shows it under the pointer, and its search finds it</td></tr>
 </tbody>
@@ -6437,6 +6439,8 @@ def cook(cx):
 </li>
 <li><strong><code>@reset</code></strong> names params whose change starts the component over: <code>@reset preset seed width height</code>. More under &quot;Starting over&quot; below.
 </li>
+<li><strong><code>@preset</code></strong> gives the values that choosing an entry of a choice writes: <code>@preset preset=maze feed=0.029 kill=0.057</code>. More under &quot;Presets&quot; below.
+</li>
 <li><strong>Comments:</strong> lines starting with <code>#</code>, and <code>//</code> lines without an <code>@</code>.
 </li>
 <li><strong>Mistakes:</strong> a line that declares nothing is listed right below the text with its line number and the reason; the rest still works. Each name may appear once. <code>params</code>, <code>shelf</code>, <code>about</code> and <code>reset</code> are taken.
@@ -6446,6 +6450,35 @@ def cook(cx):
 <h5 id="comp.base-inner-nodes-follow">Inner nodes follow</h5>
 <p>Bind an inner param to the component's param: <a class="ref" href="#node.bind"><code>node.bind {param: &quot;/rd/step.preset&quot;, from: &quot;parent.preset&quot;}</code></a>, written <code>binds: {&quot;preset&quot;: &quot;parent.preset&quot;}</code> in the file. <code>parent</code> is the component the node sits in, whatever it is called, so a copy from the library follows its own component. The follower's row shows <code>parent.preset</code>; a click on it goes to the component. When a follower cannot take a value (a choice it lacks), the component's panel lists the warning at the top. Every follower takes the new value in the same frame, also when the component's param is bound to a dropdown or an LFO outside.</p>
 <p>More in the Components section of the concepts guide.</p>
+<h5 id="comp.base-presets">Presets</h5>
+<p>A preset is a set of values for some of the component's params, chosen by its name in a choice. Choosing an entry writes its values into the params. After that the values are yours: tune a slider, and the tuned value is saved with the project. TouchDesigner's palette has the presetManager for this job.</p>
+<pre><code class="lang-text">@param preset choice(coral|maze) = coral -- the pattern
+@param speed float = 1 0..4
+@expose feed = step.feed
+@expose kill = step.kill
+@preset preset=* feed=0.0545 kill=0.062
+@preset preset=maze feed=0.029 kill=0.057 -- a labyrinth
+</code></pre>
+<ul>
+<li><strong>The <code>*</code> line</strong> lists the params the presets write, each with the value every entry starts from. Choosing <code>maze</code> writes the <code>*</code> values, then maze's own. A preset never writes a param on no <code>*</code> line: <code>speed</code> above stays where you put it.
+</li>
+<li><strong>Entry lines</strong> give one entry's own values. Several lines for one entry add up. The text after <code>--</code> describes the entry.
+</li>
+<li><strong>Values</strong> read like an <code>@param</code> default: <code>0.03</code>, <code>true</code>, <code>[1, 0.5, 0, 1]</code>, an entry of a choice by name, a palette by name or colours. A preset may write <code>@param</code> and <code>@expose</code> names.
+</li>
+<li><strong>Choosing</strong> writes the values in the same edit, and one undo takes all of them back. This holds for the panel, <a class="ref" href="#node.set"><code>node.set</code></a>, <a class="ref" href="#node.batch"><code>node.batch</code></a> and OSC. Choosing the entry that is chosen already writes its values again: back to the preset. Opening a project writes nothing, and neither does a hand edit of <code>project.ron</code>. A binding on the choice writes nothing yet.
+</li>
+<li><strong><a class="ref" href="#node.set"><code>node.set</code></a> with several names</strong> sets the choice first: <a class="ref" href="#node.set"><code>node.set {path: &quot;/rd&quot;, params: {preset: &quot;maze&quot;, feed: 0.03}}</code></a> gives maze with <code>feed</code> at 0.03.
+</li>
+<li><strong>Reset</strong> of a param a preset writes goes to the chosen entry's value: the row's reset button, or <code>null</code> in <a class="ref" href="#node.set"><code>node.set</code></a>.
+</li>
+<li><strong>A second choice with presets:</strong> <code>outside</code> may have its own <code>@preset outside=* ...</code> lines. The main presets may write <code>outside</code>, and the values of the entry they pick follow. This reaches one level: the presets of <code>outside</code> cannot write a third choice that has presets.
+</li>
+<li><strong>Mistakes</strong> cost their line or their value and show below the text. Examples: an entry the choice lacks, a name on an entry line but on no <code>*</code> line, a name given twice, a value its <code>@param</code> does not take, a param that the presets of two choices write. An inner param may refuse a value when the entry is chosen. That value is skipped, and the edit's reply names it under <code>left_out</code>.
+</li>
+<li><strong><a class="ref" href="#node.info"><code>node.info</code></a></strong> lists <code>component.presets</code>: the entries, the params the presets own (<code>owns</code>), the chosen entry, <code>changed</code> (owned params whose value differs from the chosen entry's) and <code>problems</code> (values an inner param would refuse now).
+</li>
+</ul>
 <h5 id="comp.base-starting-over">Starting over</h5>
 <p>A simulation inside a component keeps its last frame in a feedback loop. A new preset then works on the old picture. Two things start the loop over from its seed:</p>
 <ul>
@@ -7301,9 +7334,9 @@ node.bind {param: &quot;/sim.reset&quot;, from: &quot;/keys&quot;, channel: &quo
 <p>Start stateful nodes over (feedback, cache, time machine, tracker, filter...). A component resets the stateful nodes inside; locked nodes keep their outputs; {paths} or {path}</p>
 <p class="mentions">Mentioned in: <a href="#concepts-time">Concepts › Time</a>, <a href="#helpers-state">The Helpers window › State</a>, <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a></p>
 </div></details>
-<details class="entry command" id="node.set"><summary><code class="name">node.set</code><span class="sum">Set params, null resets to the default</span></summary>
+<details class="entry command" id="node.set"><summary><code class="name">node.set</code><span class="sum">Set params, null resets to the default (for a param presets write: the chosen preset's value); a choice with presets is set first and writes its values</span></summary>
 <div class="body">
-<p>Set params, null resets to the default; {path, params: {name: value}}</p>
+<p>Set params, null resets to the default (for a param presets write: the chosen preset's value); a choice with presets is set first and writes its values; {path, params: {name: value}}</p>
 <p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#concepts-buttons-sliders-and-dropdowns-on-the-node">Concepts › Buttons, sliders and dropdowns on the node</a>, <a href="#concepts-components">Concepts › Components</a>, <a href="#mapping-without-camera-from-the-control-channel">Mapping without a camera › From the control channel</a>, <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
 <details class="entry command" id="node.snapshot"><summary><code class="name">node.snapshot</code><span class="sum">Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB)</span></summary>

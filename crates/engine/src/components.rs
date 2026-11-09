@@ -793,11 +793,68 @@ pub fn info(e: &Engine, net: &Network, id: NodeId) -> Option<Json> {
         .into_iter()
         .map(|(n, w)| json!({"node": net.path_of(n), "warning": w}))
         .collect();
+    let presets: Vec<Json> = net
+        .preset_status(types, id, |t| {
+            let nid = net.resolve(t.node())?;
+            declared(e, net.node(nid)?, nid, t.param().as_str())
+        })
+        .into_iter()
+        .map(|p| {
+            let entries: Vec<Json> =
+                p.entries
+                    .iter()
+                    .map(|(name, doc)| {
+                        if doc.is_empty() { json!({"name": name}) } else { json!({"name": name, "doc": doc}) }
+                    })
+                    .collect();
+            json!({
+                "choice": p.choice,
+                "chosen": p.chosen,
+                "entries": entries,
+                "owns": p.owns,
+                "changed": p.changed,
+                "problems": p.problems,
+            })
+        })
+        .collect();
     Some(json!({
         "inputs": ins.into_iter().filter_map(port).collect::<Vec<_>>(),
         "outputs": outs.into_iter().filter_map(port).collect::<Vec<_>>(),
         "exposed": exposed,
         "errors": errors,
         "follower_warnings": followers,
+        "presets": presets,
     }))
+}
+
+/// For `node.set` on component `path`: the place of each name among the ones set, when the
+/// component has presets. The `params` text comes first (it says what the presets are, and the
+/// new text counts when it is set too), then choices with presets that no other preset sets,
+/// then the choices those set, then the rest.
+pub fn set_order(
+    e: &Engine,
+    net: &Network,
+    path: &NodePath,
+    params: &[(penumbra_core::Name, Option<penumbra_core::Value>)],
+) -> Option<impl Fn(&str) -> u8 + use<>> {
+    let types = e.types();
+    let node = net.node(net.resolve(path)?)?;
+    let desc = types.desc(&node.kind)?;
+    let mut own = node.params.clone();
+    if let Some((name, Some(text))) = params.iter().find(|(n, _)| n.as_str() == penumbra_graph::PARAMS) {
+        own.insert(name.clone(), text.clone());
+    }
+    let declared = penumbra_graph::declared_in(desc, &own)?;
+    if declared.presets.is_empty() {
+        return None;
+    }
+    Some(move |name: &str| {
+        if name == penumbra_graph::PARAMS {
+            0
+        } else if declared.presets_of(name).is_some() {
+            if declared.owner(name).is_some() { 2 } else { 1 }
+        } else {
+            3
+        }
+    })
 }

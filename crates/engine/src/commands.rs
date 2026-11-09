@@ -91,7 +91,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "Rename a node; the @expose lines and node references that name it follow, in the same undo step; {path, name}",
         node_rename,
     );
-    add("node.set", "Set params, null resets to the default; {path, params: {name: value}}", node_set);
+    add(
+        "node.set",
+        "Set params, null resets to the default (for a param presets write: the chosen preset's value); a choice with presets is set first and writes its values; {path, params: {name: value}}",
+        node_set,
+    );
     add(
         "node.connect",
         "Connect an output to an input; without input: the first of its kind, or the next free one of a run (a composite's layers); {from, output?, to, input?}",
@@ -719,7 +723,14 @@ pub fn outcome(out: &EditOutcome) -> Json {
         Recorded::NoChange => "no_change",
     };
     let created: Vec<Json> = out.created.iter().map(|id| json!(out.snapshot.path_of(*id))).collect();
-    json!({"history": recorded, "created": created})
+    let mut reply = json!({"history": recorded, "created": created});
+    // What went in without its whole batch: a preset value that did not fit, for one.
+    if !out.left_out.is_empty()
+        && let Some(map) = reply.as_object_mut()
+    {
+        map.insert("left_out".into(), json!(out.left_out));
+    }
+    reply
 }
 
 /// `kind`, or the kind it is now when it is an old name ([`penumbra_graph::NodeTypes::renamed_kind`]),
@@ -801,8 +812,14 @@ fn node_set(e: &Engine, p: &Json) -> Result<Json> {
         params: BTreeMap<Name, Option<Value>>,
     }
     let a: A = args(p)?;
-    let ops = a
-        .params
+    let mut params: Vec<(Name, Option<Value>)> = a.params.into_iter().collect();
+    // A choice with presets writes its values, so it goes first and the other names land on
+    // top of them: `{preset: maze, feed: 0.03}` is maze with feed 0.03.
+    let net = e.session().doc().snapshot();
+    if let Some(rank) = crate::components::set_order(e, &net, &a.path, &params) {
+        params.sort_by_key(|(name, _)| rank(name.as_str()));
+    }
+    let ops = params
         .into_iter()
         .map(|(name, value)| {
             let param = ParamPath::new(a.path.clone(), name)?;

@@ -336,8 +336,9 @@ pub struct Applied {
     pub created: Vec<NodeId>,
     /// Every node the batch created, changed or deleted (for the change log).
     pub touched: BTreeSet<NodeId>,
-    /// Ops of the project file left out instead of failing the batch, each with the reason
-    /// ([`Params::Keep`] only): a binding that would make a loop.
+    /// What the batch left out instead of failing, each with the reason: from the project file
+    /// ([`Params::Keep`]) a binding that would make a loop; in an interactive edit a value of a
+    /// preset that does not go in ([`crate::preset`]).
     pub left_out: Vec<String>,
     params: Params,
 }
@@ -746,7 +747,12 @@ impl Network {
             params,
         };
         for (i, op) in ops.iter().enumerate() {
-            work.apply_one(types, op).map_err(|e| e.context(format!("op {i} ({})", op.label())))?;
+            let done = match params {
+                // Interactive edits: choosing a preset writes its values ([`crate::preset`]).
+                Params::Strict => work.apply_interactive(types, op),
+                Params::Keep => work.apply_one(types, op),
+            };
+            done.map_err(|e| e.context(format!("op {i} ({})", op.label())))?;
         }
         Ok(work)
     }
@@ -816,7 +822,7 @@ impl Applied {
         self.params == Params::Keep && self.network.nodes.get(&id).is_some_and(|n| broken::is_broken(n))
     }
 
-    fn apply_one(&mut self, types: &NodeTypes, op: &Op) -> Result<(), Error> {
+    pub(crate) fn apply_one(&mut self, types: &NodeTypes, op: &Op) -> Result<(), Error> {
         // An exposed param of a component acts on the inner param it stands for.
         let aliased = match op {
             Op::Set { param, value } => {

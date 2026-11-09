@@ -15,6 +15,7 @@ pub mod history;
 pub mod job;
 pub mod network;
 pub mod node;
+pub mod preset;
 pub mod rename;
 pub mod replace;
 pub mod watch;
@@ -40,6 +41,7 @@ pub use node::{
     ListedInput, MAX_RUN, NodeDesc, NodeType, NodeTypes, Operator, PortRole, Search, StateItem, WarmUp,
     name_found, reads, search_form,
 };
+pub use preset::PresetStatus;
 pub use rename::rename;
 pub use replace::{Replacement, replace};
 pub use watch::FileWatch;
