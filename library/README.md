@@ -14,6 +14,7 @@ stage at 20 s into `examples/beat-grid/music.wav`, with `warmth` at 1.
 ## Using one
 
 - **Add it:** the add dialog's `library` tab shows them shelf by shelf. Typing searches all shelves.
+  `mapped_camera` is in the `mapping` tab instead.
   Over the control channel: `comp.load {"file": "<name>"}`. Adding copies the component's own files (shaders, textures)
   into the project's `library/<name>/`, where its nodes look for them, so the project keeps
   working without penumbra's folder and can change its copies. A file the project already has is
@@ -34,7 +35,10 @@ stage at 20 s into `examples/beat-grid/music.wav`, with `warmth` at 1.
 
 A new component in this folder needs two params on its `comp.base`. `shelf` names its shelf, in
 one or two levels. `about` says in one line what it does. No shelf may hold more than 15 components,
-because a test counts them: a fuller shelf gets split.
+because a test counts them: a fuller shelf gets split. A shelf whose first level is `mapping` or
+`simulations` sends the component to the add dialog's tab of that name, beside the node types
+there, instead of the `library` tab. Name the TouchDesigner tool it replaces in its `about` line,
+so the search finds it by that name.
 
 ### The pictures they take
 
@@ -83,6 +87,8 @@ each pixel is than around it, not the photo.
 - In: `photo`, `labels`. Out: `fine`, `wide`. Params: `fine_size` (3), `wide_size` (24) in pixels.
 
 ## Cameras
+
+In the add dialog's `mapping` tab (shelf `mapping`).
 
 ### mapped_camera
 

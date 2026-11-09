@@ -14,6 +14,10 @@ Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#g
 
 *scan and shapes:* [tex.blend_weight](#texblend_weight), [tex.face_content](#texface_content), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes)
 
+*in the add dialog's `mapping` tab:* [tex.blend_weight](#texblend_weight), [tex.face_content](#texface_content), [tex.mapper](#texmapper), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes)
+
+*in the add dialog's `simulations` tab:* [tex.fluid](#texfluid), [tex.render_volume](#texrender_volume)
+
 ### tex.blend_weight
 
 A projector's picture weighted for a blend: all of it by the blend weight, or the small features from one projector only
@@ -2371,6 +2375,8 @@ Outputs: `out` (mat).
 
 [light.ambient](#lightambient), [light.directional](#lightdirectional), [light.environment](#lightenvironment), [light.merge](#lightmerge), [light.null](#lightnull), [light.point](#lightpoint), [light.projector](#lightprojector), [light.spot](#lightspot)
 
+*in the add dialog's `mapping` tab:* [light.projector](#lightprojector)
+
 ### light.ambient
 
 Even light from every side, also on surfaces that face away: lifts the shadows
@@ -2532,6 +2538,8 @@ Outputs: `out` (view).
 
 [vol.emitter](#volemitter), [vol.null](#volnull), [vol.obstacle](#volobstacle), [vol.smoke](#volsmoke)
 
+*in the add dialog's `simulations` tab:* [vol.emitter](#volemitter), [vol.null](#volnull), [vol.obstacle](#volobstacle), [vol.smoke](#volsmoke)
+
 ### vol.emitter
 
 An emitter for vol.smoke: a place in the box that blows smoke, heat and fuel in
@@ -2664,6 +2672,8 @@ Outputs:
 ## out
 
 [out.audio](#outaudio), [out.audio_file](#outaudio_file), [out.data](#outdata), [out.dmx](#outdmx), [out.mesh](#outmesh), [out.midi](#outmidi), [out.ndi](#outndi), [out.osc](#outosc), [out.projector](#outprojector), [out.spout](#outspout), [out.table](#outtable), [out.video](#outvideo)
+
+*in the add dialog's `mapping` tab:* [out.projector](#outprojector)
 
 ### out.audio
 

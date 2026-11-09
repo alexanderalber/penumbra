@@ -686,7 +686,10 @@ first output of the kind it reads.
   `about` param says in one line what it does: the foot of the tab shows that line under the
   pointer, with `preview.png` from the component's folder if there is one. Typing searches all
   shelves, in the names, the shelves and the `about` lines. The shelf `mine` holds all your own
-  components and the project's, also those that have a shelf of their own. Their place is at
+  components and the project's, also those that have a shelf of their own. A shelf whose
+  first level is `mapping` or `simulations` puts the component into the add dialog's tab of
+  that name instead, beside the node types there (`mapping/warps` goes there too): it is then
+  on no shelf of the `library` tab, not even `mine`. Their place is at
   the right of the entry. Adding one adds a copy. The cross beside a user's library entry moves its file into a
   `removed/` folder beside it; penumbra's own cannot be removed.
 

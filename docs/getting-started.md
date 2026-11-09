@@ -100,13 +100,16 @@ it.
 
 1. **Add a node:** press Tab, or double-click on empty canvas. The add dialog has a tab per
    family; small families share one: `rendering` holds the 3D ones, `system` the scripts,
-   outputs and components. Tab cycles the tabs; while you type, it skips tabs without a match.
+   components and notes. Two tabs hold a topic instead of a family. `mapping` has what setting
+   up projectors needs: `out.projector`, `tex.mapper`, the scan and its shapes, the projector of
+   a 3D scene. `simulations` has `tex.fluid` and the smoke of `vol.smoke`. Each type is in one
+   tab only, so `tex.scan` is under `mapping`, not `tex`. Tab cycles the tabs; while you type, it
+   skips tabs without a match, so the search finds a type from any tab.
    Typing greys out the types that do not match, Enter takes the type named exactly as typed,
    else the first match; a click takes any. A TouchDesigner name works with its family word:
    `noise top` opens `tex` on `noise`. Try `tex` > `noise`. The everyday types come first in each tab. Live inputs
-   (cameras, NDI, OSC, the keyboard and the like) stand apart under "inputs", the scan's own
-   nodes under "scan and shapes" at the end of `tex`. Ready-made effects are in the `library`
-   tab.
+   (cameras, NDI, OSC, the keyboard and the like) stand apart under "inputs". Ready-made effects
+   are in the `library` tab.
 2. **Add a second one fed from the first:** with exactly one node selected, a new node is
    wired to it and placed to its right. Select the noise, add `tex` > `level`.
 3. **Wire by hand:** drag from an output (right edge of a node) to an input (left edge). Drag

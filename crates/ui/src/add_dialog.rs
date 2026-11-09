@@ -1,19 +1,24 @@
-//! The "add node" dialog, after TouchDesigner's OP Create Dialog: a search field on top, a tab
-//! per group of node families below it, all types of the active group in columns (each family
-//! from a new column in its colour, alphabetical, top to bottom, then the next column), and the
-//! summary of the type under the pointer at the bottom. Small families share a tab (nine tabs
+//! The "add node" dialog, after TouchDesigner's OP Create Dialog: a search field on top, a row
+//! of tabs below it, all types of the active tab in columns (each family from a new column in
+//! its colour, alphabetical, top to bottom, then the next column), and the summary of the type
+//! under the pointer at the bottom. Most tabs hold one family or a few small ones (nine tabs
 //! were too many); the colours tell them apart, and a heading over each family's columns says
 //! what it holds, since the colours alone left one guessing which block was which.
 //!
+//! Two tabs hold a topic instead, `mapping` and `simulations` ([`TOPICS`]): node types of any
+//! family that serve it, and the component files whose `shelf` names it. Each type has one tab:
+//! a type a topic takes is not in its family's tab, so `tex.scan` is under `mapping` and
+//! nowhere else. The search finds it from every tab.
+//!
 //! Within a family the common types come first, the family's component ports after them behind a
-//! line. The live inputs (`in`) and, in `tex`, the scan workflow (`scan and shapes`) follow in
-//! columns of their own under a heading ([`penumbra_graph::Block`]), so the types placed by hand
-//! every day are not spread out between them. The content library has a tab of its own,
-//! `library`, in the components' colour. It shows one shelf at a time, because nobody reads
-//! through dozens of names. The shelves come from the components' own `shelf` param, one or two
-//! levels; this file knows no topic. The user's and the project's components are all on `mine`
-//! as well. Under the pointer the foot of the tab shows the component's `about` line and its
-//! picture, if it has one.
+//! line. The live inputs (`in`) and the scan workflow (`scan and shapes`) follow in columns of
+//! their own under a heading ([`penumbra_graph::Block`]), so the types placed by hand every day
+//! are not spread out between them. The content library has a tab of its own, `library`, in the
+//! components' colour. It shows one shelf at a time, because nobody reads through dozens of
+//! names. The shelves come from the components' own `shelf` param, one or two levels; a first
+//! level that names a topic sends the component to that topic's tab instead. The user's and the
+//! project's components are all on `mine` as well. Under the pointer the foot of the tab shows
+//! the component's `about` line and its picture, if it has one.
 //!
 //! Typing does not hide types: those whose name does not contain the text are greyed out, so
 //! the grid keeps its shape and the eye its places. Spaces, underscores and dots do not count.
@@ -27,9 +32,11 @@
 //! name, then one found by a tag. Tab switches to the next tab, Shift+Tab to the one before;
 //! while searching, both pass over tabs without a match. A TouchDesigner family word in the
 //! text (`noise top`, `lfo chop`) searches that family alone for the rest of the text, when the
-//! whole text finds nothing, and opens its tab. Otherwise the dialog never switches the tab by
-//! itself. Escape or a click outside closes. Opened by double-click on empty canvas or Tab in
-//! the editor, and by "Replace node..." in the node menu, where choosing replaces that node.
+//! whole text finds nothing, and opens the first tab with a match in it: the family's own tab
+//! when it has one, else a topic's. Otherwise the dialog never switches the tab by itself.
+//! Escape or a click outside closes. Opened by double-click on empty canvas or Tab in the
+//! editor, on the tab of the selected node's type, and by "Replace node..." in the node menu,
+//! where choosing replaces that node.
 //!
 //! The component ports (`tex.in`, `chan.out`, ...) are greyed out and cannot be chosen at the
 //! top level of the project: there they have no component whose sockets they would be.
@@ -46,16 +53,45 @@ use penumbra_graph::{Block, NodeTypes};
 use crate::icons::{self, Icon};
 use crate::{automation, theme};
 
-/// Families always offered, by tab and in this order, even before they have node types; others
-/// found in the registry follow alphabetically, one tab each.
+/// Families always offered, by tab and in this order, even before they have node types; the
+/// tabs by topic follow, then `library`, then other families found in the registry,
+/// alphabetically, one tab each.
 const GROUPS: [&[&str]; 7] = [
     &["tex"],
     &["chan"],
     &["audio"],
     &["table"],
-    &["geo", "mat", "light", "view", "vol"],
+    &["geo", "mat", "light", "view"],
     &["out"],
     &["script", "comp", "ui"],
+];
+/// The tabs by topic: the node types each holds, a whole family by its bare name. A type here
+/// leaves its family's tab. The families appear in the tab in the order they first come here.
+/// Component files join a topic's tab when the first level of their `shelf` is its name.
+///
+/// `mapping` holds what setting up projectors needs: the output to a projector, the mapper,
+/// the scan and what draws on its result, the projector of the 3D scene. General tools that
+/// mapping also uses (`tex.remap`, `tex.transform`, `tex.primitive`, `view.camera`,
+/// `mat.occluder`) stay in their family, where TouchDesigner users look for them.
+/// `simulations` holds the types that simulate something over time. `vol` holds only the smoke's
+/// volumes, so it goes whole. Building blocks that are general tools (`tex.feedback`,
+/// `chan.feedback`, `tex.scatter`, `tex.optical_flow`) stay in their family.
+pub const TOPICS: [(&str, &[&str]); 2] = [
+    (
+        "mapping",
+        &[
+            "out.projector",
+            "tex.mapper",
+            "tex.blend_weight",
+            "tex.face_content",
+            "tex.scan",
+            "tex.scan_pattern",
+            "tex.shape_content",
+            "tex.shapes",
+            "light.projector",
+        ],
+    ),
+    ("simulations", &["tex.fluid", "tex.render_volume", "vol"]),
 ];
 /// The tab of the component files on offer: penumbra's library, the user's and the project's
 /// `components/`. Not a family of node types; it takes the colour of `comp`.
@@ -64,7 +100,13 @@ pub const LIBRARY: &str = "library";
 /// by it.
 const NAMES: [(&str, &str); 2] = [("geo", "rendering"), ("script", "system")];
 /// The headings over the families of a shared tab; a family missing here is headed by its name.
-const HEADINGS: [(&str, &str); 8] = [
+const HEADINGS: [(&str, &str); 14] = [
+    ("tex", "pictures"),
+    ("chan", "channels"),
+    ("audio", "sound"),
+    ("table", "tables"),
+    ("out", "outputs"),
+    (LIBRARY, "components"),
     ("geo", "geometry"),
     ("mat", "materials"),
     ("light", "lights"),
@@ -105,8 +147,9 @@ pub struct AddDialog {
     screen: Pos2,
     filter: String,
     focus: bool,
-    /// A family of the active tab; the editor opens the next dialog on it.
-    pub family: String,
+    /// The key of the active tab ([`Tab::key`]); the editor opens the next dialog on it. A node
+    /// type or a family given to [`AddDialog::new`] stands for its tab until the first frame.
+    pub tab: String,
     /// What choosing does, beside the search field, when it is not adding a node ("replace
     /// noise1 with").
     pub title: Option<String>,
@@ -116,7 +159,7 @@ pub struct AddDialog {
     pub shelf: ShelfChoice,
     /// The pictures shown so far by component name; `None` for one that has no usable picture.
     previews: BTreeMap<String, Option<egui::TextureHandle>>,
-    /// The search text whose family word last opened its family.
+    /// The search text whose family word last opened a tab.
     jumped: String,
 }
 
@@ -255,27 +298,135 @@ pub enum Outcome {
     Remove(String),
 }
 
-/// The tabs: the families of each.
-/// What a tab says: its name, else its families.
-fn tab_name(families: &[String]) -> String {
-    let first = families.first().map_or("", String::as_str);
-    NAMES.iter().find(|(f, _)| *f == first).map_or_else(|| families.join(" "), |(_, n)| (*n).to_string())
+/// A tab of the dialog: the families it shows, each from a new column, and for a tab by topic
+/// the topic, which then picks the types of those families (and the component files) it holds.
+#[derive(Clone, Debug, PartialEq)]
+struct Tab {
+    families: Vec<String>,
+    topic: Option<&'static str>,
 }
 
-fn groups(types: &NodeTypes) -> Vec<Vec<String>> {
-    let mut out: Vec<Vec<String>> =
-        GROUPS.iter().map(|g| g.iter().map(|f| (*f).to_string()).collect()).collect();
+impl Tab {
+    fn family(families: &[&str]) -> Self {
+        Self { families: families.iter().map(|f| (*f).to_string()).collect(), topic: None }
+    }
+
+    /// What the editor and the automation id (`add.tab.<key>`) name it by: its topic, else its
+    /// first family.
+    fn key(&self) -> &str {
+        self.topic.unwrap_or_else(|| self.families.first().map_or("", String::as_str))
+    }
+
+    /// What it says: its topic or name, else its families.
+    fn name(&self) -> String {
+        if let Some(topic) = self.topic {
+            return topic.to_string();
+        }
+        let first = self.families.first().map_or("", String::as_str);
+        NAMES
+            .iter()
+            .find(|(f, _)| *f == first)
+            .map_or_else(|| self.families.join(" "), |(_, n)| (*n).to_string())
+    }
+
+    /// Whether its name is written across its families' segments, rather than one per segment.
+    fn named(&self) -> bool {
+        self.topic.is_some() || self.families.len() > 1
+    }
+
+    /// The `library` tab, of the component files on the shelves.
+    fn is_library(&self) -> bool {
+        self.topic.is_none() && self.families.iter().any(|f| f == LIBRARY)
+    }
+}
+
+/// The topic whose tab holds `kind`, if any ([`TOPICS`]).
+pub fn topic_of(kind: &str) -> Option<&'static str> {
+    let family = kind.split_once('.').map_or(kind, |(f, _)| f);
+    TOPICS.iter().find(|(_, members)| members.iter().any(|m| *m == kind || *m == family)).map(|(t, _)| *t)
+}
+
+/// The topic a component file's `shelf` sends it to: its first level, when that names one.
+fn topic_of_shelf(shelf: &str) -> Option<&'static str> {
+    let (top, _) = levels(shelf);
+    let top = top?;
+    TOPICS.iter().map(|(t, _)| *t).find(|t| t.eq_ignore_ascii_case(top))
+}
+
+/// The component files `tab` holds, by name: those whose shelf names its topic, or for the
+/// `library` tab all others; none for a tab of families.
+fn files_of(tab: &Tab, library: &[Offered]) -> Vec<Offered> {
+    if tab.topic.is_none() && !tab.is_library() {
+        return Vec::new();
+    }
+    let mut files: Vec<Offered> =
+        library.iter().filter(|o| topic_of_shelf(&o.shelf) == tab.topic).cloned().collect();
+    if tab.topic.is_some() {
+        files.sort_by_key(|o| o.name.to_lowercase());
+    }
+    files
+}
+
+/// The tabs: those of [`GROUPS`], those by topic, `library`, then a tab for each other family
+/// the registry knows. A topic's tab shows its families in the order [`TOPICS`] names them, and
+/// [`LIBRARY`] after them when a component file is on it.
+fn tabs(types: &NodeTypes, library: &[Offered]) -> Vec<Tab> {
+    let mut out: Vec<Tab> = GROUPS.iter().map(|g| Tab::family(g)).collect();
+    for (topic, members) in TOPICS {
+        let mut families: Vec<String> = Vec::new();
+        for m in members {
+            let family = m.split_once('.').map_or(*m, |(f, _)| f).to_string();
+            if !families.contains(&family) {
+                families.push(family);
+            }
+        }
+        if library.iter().any(|o| topic_of_shelf(&o.shelf) == Some(topic)) {
+            families.push(LIBRARY.to_string());
+        }
+        out.push(Tab { families, topic: Some(topic) });
+    }
+    // A family a topic takes whole needs no tab of its own.
+    let placed = |f: &str| {
+        GROUPS.iter().any(|g| g.contains(&f)) || TOPICS.iter().any(|(_, members)| members.contains(&f))
+    };
     let mut extra: Vec<String> = types
         .kinds()
         .filter(|k| *k != penumbra_graph::broken::BROKEN_KIND)
         .filter_map(|k| k.split_once('.').map(|(f, _)| f.to_string()))
-        .filter(|f| !out.iter().flatten().any(|g| g == f))
+        .filter(|f| !placed(f))
         .collect();
     extra.sort();
     extra.dedup();
-    out.push(vec![LIBRARY.to_string()]);
-    out.extend(extra.into_iter().map(|f| vec![f]));
+    out.push(Tab::family(&[LIBRARY]));
+    out.extend(extra.iter().map(|f| Tab::family(&[f.as_str()])));
     out
+}
+
+/// The tab `wanted` means: the tab with that key, else the tab of the node type or family it
+/// names (the family's own tab before a topic's), else the first.
+fn tab_for(tabs: &[Tab], wanted: &str) -> usize {
+    let family = wanted.split_once('.').map_or(wanted, |(f, _)| f);
+    let topic = if wanted.contains('.') { topic_of(wanted) } else { None };
+    let holds = |t: &Tab| t.families.iter().any(|f| f == family);
+    tabs.iter()
+        .position(|t| t.key() == wanted)
+        .or_else(|| topic.and_then(|topic| tabs.iter().position(|t| t.topic == Some(topic))))
+        .or_else(|| tabs.iter().position(|t| t.topic.is_none() && holds(t)))
+        .or_else(|| tabs.iter().position(holds))
+        .unwrap_or(0)
+}
+
+/// The tab a family word opens: the first with a match in `family`, the family's own tab before
+/// the others; the family's own tab when none has one.
+fn family_tab(tabs: &[Tab], family: &str, has_match: impl Fn(usize) -> bool) -> usize {
+    let home = tab_for(tabs, family);
+    let holds = |i: usize| tabs.get(i).is_some_and(|t| t.families.iter().any(|f| f == family));
+    std::iter::once(home).chain(0..tabs.len()).find(|&i| holds(i) && has_match(i)).unwrap_or(home)
+}
+
+/// Everything `tab` offers, in grid order; `files` its component files ([`files_of`]).
+fn tab_kinds(types: &NodeTypes, tab: &Tab, files: &[Offered]) -> Vec<String> {
+    tab.families.iter().flat_map(|f| kinds_of(types, f, tab.topic, files)).collect()
 }
 
 /// A type in the grid: its column and row, and its family.
@@ -295,11 +446,12 @@ struct Section {
 }
 
 /// The types of a tab, each family and each block of it from a new column; empty ones take no
-/// room.
-fn cells(types: &NodeTypes, group: &[String], library: &[Offered]) -> (Vec<Cell>, Vec<Section>) {
-    let all: Vec<(&String, Option<Block>, Vec<String>)> = group
+/// room. `files`: the component files it shows.
+fn cells(types: &NodeTypes, tab: &Tab, files: &[Offered]) -> (Vec<Cell>, Vec<Section>) {
+    let all: Vec<(&String, Option<Block>, Vec<String>)> = tab
+        .families
         .iter()
-        .flat_map(|f| sections_of(types, f, library).into_iter().map(move |(b, k)| (f, b, k)))
+        .flat_map(|f| sections_of(types, f, tab.topic, files).into_iter().map(move |(b, k)| (f, b, k)))
         .collect();
     let rows = all.iter().map(|(_, _, kinds)| rows_for(kinds)).max().unwrap_or(ROWS);
     let mut out = Vec::new();
@@ -327,20 +479,26 @@ fn rows_for(kinds: &[String]) -> usize {
     kinds.len().div_ceil(columns).max(ROWS)
 }
 
-/// Everything `family` offers, in grid order.
-fn kinds_of(types: &NodeTypes, family: &str, library: &[Offered]) -> Vec<String> {
-    sections_of(types, family, library).into_iter().flat_map(|(_, kinds)| kinds).collect()
+/// Everything `family` offers in the tab of `topic` (none: its own tab), in grid order.
+fn kinds_of(types: &NodeTypes, family: &str, topic: Option<&str>, files: &[Offered]) -> Vec<String> {
+    sections_of(types, family, topic, files).into_iter().flat_map(|(_, kinds)| kinds).collect()
 }
 
-/// The kinds of `family` by section: its common types sorted by their short name (`comp.base`
-/// first) and its component ports (`tex.in`, `tex.out`) after them behind a gap ([`GAP`]), so
-/// they do not read as a source and a sink; then each [`Block`], empty or not. The `library`
-/// tab holds the component files it is given as `@name`, in the order given.
-fn sections_of(types: &NodeTypes, family: &str, library: &[Offered]) -> Vec<(Option<Block>, Vec<String>)> {
+/// The kinds of `family` in the tab of `topic` (none: the family's own tab, without the types
+/// a topic takes) by section: its common types sorted by their short name (`comp.base` first)
+/// and its component ports (`tex.in`, `tex.out`) after them behind a gap ([`GAP`]), so they do
+/// not read as a source and a sink; then each [`Block`], empty or not. [`LIBRARY`] holds the
+/// component files it is given as `@name`, in the order given.
+fn sections_of(
+    types: &NodeTypes,
+    family: &str,
+    topic: Option<&str>,
+    files: &[Offered],
+) -> Vec<(Option<Block>, Vec<String>)> {
     if family == LIBRARY {
-        return vec![(None, library.iter().map(|o| format!("{LIBRARY_MARK}{}", o.name)).collect())];
+        return vec![(None, files.iter().map(|o| format!("{LIBRARY_MARK}{}", o.name)).collect())];
     }
-    let in_family = |k: &&str| k.split_once('.').is_some_and(|(f, _)| f == family);
+    let in_family = |k: &&str| k.split_once('.').is_some_and(|(f, _)| f == family) && topic_of(k) == topic;
     let block_of = |k: &str| types.desc(k).and_then(|d| d.block);
     let is_port = |k: &str| types.desc(k).is_some_and(|d| d.port.is_some());
     let listed: Vec<&str> = types
@@ -479,13 +637,14 @@ impl Usable<'_> {
 }
 
 impl AddDialog {
-    pub fn new(screen: Pos2, at: Pos2, family: &str) -> Self {
+    /// `tab`: the key of the tab to open on, or a node type or family, whose tab it opens on.
+    pub fn new(screen: Pos2, at: Pos2, tab: &str) -> Self {
         Self {
             at,
             screen,
             filter: String::new(),
             focus: true,
-            family: family.to_string(),
+            tab: tab.to_string(),
             title: None,
             in_component: false,
             shelf: ShelfChoice::default(),
@@ -503,22 +662,30 @@ impl AddDialog {
         library: &[Offered],
         auto: &mut automation::Registry,
     ) -> Outcome {
-        let groups = groups(types);
+        let tabs = tabs(types, library);
+        let files: Vec<Vec<Offered>> = tabs.iter().map(|t| files_of(t, library)).collect();
         let typed = self.filter.trim().to_lowercase();
         let search = types.search(&typed);
         let filter = search.text.clone();
         let usable = Usable { types, in_component: self.in_component, library, family: search.family };
-        // A family word typed (`noise top`) opens its family, once per text, so Tab still
-        // moves on from there.
+        let has_match = |i: usize| {
+            filter.is_empty()
+                || tabs
+                    .get(i)
+                    .zip(files.get(i))
+                    .is_some_and(|(t, f)| tab_kinds(types, t, f).iter().any(|k| usable.hit(k, &filter)))
+        };
+        let mut active = tab_for(&tabs, &self.tab);
+        // A family word typed (`noise top`) opens a tab with a match in that family, once per
+        // text, so Tab still moves on from there.
         match search.family {
             Some(f) if self.jumped != typed => {
-                self.family = f.to_string();
+                active = family_tab(&tabs, f, has_match);
                 self.jumped.clone_from(&typed);
             }
             Some(_) => {}
             None => self.jumped.clear(),
         }
-        let mut active = groups.iter().position(|g| g.contains(&self.family)).unwrap_or(0);
         let mut outcome = Outcome::Open;
 
         // Keys first, so Tab does not move the focus out of the search field.
@@ -530,36 +697,37 @@ impl AddDialog {
                 i.consume_key(egui::Modifiers::SHIFT, Key::Tab),
             )
         });
-        if (tab || back) && !groups.is_empty() {
-            active = next_tab(&groups, active, back, |g| {
-                filter.is_empty()
-                    || g.iter().any(|f| kinds_of(types, f, library).iter().any(|k| usable.hit(k, &filter)))
-            });
+        if (tab || back) && !tabs.is_empty() {
+            let indices: Vec<usize> = (0..tabs.len()).collect();
+            active = next_tab(&indices, active, back, |&i| has_match(i));
             self.focus = true;
             // egui moves the focus on Tab before the key is consumed here; without this the
             // close button gets it, and the next Enter presses it instead of choosing.
             ui.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
         }
-        let group: &[String] = groups.get(active).map_or(&[], Vec::as_slice);
-        if !group.contains(&self.family) {
-            self.family = group.first().cloned().unwrap_or_default();
-        }
+        let empty = Tab { families: Vec::new(), topic: None };
+        let current = tabs.get(active).unwrap_or(&empty);
+        let own: &[Offered] = files.get(active).map_or(&[], Vec::as_slice);
+        self.tab = current.key().to_string();
         if escape {
             outcome = Outcome::Close;
         }
 
-        let on_library = group.iter().any(|f| f == LIBRARY);
-        let shelves = shelves(library);
+        let on_library = current.is_library();
+        let shelves = shelves(own);
         let shown =
-            if on_library { listed(library, &shelves, &self.shelf, usable, &filter) } else { Vec::new() };
-        let (cells, sections) = cells(types, group, &shown);
+            if on_library { listed(own, &shelves, &self.shelf, usable, &filter) } else { own.to_vec() };
+        let (cells, sections) = cells(types, current, &shown);
         let first = enter_choice(cells.iter().map(|c| c.kind.as_str()), usable, &filter);
         if enter && let Some(k) = &first {
             outcome = Outcome::Chosen(k.clone());
         }
 
         let columns = cells.iter().map(|c| c.col + 1).max().unwrap_or(1);
-        let width = (columns as f32 * CELL.x).max(MIN_WIDTH);
+        // Wide enough for the row of tabs as well, which may not wrap.
+        let row: f32 = tabs.iter().map(|t| tab_widths(ui, t).iter().sum::<f32>()).sum::<f32>()
+            + TAB_GAP * tabs.len().saturating_sub(1) as f32;
+        let width = (columns as f32 * CELL.x).max(MIN_WIDTH).max(row);
         let area = egui::Area::new(ui.id().with("add_dialog"))
             .order(egui::Order::Foreground)
             .fixed_pos(self.screen)
@@ -569,15 +737,15 @@ impl AddDialog {
                     ui.set_width(width);
                     self.search_row(ui, auto, &mut outcome);
                     ui.add_space(2.0);
-                    self.tabs(ui, &groups, active, usable, library, &filter, auto);
+                    self.tabs(ui, &tabs, &files, active, usable, &filter, auto);
                     ui.separator();
                     if on_library {
                         self.shelf_rows(ui, &shelves, &filter, shown.len(), width, auto);
                     }
-                    headings(ui, group, &sections, width, auto);
+                    headings(ui, current, &sections, width, auto);
                     let grid = Grid {
                         cells: &cells,
-                        group,
+                        tab: current,
                         width,
                         filter: &filter,
                         first: first.as_deref(),
@@ -771,26 +939,26 @@ impl AddDialog {
             .clone()
     }
 
-    /// One tab per group, a segment per family coloured like its node headers; a named tab
-    /// writes its name across them.
+    /// The row of tabs, a segment per family coloured like its node headers; a named tab
+    /// writes its name across them. `files`: each tab's component files.
     #[allow(clippy::too_many_arguments)]
     fn tabs(
         &mut self,
         ui: &mut Ui,
-        groups: &[Vec<String>],
+        tabs: &[Tab],
+        files: &[Vec<Offered>],
         active: usize,
         usable: Usable<'_>,
-        library: &[Offered],
         filter: &str,
         auto: &mut automation::Registry,
     ) {
         ui.horizontal(|ui| {
-            // Wider than a seam, so a tab of several families reads as one.
-            ui.spacing_mut().item_spacing.x = 6.0;
-            for (g, families) in groups.iter().enumerate() {
-                let r = tab(ui, families, g == active, usable, library, filter, auto);
+            ui.spacing_mut().item_spacing.x = TAB_GAP;
+            for (i, t) in tabs.iter().enumerate() {
+                let own = files.get(i).map_or(&[][..], Vec::as_slice);
+                let r = tab(ui, t, i == active, usable, own, filter, auto);
                 if r.clicked() {
-                    self.family = families.first().cloned().unwrap_or_default();
+                    self.tab = t.key().to_string();
                     self.focus = true;
                 }
             }
@@ -843,43 +1011,57 @@ fn shelf_button(
     r
 }
 
-/// One tab of the dialog; `families` its families, `filter` the search text.
+/// Room between two tabs: wider than a seam, so a tab of several families reads as one.
+const TAB_GAP: f32 = 6.0;
+/// Font size of a tab's text.
+const TAB_TEXT: f32 = 14.0;
+
+/// The widths of the segments of `tab`, one per family. A named tab shares its width out
+/// evenly among them; a tab of one family fits its name.
+fn tab_widths(ui: &Ui, tab: &Tab) -> Vec<f32> {
+    let n = tab.families.len().max(1);
+    let text =
+        |t: String| ui.painter().layout_no_wrap(t, FontId::proportional(TAB_TEXT), Color32::WHITE).size().x;
+    if tab.named() {
+        let even = (text(tab.name()) + 24.0) / n as f32;
+        return vec![even.max(12.0); n];
+    }
+    tab.families.iter().map(|f| (text(f.clone()) + 16.0).max(64.0)).collect()
+}
+
+/// One tab of the dialog; `files` its component files, `filter` the search text.
 fn tab(
     ui: &mut Ui,
-    families: &[String],
+    t: &Tab,
     active: bool,
     usable: Usable<'_>,
-    library: &[Offered],
+    files: &[Offered],
     filter: &str,
     auto: &mut automation::Registry,
 ) -> egui::Response {
-    let name = tab_name(families);
-    let named = families.len() > 1;
+    let name = t.name();
+    let named = t.named();
     // While searching: which families have a match?
     let mut any_bright = false;
-    let segments: Vec<(&String, bool, Option<Arc<egui::Galley>>)> = families
+    let segments: Vec<(&String, bool, Option<Arc<egui::Galley>>)> = t
+        .families
         .iter()
         .map(|f| {
-            let kinds = kinds_of(usable.types, f, library);
+            let kinds = kinds_of(usable.types, f, t.topic, files);
             let hit = !filter.is_empty() && kinds.iter().any(|k| usable.hit(k, filter));
             let bright = if filter.is_empty() { !kinds.is_empty() } else { hit };
             any_bright |= bright;
             let text = if bright { Color32::WHITE } else { theme::TEXT_WEAK };
-            let galley =
-                (!named).then(|| ui.painter().layout_no_wrap(f.clone(), FontId::proportional(14.0), text));
+            let galley = (!named)
+                .then(|| ui.painter().layout_no_wrap(f.clone(), FontId::proportional(TAB_TEXT), text));
             (f, hit, galley)
         })
         .collect();
     // A named tab is bright when any of its families is.
     let title_text = if any_bright { Color32::WHITE } else { theme::TEXT_WEAK };
     let title =
-        named.then(|| ui.painter().layout_no_wrap(name.clone(), FontId::proportional(14.0), title_text));
-    // A named tab shares its width out evenly among its families.
-    let even = title.as_ref().map_or(0.0, |t| (t.size().x + 24.0) / segments.len() as f32);
-    let widths: Vec<f32> = segments
-        .iter()
-        .map(|(_, _, t)| t.as_ref().map_or(even.max(12.0), |t| (t.size().x + 16.0).max(64.0)))
-        .collect();
+        named.then(|| ui.painter().layout_no_wrap(name.clone(), FontId::proportional(TAB_TEXT), title_text));
+    let widths = tab_widths(ui, t);
     let (rect, r) = ui.allocate_exact_size(vec2(widths.iter().sum(), 22.0), Sense::click());
     let mut x = rect.min.x;
     for ((f, hit, galley), w) in segments.iter().zip(&widths) {
@@ -910,21 +1092,14 @@ fn tab(
     }
     let hit = segments.iter().any(|(_, hit, _)| *hit);
     let label = if hit { format!("{name} (match)") } else { name };
-    let first_family = families.first().map_or("", String::as_str);
-    auto.add(format!("add.tab.{first_family}"), rect, label);
+    auto.add(format!("add.tab.{}", t.key()), rect, label);
     r
 }
 
 /// A tab of several families or blocks: a heading over each, with a line in its family's colour
 /// across its columns. A family's common types are headed by the family in a shared tab, and
 /// by the line alone in a tab of their own, whose name says it already.
-fn headings(
-    ui: &mut Ui,
-    group: &[String],
-    sections: &[Section],
-    width: f32,
-    auto: &mut automation::Registry,
-) {
+fn headings(ui: &mut Ui, tab: &Tab, sections: &[Section], width: f32, auto: &mut automation::Registry) {
     if sections.len() <= 1 {
         return;
     }
@@ -935,7 +1110,7 @@ fn headings(
         let right = row.min.x + (*last + 1) as f32 * CELL.x - 1.0;
         let (id, heading) = match block {
             Some(b) => (format!("{family}.{}", b.heading().replace(' ', "_")), b.heading()),
-            None if group.len() > 1 => (
+            None if tab.families.len() > 1 => (
                 family.clone(),
                 HEADINGS.iter().find(|(f, _)| f == family).map_or(family.as_str(), |(_, h)| *h),
             ),
@@ -961,7 +1136,7 @@ fn headings(
 /// The grid of the active tab: columns of [`ROWS`], top to bottom.
 struct Grid<'a> {
     cells: &'a [Cell],
-    group: &'a [String],
+    tab: &'a Tab,
     width: f32,
     /// The search text, trimmed and lower case.
     filter: &'a str,
@@ -974,7 +1149,7 @@ struct Grid<'a> {
 impl<'a> Grid<'a> {
     /// Draws the grid; a click on a type chooses it. Returns the type under the pointer.
     fn show(&self, ui: &mut Ui, auto: &mut automation::Registry, outcome: &mut Outcome) -> Option<&'a str> {
-        let on_library = self.group.iter().any(|f| f == LIBRARY);
+        let on_library = self.tab.is_library();
         // The library tab keeps its height from shelf to shelf.
         let least = if on_library { ROWS } else { 1 };
         let rows = self.cells.iter().map(|c| c.row + 1).max().unwrap_or(1).max(least);
@@ -986,7 +1161,7 @@ impl<'a> Grid<'a> {
             } else if on_library {
                 "no component files yet: \"Save to the library\" in a component's menu adds one".to_string()
             } else {
-                format!("no {} node types yet", self.group.join(" or "))
+                format!("no {} node types yet", self.tab.name())
             };
             painter.text(
                 grid.left_top() + vec2(6.0, CELL.y / 2.0),
@@ -1117,13 +1292,16 @@ fn summary(
     let text = about
         .and_then(|k| match k.strip_prefix(LIBRARY_MARK) {
             Some(name) => {
-                let place = library.iter().find(|o| o.name == name).map_or("", |o| o.place);
-                let place = match place {
+                let entry = library.iter().find(|o| o.name == name);
+                let place = match entry.map_or("", |o| o.place) {
                     "project" => "the project's components/",
                     "penumbra" => "penumbra's own library",
                     _ => "the library",
                 };
-                Some(format!("{name}: a component file from {place} (comp.load)"))
+                Some(match entry.map_or("", |o| o.about.as_str()) {
+                    "" => format!("{name}: a component file from {place} (comp.load)"),
+                    about => format!("{name} (a component file from {place}): {about}"),
+                })
             }
             None if !usable.allows(k) => Some(format!(
                 "{k}: only inside a component. At the top level there is no component socket for it"
@@ -1146,7 +1324,7 @@ mod tests {
     #[test]
     fn inputs_and_the_scan_workflow_follow_the_common_types() {
         let types = penumbra_ops::builtin_types().unwrap();
-        let tex = sections_of(&types, "tex", &[]);
+        let tex = sections_of(&types, "tex", None, &[]);
         let blocks: Vec<Option<Block>> = tex.iter().map(|(b, _)| *b).collect();
         assert_eq!(blocks, [None, Some(Block::In), Some(Block::ScanAndShapes)]);
         let common = &tex[0].1;
@@ -1154,8 +1332,12 @@ mod tests {
         assert!(!common.contains(&"tex.video_in".to_string()));
         assert_eq!(common[common.len() - 3..], [GAP, "tex.in", "tex.out"], "ports last, after a line");
         assert_eq!(tex[1].1, ["tex.ndi_in", "tex.screen_in", "tex.spout_in", "tex.video_in"]);
+        assert!(tex[2].1.is_empty(), "the scan workflow is under mapping");
+        let mapping = sections_of(&types, "tex", Some("mapping"), &[]);
+        assert_eq!(mapping[0].1, ["tex.mapper"]);
+        assert!(mapping[1].1.is_empty());
         assert_eq!(
-            tex[2].1,
+            mapping[2].1,
             [
                 "tex.blend_weight",
                 "tex.face_content",
@@ -1165,12 +1347,12 @@ mod tests {
                 "tex.shapes"
             ]
         );
-        let chan = sections_of(&types, "chan", &[]);
+        let chan = sections_of(&types, "chan", None, &[]);
         assert!(chan[1].1.contains(&"chan.osc_in".to_string()));
-        let audio = sections_of(&types, "audio", &[]);
+        let audio = sections_of(&types, "audio", None, &[]);
         assert_eq!(audio[1].1, ["audio.device_in"], "the device is a live input");
         assert!(audio[0].1.contains(&"audio.oscillator".to_string()));
-        let out = sections_of(&types, "out", &[]);
+        let out = sections_of(&types, "out", None, &[]);
         for sender in ["out.osc", "out.midi", "out.data"] {
             assert!(out[0].1.contains(&sender.to_string()), "{sender} sits with the other outputs");
         }
@@ -1180,10 +1362,10 @@ mod tests {
     fn the_library_is_a_tab_of_its_own() {
         let types = penumbra_ops::builtin_types().unwrap();
         let library = [offered("water", "penumbra", "", ""), offered("Mine", "library", "", "")];
-        let tabs = groups(&types);
-        assert!(tabs.contains(&vec![LIBRARY.to_string()]));
-        assert_eq!(kinds_of(&types, LIBRARY, &library).len(), 2, "the tab's search sees all of them");
-        assert_eq!(kinds_of(&types, "comp", &library), ["comp.base"], "comp keeps its own types");
+        let tabs = tabs(&types, &library);
+        assert!(tabs.contains(&Tab::family(&[LIBRARY])));
+        assert_eq!(kinds_of(&types, LIBRARY, None, &library).len(), 2, "the tab's search sees all of them");
+        assert_eq!(kinds_of(&types, "comp", None, &library), ["comp.base"], "comp keeps its own types");
     }
 
     fn offered(name: &str, place: &'static str, shelf: &str, about: &str) -> Offered {
@@ -1326,11 +1508,176 @@ mod tests {
         }
         let u = Usable { types: &types, in_component: false, library: &[], family: search.family };
         assert!(u.hit("tex.noise", &search.text) && !u.hit("chan.noise", &search.text));
-        let groups = groups(&types);
-        let tex = groups.iter().position(|g| g.iter().any(|f| f == "tex"));
-        let kinds = |g: usize| groups[g].iter().flat_map(|f| kinds_of(&types, f, &[])).collect::<Vec<_>>();
-        let first = tex.map(|g| enter_choice(kinds(g).iter().map(String::as_str), u, &search.text));
-        assert_eq!(first, Some(Some("tex.noise".to_string())));
+        let tabs = tabs(&types, &[]);
+        let opens = |text: &str| {
+            let search = types.search(text);
+            let family = search.family.unwrap_or_default();
+            let u = Usable { types: &types, in_component: false, library: &[], family: search.family };
+            let i = family_tab(&tabs, family, |i| {
+                tab_kinds(&types, &tabs[i], &[]).iter().any(|k| u.hit(k, &search.text))
+            });
+            (tabs[i].key().to_string(), search.text)
+        };
+        let (key, text) = opens("noise top");
+        assert_eq!(key, "tex");
+        let kinds = tab_kinds(&types, &tabs[tab_for(&tabs, "tex")], &[]);
+        let first = enter_choice(kinds.iter().map(String::as_str), u, &text);
+        assert_eq!(first.as_deref(), Some("tex.noise"));
+        // A tex type that the mapping tab took: its family word opens that tab.
+        assert_eq!(types.search("scan top").family, Some("tex"));
+        assert_eq!(opens("scan top"), ("mapping".to_string(), "scan".to_string()));
+        assert_eq!(opens("zzz top").0, "tex", "no match: the family's own tab");
+        assert_eq!(opens("lfo chop").0, "chan");
+    }
+
+    fn keys(tabs: &[Tab]) -> Vec<&str> {
+        tabs.iter().map(Tab::key).collect()
+    }
+
+    #[test]
+    fn every_type_has_one_tab() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let tabs = tabs(&types, &[]);
+        assert_eq!(
+            keys(&tabs),
+            ["tex", "chan", "audio", "table", "geo", "out", "script", "mapping", "simulations", "library"],
+            "no family is left without a tab"
+        );
+        let homes: Vec<Vec<String>> = tabs.iter().map(|t| tab_kinds(&types, t, &[])).collect();
+        for kind in types.kinds().filter(|k| *k != penumbra_graph::broken::BROKEN_KIND) {
+            let found: Vec<&str> = tabs
+                .iter()
+                .zip(&homes)
+                .filter(|(_, h)| h.iter().any(|k| k == kind))
+                .map(|(t, _)| t.key())
+                .collect();
+            assert_eq!(found.len(), 1, "{kind} is in {found:?}");
+        }
+        for (topic, members) in TOPICS {
+            for m in members {
+                let known = if m.contains('.') {
+                    types.desc(m).is_some()
+                } else {
+                    types.kinds().any(|k| k.starts_with(&format!("{m}.")))
+                };
+                assert!(known, "{topic} names {m}, which is no type or family");
+            }
+        }
+    }
+
+    #[test]
+    fn the_tabs_by_topic_hold_their_types() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let tabs = tabs(&types, &[]);
+        let of = |key: &str| {
+            let tab = tabs.iter().find(|t| t.key() == key).unwrap();
+            tab_kinds(&types, tab, &[]).into_iter().filter(|k| k != GAP).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            of("mapping"),
+            [
+                "out.projector",
+                "tex.mapper",
+                "tex.blend_weight",
+                "tex.face_content",
+                "tex.scan",
+                "tex.scan_pattern",
+                "tex.shape_content",
+                "tex.shapes",
+                "light.projector"
+            ]
+        );
+        assert_eq!(
+            of("simulations"),
+            [
+                "tex.fluid",
+                "tex.render_volume",
+                "vol.emitter",
+                "vol.null",
+                "vol.obstacle",
+                "vol.smoke",
+                "vol.in",
+                "vol.out"
+            ]
+        );
+        let tex = of("tex");
+        for gone in ["tex.mapper", "tex.scan", "tex.fluid", "tex.render_volume"] {
+            assert!(!tex.iter().any(|k| k == gone), "{gone} left tex");
+        }
+        for stays in ["tex.remap", "tex.feedback", "tex.scatter", "tex.blob_track"] {
+            assert!(tex.iter().any(|k| k == stays), "{stays} stays in tex");
+        }
+        assert!(!of("out").iter().any(|k| k == "out.projector"));
+        assert!(of("out").iter().any(|k| k == "out.video"));
+        let rendering = of("geo");
+        assert!(rendering.iter().any(|k| k == "light.spot"));
+        assert!(!rendering.iter().any(|k| k.starts_with("vol.") || k == "light.projector"));
+        assert!(of("chan").iter().any(|k| k == "chan.feedback"));
+    }
+
+    #[test]
+    fn a_component_whose_shelf_names_a_topic_is_in_its_tab() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let library = [
+            offered("ripples", "penumbra", "simulations", "Waves that spread from where people stand."),
+            offered("sand", "library", "Simulations/granular", "Grains that pile up."),
+            offered("water", "penumbra", "scanned objects", "A box as a tank of water."),
+            offered("aligned", "project", "mapping", ""),
+        ];
+        let tabs = tabs(&types, &library);
+        let tab = |key: &str| tabs.iter().find(|t| t.key() == key).unwrap();
+        let sims = tab("simulations");
+        assert_eq!(sims.families.last().map(String::as_str), Some(LIBRARY), "a column of components");
+        assert_eq!(names(&files_of(sims, &library)), ["ripples", "sand"], "by the shelf's first level");
+        assert!(tab_kinds(&types, sims, &files_of(sims, &library)).contains(&"@sand".to_string()));
+        assert_eq!(names(&files_of(tab("mapping"), &library)), ["aligned"]);
+        let on_shelves = files_of(tab(LIBRARY), &library);
+        assert_eq!(names(&on_shelves), ["water"], "one tab each");
+        let found = shelves(&on_shelves);
+        assert!(found.iter().all(|s| s.name != "simulations" && s.name != "mine"), "{found:?}");
+        assert!(files_of(tab("tex"), &library).is_empty());
+        let without = super::tabs(&types, &[]);
+        let sims = without.iter().find(|t| t.key() == "simulations").unwrap();
+        assert!(!sims.families.iter().any(|f| f == LIBRARY), "no empty column of components");
+        // The search finds one by its name, its line and its shelf.
+        let u = Usable { types: &types, in_component: false, library: &library, family: None };
+        assert!(u.hit("@ripples", "ripp") && u.hit("@ripples", "people") && u.hit("@sand", "simul"));
+    }
+
+    #[test]
+    fn a_type_opens_its_tab_and_the_search_finds_it_from_any() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let tabs = tabs(&types, &[]);
+        let at = |wanted: &str| tabs[tab_for(&tabs, wanted)].key();
+        assert_eq!(at("tex.noise"), "tex");
+        assert_eq!(at("tex.scan"), "mapping");
+        assert_eq!(at("out.projector"), "mapping");
+        assert_eq!(at("out.video"), "out");
+        assert_eq!(at("vol.smoke"), "simulations");
+        assert_eq!(at("vol"), "simulations", "a family a topic takes whole");
+        assert_eq!(at("light"), "geo");
+        assert_eq!(at("mapping"), "mapping");
+        assert_eq!(at("nothing"), "tex");
+        let u = Usable { types: &types, in_component: false, library: &[], family: None };
+        let matched = |text: &str| -> Vec<bool> {
+            tabs.iter().map(|t| tab_kinds(&types, t, &[]).iter().any(|k| u.hit(k, text))).collect()
+        };
+        let with = |text: &str| -> Vec<&str> {
+            tabs.iter().zip(matched(text)).filter(|(_, m)| *m).map(|(t, _)| t.key()).collect()
+        };
+        assert_eq!(with("scan pattern"), ["mapping"]);
+        assert_eq!(with("smoke"), ["simulations"]);
+        assert_eq!(with("projector"), ["mapping"], "both projectors live there");
+        for text in ["simulation", "physics"] {
+            assert!(with(text).contains(&"simulations"), "{text}: {:?}", with(text));
+        }
+        for text in ["projection mapping", "corner pin", "structured light", "edge blend"] {
+            assert!(with(text).contains(&"mapping"), "{text}: {:?}", with(text));
+        }
+        // Tab from tex passes over every tab without a match.
+        let smoke = matched("smoke");
+        assert_eq!(tabs[next_tab(&smoke, 0, false, |m| *m)].key(), "simulations");
+        assert_eq!(tabs[next_tab(&smoke, 8, true, |m| *m)].key(), "simulations", "and round");
     }
 
     #[test]

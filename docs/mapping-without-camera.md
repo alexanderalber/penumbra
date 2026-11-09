@@ -110,7 +110,7 @@ softens its edge. `tex.shape_content` fills, pulses, chases or ripples each shap
 With a 3D model of the object, you can fit the projector to the model by pointing at corners. A
 `tex.render` through the fitted camera then lays content on the object.
 
-1. Add `mapped_camera` from the add dialog's `library` tab (shelf `cameras`). Wire the model into
+1. Add `mapped_camera` from the add dialog's `mapping` tab. Wire the model into
    its `geo` input and its `guide` output into the `out.projector`. Set `width` and `height` to
    the projector's resolution.
 2. Press **Open mapping** in its params.

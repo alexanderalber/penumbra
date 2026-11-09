@@ -101,8 +101,8 @@ pub struct Editor {
     selection: BTreeSet<NodeId>,
     drag: Drag,
     add_menu: Option<AddDialog>,
-    /// The family the add dialog showed last.
-    add_family: String,
+    /// The tab the add dialog showed last, by its key.
+    add_tab: String,
     /// The library shelf the add dialog showed last.
     add_shelf: crate::add_dialog::ShelfChoice,
     /// Nodes whose thumbnail the user paused: never cooked for, shown only while current.
@@ -311,7 +311,7 @@ impl Default for Editor {
             selection: BTreeSet::new(),
             drag: Drag::None,
             add_menu: None,
-            add_family: "tex".into(),
+            add_tab: "tex".into(),
             add_shelf: Default::default(),
             paused: BTreeSet::new(),
             frame_request: true,
@@ -1387,16 +1387,12 @@ impl Editor {
     }
 
     fn open_add_menu(&mut self, input: &Inputs<'_>, screen: Pos2, at: Pos2) {
-        // The family of the selected node, else the one used last.
-        let family = match self.selection.iter().collect::<Vec<_>>().as_slice() {
-            [only] => input
-                .net
-                .node(**only)
-                .and_then(|n| n.kind.split_once('.').map(|(f, _)| f.to_string()))
-                .unwrap_or_else(|| self.add_family.clone()),
-            _ => self.add_family.clone(),
+        // The tab of the selected node's kind, else the one used last.
+        let tab = match self.selection.iter().collect::<Vec<_>>().as_slice() {
+            [only] => input.net.node(**only).map_or_else(|| self.add_tab.clone(), |n| n.kind.clone()),
+            _ => self.add_tab.clone(),
         };
-        let mut dialog = AddDialog::new(screen, at, &family);
+        let mut dialog = AddDialog::new(screen, at, &tab);
         dialog.shelf.clone_from(&self.add_shelf);
         self.add_menu = Some(dialog);
         self.replacing = None;
@@ -1606,8 +1602,7 @@ impl Editor {
                         auto.add("menu.replace", r.rect, "Replace node...");
                         if r.clicked() {
                             self.replacing = Some(id);
-                            let family = node.kind.split_once('.').map_or("tex", |(f, _)| f);
-                            let mut dialog = AddDialog::new(resp.rect.left_top(), Pos2::ZERO, family);
+                            let mut dialog = AddDialog::new(resp.rect.left_top(), Pos2::ZERO, &node.kind);
                             dialog.title = Some(format!("replace {} with", node.name));
                             dialog.shelf.clone_from(&self.add_shelf);
                             self.add_menu = Some(dialog);
@@ -2368,7 +2363,7 @@ impl Editor {
         let Some(menu) = self.add_menu.as_mut() else { return };
         menu.in_component = !level_path(input.net, level).is_root();
         let outcome = menu.show(ui, input.types, input.library, auto);
-        self.add_family.clone_from(&menu.family);
+        self.add_tab.clone_from(&menu.tab);
         self.add_shelf.clone_from(&menu.shelf);
         let at = menu.at;
         let replacing = self.replacing;

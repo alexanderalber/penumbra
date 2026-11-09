@@ -99,7 +99,18 @@ fn build_wire_tweak_and_undo_through_the_ui() {
         .collect();
     assert_eq!(
         tabs,
-        ["tex", "chan (match)", "audio", "table", "rendering", "out", "system", "library"],
+        [
+            "tex",
+            "chan (match)",
+            "audio",
+            "table",
+            "rendering",
+            "out",
+            "system",
+            "mapping",
+            "simulations",
+            "library"
+        ],
         "Enter without a match in tex did nothing"
     );
     assert_eq!(reply(&replies, "node.info", 3)["kind"], "chan.lfo", "typed into the dialog, Enter");
@@ -136,7 +147,7 @@ fn build_wire_tweak_and_undo_through_the_ui() {
     assert!(line("/lfo1").contains("pos: ["), "{project}");
 }
 
-/// The add dialog takes a TouchDesigner name with its family word, Tab passes over families
+/// The add dialog takes a TouchDesigner name with its family word, Tab passes over tabs
 /// without a match, and a click on a switch's row flips it.
 #[test]
 fn a_family_word_tab_past_empty_families_and_a_switch_clicked() {
@@ -156,11 +167,10 @@ fn a_family_word_tab_past_empty_families_and_a_switch_clicked() {
         json!({"method": "ui.key", "params": {"key": "Tab"}}),
         json!({"method": "ui.type", "params": {"text": "projector"}}),
         json!({"method": "ui.elements", "params": {"prefix": "add.tab."}}),
-        // From tex, Tab passes over chan, audio and table: `rendering` holds light.projector,
-        // `out` out.projector.
+        // From tex, Tab passes over every tab up to `mapping`, which holds both projectors, the
+        // output first.
         json!({"method": "ui.key", "params": {"key": "Tab"}}),
         json!({"method": "ui.elements", "params": {"prefix": "add.heading."}}),
-        json!({"method": "ui.key", "params": {"key": "Tab"}}),
         json!({"method": "ui.key", "params": {"key": "Enter"}}),
         json!({"method": "node.info", "params": {"path": "/projector1"}}),
         json!({"wait": 0.2}),
@@ -184,10 +194,22 @@ fn a_family_word_tab_past_empty_families_and_a_switch_clicked() {
     };
     assert_eq!(
         labels(0),
-        ["tex", "chan", "audio", "table", "rendering (match)", "out (match)", "system", "library"]
+        [
+            "tex",
+            "chan",
+            "audio",
+            "table",
+            "rendering",
+            "out",
+            "system",
+            "mapping (match)",
+            "simulations",
+            "library"
+        ]
     );
-    assert!(labels(1).contains(&"lights".to_string()), "the first Tab: rendering, {:?}", labels(1));
-    assert_eq!(reply(&replies, "node.info", 1)["kind"], "out.projector", "the second Tab: out");
+    assert!(labels(1).contains(&"lights".to_string()), "Tab went to mapping, {:?}", labels(1));
+    assert!(labels(1).contains(&"outputs".to_string()), "{:?}", labels(1));
+    assert_eq!(reply(&replies, "node.info", 1)["kind"], "out.projector", "the output comes first");
     let borderless = |i: &Json| {
         i["params"].as_array().unwrap().iter().find(|p| p["name"] == "borderless").unwrap()["value"].clone()
     };

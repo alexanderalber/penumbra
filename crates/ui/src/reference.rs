@@ -279,6 +279,24 @@ fn nodes_md(types: &NodeTypes) -> String {
                 );
             }
         }
+        // The types a tab by topic takes out of their family's tab. The ports follow their
+        // family, so their section leaves this out.
+        for (topic, _) in crate::add_dialog::TOPICS.iter().filter(|_| section.id != PORTS) {
+            let list: Vec<String> = section
+                .descs
+                .iter()
+                .filter(|d| crate::add_dialog::topic_of(&d.kind) == Some(*topic))
+                .map(link)
+                .collect();
+            if !list.is_empty() {
+                let _ = writeln!(
+                    out,
+                    "*in the add dialog's `{topic}` tab:* {}
+",
+                    list.join(", ")
+                );
+            }
+        }
         for desc in &section.descs {
             node_section(&mut out, desc);
         }
