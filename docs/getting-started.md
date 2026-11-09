@@ -36,7 +36,8 @@ a run they are saved as usual. The status bar says `until reopened` while one of
 **Save copy as** makes a project of your own that keeps them. A copy takes every file of the
 project folder along and, of the `state/` folder, the latest snapshot.
 
-A project can also be given at the start (a missing directory is created):
+A project can also be given at the start. If the folder has no project yet, the app asks before
+it makes one:
 
 ```
 cargo run -p penumbra -- --project D:\shows\foyer

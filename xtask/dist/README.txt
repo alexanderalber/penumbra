@@ -14,6 +14,12 @@ Starting
    left end of the status bar: Open project, then the example's folder. examples\README.md
    lists them.
 
+To open a folder with a right-click, double-click "Add to Explorer menu.cmd" once. Folders
+then have the entry "Open with penumbra". On Windows 11 it is under "Show more options". If a
+folder has no project yet, penumbra asks before it makes one. Run the script again after moving
+this folder. "Remove from Explorer menu.cmd" takes the entry away. Neither needs administrator
+rights.
+
 Windows may warn "Windows protected your PC", because this program is not signed. Click
 "More info", then "Run anyway".
 
@@ -39,6 +45,9 @@ Files
 - examples\                 example projects, listed in examples\README.md
 - library\                  the content library: effects for scanned objects, offered in
                             the add dialog's comp tab; library\README.md shows each
+- Add to Explorer menu.cmd,
+  Remove from Explorer menu.cmd
+                            the right-click entry for folders, see Starting
 - CLAUDE.md                 how Claude Code drives the app, read by it when started here
 - THIRD-PARTY-NOTICES.html  licences of the components penumbra is built from
 - LICENSE-MIT, LICENSE-APACHE

@@ -357,6 +357,13 @@ const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
 /// What ships beside the exe, from the target directory.
 const DIST_BINARIES: &[&str] = &["penumbra.exe", "penumbra-cli.exe", "pyhost.dll"];
 
+/// Scripts beside the exe that add and remove the folder entry in Explorer's right-click menu.
+/// They read the exe's place when they run, since a zip can be unpacked anywhere.
+const EXPLORER_MENU_SCRIPTS: &[(&str, &str)] = &[
+    ("Add to Explorer menu.cmd", include_str!("../dist/Add to Explorer menu.cmd")),
+    ("Remove from Explorer menu.cmd", include_str!("../dist/Remove from Explorer menu.cmd")),
+];
+
 fn dist() -> Result<(), String> {
     if !cfg!(windows) {
         return Err("dist builds for Windows only so far".into());
@@ -405,6 +412,11 @@ fn dist() -> Result<(), String> {
         .replace("\r\n", "\n")
         .replace('\n', "\r\n");
     std::fs::write(stage.join("README.txt"), readme).map_err(|e| format!("cannot write README.txt: {e}"))?;
+    // Windows line endings: cmd.exe misreads labels and blocks in a batch file with bare LF.
+    for (name, text) in EXPLORER_MENU_SCRIPTS {
+        let text = text.replace("\r\n", "\n").replace('\n', "\r\n");
+        std::fs::write(stage.join(name), text).map_err(|e| format!("cannot write {name}: {e}"))?;
+    }
     // For a Claude Code session started in the unpacked folder, which reads CLAUDE.md on its own.
     std::fs::write(stage.join("CLAUDE.md"), include_str!("../dist/CLAUDE.md"))
         .map_err(|e| format!("cannot write CLAUDE.md: {e}"))?;

@@ -3,8 +3,8 @@
 //! every open, so this one too), the control channel and a window, plus a
 //! fullscreen output window per display that an active `out.projector` names.
 //!
-//! Arguments: `--project DIR` (project directory, created if missing; default: the project open
-//! last, else the demo project in the user's data directory; the project menu opens others
+//! Arguments: `--project DIR` (project directory; a folder without a project gets one after a yes
+//! to the question the app asks first; default: the project open last, else the demo project in the user's data directory; the project menu opens others
 //! while it runs), `--port N`
 //! (control channel port, default from `PENUMBRA_PORT` or 9880), `--fresh` (discard what
 //! feedback loops, caches and other nodes kept from the last run; locked nodes keep their
@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex};
 use eframe::egui;
 use penumbra_core::lock;
 use penumbra_engine::{Engine, control, projects};
-use penumbra_project::{Content, Session};
+use penumbra_project::{Content, FILE_NAME, Session};
 use penumbra_ui::{AppOptions, Bridge, PenumbraApp};
 use serde_json::Value;
 
@@ -88,8 +88,39 @@ struct Args {
     after_crash_of: Option<u32>,
 }
 
+/// The folder to ask about before opening it: `--project` named one without a project, and
+/// someone is there to answer. A headless run and a restart in show mode must not wait for a
+/// click.
+fn folder_to_confirm(args: &Args) -> Option<&Path> {
+    if args.headless.is_some() || args.after_crash_of.is_some() {
+        return None;
+    }
+    let dir = args.project.as_deref()?;
+    (!dir.join(FILE_NAME).exists()).then_some(dir)
+}
+
+/// Opening a project writes its file at once, so a wrong folder has to be caught before that.
+fn confirmed_new_project(dir: &Path) -> bool {
+    let answer = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Info)
+        .set_title("penumbra")
+        .set_description(format!(
+            "This folder has no penumbra project yet. Create one here?\n\n{}",
+            dir.display()
+        ))
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show();
+    matches!(answer, rfd::MessageDialogResult::Yes)
+}
+
 fn run() -> Result<(), String> {
     let args = parse_args(std::env::args().skip(1))?;
+    if let Some(dir) = folder_to_confirm(&args)
+        && !confirmed_new_project(dir)
+    {
+        log::info!("no project made in {}", dir.display());
+        return Ok(());
+    }
     if args.headless.is_some() && !args.speakers {
         // Before the project opens, so no bus ever opens a device.
         penumbra_engine::keep_off_devices();
@@ -436,6 +467,29 @@ mod tests {
             restart_args(args(&["--project", "d", "--after-crash-of", "42", "--port", "1"])),
             ["--project", "d", "--port", "1"]
         );
+    }
+
+    #[test]
+    fn only_a_window_on_a_folder_without_a_project_asks() {
+        let dir = std::env::temp_dir().join(format!("penumbra-app-confirm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let text = dir.to_string_lossy().into_owned();
+
+        let window = parse_args(args(&["--project", &text, "--port", "1"])).unwrap();
+        assert_eq!(folder_to_confirm(&window), Some(dir.as_path()), "the folder does not exist yet");
+        let headless = parse_args(args(&["--project", &text, "--port", "1", "--headless", "s"])).unwrap();
+        assert_eq!(folder_to_confirm(&headless), None);
+        let restart =
+            parse_args(args(&["--project", &text, "--port", "1", "--after-crash-of", "7"])).unwrap();
+        assert_eq!(folder_to_confirm(&restart), None);
+        let no_folder = parse_args(args(&["--port", "1"])).unwrap();
+        assert_eq!(folder_to_confirm(&no_folder), None);
+
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(folder_to_confirm(&window), Some(dir.as_path()), "an existing folder without a project");
+        std::fs::write(dir.join(FILE_NAME), "").unwrap();
+        assert_eq!(folder_to_confirm(&window), None, "a project is there");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
