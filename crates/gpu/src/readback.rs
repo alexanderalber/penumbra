@@ -260,14 +260,31 @@ impl Gpu {
             halves.push(self.to_half(tex)?);
         }
         let textures: Vec<&Tex> = halves.iter().collect();
+        self.read_async_as_stored(&textures, spare, ready)
+    }
+
+    /// [`Gpu::read_async_reusing`] keeping every texture's own format: the rows of a texture of
+    /// [`crate::FLOAT_FORMAT`] are 32-bit floats ([`PendingRead::pixel_bytes`] says which). For
+    /// state files, where rounding a simulation's state to half floats would change it.
+    pub fn read_async_exact(&self, textures: &[&Tex], spare: &mut ReadPool) -> Result<PendingRead, Error> {
+        self.read_async_as_stored(textures, spare, None)
+    }
+
+    fn read_async_as_stored(
+        &self,
+        textures: &[&Tex],
+        spare: &mut ReadPool,
+        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Result<PendingRead, Error> {
         let device = self.device();
         let ((items, index), error) = self.scoped(|| {
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("read_async") });
             let mut items = Vec::with_capacity(textures.len());
-            for tex in &textures {
+            for tex in textures {
                 let (width, height) = tex.size();
-                let padded = (u64::from(width) * 8).div_ceil(256) * 256;
+                let pixel_bytes = tex.pixel_bytes();
+                let padded = (u64::from(width) * u64::from(pixel_bytes)).div_ceil(256) * 256;
                 let size = padded * u64::from(height);
                 let buffer = match spare.0.iter().position(|b| b.size() == size) {
                     Some(i) => spare.0.swap_remove(i),
@@ -295,7 +312,7 @@ impl Gpu {
                     },
                     wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
                 );
-                items.push(ReadItem { buffer, width, height, padded });
+                items.push(ReadItem { buffer, width, height, padded, pixel_bytes });
             }
             let index = self.submit([encoder.finish()]);
             (items, index)
@@ -335,6 +352,35 @@ impl Gpu {
         let tex = Tex::new(self, width, height, label)?;
         self.write_rgba16f(&tex, bytes)?;
         Ok(tex)
+    }
+
+    /// A texture from rows of little-endian 32-bit floats as [`Gpu::read_async_exact`] delivers
+    /// them for a texture of [`crate::FLOAT_FORMAT`], `width * height * 16` bytes: of that format
+    /// where the device filters it ([`Gpu::float_textures`]), else rounded to half floats. NaN
+    /// and infinities become 0, as in [`Gpu::upload_rgba16f`].
+    pub fn upload_rgba32f(&self, width: u32, height: u32, bytes: &[u8], label: &str) -> Result<Tex, Error> {
+        let expected = u64::from(width).saturating_mul(u64::from(height)).saturating_mul(16);
+        if bytes.len() as u64 != expected {
+            return Err(Error::new(format!(
+                "{} bytes for a {width}x{height} texture of 32-bit floats, expected {expected}",
+                bytes.len()
+            )));
+        }
+        let rgba: Vec<[f32; 4]> = bytes
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .map(|px| {
+                let mut c = [0f32; 4];
+                for (out, f) in c.iter_mut().zip(px.as_chunks::<4>().0) {
+                    let v = f32::from_le_bytes(*f);
+                    *out = if v.is_finite() { v } else { 0.0 };
+                }
+                c
+            })
+            .collect();
+        let image = crate::image::FloatImage { width, height, rgba, source: String::new() };
+        self.upload_picture(&crate::image::Picture::Float(image), label)
     }
 
     /// [`Gpu::upload_rgba16f`] into an existing texture of the same size (a [`crate::TexRing`]'s).
@@ -396,6 +442,8 @@ struct ReadItem {
     width: u32,
     height: u32,
     padded: u64,
+    /// 8 for half floats, 16 for 32-bit floats.
+    pixel_bytes: u32,
 }
 
 /// Readback buffers kept for the next [`Gpu::read_async_reusing`].
@@ -500,8 +548,15 @@ impl PendingRead {
         self.items.get(i).map(|t| (t.width, t.height))
     }
 
+    /// Bytes per pixel of texture `i`'s rows: 8 for half floats, 16 for 32-bit floats (only
+    /// from [`Gpu::read_async_exact`]).
+    pub fn pixel_bytes(&self, i: usize) -> Option<u32> {
+        self.items.get(i).map(|t| t.pixel_bytes)
+    }
+
     /// Hands the rows of texture `i` to `f`, top to bottom, each `width * 8` bytes of
-    /// little-endian half floats (RGBA, as stored: linear, premultiplied). Only once ready.
+    /// little-endian half floats (RGBA, as stored: linear, premultiplied), or `width * 16` bytes
+    /// of 32-bit floats ([`PendingRead::pixel_bytes`]). Only once ready.
     pub fn rows<E>(&self, i: usize, mut f: impl FnMut(&[u8]) -> Result<(), E>) -> Result<(), RowsError<E>> {
         let gpu_error = |m: String| RowsError::Gpu(Error::new(m));
         if self.state() != ReadState::Ready {
@@ -509,7 +564,7 @@ impl PendingRead {
         }
         let item = self.items.get(i).ok_or_else(|| gpu_error(format!("no texture {i}")))?;
         let view = item.buffer.get_mapped_range(..).map_err(|e| gpu_error(format!("readback: {e}")))?;
-        let row = usize::try_from(u64::from(item.width) * 8).unwrap_or(usize::MAX);
+        let row = usize::try_from(u64::from(item.width) * u64::from(item.pixel_bytes)).unwrap_or(usize::MAX);
         let padded = usize::try_from(item.padded).unwrap_or(usize::MAX);
         for y in 0..item.height as usize {
             let start = y.saturating_mul(padded);

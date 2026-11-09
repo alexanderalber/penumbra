@@ -58,15 +58,17 @@ struct Cache {
 impl Cache {
     fn take(&mut self, gpu: &Gpu, src: &Tex, length: usize) -> Result<(), CookError> {
         let (w, h) = src.size();
-        self.frames.retain(|t| t.size() == (w, h));
+        // Frames of 32-bit floats stay 32-bit floats: a held simulation state keeps its values.
+        let format = src.format();
+        self.frames.retain(|t| t.size() == (w, h) && t.format() == format);
         self.frames.truncate(length);
         let slot = if self.frames.len() == length {
             match self.frames.pop_back() {
                 Some(t) => t,
-                None => Tex::new(gpu, w, h, KIND)?,
+                None => Tex::new_in(gpu, w, h, format, KIND)?,
             }
         } else {
-            Tex::new(gpu, w, h, KIND)?
+            Tex::new_in(gpu, w, h, format, KIND)?
         };
         gpu.copy(src, &slot)?;
         self.frames.push_front(slot);

@@ -6,8 +6,9 @@
 //! - textures are [`FORMAT`] (RGBA, 16-bit float), **linear light, premultiplied alpha**;
 //!   values above 1 are allowed (HDR). Pictures loaded from files of 32-bit floats (the maps a
 //!   scan writes) are [`FLOAT_FORMAT`] instead, so they keep the precision of a sub-pixel
-//!   position: every pass samples them like the others, and readback and copies turn them into
-//!   [`FORMAT`] where they need it ([`Gpu::to_half`]);
+//!   position, and so is the output of a pass compiled for it (simulation state,
+//!   [`Pass::compile_in`]): every pass samples them like the others, and readback and copies
+//!   turn them into [`FORMAT`] where they need it ([`Gpu::to_half`]);
 //! - texture coordinates have their origin at the **top left**, `y` pointing down (as wgpu and
 //!   image files have it);
 //! - a node's resolution is fixed (a parameter or its input's), never derived from downstream.
@@ -58,7 +59,7 @@ pub use tex::{Tex, TexRing, texture_bytes, unique_bytes, view_bytes};
 pub use vram::Vram;
 pub use yuv::{MappedPlanes, PlaneLayout, YuvReader};
 
-/// The format of every texture flowing between nodes.
+/// The format of the textures flowing between nodes, unless a node asked for [`FLOAT_FORMAT`].
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// The format of pictures loaded from files of 32-bit floats, where the device can filter it
@@ -326,6 +327,17 @@ impl Gpu {
     /// A device without a window, for tests and headless tools. `backends` defaults to the
     /// platform's choice (DX12 on Windows, as in the app).
     pub fn headless(choice: AdapterChoice) -> Result<Self, Error> {
+        Self::headless_without(choice, wgpu::Features::empty())
+    }
+
+    /// [`Gpu::headless`] without filtering of 32-bit floats even where the adapter has it: what
+    /// penumbra does on a device that lacks it ([`Gpu::float_textures`], [`Gpu::float_targets`]),
+    /// tried on one that has it.
+    pub fn headless_without_float_filtering(choice: AdapterChoice) -> Result<Self, Error> {
+        Self::headless_without(choice, wgpu::Features::FLOAT32_FILTERABLE)
+    }
+
+    fn headless_without(choice: AdapterChoice, features: wgpu::Features) -> Result<Self, Error> {
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
         desc.memory_budget_thresholds = vram::memory_thresholds();
         if cfg!(windows) && std::env::var_os("WGPU_BACKEND").is_none() {
@@ -339,7 +351,9 @@ impl Gpu {
             apply_limit_buckets: false,
         }))
         .map_err(|e| Error::new(format!("no {choice:?} GPU adapter: {e}")))?;
-        let (device, queue) = block_on(adapter.request_device(&device_descriptor(&adapter)))
+        let mut wanted = device_descriptor(&adapter);
+        wanted.required_features.remove(features);
+        let (device, queue) = block_on(adapter.request_device(&wanted))
             .map_err(|e| Error::new(format!("cannot open the GPU device: {e}")))?;
         Ok(Self::new(adapter, device, queue))
     }
@@ -587,6 +601,19 @@ impl Gpu {
     /// them, as every pass's sampler does. Without it they load as [`FORMAT`].
     pub fn float_textures(&self) -> bool {
         self.device().features().contains(wgpu::Features::FLOAT32_FILTERABLE)
+    }
+
+    /// Whether passes can keep state in [`FLOAT_FORMAT`] textures ([`Pass::compile_in`]): the
+    /// device filters 32-bit floats ([`Gpu::float_textures`]), so every pass may sample them,
+    /// and renders into them. Without it a node asking for 32-bit floats writes [`FORMAT`].
+    pub fn float_targets(&self) -> bool {
+        self.float_textures()
+            && self
+                .inner
+                .adapter
+                .get_texture_format_features(FLOAT_FORMAT)
+                .allowed_usages
+                .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
     }
 
     /// `tex` as a texture of [`FORMAT`]: itself when it is one, else a copy, rounded to half

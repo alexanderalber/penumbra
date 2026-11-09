@@ -1100,6 +1100,77 @@ fn feedback_and_locked_textures_survive_a_restart() {
     }
 }
 
+/// A step a half float cannot hold: 1 + 1/8192 rounds back to 1 in 16 bits.
+const NUDGE: &str = "@fragment fn main(v: PnVertex) -> @location(0) vec4f {
+    return textureLoad(in0, vec2i(v.pos.xy), 0) + vec4f(1.0 / 8192.0, 0.0, 0.0, 0.0);
+}
+";
+
+#[test]
+fn a_loop_in_32_bit_floats_keeps_steps_half_floats_lose_and_survives_a_restart() {
+    let dir = ScratchDir::unborn("engine-state-float");
+    let Some(gpu) = warp() else { return };
+    let shots = dir.path().join("shots");
+    std::fs::create_dir_all(dir.path()).unwrap();
+    std::fs::write(dir.path().join("nudge.wgsl"), NUDGE).unwrap();
+    let red = |s: &Json| s["stats"]["mean"][0].as_f64().unwrap();
+    let before;
+    {
+        let (engine, r) = open(dir.path());
+        engine.attach_gpu(gpu).unwrap();
+        ok(&r, "project.settings", json!({"set": {"persist_state": true}}));
+        let one = json!({"width": 8, "height": 4, "color": [1.0, 1.0, 1.0, 1.0]});
+        ok(&r, "node.create", json!({"path": "/one", "kind": "tex.constant", "params": one}));
+        ok(&r, "node.create", json!({"path": "/fb", "kind": "tex.feedback"}));
+        for (path, format) in [("/half", "16f"), ("/float", "32f")] {
+            let params = json!({"file": "nudge.wgsl", "format": format, "iterations": 4});
+            ok(&r, "node.create", json!({"path": path, "kind": "tex.shader", "params": params}));
+        }
+        ok(&r, "node.connect", json!({"from": "/one", "to": "/half", "input": "in0"}));
+        ok(&r, "node.connect", json!({"from": "/one", "to": "/fb", "input": "initial"}));
+        ok(&r, "node.connect", json!({"from": "/fb", "to": "/float", "input": "in0"}));
+        ok(&r, "node.connect", json!({"from": "/float", "to": "/fb", "input": "previous"}));
+        ok(&r, "node.watch", json!({"path": "/float"}));
+        ok(&r, "node.watch", json!({"path": "/half"}));
+        eventually("the startup restore", || engine.state().status().restore.is_some());
+        // Four passes of 1/8192 each: half floats round every one of them back to 1.
+        eventually("the 16f shader", || {
+            r.dispatch("node.snapshot", &json!({"path": "/half", "file": shots.join("half.png")}))["ok"]
+                == true
+        });
+        let half = ok(&r, "node.snapshot", json!({"path": "/half", "file": shots.join("half.png")}));
+        assert_eq!(red(&half), 1.0, "{half}");
+        // The loop in 32-bit floats adds them up, frame after frame.
+        eventually("a few frames of the 32f loop", || {
+            let s = r.dispatch("node.snapshot", &json!({"path": "/fb", "file": shots.join("probe.png")}));
+            s["ok"] == true && red(&s["result"]) > 1.0 + 40.0 / 8192.0
+        });
+        ok(&r, "cook.play", json!({"playing": false}));
+        before = ok(&r, "node.snapshot", json!({"path": "/fb", "file": shots.join("before.png")}));
+        let steps = (red(&before) - 1.0) * 8192.0;
+        assert!((steps - steps.round()).abs() < 1e-3, "whole steps of 1/8192: {before}");
+        let saved = ok(&r, "state.save", json!({}));
+        assert_eq!(saved["nodes"], json!(["/fb"]), "{saved}");
+        assert!(saved["bytes"].as_u64().unwrap() > 8 * 4 * 16, "16 bytes a pixel: {saved}");
+        assert_eq!(ok(&r, "gpu.info", json!({}))["errors"], 0);
+        engine.shutdown();
+    }
+    let state = dir.path().join("state").join("latest.pnstate");
+    let saved = crate::state::read_path(&state, &crate::state::StateLimits::default()).unwrap();
+    assert!(matches!(saved.nodes[0].items[..], [crate::state::SavedItem::Tex { float: true, .. }]));
+    {
+        let (engine, r) = open(dir.path());
+        ok(&r, "cook.play", json!({"playing": false}));
+        engine.attach_gpu(warp().unwrap()).unwrap();
+        eventually("the startup restore", || engine.state().status().restore.is_some());
+        let report = engine.state().status().restore.unwrap();
+        assert_eq!(report.restored, ["/fb"], "{report:?}");
+        let after = ok(&r, "node.snapshot", json!({"path": "/fb", "file": shots.join("after.png")}));
+        assert_eq!(after["stats"], before["stats"], "restored as saved, in 32-bit floats");
+        engine.shutdown();
+    }
+}
+
 #[test]
 fn node_reset_starts_a_loop_over_and_leaves_locked_nodes_alone() {
     let dir = ScratchDir::unborn("engine-reset");

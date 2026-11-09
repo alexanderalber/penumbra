@@ -1,5 +1,6 @@
 //! `iterations` on `tex.shader` on WARP: N passes equal N chained nodes, 1 is one pass, the
-//! passes know their number, hostile counts are clamped, and the size rule with `custom`.
+//! passes know their number, hostile counts are clamped, the size rule with `custom`, a bound
+//! count; and `format` 32f through every pass, with its fallback to 16f.
 
 use penumbra_core::Value;
 use penumbra_gpu::Pixels;
@@ -120,4 +121,99 @@ fn with_custom_size_later_passes_read_the_output_size() {
     let Some(px) = run("iter_size_3", &ops(3), "/count") else { return };
     assert_eq!((px.width, px.height), (4, 2));
     assert_eq!(px.get(0, 0).map(|p| p[3]), Some(4.0));
+}
+
+/// `iterations` is a number param like any other: a channel bound to it sets the passes per
+/// cook, and a new value of the channel takes effect at the next cook.
+#[test]
+fn iterations_follow_a_bound_channel() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("iter_bound");
+    std::fs::write(dir.join("count.wgsl"), COUNT).unwrap();
+    let bind = Op::Bind {
+        param: penumbra_core::ParamPath::parse("/count.iterations").unwrap(),
+        component: None,
+        from: "/k".parse().unwrap(),
+        channel: None,
+        cell: None,
+        format: None,
+    };
+    let ops =
+        [create("/k", "chan.constant", &[("value0", Value::Float(7.0))]), count(Value::Int(2), None), bind];
+    let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+    let px = rig.pixels("/count");
+    assert_eq!(px.get(0, 0).map(|p| [p[0], p[2]]), Some([7.0, 7.0]));
+    let before = rig.version("/count");
+    rig.edit(&[super::set("/k.value0", Value::Float(3.0))]);
+    let tex = rig.cook_until_new("/count", before);
+    let px = gpu.read(&tex).unwrap();
+    assert_eq!(px.get(0, 0).map(|p| [p[0], p[2]]), Some([3.0, 3.0]));
+    // Out of range, as a channel may well go: held to 1 to 64 like a typed value.
+    let before = rig.version("/count");
+    rig.edit(&[super::set("/k.value0", Value::Float(500.0))]);
+    let tex = rig.cook_until_new("/count", before);
+    assert_eq!(gpu.read(&tex).unwrap().get(0, 0).map(|p| p[2]), Some(64.0));
+}
+
+/// Adds 1/8192 to red: a step half floats lose above 1.
+const NUDGE: &str = "@fragment fn main(v: PnVertex) -> @location(0) vec4f {     return textureLoad(in0, vec2i(v.pos.xy), 0) + vec4f(1.0 / 8192.0, 0.0, 0.0, 0.0); }";
+
+fn nudge(format: &str) -> [Op; 3] {
+    [
+        create(
+            "/one",
+            "tex.constant",
+            &[("width", Value::Int(4)), ("height", Value::Int(2)), ("color", Value::Vec4([1.0; 4]))],
+        ),
+        create(
+            "/n",
+            "tex.shader",
+            &[("file", "nudge.wgsl".into()), ("iterations", Value::Int(6)), ("format", format.into())],
+        ),
+        connect("/one", "/n", 0),
+    ]
+}
+
+#[test]
+fn format_32f_keeps_every_pass_in_32_bit_floats() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("iter_float");
+    std::fs::write(dir.join("nudge.wgsl"), NUDGE).unwrap();
+    let mut rig = Rig::new(gpu.clone(), Some(&dir), &nudge("32f"));
+    let tex = rig.cook_until_new("/n", 0);
+    assert_eq!(tex.format(), penumbra_gpu::FLOAT_FORMAT);
+    assert_eq!(tex.bytes(), 4 * 2 * 16);
+    let red = gpu.read(&tex).unwrap().get(0, 0).unwrap()[0];
+    assert_eq!(red, 1.0 + 6.0 / 8192.0, "six passes, none rounded");
+    // Back to 16f: a new compile, and the output is half floats again, every step lost.
+    let before = rig.version("/n");
+    rig.edit(&[super::set("/n.format", "16f".into())]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let tex = loop {
+        let t = rig.cook_until_new("/n", before);
+        if t.format() == penumbra_gpu::FORMAT {
+            break t;
+        }
+        assert!(std::time::Instant::now() < deadline, "the 16f pass never came");
+    };
+    assert_eq!(gpu.read(&tex).unwrap().get(0, 0).unwrap()[0], 1.0);
+    let s = rig.cooker.status(rig.id("/n")).unwrap();
+    assert!(s.warning.is_none() && s.error.is_none(), "{s:?}");
+}
+
+#[test]
+fn format_32f_falls_back_to_16f_with_a_warning_without_float_filtering() {
+    let Ok(gpu) = penumbra_gpu::Gpu::headless_without_float_filtering(penumbra_gpu::AdapterChoice::Software)
+    else {
+        return;
+    };
+    let dir = scratch("iter_float_fallback");
+    std::fs::write(dir.join("nudge.wgsl"), NUDGE).unwrap();
+    let mut rig = Rig::new(gpu.clone(), Some(&dir), &nudge("32f"));
+    let tex = rig.cook_until_new("/n", 0);
+    assert_eq!(tex.format(), penumbra_gpu::FORMAT);
+    let s = rig.cooker.status(rig.id("/n")).unwrap();
+    let warning = s.warning.unwrap_or_default();
+    assert!(warning.contains("cannot filter or render 32-bit floats, so the node writes 16f"), "{warning}");
+    assert_eq!(gpu.errors().count, 0);
 }

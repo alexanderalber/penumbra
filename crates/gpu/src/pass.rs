@@ -45,7 +45,7 @@ use std::sync::{Arc, Mutex};
 use penumbra_core::{Error, ParamKind, ParamSpec, Value, lock, palette};
 
 use crate::tex::TexKey;
-use crate::{Deferral, Done, FORMAT, Gpu, Tex};
+use crate::{Deferral, Done, FLOAT_FORMAT, FORMAT, Gpu, Tex};
 
 /// Texture inputs every pass has (`in0` to `in3`).
 pub const INPUTS: usize = 4;
@@ -528,6 +528,8 @@ pub struct Pass {
     uniform_size: u64,
     uses_time: bool,
     uses_input: [bool; INPUTS],
+    /// What it renders into: [`FORMAT`], or [`FLOAT_FORMAT`] for state kept in 32-bit floats.
+    format: wgpu::TextureFormat,
     /// Bind groups of the inputs used lately: making one costs about a fifth of a pass.
     inputs: Arc<InputGroups>,
 }
@@ -565,6 +567,25 @@ impl Pass {
     /// Compiles `source` (see the module docs) with `params`. The error text is meant for the
     /// person who wrote the shader: naga's message with the source line.
     pub fn compile(gpu: &Gpu, label: &str, source: &str, params: &[ParamSpec]) -> Result<Self, Error> {
+        Self::compile_in(gpu, label, source, params, FORMAT)
+    }
+
+    /// [`Pass::compile`] for targets of `format`: [`FORMAT`], or [`FLOAT_FORMAT`] where the
+    /// device renders it ([`Gpu::float_targets`]). The format is part of the pipeline, so a pass
+    /// renders into targets of its own format only.
+    pub fn compile_in(
+        gpu: &Gpu,
+        label: &str,
+        source: &str,
+        params: &[ParamSpec],
+        format: wgpu::TextureFormat,
+    ) -> Result<Self, Error> {
+        if format == FLOAT_FORMAT && !gpu.float_targets() {
+            return Err(Error::new(format!("{label}: this GPU cannot render into 32-bit floats")));
+        }
+        if format != FORMAT && format != FLOAT_FORMAT {
+            return Err(Error::new(format!("{label}: a pass cannot render into {format:?}")));
+        }
         let full = format!("{source}\n{PRELUDE}{SHARED}{PRELUDE_REST}{}", params_wgsl(params));
         let module = naga::front::wgsl::parse_str(&full)
             .map_err(|e| Error::new(ascii_frame(&e.emit_to_string_with_path(&full, label))))?;
@@ -613,7 +634,7 @@ impl Pass {
                     module: &module,
                     entry_point: Some("main"),
                     compilation_options: Default::default(),
-                    targets: &[Some(FORMAT.into())],
+                    targets: &[Some(format.into())],
                 }),
                 multiview_mask: None,
                 cache: None,
@@ -630,8 +651,14 @@ impl Pass {
             uniform_size,
             uses_time,
             uses_input,
+            format,
             inputs: gpu.input_groups(),
         })
+    }
+
+    /// The format of the targets it renders into.
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.format
     }
 
     pub fn params(&self) -> &[ParamSpec] {
@@ -681,6 +708,13 @@ impl Pass {
     /// `iteration` is the pass's number among the passes of one cook and their count
     /// (`pn.iteration`, `pn.iterations`).
     fn record(&self, gpu: &Gpu, target: &Tex, input: &PassInput<'_>, iteration: [u32; 2]) -> Option<String> {
+        if target.format() != self.format {
+            return Some(format!(
+                "the pass renders into {:?}, the target is {:?}",
+                self.format,
+                target.format()
+            ));
+        }
         let (w, h) = target.size();
         let words = |v: [f32; 4]| {
             let mut out = [0u8; 16];
@@ -1096,6 +1130,64 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         assert_eq!(px.get(1, 0).unwrap(), [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(px.get(2, 0).unwrap(), [0.0, 0.0, 1.0, 1.0]);
         assert_eq!(px.get(3, 0).unwrap(), [0.5, 0.75, 0.25, 0.5]);
+        assert_eq!(gpu.errors().count, 0);
+    }
+
+    #[test]
+    fn a_pass_keeps_32_bit_floats_where_the_device_renders_them() {
+        let Some(gpu) = gpu() else { return };
+        assert!(gpu.float_targets(), "WARP filters and renders 32-bit floats");
+        // 1 + 1/8192 and 1234.567 do not fit half floats; a 32-bit target keeps them.
+        let src = "@fragment fn main(v: PnVertex) -> @location(0) vec4f {
+            return vec4f(1.0 + 1.0 / 8192.0, -3.0e-5, 1234.567, v.uv.x);
+        }";
+        let pass = Pass::compile_in(&gpu, "float", src, &[], FLOAT_FORMAT).unwrap();
+        assert_eq!(pass.format(), FLOAT_FORMAT);
+        let none = |_: &str| None;
+        let input = PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &none };
+        let target = Tex::new_float(&gpu, 4, 2, "t").unwrap();
+        pass.render(&gpu, &target, &input).unwrap();
+        let px = gpu.read(&target).unwrap();
+        assert_eq!(px.get(1, 0).unwrap(), [1.0 + 1.0 / 8192.0, -3.0e-5, 1234.567, 0.375]);
+        // The same shader into half floats rounds.
+        let half_pass = Pass::compile(&gpu, "half", src, &[]).unwrap();
+        let half = Tex::new(&gpu, 4, 2, "h").unwrap();
+        half_pass.render(&gpu, &half, &input).unwrap();
+        assert_eq!(gpu.read(&half).unwrap().get(1, 0).unwrap()[0], 1.0);
+        // A pass renders into its own format only.
+        let e = pass.render(&gpu, &half, &input).unwrap_err();
+        assert!(e.0.contains("renders into Rgba32Float, the target is Rgba16Float"), "{e}");
+        assert!(half_pass.render(&gpu, &target, &input).is_err());
+        // State files read the rows as stored: 16 bytes a pixel.
+        let read = gpu.read_async_exact(&[&target, &half], &mut crate::ReadPool::default()).unwrap();
+        assert_eq!(read.wait(&gpu, std::time::Duration::from_secs(10)), crate::ReadState::Ready);
+        assert_eq!((read.pixel_bytes(0), read.pixel_bytes(1)), (Some(16), Some(8)));
+        let mut rows = Vec::new();
+        read.rows(0, |r| -> Result<(), ()> {
+            rows.extend_from_slice(r);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(rows.len(), 4 * 2 * 16);
+        let back = gpu.upload_rgba32f(4, 2, &rows, "back").unwrap();
+        assert_eq!(back.format(), FLOAT_FORMAT);
+        assert_eq!(gpu.read(&back).unwrap().data, px.data);
+        assert!(gpu.upload_rgba32f(4, 1, &rows, "short").is_err());
+        assert_eq!(gpu.errors().count, 0);
+    }
+
+    #[test]
+    fn without_float_filtering_no_pass_renders_32_bit_floats() {
+        let Ok(gpu) = Gpu::headless_without_float_filtering(crate::AdapterChoice::Software) else { return };
+        assert!(!gpu.float_textures() && !gpu.float_targets());
+        let src = "@fragment fn main(v: PnVertex) -> @location(0) vec4f { return vec4f(1.0); }";
+        let e = Pass::compile_in(&gpu, "float", src, &[], FLOAT_FORMAT).err().unwrap();
+        assert!(e.0.contains("cannot render into 32-bit floats"), "{e}");
+        // A state file's 32-bit texture comes back as half floats.
+        let bytes: Vec<u8> = (0..4).flat_map(|i| (1.5f32 + i as f32).to_le_bytes()).collect();
+        let back = gpu.upload_rgba32f(1, 1, &bytes, "back").unwrap();
+        assert_eq!(back.format(), FORMAT);
+        assert_eq!(gpu.read(&back).unwrap().data, [[1.5, 2.5, 3.5, 4.5]]);
         assert_eq!(gpu.errors().count, 0);
     }
 }

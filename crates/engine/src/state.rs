@@ -31,8 +31,9 @@
 //! Format (version 1, little endian): `PNSTATE\0`, `u32` version, `u32` manifest length, the
 //! manifest (JSON: which nodes, what kind of state, which items with their sizes), the items'
 //! bytes one after the other, and a `u64` checksum of everything before it. Textures are stored
-//! as they live on the GPU (RGBA half floats, linear, premultiplied, rows top to bottom), so a
-//! restored loop continues bit for bit; channels and tables as JSON; operator bytes as they are.
+//! as they live on the GPU (RGBA half floats, or 32-bit floats for a simulation that keeps its
+//! state in them; linear, premultiplied, rows top to bottom), so a restored loop continues bit
+//! for bit; channels and tables as JSON; operator bytes as they are.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -265,18 +266,31 @@ pub enum What {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ItemEntry {
-    Tex { width: u32, height: u32 },
-    Chan { len: u64 },
-    Table { len: u64 },
-    Bytes { len: u64 },
+    /// RGBA half floats, or 32-bit floats with `float` (a simulation's state). Files written
+    /// before 32-bit floats existed have no `float` and hold half floats.
+    Tex {
+        width: u32,
+        height: u32,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        float: bool,
+    },
+    Chan {
+        len: u64,
+    },
+    Table {
+        len: u64,
+    },
+    Bytes {
+        len: u64,
+    },
 }
 
 impl ItemEntry {
     fn len(&self) -> u64 {
         match self {
-            ItemEntry::Tex { width, height } => {
-                u64::from(*width).saturating_mul(u64::from(*height)).saturating_mul(8)
-            }
+            ItemEntry::Tex { width, height, float } => u64::from(*width)
+                .saturating_mul(u64::from(*height))
+                .saturating_mul(if *float { 16 } else { 8 }),
             ItemEntry::Chan { len } | ItemEntry::Table { len } | ItemEntry::Bytes { len } => *len,
         }
     }
@@ -305,10 +319,12 @@ pub struct Manifest {
 /// An item read from a file.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SavedItem {
-    /// `width * height * 8` bytes of RGBA half floats.
+    /// `width * height * 8` bytes of RGBA half floats, or `width * height * 16` bytes of 32-bit
+    /// floats with `float`.
     Tex {
         width: u32,
         height: u32,
+        float: bool,
         bytes: Vec<u8>,
     },
     Chan(Chans),
@@ -502,7 +518,7 @@ pub fn read_file<R: Read>(r: R, len: u64, limits: &StateLimits) -> Result<Saved,
     for node in &manifest.nodes {
         for item in &node.items {
             match item {
-                ItemEntry::Tex { width, height } => {
+                ItemEntry::Tex { width, height, .. } => {
                     if *width == 0 || *height == 0 || *width > limits.max_side || *height > limits.max_side {
                         return Err(Error::new(format!("{}: a {width}x{height} texture", node.path)));
                     }
@@ -527,7 +543,9 @@ pub fn read_file<R: Read>(r: R, len: u64, limits: &StateLimits) -> Result<Saved,
         for item in &node.items {
             let bytes = f.take(item.len())?;
             items.push(match item {
-                ItemEntry::Tex { width, height } => SavedItem::Tex { width: *width, height: *height, bytes },
+                ItemEntry::Tex { width, height, float } => {
+                    SavedItem::Tex { width: *width, height: *height, float: *float, bytes }
+                }
                 ItemEntry::Bytes { .. } => SavedItem::Bytes(bytes),
                 // Parsed after the checksum (below): a corrupt file should say so first.
                 ItemEntry::Chan { .. } | ItemEntry::Table { .. } => SavedItem::Bytes(bytes),
@@ -609,8 +627,8 @@ pub fn encode(saved: &Saved) -> Result<Vec<u8>, Error> {
         let mut bytes = Vec::new();
         for item in &node.items {
             let (entry, b) = match item {
-                SavedItem::Tex { width, height, bytes } => {
-                    (ItemEntry::Tex { width: *width, height: *height }, bytes.clone())
+                SavedItem::Tex { width, height, float, bytes } => {
+                    (ItemEntry::Tex { width: *width, height: *height, float: *float }, bytes.clone())
                 }
                 SavedItem::Chan(c) => {
                     let b = chans_to_json(c)?;
@@ -988,7 +1006,7 @@ fn collect(
         None
     } else {
         let gpu = gpu.ok_or_else(|| Error::new("textures to keep but no GPU"))?;
-        Some(gpu.read_async_reusing(&textures, pool)?)
+        Some(gpu.read_async_exact(&textures, pool)?)
     };
     // The textures become their place in the readback, in the order they were listed.
     let mut index = 0;
@@ -1039,7 +1057,8 @@ fn items_of(list: Vec<StateItem>, limits: &StateLimits) -> Result<Vec<(ItemEntry
             StateItem::Data(d) => match d.kind() {
                 DataKind::Tex => {
                     let t = d.get::<Tex>().ok_or("a texture output without a texture")?;
-                    (ItemEntry::Tex { width: t.width(), height: t.height() }, ItemOut::Data(d))
+                    let float = t.format() == penumbra_gpu::FLOAT_FORMAT;
+                    (ItemEntry::Tex { width: t.width(), height: t.height(), float }, ItemOut::Data(d))
                 }
                 DataKind::Chan => {
                     d.get::<Chans>().ok_or("a channel output without channels")?;
@@ -1361,12 +1380,17 @@ pub fn prepare(
         let mut failed = None;
         for item in node.items {
             let item = match item {
-                SavedItem::Tex { width, height, mut bytes } => {
+                SavedItem::Tex { width, height, float, mut bytes } => {
                     let Some(gpu) = gpu else {
                         failed = Some("no GPU to upload the texture to".to_string());
                         break;
                     };
-                    match gpu.upload_rgba16f(width, height, &mut bytes, "restored") {
+                    let uploaded = if float {
+                        gpu.upload_rgba32f(width, height, &bytes, "restored")
+                    } else {
+                        gpu.upload_rgba16f(width, height, &mut bytes, "restored")
+                    };
+                    match uploaded {
                         Ok(t) => StateItem::Data(Data::new(DataKind::Tex, t)),
                         Err(e) => {
                             failed = Some(e.0);
@@ -1426,7 +1450,7 @@ mod tests {
                     path: "/fb".into(),
                     kind: "tex.feedback".into(),
                     what: What::State,
-                    items: vec![SavedItem::Tex { width: 3, height: 2, bytes: tex }],
+                    items: vec![SavedItem::Tex { width: 3, height: 2, float: false, bytes: tex }],
                 },
                 SavedNode {
                     path: "/held".into(),
@@ -1509,7 +1533,7 @@ mod tests {
                 path: "/fb".into(),
                 kind: "tex.feedback".into(),
                 what: What::State,
-                items: vec![ItemEntry::Tex { width: 100_000, height: 100_000 }],
+                items: vec![ItemEntry::Tex { width: 100_000, height: 100_000, float: false }],
             }],
         };
         let forged = write_file(Vec::new(), &manifest, |_, _, sink| {

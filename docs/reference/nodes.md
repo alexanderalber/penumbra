@@ -952,6 +952,7 @@ Outputs: `out` (tex).
 | `height` | int | `1080` | 1 to 16384 px | Height of the output in pixels, used with resolution custom or without in0. res.optimize may change it unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 | `iterations` *(more)* | int | `1` | 1 to 16 (soft, held within 1 to 64) | How often the shader runs per cook, TouchDesigner's Passes. From the second pass on, in0 is the pass before. The shader reads its pass as pn.iteration, from 0. For simulations that take several steps a frame |
+| `format` *(more)* | 16f \| 32f | `"16f"` |  | Number format of the output, TouchDesigner's Pixel Format. Use 32f for simulation state that 16f rounds away. 32f takes twice the memory; 16f: half floats, about 3 decimal digits, like every other picture; 32f: 32-bit floats, about 7 decimal digits, in every pass. A GPU that cannot filter 32-bit floats gets 16f and a warning |
 
 ### tex.shape_content
 

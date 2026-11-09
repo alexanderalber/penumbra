@@ -1895,7 +1895,7 @@ fn main(v: PnVertex) -&gt; @location(0) vec4f {
 <h3 id="shaders-params">Params</h3>
 <p>Comment lines starting with <code>// @param</code> declare params. They appear in the node's param panel under &quot;from the shader&quot;, and are set, bound to channels, saved and undone like any other. Some names are taken, and a shader that declares one does not load:</p>
 <ul>
-<li><strong>The node's own params:</strong> <code>file</code>, <code>resolution</code>, <code>width</code>, <code>height</code>, <code>keep_size</code>, <code>iterations</code>. Call a line width <code>line</code>, not <code>width</code>. The error lists them.
+<li><strong>The node's own params:</strong> <code>file</code>, <code>resolution</code>, <code>width</code>, <code>height</code>, <code>keep_size</code>, <code>iterations</code>, <code>format</code>. Call a line width <code>line</code>, not <code>width</code>. The error lists them.
 </li>
 <li><strong>WGSL's reserved words</strong>, since every param becomes a field <code>params.&lt;name&gt;</code>: <code>active</code>, <code>type</code>, <code>target</code>, <code>static</code>, <code>super</code>... and keywords such as <code>loop</code> or <code>default</code>. The error says which word it is.
 </li>
@@ -1988,7 +1988,21 @@ fn pn_band(p: PnPalette, t: f32) -&gt; vec4f     // 0..1 in equal bands, one per
 </li>
 </ul>
 <p>A simulation loop: a <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a>, into one <a class="ref" href="#tex.shader"><code>tex.shader</code></a> with <code>iterations</code> 8, the shader back into the feedback's <code>previous</code>. Each pass costs as much as one more node with the same shader. <code>iterations</code> is held between 1 and 64.</p>
+<p><strong>Steps from a channel.</strong> <code>iterations</code> can be bound like any number param, for example <a class="ref" href="#node.bind"><code>node.bind {param: &quot;/step.iterations&quot;, from: &quot;/speed&quot;}</code></a>. A pass that returns <code>in0</code> unchanged still costs a full pass. Bind the count to what a look needs, rather than running 64 passes and skipping most of them in the shader.</p>
 <p><strong>Size.</strong> Every pass renders at the output's size. With <code>resolution</code> <code>custom</code> only the first pass reads the wired <code>in0</code>, at its own size; later passes read an <code>in0</code> of the output's size. Take the size from <code>textureDimensions(in0)</code> in each pass.</p>
+<h3 id="shaders-precision-16f-or-32f">Precision: 16f or 32f</h3>
+<p>Every picture between nodes is RGBA in half floats (<code>16f</code>): about 3 decimal digits. Between 1 and 2 the values lie 1/1024 apart. A simulation that keeps its state in a picture loses every change smaller than that. A wave equation then slowly loses its energy, and a temperature resting near 1 stops cooling.</p>
+<p><strong><code>format</code> 32f.</strong> Set the node's <code>format</code> (under &quot;more&quot;; TouchDesigner calls it Pixel Format) to <code>32f</code> on the node that writes the state. Its output is then 32-bit floats: about 7 decimal digits. With <code>iterations</code> above 1, every pass is 32f. A <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a> passes the 32f picture on unchanged, and its state file keeps the 32-bit values.</p>
+<ul>
+<li><strong>Cost:</strong> twice the memory, 16 bytes a pixel. Each pass writes twice the bytes, which matters for large pictures and many passes.
+</li>
+<li><strong>Where it ends:</strong> nodes that read the picture take it at full precision, and so does <a class="ref" href="#tex.cache"><code>tex.cache</code></a>. <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> reads it back as half floats. Recordings, Spout, NDI, outputs and thumbnails end in 8 or 16 bits anyway. <a class="ref" href="#node.snapshot"><code>node.snapshot</code></a> computes its stats from the 32-bit values.
+</li>
+<li><strong>Display:</strong> keep <code>16f</code> on the nodes that draw the state for the audience. Only the state needs 32f.
+</li>
+<li><strong>Fallback:</strong> a GPU that cannot filter or render 32-bit floats gets <code>16f</code>, with a warning on the node. Most desktop and laptop GPUs can.
+</li>
+</ul>
 <h3 id="shaders-from-shadertoy-and-glsl">From Shadertoy and GLSL</h3>
 <p>A Shadertoy shader ports line by line. Shadertoy's template for a new shader, and the same in penumbra:</p>
 <pre><code class="lang-glsl">void mainImage(out vec4 fragColor, in vec2 fragCoord) {
@@ -2388,7 +2402,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>persist</code></td><td>bool</td><td><code>true</code></td><td></td><td>While not recording, keep the held frames in the state snapshots, so they survive a restart</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#tracking-setting-up">Tracking › Setting up</a></p>
+<p class="mentions">Mentioned in: <a href="#tracking-setting-up">Tracking › Setting up</a>, <a href="#shaders-precision-16f-or-32f">Shaders › Precision: 16f or 32f</a></p>
 </div></details>
 <details class="entry node" id="tex.channel_mix"><summary><code class="name">tex.channel_mix</code><span class="sum">Mixes the colour channels anew: swap red and blue, make grey from one channel, turn alpha into colour</span></summary>
 <div class="body">
@@ -2722,7 +2736,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="tex.feedback-example">Example</h5>
 <p>The <code>feedback</code> example project: text drawn over a loop that zooms, turns, dims and shifts the hue of the last frame a little, so the text leaves trails that drift outwards and change colour.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-state">The Helpers window › State</a>, <a href="#shaders-several-steps-per-frame">Shaders › Several steps per frame</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-state">The Helpers window › State</a>, <a href="#shaders-several-steps-per-frame">Shaders › Several steps per frame</a>, <a href="#shaders-precision-16f-or-32f">Shaders › Precision: 16f or 32f</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.fit"><summary><code class="name">tex.fit</code><span class="sum">Fits a picture into a frame of another size or shape: whole with bars, cropped to fill, or stretched</span></summary>
 <div class="body">
@@ -3566,6 +3580,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
 <tr><td><code>iterations</code></td><td>int</td><td><code>1</code></td><td>1 to 16 (soft, held within 1 to 64)</td><td>How often the shader runs per cook, TouchDesigner's Passes. From the second pass on, in0 is the pass before. The shader reads its pass as pn.iteration, from 0. For simulations that take several steps a frame</td></tr>
+<tr><td><code>format</code></td><td>16f | 32f</td><td><code>&quot;16f&quot;</code></td><td></td><td>Number format of the output, TouchDesigner's Pixel Format. Use 32f for simulation state that 16f rounds away. 32f takes twice the memory<ul><li><code>16f</code>: half floats, about 3 decimal digits, like every other picture</li><li><code>32f</code>: 32-bit floats, about 7 decimal digits, in every pass. A GPU that cannot filter 32-bit floats gets 16f and a warning</li></ul></td></tr>
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#shaders">Shaders</a>, <a href="#shaders-several-steps-per-frame">Shaders › Several steps per frame</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
@@ -4328,7 +4343,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>components</code></td><td>rgba | rgb | red | luminance</td><td><code>&quot;rgba&quot;</code></td><td></td><td>Which channels a row gives; values are linear and premultiplied, as the picture holds them<ul><li><code>rgba</code>: r, g, b and a</li><li><code>rgb</code>: r, g and b</li><li><code>red</code>: r only</li><li><code>luminance</code>: lum, the brightness as the eye weighs it (Rec. 709)</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#shaders-precision-16f-or-32f">Shaders › Precision: 16f or 32f</a>, <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
 </div></details>
 <details class="entry node" id="chan.http_in"><summary><code class="name">chan.http_in</code><span class="sum">A control page in the browser (a phone on the LAN) or another program sends JSON over HTTP or a WebSocket: every address a channel</span></summary>
 <div class="body">
@@ -6886,7 +6901,7 @@ def cook(cx):
 <details class="entry command" id="node.bind"><summary><code class="name">node.bind</code><span class="sum">Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format (&quot;{.1} m&quot;), a choice its entry by name or place</span></summary>
 <div class="body">
 <p>Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format (&quot;{.1} m&quot;), a choice its entry by name or place; {param, from, channel?, cell?: {row?, col?}, format?}</p>
-<p class="mentions">Mentioned in: <a href="#concepts-text-and-choices">Concepts › Text and choices</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-text-and-choices">Concepts › Text and choices</a>, <a href="#shaders-several-steps-per-frame">Shaders › Several steps per frame</a></p>
 </div></details>
 <details class="entry command" id="node.connect"><summary><code class="name">node.connect</code><span class="sum">Connect an output to an input; without input: the first of its kind, or the next free one of a run (a composite's layers)</span></summary>
 <div class="body">
@@ -6969,7 +6984,7 @@ def cook(cx):
 <details class="entry command" id="node.snapshot"><summary><code class="name">node.snapshot</code><span class="sum">Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB)</span></summary>
 <div class="body">
 <p>Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file? (relative to the project; default in the temp directory), opaque? (true: the colour channels as stored, without alpha; on by itself when every pixel has alpha 0 and some colour)}</p>
-<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#shaders-on-windows-direct3d-12">Shaders › On Windows (Direct3D 12)</a>, <a href="#control-mcp-server">Control › MCP server</a>, <a href="#control-taking-turns">Control › Taking turns</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#shaders-on-windows-direct3d-12">Shaders › On Windows (Direct3D 12)</a>, <a href="#shaders-precision-16f-or-32f">Shaders › Precision: 16f or 32f</a>, <a href="#control-mcp-server">Control › MCP server</a>, <a href="#control-taking-turns">Control › Taking turns</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
 </div></details>
 <details class="entry command" id="node.unbind"><summary><code class="name">node.unbind</code><span class="sum">Back to the param's stored value</span></summary>
 <div class="body">

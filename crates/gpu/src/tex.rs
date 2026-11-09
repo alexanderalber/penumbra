@@ -14,9 +14,9 @@ struct Inner {
     format: wgpu::TextureFormat,
 }
 
-/// A texture in [`FORMAT`] (or [`FLOAT_FORMAT`], loaded from a file of 32-bit floats): linear
-/// light, premultiplied alpha, origin top left. Cloning is an `Arc` clone. This is the payload of
-/// `tex` data in the graph.
+/// A texture in [`FORMAT`] (or [`FLOAT_FORMAT`]: loaded from a file of 32-bit floats, or the
+/// state of a simulation that asked for 32-bit floats): linear light, premultiplied alpha, origin
+/// top left. Cloning is an `Arc` clone. This is the payload of `tex` data in the graph.
 #[derive(Clone)]
 pub struct Tex(Arc<Inner>);
 
@@ -27,9 +27,24 @@ impl Tex {
         Self::with_format(gpu, width, height, FORMAT, label)
     }
 
-    /// A new texture of [`FLOAT_FORMAT`] for pictures uploaded from the CPU (not rendered to).
+    /// A new texture of [`FLOAT_FORMAT`], for pictures uploaded from the CPU and for passes
+    /// that keep simulation state in 32-bit floats ([`Gpu::float_targets`]).
     pub fn new_float(gpu: &Gpu, width: u32, height: u32, label: &str) -> Result<Self, Error> {
         Self::with_format(gpu, width, height, FLOAT_FORMAT, label)
+    }
+
+    /// A new texture of `format`, which must be [`FORMAT`] or [`FLOAT_FORMAT`].
+    pub fn new_in(
+        gpu: &Gpu,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        label: &str,
+    ) -> Result<Self, Error> {
+        if format != FORMAT && format != FLOAT_FORMAT {
+            return Err(Error::new(format!("a texture between nodes cannot be {format:?}")));
+        }
+        Self::with_format(gpu, width, height, format, label)
     }
 
     /// A texture of [`FORMAT`] that compute programs can also write ([`crate::compute`]). Only
@@ -222,12 +237,25 @@ impl TexRing {
 
     /// A texture of this size to render into that nobody else is reading.
     pub fn next(&mut self, gpu: &Gpu, width: u32, height: u32, label: &str) -> Result<Tex, Error> {
-        self.next_of(gpu, width, height, false, label)
+        self.next_of(gpu, width, height, FORMAT, false, label)
+    }
+
+    /// Like [`TexRing::next`], of `format` ([`FORMAT`] or [`FLOAT_FORMAT`]). Textures of
+    /// another format go, as those of another size do.
+    pub fn next_in(
+        &mut self,
+        gpu: &Gpu,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        label: &str,
+    ) -> Result<Tex, Error> {
+        self.next_of(gpu, width, height, format, false, label)
     }
 
     /// Like [`TexRing::next`], a texture compute programs can write ([`Tex::new_storage`]).
     pub fn next_storage(&mut self, gpu: &Gpu, width: u32, height: u32, label: &str) -> Result<Tex, Error> {
-        self.next_of(gpu, width, height, true, label)
+        self.next_of(gpu, width, height, FORMAT, true, label)
     }
 
     fn next_of(
@@ -235,17 +263,19 @@ impl TexRing {
         gpu: &Gpu,
         width: u32,
         height: u32,
+        format: wgpu::TextureFormat,
         storage: bool,
         label: &str,
     ) -> Result<Tex, Error> {
-        self.textures.retain(|t| t.size() == (width, height) && t.is_storage() == storage);
+        self.textures
+            .retain(|t| t.size() == (width, height) && t.is_storage() == storage && t.format() == format);
         if let Some(t) = self.textures.iter().find(|t| !t.shared()) {
             return Ok(t.clone());
         }
         let t = if storage {
             Tex::new_storage(gpu, width, height, label)?
         } else {
-            Tex::new(gpu, width, height, label)?
+            Tex::new_in(gpu, width, height, format, label)?
         };
         if self.textures.len() >= RING {
             // All held elsewhere: forget the oldest, its holders keep it alive.

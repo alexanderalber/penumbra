@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use penumbra_core::{Error, ParamSpec};
 use penumbra_gpu::header::{self, Header};
-use penumbra_gpu::{Pass, PassInput, Tex, TexRing};
+use penumbra_gpu::{FLOAT_FORMAT, FORMAT, Gpu, Pass, PassInput, Tex, TexRing};
 use penumbra_graph::{
     AsyncSlot, CookContext, CookError, Cooked, Data, DataKind, Density, FileWatch, FnNodeType, JobStatus,
     NodeDef, NodeDesc, NodeTypes, Operator,
@@ -20,7 +20,7 @@ use penumbra_graph::{
 const MAX_SOURCE_BYTES: u64 = 1 << 20;
 
 /// Parameters every shader node has; the header adds its own.
-const FIXED: &[&str] = &["file", "resolution", "width", "height", super::KEEP_SIZE, "iterations"];
+const FIXED: &[&str] = &["file", "resolution", "width", "height", super::KEEP_SIZE, "iterations", "format"];
 
 /// Most passes per cook. A cheap simulation step costs roughly 0.2 ms per pass at 1920 x 1080
 /// on a desktop GPU, so 64 passes still fit a 60 fps frame there; a bound value gone wild cannot
@@ -59,6 +59,16 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     "How often the shader runs per cook, TouchDesigner's Passes. From the second pass on, in0 is the pass before. The shader reads its pass as pn.iteration, from 0. For simulations that take several steps a frame",
                 ),
         )
+        .param(
+            ParamSpec::choice("format", &["16f", "32f"])
+                .more()
+                .doc("Number format of the output, TouchDesigner's Pixel Format. Use 32f for simulation state that 16f rounds away. 32f takes twice the memory")
+                .choice_doc("16f", "half floats, about 3 decimal digits, like every other picture")
+                .choice_doc(
+                    "32f",
+                    "32-bit floats, about 7 decimal digits, in every pass. A GPU that cannot filter 32-bit floats gets 16f and a warning",
+                ),
+        )
         .input("in0", DataKind::Tex)
         .input("in1", DataKind::Tex)
         .input("in2", DataKind::Tex)
@@ -83,6 +93,8 @@ struct Shader {
     ring: TexRing,
     /// The passes before the last when `iterations` is above 1.
     middle: TexRing,
+    /// Whether the compile started last renders 32-bit floats.
+    asked: Option<bool>,
     palettes: crate::palette::Palettes,
 }
 
@@ -102,9 +114,13 @@ impl Operator for Shader {
         }
         let gpu = super::gpu(cx)?;
         let path = cx.resolve_path(cx.text("file")?)?;
+        let float = wants_float(cx, gpu)?;
         let moved = self.watch.as_ref().is_none_or(|w| w.path() != path);
-        // Only a new file name or a change on disk recompiles; params, inputs and time do not.
-        if moved || self.watch.as_ref().is_some_and(FileWatch::take_changed) {
+        // Only a new file name, a change on disk or another format recompiles; params, inputs
+        // and time do not. The format is part of the pipeline.
+        let changed = self.watch.as_ref().is_some_and(FileWatch::take_changed);
+        if moved || changed || self.asked != Some(float) {
+            self.asked = Some(float);
             if moved {
                 self.watch = Some(cx.watch_file(&path));
             }
@@ -127,7 +143,8 @@ impl Operator for Shader {
                         FIXED.join(", ")
                     ));
                 }
-                let pass = Pass::compile(&gpu, &label, &source, &header.params).map_err(|e| e.0)?;
+                let format = if float { FLOAT_FORMAT } else { FORMAT };
+                let pass = Pass::compile_in(&gpu, &label, &source, &header.params, format).map_err(|e| e.0)?;
                 Ok(Compiled { pass: Arc::new(pass), header })
             }));
         }
@@ -181,7 +198,8 @@ impl Operator for Shader {
         for i in 0..iterations {
             let last = i + 1 == iterations;
             let ring = if last { &mut self.ring } else { &mut self.middle };
-            let target = ring.next(gpu, w, h, "tex.shader")?;
+            // The compiled pass's format: until a new format has compiled, the old one.
+            let target = ring.next_in(gpu, w, h, current.pass.format(), "tex.shader")?;
             let mut ins = inputs.clone();
             if let Some(p) = &previous {
                 match ins.first_mut() {
@@ -221,4 +239,17 @@ impl Operator for Shader {
         let custom = def.param(desc, "resolution").and_then(|v| v.as_str()) == Some("custom");
         custom || def.inputs.first().is_none_or(Option::is_none)
     }
+}
+
+/// Whether the output is to be 32-bit floats: `format` asks for them and the GPU can do it. A
+/// GPU that cannot filter or render 32-bit floats gets half floats, with a warning on the node.
+fn wants_float(cx: &CookContext<'_>, gpu: &Gpu) -> Result<bool, CookError> {
+    if cx.text("format")? != "32f" {
+        return Ok(false);
+    }
+    if gpu.float_targets() {
+        return Ok(true);
+    }
+    cx.warn("format 32f: this GPU cannot filter or render 32-bit floats, so the node writes 16f");
+    Ok(false)
 }

@@ -32,7 +32,7 @@ under "from the shader", and are set, bound to channels, saved and undone like a
 Some names are taken, and a shader that declares one does not load:
 
 - **The node's own params:** `file`, `resolution`, `width`, `height`, `keep_size`,
-  `iterations`. Call a line width `line`, not `width`. The error lists them.
+  `iterations`, `format`. Call a line width `line`, not `width`. The error lists them.
 - **WGSL's reserved words**, since every param becomes a field `params.<name>`: `active`,
   `type`, `target`, `static`, `super`... and keywords such as `loop` or `default`. The error says
   which word it is.
@@ -168,9 +168,37 @@ A simulation loop: a `tex.feedback`, into one `tex.shader` with `iterations` 8, 
 into the feedback's `previous`. Each pass costs as much as one more node with the same shader.
 `iterations` is held between 1 and 64.
 
+**Steps from a channel.** `iterations` can be bound like any number param, for example
+`node.bind {param: "/step.iterations", from: "/speed"}`. A pass that returns `in0` unchanged
+still costs a full pass. Bind the count to what a look needs, rather than running 64 passes and
+skipping most of them in the shader.
+
 **Size.** Every pass renders at the output's size. With `resolution` `custom` only the first pass
 reads the wired `in0`, at its own size; later passes read an `in0` of the output's size. Take
 the size from `textureDimensions(in0)` in each pass.
+
+## Precision: 16f or 32f
+
+Every picture between nodes is RGBA in half floats (`16f`): about 3 decimal digits. Between 1
+and 2 the values lie 1/1024 apart. A simulation that keeps its state in a picture loses every
+change smaller than that. A wave equation then slowly loses its energy, and a temperature
+resting near 1 stops cooling.
+
+**`format` 32f.** Set the node's `format` (under "more"; TouchDesigner calls it Pixel Format)
+to `32f` on the node that writes the state. Its output is then 32-bit floats: about 7 decimal
+digits. With `iterations` above 1, every pass is 32f. A `tex.feedback` passes the 32f picture
+on unchanged, and its state file keeps the 32-bit values.
+
+- **Cost:** twice the memory, 16 bytes a pixel. Each pass writes twice the bytes, which matters
+  for large pictures and many passes.
+- **Where it ends:** nodes that read the picture take it at full precision, and so does
+  `tex.cache`. `chan.from_tex` reads it back as half floats. Recordings, Spout, NDI, outputs
+  and thumbnails end in 8 or 16 bits anyway. `node.snapshot` computes its stats from the
+  32-bit values.
+- **Display:** keep `16f` on the nodes that draw the state for the audience. Only the state
+  needs 32f.
+- **Fallback:** a GPU that cannot filter or render 32-bit floats gets `16f`, with a warning on
+  the node. Most desktop and laptop GPUs can.
 
 ## From Shadertoy and GLSL
 
