@@ -20,14 +20,17 @@
 //! inputs per unit of its output's (default 1; 2 when it magnifies by 2, 0.5 when it shrinks),
 //! for `res.analyze`. `@group <name>` puts the params declared after it in a section of the
 //! panel that is folded away until opened; `@group` alone goes back to the main rows. Lines may
-//! appear anywhere in the file.
+//! appear anywhere in the file. The grammar of `@param` and `@group` is
+//! [`penumbra_core::declare`], shared with the params a component declares; a shader adds
+//! `@density` and refuses param names WGSL reserves.
 //!
 //! Any other `// @word` line is an ordinary comment (`// @@LAB@@`, `// @todo`), unless the word
 //! looks like a misspelt header: one of the three names in other letter case, with a letter or
 //! two more, fewer or different, or with letters after it (`@parm`, `@Param`, `@params`). Such
 //! a line refuses the shader, since the param it meant to declare would be missing.
 
-use penumbra_core::{Error, ParamSpec, Value};
+use penumbra_core::declare::{self, GROUP, PARAM};
+use penumbra_core::{Error, ParamSpec};
 
 /// What a shader file declares about itself.
 #[derive(Clone, Debug, PartialEq)]
@@ -36,35 +39,32 @@ pub struct Header {
     pub density: f64,
 }
 
+/// The resolution a shader needs of its inputs.
+const DENSITY: &str = "@density";
+
 /// Parses every `// @...` line of `source`. Errors name the line.
 pub fn parse(source: &str) -> Result<Header, Error> {
     let mut header = Header { params: Vec::new(), density: 1.0 };
     let mut group = String::new();
     for (i, line) in source.lines().enumerate() {
-        let Some(rest) = line.trim_start().strip_prefix("//") else { continue };
-        let rest = rest.trim();
+        let Some((word, args)) = declare::split(line, true) else { continue };
         let ctx = || format!("line {}", i + 1);
-        if !rest.starts_with('@') {
-            continue;
-        }
-        let (word, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
-        if word == "@param" {
-            let decl = args;
-            let spec = param(decl).map_err(|e| e.context(ctx()))?.group(&group);
+        if word == PARAM {
+            let spec = declare::param(args, wgsl_name).map_err(|e| e.context(ctx()))?.group(&group);
             spec.validate_spec().map_err(|e| e.context(ctx()))?;
             if header.params.iter().any(|p| p.name == spec.name) {
                 return Err(Error::new(format!("param `{}` declared twice", spec.name)).context(ctx()));
             }
             header.params.push(spec);
-        } else if word == "@group" {
+        } else if word == GROUP {
             group = args.trim().to_string();
-        } else if word == "@density" {
+        } else if word == DENSITY {
             let d = args;
             header.density =
                 d.trim().parse::<f64>().ok().filter(|d| d.is_finite() && *d > 0.0).ok_or_else(|| {
                     Error::new(format!("@density wants a positive number, got `{}`", d.trim())).context(ctx())
                 })?;
-        } else if let Some(meant) = misspelt(word) {
+        } else if let Some(meant) = declare::misspelt(word, &HEADERS) {
             return Err(Error::new(format!(
                 "`{word}` looks like a misspelt `{meant}`; headers are @param, @group and @density. Other words after `// @` are fine in a comment"
             ))
@@ -74,122 +74,21 @@ pub fn parse(source: &str) -> Result<Header, Error> {
     Ok(header)
 }
 
-const HEADERS: [&str; 3] = ["@param", "@group", "@density"];
+const HEADERS: [&str; 3] = [PARAM, GROUP, DENSITY];
 
-/// The header `word` (with its `@`) seems to mean, when it is none but close to one.
-fn misspelt(word: &str) -> Option<&'static str> {
-    let lower = word.to_ascii_lowercase();
-    let letters = lower.strip_prefix('@')?;
-    if letters.len() < 3 || !letters.bytes().all(|b| b.is_ascii_alphabetic()) {
-        return None;
-    }
-    HEADERS.into_iter().find(|h| {
-        let name = &h[1..];
-        // Three letters are too few for two edits: `@arm` is no `@param`.
-        let edits = if letters.len() > 3 { 2 } else { 1 };
-        letters.starts_with(name) || distance(letters, name) <= edits
-    })
-}
-
-/// Edits (insert, delete, replace one letter) from `a` to `b`, for ASCII words.
-fn distance(a: &str, b: &str) -> usize {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    let mut row: Vec<usize> = (0..=b.len()).collect();
-    for (i, ca) in a.iter().enumerate() {
-        let mut diagonal = row.first().copied().unwrap_or(0);
-        if let Some(first) = row.first_mut() {
-            *first = i + 1;
-        }
-        for (j, cb) in b.iter().enumerate() {
-            let above = row.get(j + 1).copied().unwrap_or(usize::MAX);
-            let left = row.get(j).copied().unwrap_or(usize::MAX);
-            let here =
-                (diagonal + usize::from(ca != cb)).min(above.saturating_add(1)).min(left.saturating_add(1));
-            diagonal = above;
-            if let Some(cell) = row.get_mut(j + 1) {
-                *cell = here;
-            }
-        }
-    }
-    row.last().copied().unwrap_or(0)
-}
-
-fn param(decl: &str) -> Result<ParamSpec, Error> {
-    let (decl, doc) = match decl.split_once("--") {
-        Some((d, doc)) => (d, doc.trim()),
-        None => (decl, ""),
-    };
-    let decl = decl.trim();
-    let (head, default) = match decl.split_once('=') {
-        Some((h, d)) => (h.trim(), Some(d.trim())),
-        None => (decl, None),
-    };
-    // A range is the last token of whatever follows the kind (or the default).
-    let (head, default, range) = {
-        let tail = default.unwrap_or(head);
-        let (before, last) = tail.rsplit_once(char::is_whitespace).unwrap_or(("", tail));
-        match range(last) {
-            Some(r) if default.is_some() => (head, Some(before.trim()), Some(r)),
-            Some(r) => (before.trim(), None, Some(r)),
-            None => (head, default, None),
-        }
-    };
-    let mut words = head.split_whitespace();
-    let (Some(name), Some(kind), None) = (words.next(), words.next(), words.next()) else {
-        return Err(Error::new("expected `@param <name> <kind> [= default] [min..max] [-- doc]`"));
-    };
-    // The name becomes a field of the shader's `params` struct.
+/// A param's name becomes a field of the shader's `params` struct, so it cannot be a word WGSL
+/// reserves.
+fn wgsl_name(name: &str) -> Result<(), Error> {
     if naga::keywords::wgsl::RESERVED.contains(&name) {
         return Err(Error::new(format!("`{name}` is a reserved word in WGSL; give the param another name")));
     }
-    let default = default.filter(|d| !d.is_empty());
-    let mut spec = match kind {
-        "float" => ParamSpec::float(name, 0.0),
-        "int" => ParamSpec::int(name, 0),
-        "bool" => ParamSpec::bool(name, false),
-        "vec2" => ParamSpec::vec2(name, [0.0; 2]),
-        "vec3" => ParamSpec::vec3(name, [0.0; 3]),
-        "vec4" => ParamSpec::vec4(name, [0.0; 4]),
-        "color" => ParamSpec::color(name, [0.0, 0.0, 0.0, 1.0]),
-        "palette" => ParamSpec::palette(name, ""),
-        k => match k.strip_prefix("choice(").and_then(|c| c.strip_suffix(')')) {
-            Some(list) => {
-                let choices: Vec<&str> = list.split('|').map(str::trim).collect();
-                ParamSpec::choice(name, &choices)
-            }
-            None => {
-                return Err(Error::new(format!(
-                    "unknown kind `{k}`; kinds: float, int, bool, vec2, vec3, vec4, color, palette, choice(a|b)"
-                )));
-            }
-        },
-    };
-    if let Some(d) = default {
-        let value = match serde_json::from_str::<Value>(d) {
-            // A palette's default is always text: `123456` is a colour, not a place in the list.
-            _ if spec.kind == penumbra_core::ParamKind::Palette => Value::Text(d.to_string()),
-            Ok(v) => v,
-            Err(_) => Value::Text(d.to_string()),
-        };
-        spec.default = spec.check(&value)?;
-    }
-    if let Some((min, max)) = range {
-        spec = spec.range(min, max);
-    }
-    spec = spec.doc(doc);
-    spec.validate_spec()?;
-    Ok(spec)
-}
-
-fn range(token: &str) -> Option<(f64, f64)> {
-    let (a, b) = token.split_once("..")?;
-    Some((a.parse().ok()?, b.parse().ok()?))
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use penumbra_core::ParamKind;
+    use penumbra_core::{ParamKind, Value};
 
     #[test]
     fn declarations() {
@@ -251,6 +150,206 @@ mod tests {
         ] {
             let e = parse(src).err().unwrap_or_else(|| panic!("{src} parsed"));
             assert!(e.0.contains(needle), "{src}: {e}");
+        }
+    }
+
+    /// Every shader that ships parses to the specs the header parser gave before its grammar
+    /// moved to `penumbra_core::declare`.
+    #[test]
+    fn shipped_shaders_parse_as_before_the_grammar_moved() {
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|e| e == "wgsl") {
+                    out.push(p);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut files = Vec::new();
+        for dir in ["library", "examples", "crates"] {
+            walk(&root.join(dir), &mut files);
+        }
+        assert!(files.len() > 100, "{}", files.len());
+        let mut declared = 0;
+        for f in files {
+            let source = std::fs::read_to_string(&f).unwrap();
+            let now = parse(&source).map(|h| (h.params, h.density)).map_err(|e| e.0);
+            let before = old::parse(&source).map(|h| (h.params, h.density)).map_err(|e| e.0);
+            assert_eq!(now, before, "{}", f.display());
+            declared += now.map(|(p, _)| p.len()).unwrap_or(0);
+        }
+        assert!(declared > 500, "{declared}");
+    }
+
+    /// The header parser as it was before its grammar moved to `penumbra_core::declare`.
+    mod old {
+        use penumbra_core::{Error, ParamSpec, Value};
+
+        #[derive(Clone, Debug, PartialEq)]
+        pub struct OldHeader {
+            pub params: Vec<ParamSpec>,
+            pub density: f64,
+        }
+
+        /// Parses every `// @...` line of `source`. Errors name the line.
+        pub fn parse(source: &str) -> Result<OldHeader, Error> {
+            let mut header = OldHeader { params: Vec::new(), density: 1.0 };
+            let mut group = String::new();
+            for (i, line) in source.lines().enumerate() {
+                let Some(rest) = line.trim_start().strip_prefix("//") else { continue };
+                let rest = rest.trim();
+                let ctx = || format!("line {}", i + 1);
+                if !rest.starts_with('@') {
+                    continue;
+                }
+                let (word, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+                if word == "@param" {
+                    let decl = args;
+                    let spec = param(decl).map_err(|e| e.context(ctx()))?.group(&group);
+                    spec.validate_spec().map_err(|e| e.context(ctx()))?;
+                    if header.params.iter().any(|p| p.name == spec.name) {
+                        return Err(
+                            Error::new(format!("param `{}` declared twice", spec.name)).context(ctx())
+                        );
+                    }
+                    header.params.push(spec);
+                } else if word == "@group" {
+                    group = args.trim().to_string();
+                } else if word == "@density" {
+                    let d = args;
+                    header.density =
+                        d.trim().parse::<f64>().ok().filter(|d| d.is_finite() && *d > 0.0).ok_or_else(
+                            || {
+                                Error::new(format!("@density wants a positive number, got `{}`", d.trim()))
+                                    .context(ctx())
+                            },
+                        )?;
+                } else if let Some(meant) = misspelt(word) {
+                    return Err(Error::new(format!(
+                    "`{word}` looks like a misspelt `{meant}`; headers are @param, @group and @density. Other words after `// @` are fine in a comment"
+                ))
+                .context(ctx()));
+                }
+            }
+            Ok(header)
+        }
+
+        const HEADERS: [&str; 3] = ["@param", "@group", "@density"];
+
+        /// The header `word` (with its `@`) seems to mean, when it is none but close to one.
+        fn misspelt(word: &str) -> Option<&'static str> {
+            let lower = word.to_ascii_lowercase();
+            let letters = lower.strip_prefix('@')?;
+            if letters.len() < 3 || !letters.bytes().all(|b| b.is_ascii_alphabetic()) {
+                return None;
+            }
+            HEADERS.into_iter().find(|h| {
+                let name = &h[1..];
+                // Three letters are too few for two edits: `@arm` is no `@param`.
+                let edits = if letters.len() > 3 { 2 } else { 1 };
+                letters.starts_with(name) || distance(letters, name) <= edits
+            })
+        }
+
+        /// Edits (insert, delete, replace one letter) from `a` to `b`, for ASCII words.
+        fn distance(a: &str, b: &str) -> usize {
+            let (a, b) = (a.as_bytes(), b.as_bytes());
+            let mut row: Vec<usize> = (0..=b.len()).collect();
+            for (i, ca) in a.iter().enumerate() {
+                let mut diagonal = row.first().copied().unwrap_or(0);
+                if let Some(first) = row.first_mut() {
+                    *first = i + 1;
+                }
+                for (j, cb) in b.iter().enumerate() {
+                    let above = row.get(j + 1).copied().unwrap_or(usize::MAX);
+                    let left = row.get(j).copied().unwrap_or(usize::MAX);
+                    let here = (diagonal + usize::from(ca != cb))
+                        .min(above.saturating_add(1))
+                        .min(left.saturating_add(1));
+                    diagonal = above;
+                    if let Some(cell) = row.get_mut(j + 1) {
+                        *cell = here;
+                    }
+                }
+            }
+            row.last().copied().unwrap_or(0)
+        }
+
+        fn param(decl: &str) -> Result<ParamSpec, Error> {
+            let (decl, doc) = match decl.split_once("--") {
+                Some((d, doc)) => (d, doc.trim()),
+                None => (decl, ""),
+            };
+            let decl = decl.trim();
+            let (head, default) = match decl.split_once('=') {
+                Some((h, d)) => (h.trim(), Some(d.trim())),
+                None => (decl, None),
+            };
+            // A range is the last token of whatever follows the kind (or the default).
+            let (head, default, range) = {
+                let tail = default.unwrap_or(head);
+                let (before, last) = tail.rsplit_once(char::is_whitespace).unwrap_or(("", tail));
+                match range(last) {
+                    Some(r) if default.is_some() => (head, Some(before.trim()), Some(r)),
+                    Some(r) => (before.trim(), None, Some(r)),
+                    None => (head, default, None),
+                }
+            };
+            let mut words = head.split_whitespace();
+            let (Some(name), Some(kind), None) = (words.next(), words.next(), words.next()) else {
+                return Err(Error::new("expected `@param <name> <kind> [= default] [min..max] [-- doc]`"));
+            };
+            // The name becomes a field of the shader's `params` struct.
+            if naga::keywords::wgsl::RESERVED.contains(&name) {
+                return Err(Error::new(format!(
+                    "`{name}` is a reserved word in WGSL; give the param another name"
+                )));
+            }
+            let default = default.filter(|d| !d.is_empty());
+            let mut spec = match kind {
+                "float" => ParamSpec::float(name, 0.0),
+                "int" => ParamSpec::int(name, 0),
+                "bool" => ParamSpec::bool(name, false),
+                "vec2" => ParamSpec::vec2(name, [0.0; 2]),
+                "vec3" => ParamSpec::vec3(name, [0.0; 3]),
+                "vec4" => ParamSpec::vec4(name, [0.0; 4]),
+                "color" => ParamSpec::color(name, [0.0, 0.0, 0.0, 1.0]),
+                "palette" => ParamSpec::palette(name, ""),
+                k => match k.strip_prefix("choice(").and_then(|c| c.strip_suffix(')')) {
+                    Some(list) => {
+                        let choices: Vec<&str> = list.split('|').map(str::trim).collect();
+                        ParamSpec::choice(name, &choices)
+                    }
+                    None => {
+                        return Err(Error::new(format!(
+                            "unknown kind `{k}`; kinds: float, int, bool, vec2, vec3, vec4, color, palette, choice(a|b)"
+                        )));
+                    }
+                },
+            };
+            if let Some(d) = default {
+                let value = match serde_json::from_str::<Value>(d) {
+                    // A palette's default is always text: `123456` is a colour, not a place in the list.
+                    _ if spec.kind == penumbra_core::ParamKind::Palette => Value::Text(d.to_string()),
+                    Ok(v) => v,
+                    Err(_) => Value::Text(d.to_string()),
+                };
+                spec.default = spec.check(&value)?;
+            }
+            if let Some((min, max)) = range {
+                spec = spec.range(min, max);
+            }
+            spec = spec.doc(doc);
+            spec.validate_spec()?;
+            Ok(spec)
+        }
+
+        fn range(token: &str) -> Option<(f64, f64)> {
+            let (a, b) = token.split_once("..")?;
+            Some((a.parse().ok()?, b.parse().ok()?))
         }
     }
 }

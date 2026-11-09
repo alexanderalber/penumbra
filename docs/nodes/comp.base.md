@@ -10,7 +10,7 @@ That is good for three things:
 - **Order.** Each scene of a show, the mapping of each projector, the audio analysis: one
   component each, and the top level shows how they connect.
 - **Reuse.** A component can go into the library and be added to any project, as a copy.
-- **A simple surface.** Only the params you expose show on the component. The scene's speed and
+- **A simple surface.** Only the params you declare or expose show on the component. The scene's speed and
   colour are on the outside; the twenty nodes that make it are tucked away.
 
 ## Making one
@@ -28,10 +28,34 @@ outputs. What is wired to an input outside comes out of the matching `.in` node 
 into a `.out` node inside comes out of the component. Bindings and `tex.select` are not wires:
 they may reach in and out of components by path.
 
-## Exposed params
+## Params of its own
 
-`expose` lists inner params to show on the component, one per line: `noise1.speed`, or with a
-name of its own, `speed = noise1.speed`. Changing the exposed param changes the inner one, and
-you can bind it like any param.
+The `params` text (under more) gives the component params, one per line. TouchDesigner calls
+these custom parameters. A line uses the grammar of a shader header, and the `//` in front may
+stay when you paste one:
+
+```text
+@param preset choice(coral|maze|worms) = coral -- the pattern
+@param feed float = 0.055 0..0.1
+@group look
+@param glow float = 1 0..4
+@expose speed = noise1.speed
+```
+
+- **`@param`** makes a param the component holds: `name kind = default min..max -- doc`. Kinds
+  are `float`, `int`, `bool`, `vec2`, `vec3`, `vec4`, `color`, `palette` and `choice(a|b)`. Set
+  and bind it like any param; a value it does not take is refused at once. Inner nodes do not
+  follow it yet.
+- **`@group`** puts the params after it into a fold of the panel. `@group` alone ends the fold.
+- **`@expose`** shows an inner param on the component: `@expose noise1.speed`, or with a name of
+  its own, `@expose speed = noise1.speed`. Changing the exposed param changes the inner one,
+  and you can bind it like any param. The inner node keeps the value and the range.
+- **Comments:** lines starting with `#`, and `//` lines without an `@`.
+- **Mistakes:** a line that declares nothing is listed below the rows with its line number and
+  the reason; the rest still works. Each name may appear once. `params`, `shelf`, `about` and
+  `reset` are taken.
+
+Files written before `params` existed listed the exposed params in a param `expose`. They load
+as `@expose` lines and are saved in the new form.
 
 More in the Components section of the concepts guide.

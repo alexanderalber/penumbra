@@ -8,63 +8,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use penumbra_core::{
-    BindTarget, Cell, Error, Name, NodeId, NodePath, NumberFormat, ParamPart, ParamPath, Value,
+    BindTarget, Cell, Error, Name, NodeId, NodePath, NumberFormat, ParamPart, ParamPath, ParamSpec, Value,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::broken;
 use crate::cook::ThumbnailMode;
 use crate::node::{DataKind, NodeDesc, NodeTypes, PortRole};
-
-/// The text param of a container that lists the params it exposes: one per line, `name =
-/// inner/path.param` or just `inner/path.param` (exposed under the param's own name); `#` starts a
-/// comment. An exposed param is an alias: setting, resetting or binding `/comp.name` acts on the
-/// inner param, which holds the value.
-pub const EXPOSE: &str = "expose";
-
-/// One line of a container's [`EXPOSE`] list.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Exposed {
-    pub name: Name,
-    /// The inner param, or why the line does not name one.
-    pub target: Result<ParamPath, String>,
-}
-
-/// The lines of an [`EXPOSE`] text of the container at `comp`, with their targets; lines that
-/// do not even give a name are left out (`errors` collects them).
-pub fn parse_expose(comp: &NodePath, text: &str, errors: &mut Vec<String>) -> Vec<Exposed> {
-    let mut out: Vec<Exposed> = Vec::new();
-    for (i, raw) in text.lines().enumerate() {
-        let line = raw.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
-        let (name, target) = match line.split_once('=') {
-            Some((n, t)) => (Some(n.trim()), t.trim()),
-            None => (None, line),
-        };
-        let param = target.rsplit_once('.').map(|(_, p)| p).unwrap_or("");
-        let name = match Name::new(name.unwrap_or(param)) {
-            Ok(n) => n,
-            Err(e) => {
-                errors.push(format!("line {}: {e}", i + 1));
-                continue;
-            }
-        };
-        if out.iter().any(|x| x.name == name) {
-            errors.push(format!("line {}: `{name}` is exposed twice", i + 1));
-            continue;
-        }
-        let target = if target.starts_with('/') || target.split('/').any(|n| n == ".." || n == ".") {
-            Err(format!("`{target}` must be a path inside the component, like lfo1.rate"))
-        } else {
-            let joined = if comp.is_root() { format!("/{target}") } else { format!("{comp}/{target}") };
-            ParamPath::parse(&joined).map_err(|e| format!("`{target}`: {e}"))
-        };
-        out.push(Exposed { name, target });
-    }
-    out
-}
 
 /// Compares names with runs of digits as numbers: `in2` before `in10`.
 pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
@@ -553,25 +503,6 @@ impl Network {
         self.nodes.values().filter(move |n| n.parent == parent)
     }
 
-    /// The params container `id` exposes ([`EXPOSE`]); empty for other nodes.
-    pub fn exposed(&self, types: &NodeTypes, id: NodeId) -> Vec<Exposed> {
-        self.exposed_with_errors(types, id, &mut Vec::new())
-    }
-
-    /// [`Self::exposed`], collecting the lines that name nothing.
-    pub fn exposed_with_errors(
-        &self,
-        types: &NodeTypes,
-        id: NodeId,
-        errors: &mut Vec<String>,
-    ) -> Vec<Exposed> {
-        let Some(node) = self.nodes.get(&id) else { return Vec::new() };
-        let Some(desc) = types.desc(&node.kind).filter(|d| d.container) else { return Vec::new() };
-        let Some(text) = node.param(desc, EXPOSE).and_then(Value::as_str) else { return Vec::new() };
-        let Some(path) = self.path_of(id) else { return Vec::new() };
-        parse_expose(&path, text, errors)
-    }
-
     /// The input and output nodes of component `id` ([`PortRole`]), each in natural order of
     /// their names (`in2` before `in10`): the component's inputs and outputs.
     pub fn comp_ports(&self, types: &NodeTypes, id: NodeId) -> (Vec<NodeId>, Vec<NodeId>) {
@@ -617,7 +548,7 @@ impl Network {
         )
     }
 
-    /// The param an alias on a container stands for ([`EXPOSE`]), followed through nested
+    /// The param an alias on a container stands for (an `@expose` line), followed through nested
     /// components; `param` itself when it is no alias.
     pub fn resolve_alias(&self, types: &NodeTypes, param: &ParamPath) -> Result<ParamPath, Error> {
         let mut current = param.clone();
@@ -629,19 +560,24 @@ impl Network {
             if !desc.container || desc.param_spec(current.param().as_str()).is_some() {
                 return Ok(current);
             }
+            let declared = self.declared(types, id).unwrap_or_default();
+            if declared.param(current.param().as_str()).is_some() {
+                return Ok(current);
+            }
             let exposed = self.exposed(types, id);
             let Some(alias) = exposed.iter().find(|e| &e.name == current.param()) else {
                 let known: Vec<&str> = desc
                     .params
                     .iter()
                     .map(|p| p.name.as_str())
-                    .chain(exposed.iter().map(|e| e.name.as_str()))
+                    .chain(declared.lines.iter().map(|d| d.name()))
                     .collect();
                 return Err(Error::new(format!(
-                    "`{}` has no param `{}`; params: {}",
+                    "`{}` has no param `{}`; params: {}{}",
                     desc.kind,
                     current.param(),
-                    known.join(", ")
+                    known.join(", "),
+                    expose_hint(desc, current.param())
                 )));
             };
             current =
@@ -929,9 +865,12 @@ impl Applied {
                     return Err(Error::new(format!("a network holds at most {MAX_NODES} nodes")));
                 }
                 let mut checked = BTreeMap::new();
+                // The params a component declares come from its text among the others.
+                let own = crate::declared_in(desc, params).unwrap_or_default();
                 for (pname, value) in params {
-                    let value = check_param(desc, pname, value, self.params)?;
-                    if desc.param_spec(pname.as_str()).is_none_or(|s| s.default != value) {
+                    let spec = desc.param_spec(pname.as_str()).or_else(|| own.param(pname.as_str()));
+                    let value = check_param(desc, spec, pname, value, self.params)?;
+                    if spec.is_none_or(|s| s.default != value) {
                         checked.insert(pname.clone(), value);
                     }
                 }
@@ -994,8 +933,12 @@ impl Applied {
                 let id = net.require(param.node())?;
                 self.guard(id, param.node())?;
                 let desc = desc_of(net, types, id)?;
-                let value = check_param(desc, param.param(), value, self.params)?;
-                let is_default = desc.param_spec(param.param().as_str()).is_some_and(|s| s.default == value);
+                let node = net.nodes.get(&id).ok_or_else(|| Error::new(format!("node {id} vanished")))?;
+                let spec = node.spec(desc, param.param().as_str());
+                let value = check_param(desc, spec.as_deref(), param.param(), value, self.params)?;
+                let is_default = spec.is_some_and(|s| s.default == value);
+                let strict = self.params == Params::Strict;
+                let declaring = crate::declares(desc) && param.param().as_str() == crate::PARAMS;
                 let params = &mut self.node_mut(id)?.params;
                 // Only values that differ from the default are stored, so the network (and
                 // later the project file) has one form per state, and setting the default is
@@ -1005,17 +948,27 @@ impl Applied {
                 } else {
                     params.insert(param.param().clone(), value);
                 }
+                if declaring {
+                    keep_declared(desc, params, strict);
+                }
             }
             Op::Reset { param } => {
                 let id = net.require(param.node())?;
                 self.guard(id, param.node())?;
                 let desc = desc_of(net, types, id)?;
                 // A stray value (see [`Params::Keep`]) can always be removed.
-                let present = net.nodes.get(&id).is_some_and(|n| n.params.contains_key(param.param()));
-                if desc.param_spec(param.param().as_str()).is_none() && !desc.extra_params && !present {
-                    return Err(unknown_param(desc, param.param()));
+                let node = net.nodes.get(&id).ok_or_else(|| Error::new(format!("node {id} vanished")))?;
+                let present = node.params.contains_key(param.param());
+                if node.spec(desc, param.param().as_str()).is_none() && !desc.extra_params && !present {
+                    return Err(unknown_param(desc, node, param.param()));
                 }
-                self.node_mut(id)?.params.remove(param.param());
+                let declaring = crate::declares(desc) && param.param().as_str() == crate::PARAMS;
+                let strict = self.params == Params::Strict;
+                let params = &mut self.node_mut(id)?.params;
+                params.remove(param.param());
+                if declaring {
+                    keep_declared(desc, params, strict);
+                }
             }
             Op::Connect { from, output, to, input } => {
                 let src = net.require(from)?;
@@ -1094,11 +1047,12 @@ impl Applied {
                 self.guard(src, from)?;
                 let desc = desc_of(net, types, dst)?;
                 let name = param.param();
-                let target = match desc.param_spec(name.as_str()) {
+                let node = net.nodes.get(&dst).ok_or_else(|| Error::new(format!("node {dst} vanished")))?;
+                let target = match node.spec(desc, name.as_str()) {
                     Some(spec) => spec.bind_target(*component)?,
                     // Checked against the instance's own declaration when it cooks.
                     None if desc.extra_params || self.params == Params::Keep => BindTarget::Text,
-                    None => return Err(unknown_param(desc, name)),
+                    None => return Err(unknown_param(desc, node, name)),
                 };
                 check_bind_read(target, channel.as_ref(), cell.as_ref(), format.as_ref())?;
                 let bind =
@@ -1175,11 +1129,43 @@ fn desc_of<'t>(net: &Network, types: &'t NodeTypes, id: NodeId) -> Result<&'t No
 }
 
 /// The value param `name` of a node of type `desc` stores for `value`, or why it cannot.
-pub fn check_param(desc: &NodeDesc, name: &Name, value: &Value, params: Params) -> Result<Value, Error> {
-    match desc.param_spec(name.as_str()) {
+/// `spec` is the param's spec: the type's, or one the node declares itself
+/// ([`NodeDef::spec`]); `None` for a name neither declares.
+pub fn check_param(
+    desc: &NodeDesc,
+    spec: Option<&ParamSpec>,
+    name: &Name,
+    value: &Value,
+    params: Params,
+) -> Result<Value, Error> {
+    match spec {
         Some(spec) => spec.check(value),
         None if desc.extra_params || params == Params::Keep => check_extra(name, value),
-        None => Err(unknown_param(desc, name)),
+        None => Err(unknown(desc, &[], name)),
+    }
+}
+
+/// After a component's [`crate::PARAMS`] text changed: the values `params` holds for params
+/// it declares are checked against the new declarations. One that no longer fits, or that
+/// nothing declares any more, is dropped (only when `strict`: a file's values are kept as
+/// written), and one that is the default now is no longer stored.
+fn keep_declared(desc: &NodeDesc, params: &mut BTreeMap<Name, Value>, strict: bool) {
+    let Some(declared) = crate::declared_in(desc, params) else { return };
+    let own: Vec<Name> = params.keys().filter(|n| desc.param_spec(n.as_str()).is_none()).cloned().collect();
+    for name in own {
+        let Some(value) = params.get(&name) else { continue };
+        match declared.param(name.as_str()).map(|spec| (spec.check(value), spec)) {
+            Some((Ok(v), spec)) if v == spec.default => {
+                params.remove(&name);
+            }
+            Some((Ok(v), _)) => {
+                params.insert(name, v);
+            }
+            Some((Err(_), _)) | None if strict => {
+                params.remove(&name);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -1195,9 +1181,30 @@ fn check_extra(name: &Name, value: &Value) -> Result<Value, Error> {
     Ok(value.clone())
 }
 
-fn unknown_param(desc: &NodeDesc, name: &Name) -> Error {
-    let known: Vec<&str> = desc.params.iter().map(|p| p.name.as_str()).collect();
-    Error::new(format!("`{}` has no param `{name}`; params: {}", desc.kind, known.join(", ")))
+fn unknown_param(desc: &NodeDesc, node: &NodeDef, name: &Name) -> Error {
+    let declared = node.declared(desc).unwrap_or_default();
+    let own: Vec<&str> = declared.params().map(|s| s.name.as_str()).collect();
+    unknown(desc, &own, name)
+}
+
+fn unknown(desc: &NodeDesc, own: &[&str], name: &Name) -> Error {
+    let known: Vec<&str> = desc.params.iter().map(|p| p.name.as_str()).chain(own.iter().copied()).collect();
+    Error::new(format!(
+        "`{}` has no param `{name}`; params: {}{}",
+        desc.kind,
+        known.join(", "),
+        expose_hint(desc, name)
+    ))
+}
+
+/// Components had a param `expose` before its lines moved into their declarations: a word on
+/// where they went, for anyone who still sets it.
+fn expose_hint(desc: &NodeDesc, name: &Name) -> String {
+    if crate::declares(desc) && name.as_str() == "expose" {
+        format!("; exposed params are lines of `{}` now, like `@expose speed = lfo1.rate`", crate::PARAMS)
+    } else {
+        String::new()
+    }
 }
 
 #[cfg(test)]
@@ -1584,11 +1591,11 @@ mod tests {
                     create("/c/k", "test.const"),
                     create("/c/sub", "test.comp"),
                     create("/c/sub/x", "test.const"),
-                    Op::Set { param: pp("/c/sub.expose"), value: Value::Text("deep = x.value".into()) },
+                    Op::Set { param: pp("/c/sub.params"), value: Value::Text("@expose deep = x.value".into()) },
                     Op::Set {
-                        param: pp("/c.expose"),
+                        param: pp("/c.params"),
                         value: Value::Text(
-                            "# what the outside sees\nlevel = k.value\nsub.deep\nbad = /src.value\n= nope\n"
+                            "# what the outside sees\n@expose level = k.value\n@expose sub.deep\n@expose bad = /src.value\n@expose = nope\n"
                                 .into(),
                         ),
                     },
@@ -1614,7 +1621,7 @@ mod tests {
         assert_eq!(value("/c/sub/x"), Some(Value::Float(3.0)));
         assert!(!n.touched.contains(&c), "the component itself holds no value");
         let e = net.apply(&types, &[set("/c.nope", 1.0)]).unwrap_err().0;
-        assert!(e.contains("params: expose, level, deep, bad"), "{e}");
+        assert!(e.contains("params: params, level, deep, bad"), "{e}");
         assert!(net.apply(&types, &[set("/c.bad", 1.0)]).unwrap_err().0.contains("inside the component"));
         // Binding and resetting follow the alias too.
         let bound = n

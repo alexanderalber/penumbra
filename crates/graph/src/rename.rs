@@ -2,13 +2,14 @@
 //!
 //! A wire or a binding names its source by id, so it follows a rename by itself. Two kinds of
 //! params name nodes by path in text: node reference params ([`penumbra_core::ParamSpec::node`])
-//! and the [`EXPOSE`] lists of components. [`rename`] gives the ops that rename a node and
+//! and the `@expose` lines in the [`PARAMS`] text of components. [`rename`] gives the ops that rename a node and
 //! rewrite those texts, as one batch, so the whole rename is one undo step. A text is rewritten
 //! only where it named the renamed node or a node inside it; every other text stays as written.
 
 use penumbra_core::{Error, Name, NodePath, ParamPath, Value};
 
-use crate::network::{EXPOSE, Network, Op};
+use crate::declared::PARAMS;
+use crate::network::{Network, Op};
 use crate::node::NodeTypes;
 
 /// The ops that rename the node at `path` to `name` and rewrite the node references and expose
@@ -40,12 +41,13 @@ pub fn rename(net: &Network, types: &NodeTypes, path: &NodePath, name: &Name) ->
                 });
             }
         }
-        let expose = Name::new(EXPOSE)?;
-        if let Some(text) = node.params.get(&expose).and_then(Value::as_str) {
+        let declares = types.desc(&node.kind).is_some_and(crate::declared::declares);
+        let params = Name::new(PARAMS)?;
+        if let Some(text) = node.params.get(&params).and_then(Value::as_str).filter(|_| declares) {
             let fixed = rewrite_expose(text, |target| fix_target(&owner, &owner_now, target, &moved));
             if fixed != text {
                 ops.push(Op::Set {
-                    param: ParamPath::new(owner_now.clone(), expose)?,
+                    param: ParamPath::new(owner_now.clone(), params)?,
                     value: Value::Text(fixed),
                 });
             }
@@ -101,15 +103,24 @@ fn fix_target(
     (fixed != target).then_some(fixed)
 }
 
-/// `text` (an [`EXPOSE`] list) with the target of each line passed through `fix`; everything
-/// else (names, spacing, comments, blank lines) stays as it is.
+/// `text` (a [`PARAMS`] text) with the target of each `@expose` line passed through `fix`;
+/// everything else (other lines, names, spacing, comments, blank lines) stays as it is.
 fn rewrite_expose(text: &str, fix: impl Fn(&str) -> Option<String>) -> String {
     let lines: Vec<String> = text
         .split('\n')
         .map(|line| {
-            let code_end = line.find('#').unwrap_or(line.len());
+            let Some(args) = penumbra_core::declare::split(line, false)
+                .filter(|(word, _)| *word == penumbra_core::declare::EXPOSE)
+                .map(|(_, args)| args)
+            else {
+                return line.to_string();
+            };
+            // Where the text after the word starts in the line (`args` is a part of it).
+            let begin = line.trim_end().len().saturating_sub(args.len());
+            let code_end =
+                line.get(begin..).and_then(|rest| rest.find('#')).map_or(line.len(), |i| begin + i);
             let code = line.get(..code_end).unwrap_or(line);
-            let start = code.find('=').map_or(0, |i| i + 1);
+            let start = code.get(begin..).and_then(|c| c.find('=')).map_or(begin, |i| begin + i + 1);
             let part = code.get(start..).unwrap_or("");
             let target = part.trim();
             if target.is_empty() {
@@ -163,10 +174,10 @@ mod tests {
             create("/outer/far", "test.ref"),
             create("/other", "test.ref"),
             set(
-                "/outer/comp.expose",
-                "speed = lfo.value  # the rate\nlfo.value\n\n  deep = inner/deep.value\nbad line",
+                "/outer/comp.params",
+                "@expose speed = lfo.value  # the rate\n// @expose lfo.value\n\n  @expose deep = inner/deep.value\nbad line\n# lfo.value\n@param mode choice(lfo.value|b)",
             ),
-            set("/outer.expose", "s = comp/lfo.value\nd=comp/inner/deep.value"),
+            set("/outer.params", "@expose s = comp/lfo.value\n@expose d=comp/inner/deep.value"),
             set("/outer/comp/near.node", "lfo"),
             set("/outer/comp/abs.node", "/outer/comp/lfo"),
             set("/outer/comp/inner/up.node", "../lfo"),
@@ -177,17 +188,21 @@ mod tests {
     }
 
     #[test]
-    fn a_rename_rewrites_the_expose_lines_and_references_that_name_the_node() {
+    fn a_rename_rewrites_the_exposed_targets_and_references_that_name_the_node() {
         let types = test_types();
         let net = net();
         let ops = rename(&net, &types, &p("/outer/comp/lfo"), &"wave".parse().unwrap()).unwrap();
         let after = net.apply(&types, &ops).unwrap().network;
         assert!(after.resolve(&p("/outer/comp/wave")).is_some());
         assert_eq!(
-            text(&after, "/outer/comp.expose"),
-            "speed = wave.value  # the rate\nwave.value\n\n  deep = inner/deep.value\nbad line"
+            text(&after, "/outer/comp.params"),
+            "@expose speed = wave.value  # the rate\n// @expose wave.value\n\n  @expose deep = inner/deep.value\nbad line\n# lfo.value\n@param mode choice(lfo.value|b)",
+            "only the targets of @expose lines change"
         );
-        assert_eq!(text(&after, "/outer.expose"), "s = comp/wave.value\nd=comp/inner/deep.value");
+        assert_eq!(
+            text(&after, "/outer.params"),
+            "@expose s = comp/wave.value\n@expose d=comp/inner/deep.value"
+        );
         assert_eq!(text(&after, "/outer/comp/near.node"), "wave");
         assert_eq!(text(&after, "/outer/comp/abs.node"), "/outer/comp/wave", "absolute stays absolute");
         assert_eq!(text(&after, "/outer/comp/inner/up.node"), "../wave");
@@ -202,14 +217,14 @@ mod tests {
         let net = net();
         let ops = rename(&net, &types, &p("/outer/comp"), &"c2".parse().unwrap()).unwrap();
         let after = net.apply(&types, &ops).unwrap().network;
-        assert_eq!(text(&after, "/outer.expose"), "s = c2/lfo.value\nd=c2/inner/deep.value");
+        assert_eq!(text(&after, "/outer.params"), "@expose s = c2/lfo.value\n@expose d=c2/inner/deep.value");
         assert_eq!(text(&after, "/outer/far.node"), "c2/inner/deep");
         assert_eq!(text(&after, "/other.node"), "/outer/c2/inner");
         assert_eq!(text(&after, "/outer/c2/abs.node"), "/outer/c2/lfo");
         // Inside the renamed component, relative texts still hold.
         assert_eq!(text(&after, "/outer/c2/near.node"), "lfo");
         assert_eq!(text(&after, "/outer/c2/inner/up.node"), "../lfo");
-        assert!(text(&after, "/outer/c2.expose").starts_with("speed = lfo.value"));
+        assert!(text(&after, "/outer/c2.params").starts_with("@expose speed = lfo.value"));
     }
 
     #[test]

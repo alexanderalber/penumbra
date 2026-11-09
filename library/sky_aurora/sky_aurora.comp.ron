@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/sky_aurora": (kind: "comp.base", params: {"about": "Curtains of light over the horizon.", "expose": "presence = aurora.presence\nbrightness = aurora.brightness\nwarmth = aurora.warmth\nbands = aurora.bands\nheight = aurora.hang\nspeed = aurora.speed\nglow = aurora.glow\nreach = aurora.reach", "shelf": "music stage/sky"}),
+        "/sky_aurora": (kind: "comp.base", params: {"about": "Curtains of light over the horizon.", "params": "@expose presence = aurora.presence\n@expose brightness = aurora.brightness\n@expose warmth = aurora.warmth\n@expose bands = aurora.bands\n@expose height = aurora.hang\n@expose speed = aurora.speed\n@expose glow = aurora.glow\n@expose reach = aurora.reach", "shelf": "music stage/sky"}),
         "/sky_aurora/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/sky_aurora/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
         "/sky_aurora/aurora": (kind: "tex.shader", params: {"bands": 3, "brightness": 1.0, "file": "library/sky_aurora/aurora.wgsl", "glow": 1.0, "hang": 0.22, "presence": 1.0, "resolution": "custom", "speed": 0.02, "warmth": 0.0}, binds: {"eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side", "beats": "bus:travelled", "energy": "bus:energy_high"}, pos: [-300.0, 0.0]),

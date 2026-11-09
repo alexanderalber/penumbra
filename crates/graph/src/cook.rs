@@ -1477,7 +1477,13 @@ impl Cooker {
         let stray: Vec<&str> = if desc.extra_params {
             Vec::new()
         } else {
-            rt.def.params.keys().map(|n| n.as_str()).filter(|n| desc.param_spec(n).is_none()).collect()
+            let own = rt.def.declared(desc).unwrap_or_default();
+            rt.def
+                .params
+                .keys()
+                .map(|n| n.as_str())
+                .filter(|n| desc.param_spec(n).is_none() && own.param(n).is_none())
+                .collect()
         };
         let stray_warning = (!stray.is_empty()).then(|| {
             format!("`{}` has no param {}; the value is ignored, remove it", desc.kind, quoted(&stray))
@@ -1664,7 +1670,8 @@ impl Cooker {
             return;
         }
         let Some(desc) = rt.ty.as_ref().map(|t| t.desc()) else { return };
-        // Params a shader declares in its header; asked for only when the type lacks one.
+        // Params a shader declares in its header, or a component in its text; asked for only
+        // when the type lacks one.
         let mut instance: Option<Vec<ParamSpec>> = None;
         let mut warn = |w: String| {
             if let Some(ws) = warnings.as_deref_mut() {
@@ -1677,11 +1684,13 @@ impl Cooker {
             let spec = match desc.param_spec(name.as_str()) {
                 Some(spec) => Some(spec),
                 None => instance
-                    .get_or_insert_with(|| {
-                        rt.op
+                    .get_or_insert_with(|| match rt.def.declared(desc) {
+                        Some(own) => own.params().cloned().collect(),
+                        None => rt
+                            .op
                             .as_ref()
                             .and_then(|op| self.ask(rt.def.id, "params", || op.params()).flatten())
-                            .unwrap_or_default()
+                            .unwrap_or_default(),
                     })
                     .iter()
                     .find(|s| s.name == name.as_str()),

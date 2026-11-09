@@ -119,10 +119,7 @@ fn live_json(
             continue;
         }
         let Some(desc) = types.desc(&node.kind) else { continue };
-        let value = node
-            .param(desc, name.as_str())
-            .cloned()
-            .or_else(|| desc.param_spec(name.as_str()).map(|s| s.default.clone()));
+        let value = node.value(desc, name.as_str());
         // A value JSON cannot hold (not finite) is not kept.
         if let Some(json) = value.and_then(|v| serde_json::to_value(&v).ok()) {
             out.insert(format!("{path}.{name}"), json);
@@ -384,7 +381,7 @@ fn restore_live(session: &Session, path: &str, json: &Json) -> Result<(), String
     }
     let types = session.types();
     let desc = types.desc(&node.kind).ok_or_else(|| format!("unknown node kind `{}`", node.kind))?;
-    let spec = desc.param_spec(name).ok_or_else(|| format!("`{}` has no param `{name}`", node.kind))?;
+    let spec = node.spec(desc, name).ok_or_else(|| format!("`{}` has no param `{name}`", node.kind))?;
     if name == "value" && crate::buttons::on_show_screen(types, node) {
         return Err("a control on the show screen; its value is kept with the show screen's".into());
     }

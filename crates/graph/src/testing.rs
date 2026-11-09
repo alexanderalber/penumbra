@@ -150,7 +150,7 @@ pub fn test_types() -> NodeTypes {
     simple(
         &mut t,
         NodeDesc::new("test.comp", "A component")
-            .param(ParamSpec::text(crate::EXPOSE, "").multiline())
+            .param(ParamSpec::text(crate::PARAMS, "").multiline())
             .container(),
         |_| Ok(Cooked::Outputs(vec![])),
     );

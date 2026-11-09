@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/photo_detail": (kind: "comp.base", params: {"about": "A camera still kept only on the objects, softened and blurred wide.", "expose": "fine_size = blur_fine.size\nwide_size = blur_wide.size", "shelf": "scanned objects"}),
+        "/photo_detail": (kind: "comp.base", params: {"about": "A camera still kept only on the objects, softened and blurred wide.", "params": "@expose fine_size = blur_fine.size\n@expose wide_size = blur_wide.size", "shelf": "scanned objects"}),
         "/photo_detail/blur_fine": (kind: "tex.blur", params: {"size": 3.0}, inputs: {"in": "on"}),
         "/photo_detail/blur_wide": (kind: "tex.blur", params: {"size": 24.0}, inputs: {"in": "on"}),
         "/photo_detail/fine": (kind: "tex.out", inputs: {"in": "blur_fine"}),

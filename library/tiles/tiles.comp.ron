@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/tiles": (kind: "comp.base", params: {"about": "Glazed tiles with grout on a rectified face, appearing one by one.", "expose": "object = tiles.object\nreveal = tiles.reveal\naspect = tiles.aspect\ntile = tiles.tile\ngrout = tiles.grout\nrim = tiles.rim\ndecor = tiles.decor\ngrout_color = tiles.grout_color\nwood = tiles.wood\ngain = tiles.gain\nseed = tiles.seed\natlas = atlas.file", "shelf": "scanned objects"}),
+        "/tiles": (kind: "comp.base", params: {"about": "Glazed tiles with grout on a rectified face, appearing one by one.", "params": "@expose object = tiles.object\n@expose reveal = tiles.reveal\n@expose aspect = tiles.aspect\n@expose tile = tiles.tile\n@expose grout = tiles.grout\n@expose rim = tiles.rim\n@expose decor = tiles.decor\n@expose grout_color = tiles.grout_color\n@expose wood = tiles.wood\n@expose gain = tiles.gain\n@expose seed = tiles.seed\n@expose atlas = atlas.file", "shelf": "scanned objects"}),
         "/tiles/atlas": (kind: "tex.image_file", params: {"file": "library/tiles/atlas.png"}),
         "/tiles/objects": (kind: "tex.in"),
         "/tiles/out": (kind: "tex.out", inputs: {"in": "tiles"}),

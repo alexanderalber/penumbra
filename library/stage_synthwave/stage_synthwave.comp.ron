@@ -3,10 +3,10 @@
 (
     version: 2,
     nodes: {
-        "/stage_synthwave": (kind: "comp.base", params: {"about": "A world: the camera flies over a wireframe floor towards a nebula.", "expose": "warmth = palette.cross\nlift = energy_lift.b\nenergy_curve = energy_curve.b\nbars_per_turn = lane_map.bars_per_turn\nswing = lane_map.swing\nturn = lane_map.turn\nstep = controls.value0\nbeats_per_bar = lane_map.beats_per_bar\nstart = fade.start\nend = shape.value4\ndim = nebula_dim.brightness\ncamera = preset.row\nglide = glide.rise\npresets = presets.text
-gap = gap_memory.gap
-gap_length = lane_map.gap_length
-ground = ground.ground\nroll_up = controls.value1", "shelf": "music stage/stages"}),
+        "/stage_synthwave": (kind: "comp.base", params: {"about": "A world: the camera flies over a wireframe floor towards a nebula.", "params": "@expose warmth = palette.cross\n@expose lift = energy_lift.b\n@expose energy_curve = energy_curve.b\n@expose bars_per_turn = lane_map.bars_per_turn\n@expose swing = lane_map.swing\n@expose turn = lane_map.turn\n@expose step = controls.value0\n@expose beats_per_bar = lane_map.beats_per_bar\n@expose start = fade.start\n@expose end = shape.value4\n@expose dim = nebula_dim.brightness\n@expose camera = preset.row\n@expose glide = glide.rise\n@expose presets = presets.text
+@expose gap = gap_memory.gap
+@expose gap_length = lane_map.gap_length
+@expose ground = ground.ground\n@expose roll_up = controls.value1", "shelf": "music stage/stages"}),
         "/stage_synthwave/bus": (kind: "chan.in", pos: [-1400.0, 0.0]),
         "/stage_synthwave/floor": (kind: "geo.in", pos: [400.0, 300.0]),
         "/stage_synthwave/mid": (kind: "geo.in", pos: [400.0, 450.0]),

@@ -5,7 +5,7 @@
 
 use penumbra_core::{Error, ParamSpec};
 use penumbra_graph::{
-    CookContext, CookError, Cooked, DataKind, EXPOSE, FnNodeType, NodeDesc, NodeTypes, Operator, PortRole,
+    CookContext, CookError, Cooked, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator, PARAMS, PortRole,
 };
 
 /// The kind of a component.
@@ -31,8 +31,8 @@ const PORT_FAMILIES: [(&str, DataKind); 9] = [
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(COMP_KIND, "A box of nodes: groups part of a network into one node, with inputs and outputs of its own (the in and out nodes inside)")
-            .param(ParamSpec::text(EXPOSE, "").multiline().more().doc(
-                "Inner params shown on the component, one per line: `name = node.param` or `node.param`",
+            .param(ParamSpec::text(PARAMS, "").multiline().more().doc(
+                "The component's own params, one per line. `@param speed float = 1 0..4 -- doc` adds a param with its own value, in the grammar of a shader header. `@expose rate = lfo1.rate` shows an inner param on the component. `@group look` puts the params after it in a fold",
             ))
             .param(ParamSpec::text(SHELF, "").more().doc(
                 "Where this component stands in the add dialog's library tab: one or two levels, `dmx` or `dmx/safety`. Empty: only your own components' shelf `mine` shows it",

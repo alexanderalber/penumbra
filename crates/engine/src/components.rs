@@ -604,7 +604,8 @@ pub fn port_node(
     Ok(Some(net.path_of(id).ok_or("port vanished")?))
 }
 
-/// The ports of component `id` and its exposed params, for `node.info`.
+/// The ports of component `id`, its exposed params and the lines of its `params` text that
+/// declare nothing, for `node.info`. Its own declared params are in `instance_params`.
 pub fn info(e: &Engine, net: &Network, id: NodeId) -> Option<Json> {
     let types = e.types();
     let node = net.node(id)?;
@@ -646,6 +647,6 @@ pub fn info(e: &Engine, net: &Network, id: NodeId) -> Option<Json> {
         "inputs": ins.into_iter().filter_map(port).collect::<Vec<_>>(),
         "outputs": outs.into_iter().filter_map(port).collect::<Vec<_>>(),
         "exposed": exposed,
-        "expose_errors": errors,
+        "errors": errors,
     }))
 }

@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/sky_stars": (kind: "comp.base", params: {"about": "A night sky of stars over black, for stage_valley.", "expose": "presence = stars.presence\nbrightness = stars.brightness\nseed = stars.seed\ndensity = stars.density\nsize = stars.size\ntwinkle = stars.twinkle\nvenus = stars.venus\nvenus_x = stars.venus_x\nvenus_y = stars.venus_y\nthin = stars.thin\nmeteor = meteor_in.value0\nmeteor_seed = stars.meteor_seed\nmeteor_length = stars.meteor_length\nmeteor_time = flight.decay\ntrail = stars.trail\ntrail_angle = stars.trail_angle\ntrail_light = stars.trail_light\npole_x = stars.pole_x\npole_y = stars.pole_y", "shelf": "music stage/sky"}),
+        "/sky_stars": (kind: "comp.base", params: {"about": "A night sky of stars over black, for stage_valley.", "params": "@expose presence = stars.presence\n@expose brightness = stars.brightness\n@expose seed = stars.seed\n@expose density = stars.density\n@expose size = stars.size\n@expose twinkle = stars.twinkle\n@expose venus = stars.venus\n@expose venus_x = stars.venus_x\n@expose venus_y = stars.venus_y\n@expose thin = stars.thin\n@expose meteor = meteor_in.value0\n@expose meteor_seed = stars.meteor_seed\n@expose meteor_length = stars.meteor_length\n@expose meteor_time = flight.decay\n@expose trail = stars.trail\n@expose trail_angle = stars.trail_angle\n@expose trail_light = stars.trail_light\n@expose pole_x = stars.pole_x\n@expose pole_y = stars.pole_y", "shelf": "music stage/sky"}),
         "/sky_stars/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/sky_stars/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
         "/sky_stars/meteor_in": (kind: "chan.constant", params: {"rows": 1, "name0": "meteor", "value0": 0.0}, pos: [-800.0, 300.0]),

@@ -41,9 +41,13 @@ runs](concepts.md#how-the-network-runs).
 or a lighting desk, a step of a `chan.sequence`. In penumbra a cue is a channel that turns on.
 A clock, a show or a clip bound to it starts over. See [Video clips on cue](concepts.md#video-clips-on-cue).
 
+**Custom parameters.** TouchDesigner's name for params a component declares itself. In
+penumbra they are `@param` lines in the component's `params` text:
+`@param preset choice(coral|maze) = coral`. See [Components](concepts.md#components).
+
 **Expose.** Showing an inner param of a component on the component itself, so it can be set
-without going in. List it in the component's `expose` param, one per line:
-`speed = noise1.speed`. See [Components](concepts.md#components).
+without going in. Add a line to the component's `params` text: `@expose speed = noise1.speed`.
+See [Components](concepts.md#components).
 
 **Face.** A flat part of a scanned scene: a crate's lid, a box's side, a wall. `scan.scene` finds
 the faces and numbers them, and content can be put on each one. Face numbers change with every

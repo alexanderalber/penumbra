@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/mid_birds": (kind: "comp.base", params: {"about": "A flock of birds crossing the view far ahead in stage_valley.", "expose": "presence = controls.value0\nbirds = controls.value1\nsize = controls.value2\nat = controls.value3\nlow = controls.value4\nhigh = controls.value5\nevery = controls.value6\ncross = controls.value7\ngap = controls.value8\nflap = controls.value9\nphase = controls.value10\nseed = controls.value11\nextent = bodies.extent", "shelf": "music stage/mid"}, pos: [0.0, 0.0]),
+        "/mid_birds": (kind: "comp.base", params: {"about": "A flock of birds crossing the view far ahead in stage_valley.", "params": "@expose presence = controls.value0\n@expose birds = controls.value1\n@expose size = controls.value2\n@expose at = controls.value3\n@expose low = controls.value4\n@expose high = controls.value5\n@expose every = controls.value6\n@expose cross = controls.value7\n@expose gap = controls.value8\n@expose flap = controls.value9\n@expose phase = controls.value10\n@expose seed = controls.value11\n@expose extent = bodies.extent", "shelf": "music stage/mid"}, pos: [0.0, 0.0]),
         "/mid_birds/bus": (kind: "chan.in", pos: [-1200.0, 0.0]),
         "/mid_birds/pose": (kind: "chan.in", pos: [-1200.0, 150.0]),
         "/mid_birds/controls": (kind: "chan.constant", params: {"rows": 12, "name0": "presence", "value0": 1.0, "name1": "birds", "value1": 24.0, "name2": "size", "value2": 0.9, "name3": "at", "value3": 17.0, "name4": "low", "value4": 0.012, "name5": "high", "value5": 0.045, "name6": "every", "value6": 64.0, "name7": "cross", "value7": 48.0, "name8": "gap", "value8": 1.0, "name9": "flap", "value9": 1.0, "name10": "phase", "value10": 0.0, "name11": "seed", "value11": 0.0}, pos: [-1200.0, 300.0]),

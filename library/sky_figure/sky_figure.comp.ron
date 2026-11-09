@@ -3,14 +3,14 @@
 (
     version: 2,
     nodes: {
-        "/sky_figure": (kind: "comp.base", params: {"about": "A huge figure of lines standing on the horizon.", "expose": "presence = figure.presence
-brightness = figure.brightness
-warmth = figure.warmth
-tall = figure.tall
-place = figure.place
-thickness = figure.thickness
-glow = figure.glow
-reach = figure.reach", "shelf": "music stage/figures"}),
+        "/sky_figure": (kind: "comp.base", params: {"about": "A huge figure of lines standing on the horizon.", "params": "@expose presence = figure.presence
+@expose brightness = figure.brightness
+@expose warmth = figure.warmth
+@expose tall = figure.tall
+@expose place = figure.place
+@expose thickness = figure.thickness
+@expose glow = figure.glow
+@expose reach = figure.reach", "shelf": "music stage/figures"}),
         "/sky_figure/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/sky_figure/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
         "/sky_figure/figure": (kind: "tex.shader", params: {"file": "library/sky_figure/figure.wgsl", "resolution": "custom", "presence": 1.0, "brightness": 1.0, "warmth": 0.0, "tall": 0.42, "place": 0.0, "thickness": 2.5, "glow": 0.6, "reach": 10.0}, binds: {"beats": "bus:travelled", "bar": "bus:bar", "bar_index": "bus:bar_index", "build": "bus:build", "drop": "bus:drop", "role": "bus:section_role", "energy": "bus:energy_low", "eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side"}, pos: [-300.0, 0.0]),

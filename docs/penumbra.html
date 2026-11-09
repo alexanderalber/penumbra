@@ -493,9 +493,13 @@ water      15
 </li>
 <li><strong>Dissolve:</strong> the node menu moves the nodes back up.
 </li>
-<li><strong>Expose params:</strong> the component's <code>expose</code> param lists inner params, one per line, <code>speed = noise1.speed</code> or just <code>noise1.speed</code>. They show on the component and act on the inner param.
+<li><strong>Params of its own:</strong> the component's <code>params</code> text (under more) declares them, one per line. TouchDesigner calls these custom parameters. <code>@param preset choice(coral|maze) = coral -- the pattern</code> makes a param that the component holds, in the grammar of a shader header (the <code>//</code> may stay). It has a default, a range and a doc, and <a class="ref" href="#node.set"><code>node.set</code></a> and <a class="ref" href="#node.bind"><code>node.bind</code></a> treat it like any param: a value it does not take is refused at once. <code>@group look</code> puts the params after it into a fold. Inner nodes do not follow such a param yet.
 </li>
-<li><strong>Rename:</strong> renaming a node (the name field at the top of the param panel, or <a class="ref" href="#node.rename"><code>node.rename</code></a>) also rewrites the <code>expose</code> lines and node references (<a class="ref" href="#tex.select"><code>tex.select</code></a>'s <code>node</code>) that name it or a node inside it. One undo takes all of it back. Wires and bindings follow a rename by themselves. Params that name a node in plain text, such as <a class="ref" href="#tex.scan"><code>tex.scan</code></a>'s <code>projector</code>, keep the old name: fix them by hand.
+<li><strong>Exposed params:</strong> an <code>@expose speed = noise1.speed</code> line (or just <code>@expose noise1.speed</code>) in the same text shows an inner param on the component. Setting it sets the inner param, which keeps the value and the range. Files from before this text existed listed these lines in a param <code>expose</code>; they load into <code>params</code>.
+</li>
+<li><strong>Mistakes in the text:</strong> a line that declares nothing shows below the rows, with its line number and the reason. The other lines still work. A name may be declared once, and not as one of the component's own built-in params (<code>params</code>, <code>shelf</code>, <code>about</code>) or <code>reset</code>.
+</li>
+<li><strong>Rename:</strong> renaming a node (the name field at the top of the param panel, or <a class="ref" href="#node.rename"><code>node.rename</code></a>) also rewrites the <code>@expose</code> lines and node references (<a class="ref" href="#tex.select"><code>tex.select</code></a>'s <code>node</code>) that name it or a node inside it. One undo takes all of it back. Wires and bindings follow a rename by themselves. Params that name a node in plain text, such as <a class="ref" href="#tex.scan"><code>tex.scan</code></a>'s <code>projector</code>, keep the old name: fix them by hand.
 </li>
 <li><strong>Library:</strong> &quot;Save to the library&quot; in the node menu writes a <code>&lt;name&gt;.comp.ron</code> file. The add dialog's <code>library</code> tab lists the project's <code>components/</code> folder, the library shared by all projects (<code>%LOCALAPPDATA%\penumbra\components</code>, or <code>PENUMBRA_LIBRARY</code>) and the content library that ships with penumbra (marked <code>penumbra</code>; the <code>library</code> folder beside the app, catalogued with a preview of each in <a href="../library/README.md">its README</a>): effects for scanned objects such as water in a crate, a lamp going round a pumpkin, contour lines or a carved face. The tab shows one shelf at a time. A component names its shelf in its <code>shelf</code> param, in one or two levels such as <code>dmx</code> or <code>dmx/safety</code>. A new name makes a new shelf. Its <code>about</code> param says in one line what it does: the foot of the tab shows that line under the pointer, with <code>preview.png</code> from the component's folder if there is one. Typing searches all shelves, in the names, the shelves and the <code>about</code> lines. The shelf <code>mine</code> holds all your own components and the project's, also those that have a shelf of their own. Their place is at the right of the entry. Adding one adds a copy. The cross beside a user's library entry moves its file into a <code>removed/</code> folder beside it; penumbra's own cannot be removed.
 </li>
@@ -554,7 +558,8 @@ water      15
 <p><strong>Control channel.</strong> The way a script, a terminal or Claude drives the running app: JSON requests over a local network connection, port 9880. Everything the editor does is a command there too. <code>penumbra-cli ctl</code> sends one from the command line. See <a href="#control">Control</a>.</p>
 <p><strong>Cook.</strong> A node <em>cooks</em> when it computes its outputs. penumbra cooks only what an output, the viewer or a thumbnail needs, and only when something it depends on changed. A node that nothing needs shows &quot;not cooked&quot; and costs nothing. See <a href="#concepts-how-the-network-runs">How the network runs</a>.</p>
 <p><strong>Cue.</strong> A signal that starts something at a moment of the show: a key, an OSC message from QLab or a lighting desk, a step of a <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a>. In penumbra a cue is a channel that turns on. A clock, a show or a clip bound to it starts over. See <a href="#concepts-video-clips-on-cue">Video clips on cue</a>.</p>
-<p><strong>Expose.</strong> Showing an inner param of a component on the component itself, so it can be set without going in. List it in the component's <code>expose</code> param, one per line: <code>speed = noise1.speed</code>. See <a href="#concepts-components">Components</a>.</p>
+<p><strong>Custom parameters.</strong> TouchDesigner's name for params a component declares itself. In penumbra they are <code>@param</code> lines in the component's <code>params</code> text: <code>@param preset choice(coral|maze) = coral</code>. See <a href="#concepts-components">Components</a>.</p>
+<p><strong>Expose.</strong> Showing an inner param of a component on the component itself, so it can be set without going in. Add a line to the component's <code>params</code> text: <code>@expose speed = noise1.speed</code>. See <a href="#concepts-components">Components</a>.</p>
 <p><strong>Face.</strong> A flat part of a scanned scene: a crate's lid, a box's side, a wall. <a class="ref" href="#scan.scene"><code>scan.scene</code></a> finds the faces and numbers them, and content can be put on each one. Face numbers change with every scan; regions keep their names. See <a href="#scanning-5-faces-and-objects-scanscene">Scanning</a>.</p>
 <p><strong>Family.</strong> The first part of a node's kind: <code>tex</code> for pictures, <code>chan</code> for channels, <code>geo</code>, <code>mat</code>, <code>light</code> and <code>view</code> for 3D, <code>table</code> for text, <code>script</code> for Python, <code>out</code> for outputs, <code>comp</code> for components. Each node's header has its family's colour, and so does the family's block in the add dialog.</p>
 <p><strong>Feedback.</strong> A loop that hands each frame's picture back to the start of a chain, so the next frame builds on it: trails, echoes, patterns that grow. A <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a> closes the loop through its <code>previous</code> input. See <a href="#tex.feedback">tex.feedback</a> and the <code>feedback</code> example.</p>
@@ -6317,7 +6322,7 @@ def cook(cx):
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
 <tr class="section"><th colspan="5">more</th></tr>
-<tr><td><code>expose</code></td><td>text</td><td></td><td></td><td>Inner params shown on the component, one per line: <code>name = node.param</code> or <code>node.param</code></td></tr>
+<tr><td><code>params</code></td><td>text</td><td></td><td></td><td>The component's own params, one per line. <code>@param speed float = 1 0..4 -- doc</code> adds a param with its own value, in the grammar of a shader header. <code>@expose rate = lfo1.rate</code> shows an inner param on the component. <code>@group look</code> puts the params after it in a fold</td></tr>
 <tr><td><code>shelf</code></td><td>text</td><td></td><td></td><td>Where this component stands in the add dialog's library tab: one or two levels, <code>dmx</code> or <code>dmx/safety</code>. Empty: only your own components' shelf <code>mine</code> shows it</td></tr>
 <tr><td><code>about</code></td><td>text</td><td></td><td></td><td>One line on what this component does. The add dialog shows it under the pointer, and its search finds it</td></tr>
 </tbody>
@@ -6331,15 +6336,34 @@ def cook(cx):
 </li>
 <li><strong>Reuse.</strong> A component can go into the library and be added to any project, as a copy.
 </li>
-<li><strong>A simple surface.</strong> Only the params you expose show on the component. The scene's speed and colour are on the outside; the twenty nodes that make it are tucked away.
+<li><strong>A simple surface.</strong> Only the params you declare or expose show on the component. The scene's speed and colour are on the outside; the twenty nodes that make it are tucked away.
 </li>
 </ul>
 <h5 id="comp.base-making-one">Making one</h5>
 <p>Select nodes and press Ctrl+G. penumbra puts them into a new component and adds a port wherever a wire crossed the edge of the selection. I or a double-click goes in, U goes back up. The node menu's &quot;Dissolve&quot; undoes the grouping.</p>
 <h5 id="comp.base-ports">Ports</h5>
 <p>Wires enter and leave a component only through ports, which are nodes inside it. Each data kind has a pair: <a class="ref" href="#tex.in"><code>tex.in</code></a> and <a class="ref" href="#tex.out"><code>tex.out</code></a>, <a class="ref" href="#chan.in"><code>chan.in</code></a> and <a class="ref" href="#chan.out"><code>chan.out</code></a>, and the same for <code>table</code>, <code>geo</code>, <code>mat</code>, <code>light</code> and <code>view</code>. The <code>.in</code> nodes are the component's inputs, the <code>.out</code> nodes its outputs. What is wired to an input outside comes out of the matching <code>.in</code> node inside; what is wired into a <code>.out</code> node inside comes out of the component. Bindings and <a class="ref" href="#tex.select"><code>tex.select</code></a> are not wires: they may reach in and out of components by path.</p>
-<h5 id="comp.base-exposed-params">Exposed params</h5>
-<p><code>expose</code> lists inner params to show on the component, one per line: <code>noise1.speed</code>, or with a name of its own, <code>speed = noise1.speed</code>. Changing the exposed param changes the inner one, and you can bind it like any param.</p>
+<h5 id="comp.base-params-of-its-own">Params of its own</h5>
+<p>The <code>params</code> text (under more) gives the component params, one per line. TouchDesigner calls these custom parameters. A line uses the grammar of a shader header, and the <code>//</code> in front may stay when you paste one:</p>
+<pre><code class="lang-text">@param preset choice(coral|maze|worms) = coral -- the pattern
+@param feed float = 0.055 0..0.1
+@group look
+@param glow float = 1 0..4
+@expose speed = noise1.speed
+</code></pre>
+<ul>
+<li><strong><code>@param</code></strong> makes a param the component holds: <code>name kind = default min..max -- doc</code>. Kinds are <code>float</code>, <code>int</code>, <code>bool</code>, <code>vec2</code>, <code>vec3</code>, <code>vec4</code>, <code>color</code>, <code>palette</code> and <code>choice(a|b)</code>. Set and bind it like any param; a value it does not take is refused at once. Inner nodes do not follow it yet.
+</li>
+<li><strong><code>@group</code></strong> puts the params after it into a fold of the panel. <code>@group</code> alone ends the fold.
+</li>
+<li><strong><code>@expose</code></strong> shows an inner param on the component: <code>@expose noise1.speed</code>, or with a name of its own, <code>@expose speed = noise1.speed</code>. Changing the exposed param changes the inner one, and you can bind it like any param. The inner node keeps the value and the range.
+</li>
+<li><strong>Comments:</strong> lines starting with <code>#</code>, and <code>//</code> lines without an <code>@</code>.
+</li>
+<li><strong>Mistakes:</strong> a line that declares nothing is listed below the rows with its line number and the reason; the rest still works. Each name may appear once. <code>params</code>, <code>shelf</code>, <code>about</code> and <code>reset</code> are taken.
+</li>
+</ul>
+<p>Files written before <code>params</code> existed listed the exposed params in a param <code>expose</code>. They load as <code>@expose</code> lines and are saved in the new form.</p>
 <p>More in the Components section of the concepts guide.</p>
 </div>
 <p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
@@ -7096,7 +7120,7 @@ def cook(cx):
 <details class="entry command" id="node.bind"><summary><code class="name">node.bind</code><span class="sum">Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format (&quot;{.1} m&quot;), a choice its entry by name or place</span></summary>
 <div class="body">
 <p>Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format (&quot;{.1} m&quot;), a choice its entry by name or place; {param, from, channel?, cell?: {row?, col?}, format?}</p>
-<p class="mentions">Mentioned in: <a href="#concepts-text-and-choices">Concepts › Text and choices</a>, <a href="#shaders-several-steps-per-frame">Shaders › Several steps per frame</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-text-and-choices">Concepts › Text and choices</a>, <a href="#concepts-components">Concepts › Components</a>, <a href="#shaders-several-steps-per-frame">Shaders › Several steps per frame</a></p>
 </div></details>
 <details class="entry command" id="node.connect"><summary><code class="name">node.connect</code><span class="sum">Connect an output to an input; without input: the first of its kind, or the next free one of a run (a composite's layers)</span></summary>
 <div class="body">
@@ -7156,9 +7180,9 @@ def cook(cx):
 <div class="body">
 <p>Move nodes in the editor; top left corner, graph units on their component's plane, one undo step. null leaves a node to the editor to place; {nodes: {path: [x, y]}}</p>
 </div></details>
-<details class="entry command" id="node.rename"><summary><code class="name">node.rename</code><span class="sum">Rename a node; the expose lines and node references that name it follow, in the same undo step</span></summary>
+<details class="entry command" id="node.rename"><summary><code class="name">node.rename</code><span class="sum">Rename a node; the @expose lines and node references that name it follow, in the same undo step</span></summary>
 <div class="body">
-<p>Rename a node; the expose lines and node references that name it follow, in the same undo step; {path, name}</p>
+<p>Rename a node; the @expose lines and node references that name it follow, in the same undo step; {path, name}</p>
 <p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
 </div></details>
 <details class="entry command" id="node.replace"><summary><code class="name">node.replace</code><span class="sum">Replace a node with one of another kind under the same name (one undo step). Keeps the params, wires and bindings that fit and lists what was not kept</span></summary>
@@ -7174,7 +7198,7 @@ def cook(cx):
 <details class="entry command" id="node.set"><summary><code class="name">node.set</code><span class="sum">Set params, null resets to the default</span></summary>
 <div class="body">
 <p>Set params, null resets to the default; {path, params: {name: value}}</p>
-<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#concepts-buttons-sliders-and-dropdowns-on-the-node">Concepts › Buttons, sliders and dropdowns on the node</a>, <a href="#mapping-without-camera-from-the-control-channel">Mapping without a camera › From the control channel</a>, <a href="#control-taking-turns">Control › Taking turns</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#concepts-buttons-sliders-and-dropdowns-on-the-node">Concepts › Buttons, sliders and dropdowns on the node</a>, <a href="#concepts-components">Concepts › Components</a>, <a href="#mapping-without-camera-from-the-control-channel">Mapping without a camera › From the control channel</a>, <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
 <details class="entry command" id="node.snapshot"><summary><code class="name">node.snapshot</code><span class="sum">Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB)</span></summary>
 <div class="body">

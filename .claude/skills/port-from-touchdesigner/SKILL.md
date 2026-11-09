@@ -154,7 +154,7 @@ counterpart" below.
 | Camera COMP | `view.camera` | `position` and `target` in z-up metres; `projection` `orthographic` with `size` |
 | Light COMP | `light.point`, `light.spot` (`angle`), `light.directional` | Ambient and Environment Light COMP: `light.ambient`, `light.environment` |
 | Constant, Phong, PBR, Wireframe MAT | `mat.constant`, `mat.phong`, `mat.pbr`, `mat.wireframe` | Phong `diffr diffg diffb` is `color`; set `specular` and `shininess` by the reference, since the defaults differ |
-| Base, Container COMP | `comp.base` | custom params: the `expose` param |
+| Base, Container COMP | `comp.base` | custom params: `@param` and `@expose` lines of its `params` text |
 
 ## 5. GLSL TOP to WGSL
 
@@ -204,7 +204,9 @@ does not compile shows the message on the node (`node.info`).
   param that does the sum, or `script.python`.
 - **Pure numbers** (`1280/2500`): work them out and type the value.
 - **`op('table')[r, c]`:** a binding to the cell (`node.bind {param, from, cell: {row, col}}`).
-- **`parent().par.X`, custom params:** an `expose` line on the `comp.base`.
+- **`parent().par.X`, custom params:** an `@expose X = inner.param` line in the `comp.base`'s
+  `params` text. A `@param` line declares a param the component holds, but inner nodes cannot
+  follow it yet.
 - **Execute DATs** (`onFrameStart`), **CHOP Execute** (`onValueChange`), **DAT Execute**:
   one `script.python` each. `cook(cx)` runs every frame (`cook` `every frame`, or `auto` when
   the code reads `cx.time`). Module globals keep state between calls. Channels come in on

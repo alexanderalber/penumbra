@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/floor_waves": (kind: "comp.base", params: {"about": "Waves beside the lane.", "expose": "presence = field.presence\nsource = field.source\nseed = field.seed\nheight = field.tall\nbass = field.bass\ncrests = field.crests\nflow = field.flow\nspacing = field.spacing\nspread = field.spread\nlane = field.lane\nfoot = field.foot\nnear = field.near\nfar = field.far\nsmooth = levels.fall\ncolor = wave_lines.color\nline_width = wave_lines.line_width\nextent = waves.extent", "shelf": "music stage/floor"}),
+        "/floor_waves": (kind: "comp.base", params: {"about": "Waves beside the lane.", "params": "@expose presence = field.presence\n@expose source = field.source\n@expose seed = field.seed\n@expose height = field.tall\n@expose bass = field.bass\n@expose crests = field.crests\n@expose flow = field.flow\n@expose spacing = field.spacing\n@expose spread = field.spread\n@expose lane = field.lane\n@expose foot = field.foot\n@expose near = field.near\n@expose far = field.far\n@expose smooth = levels.fall\n@expose color = wave_lines.color\n@expose line_width = wave_lines.line_width\n@expose extent = waves.extent", "shelf": "music stage/floor"}),
         "/floor_waves/bus": (kind: "chan.in", pos: [-1000.0, 0.0]),
         "/floor_waves/lane": (kind: "tex.in", pos: [-1000.0, 150.0]),
         "/floor_waves/bands": (kind: "chan.select", params: {"channels": "energy_low energy_mid energy_high"}, inputs: {"in": "bus"}, pos: [-800.0, -150.0]),

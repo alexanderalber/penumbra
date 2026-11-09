@@ -2941,7 +2941,7 @@ Outputs: none.
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `expose` *(more)* | text |  |  | Inner params shown on the component, one per line: `name = node.param` or `node.param` |
+| `params` *(more)* | text |  |  | The component's own params, one per line. `@param speed float = 1 0..4 -- doc` adds a param with its own value, in the grammar of a shader header. `@expose rate = lfo1.rate` shows an inner param on the component. `@group look` puts the params after it in a fold |
 | `shelf` *(more)* | text |  |  | Where this component stands in the add dialog's library tab: one or two levels, `dmx` or `dmx/safety`. Empty: only your own components' shelf `mine` shows it |
 | `about` *(more)* | text |  |  | One line on what this component does. The add dialog shows it under the pointer, and its search finds it |
 

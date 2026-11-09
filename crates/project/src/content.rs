@@ -166,7 +166,10 @@ pub fn diff(base: &Content, theirs: &Content) -> Vec<Op> {
             }
             continue;
         };
-        for (name, value) in &t.params {
+        // A component's declarations first: they say which of its other values are valid.
+        let declarations = t.params.iter().filter(|(n, _)| n.as_str() == penumbra_graph::PARAMS);
+        let others = t.params.iter().filter(|(n, _)| n.as_str() != penumbra_graph::PARAMS);
+        for (name, value) in declarations.chain(others) {
             if b.params.get(name) != Some(value)
                 && let Ok(param) = path.param(name.clone())
             {

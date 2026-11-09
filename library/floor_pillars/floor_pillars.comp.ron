@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/floor_pillars": (kind: "comp.base", params: {"about": "Tall wireframe pillars in lines on both sides of the lane, like an avenue.", "expose": "presence = places.presence\nspacing = places.spacing\nheight = places.tall\nwidth = places.across\nrows = places.rows\ngap = places.gap\npulse = places.pulse\nlane = places.lane\nnear = places.near\nfar = places.far\nbeats_per_bar = places.beats_per_bar\ncolor = pillar_lines.color\nextent = pillars.extent", "shelf": "music stage/floor"}),
+        "/floor_pillars": (kind: "comp.base", params: {"about": "Tall wireframe pillars in lines on both sides of the lane, like an avenue.", "params": "@expose presence = places.presence\n@expose spacing = places.spacing\n@expose height = places.tall\n@expose width = places.across\n@expose rows = places.rows\n@expose gap = places.gap\n@expose pulse = places.pulse\n@expose lane = places.lane\n@expose near = places.near\n@expose far = places.far\n@expose beats_per_bar = places.beats_per_bar\n@expose color = pillar_lines.color\n@expose extent = pillars.extent", "shelf": "music stage/floor"}),
         "/floor_pillars/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/floor_pillars/lane": (kind: "tex.in", pos: [-600.0, 150.0]),
         "/floor_pillars/places": (kind: "tex.shader", params: {"across": 0.3, "beats_per_bar": 4.0, "far": 14.0, "file": "library/floor_pillars/pillars.wgsl", "gap": 1.2, "height": 32, "keep_size": true, "lane": 1.6, "near": -2.0, "presence": 1.0, "pulse": 0.1, "resolution": "custom", "rows": 2, "spacing": 1.0, "tall": 2.4, "width": 6}, inputs: {"in0": "lane"}, binds: {"beat": "bus:beat", "beats": "bus:travelled", "drift": "bus:drift"}, pos: [-400.0, 100.0]),

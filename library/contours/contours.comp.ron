@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/contours": (kind: "comp.base", params: {"about": "Contour lines of the object's height.", "expose": "interval = lines.interval\noffset = lines.offset\nthickness = lines.thickness\nsmooth = lines.smooth\ncolor = lines.color\nmode = lines.mode\nrange = lines.range", "shelf": "scanned objects"}),
+        "/contours": (kind: "comp.base", params: {"about": "Contour lines of the object's height.", "params": "@expose interval = lines.interval\n@expose offset = lines.offset\n@expose thickness = lines.thickness\n@expose smooth = lines.smooth\n@expose color = lines.color\n@expose mode = lines.mode\n@expose range = lines.range", "shelf": "scanned objects"}),
         "/contours/height": (kind: "tex.in"),
         "/contours/labels": (kind: "tex.in"),
         "/contours/lines": (kind: "tex.contour", params: {"interval": 0.07, "thickness": 2.0, "smooth": 6.0, "mode": "alpha", "color": [1.0, 0.9, 0.6, 0.9]}, inputs: {"in": "on"}),

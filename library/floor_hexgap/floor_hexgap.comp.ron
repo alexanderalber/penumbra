@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/floor_hexgap": (kind: "comp.base", params: {"about": "Split hexagonal pillars beside the lane.", "expose": "presence = places.presence\nceiling = places.ceiling\nseed = places.seed\nlow = places.low\nhigh = places.high\nnarrow = places.narrow\nwide = places.wide\nspacing = places.spacing\nwidth = controls.value0\nrows = places.rows\ngap = places.gap\npulse = places.pulse\nlane = places.lane\nnear = places.near\nfar = places.far\nbeats_per_bar = places.beats_per_bar\ncolor = hex_lines.color\nline_width = hex_lines.line_width\nextent = pillars.extent", "shelf": "music stage/floor"}),
+        "/floor_hexgap": (kind: "comp.base", params: {"about": "Split hexagonal pillars beside the lane.", "params": "@expose presence = places.presence\n@expose ceiling = places.ceiling\n@expose seed = places.seed\n@expose low = places.low\n@expose high = places.high\n@expose narrow = places.narrow\n@expose wide = places.wide\n@expose spacing = places.spacing\n@expose width = controls.value0\n@expose rows = places.rows\n@expose gap = places.gap\n@expose pulse = places.pulse\n@expose lane = places.lane\n@expose near = places.near\n@expose far = places.far\n@expose beats_per_bar = places.beats_per_bar\n@expose color = hex_lines.color\n@expose line_width = hex_lines.line_width\n@expose extent = pillars.extent", "shelf": "music stage/floor"}),
         "/floor_hexgap/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/floor_hexgap/lane": (kind: "tex.in", pos: [-600.0, 150.0]),
         "/floor_hexgap/controls": (kind: "chan.constant", params: {"rows": 1, "name0": "across", "value0": 0.36}, pos: [-800.0, 250.0]),

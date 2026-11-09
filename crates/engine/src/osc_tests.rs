@@ -113,7 +113,7 @@ fn osc_addresses_set_params_live_outside_the_history() {
     f.call("node.bind", json!({"param": "/tied.rate", "from": "/lfo"}));
     f.call("node.create", json!({"path": "/scene", "kind": "comp.base"}));
     f.call("node.create", json!({"path": "/scene/inner", "kind": "chan.lfo"}));
-    f.call("node.set", json!({"path": "/scene", "params": {"expose": "speed = inner.rate"}}));
+    f.call("node.set", json!({"path": "/scene", "params": {"params": "@expose speed = inner.rate"}}));
     let port = osc_port(&f, 0);
     let before = f.call("history.list", json!({}))["total"].as_u64().unwrap();
 

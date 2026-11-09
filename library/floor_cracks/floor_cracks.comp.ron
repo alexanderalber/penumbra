@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/floor_cracks": (kind: "comp.base", params: {"about": "Glowing cracks in the floor, like lava under a crust.", "expose": "presence = glow.presence\nseed = glow.seed\nbass = glow.bass\ncell = glow.cell\nthickness = glow.thickness\nglow = glow.glow\nflow = glow.flow\npulse = glow.pulse\ncolor = glow.color\nhot = glow.hot\nbrightness = glow.brightness\nlane = glow.lane\nfade = glow.fade\ngone = glow.gone\nsmooth = level.fall", "shelf": "music stage/floor"}),
+        "/floor_cracks": (kind: "comp.base", params: {"about": "Glowing cracks in the floor, like lava under a crust.", "params": "@expose presence = glow.presence\n@expose seed = glow.seed\n@expose bass = glow.bass\n@expose cell = glow.cell\n@expose thickness = glow.thickness\n@expose glow = glow.glow\n@expose flow = glow.flow\n@expose pulse = glow.pulse\n@expose color = glow.color\n@expose hot = glow.hot\n@expose brightness = glow.brightness\n@expose lane = glow.lane\n@expose fade = glow.fade\n@expose gone = glow.gone\n@expose smooth = level.fall", "shelf": "music stage/floor"}),
         "/floor_cracks/bus": (kind: "chan.in", pos: [-800.0, 0.0]),
         "/floor_cracks/lane": (kind: "tex.in", pos: [-800.0, 150.0]),
         "/floor_cracks/bass": (kind: "chan.select", params: {"channels": "energy_low"}, inputs: {"in": "bus"}, pos: [-600.0, -150.0]),

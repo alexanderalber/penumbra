@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/mid_glider": (kind: "comp.base", params: {"expose": "presence = controls.value1\nat = controls.value0\nflight = style.row\nbank = steer.bank\nbob = bob.amplitude\nscale = flight.scale\nhover = flight.hover\narrive = arrive.rise\nflights = flights.text\nflight_glide = style_glide.rise\nroll_bars = steer.roll_bars\nroll_beats = steer.roll_beats\nlean_angle = steer.lean_angle\nbeats_per_bar = steer.beats_per_bar"}),
+        "/mid_glider": (kind: "comp.base", params: {"params": "@expose presence = controls.value1\n@expose at = controls.value0\n@expose flight = style.row\n@expose bank = steer.bank\n@expose bob = bob.amplitude\n@expose scale = flight.scale\n@expose hover = flight.hover\n@expose arrive = arrive.rise\n@expose flights = flights.text\n@expose flight_glide = style_glide.rise\n@expose roll_bars = steer.roll_bars\n@expose roll_beats = steer.roll_beats\n@expose lean_angle = steer.lean_angle\n@expose beats_per_bar = steer.beats_per_bar"}),
         "/mid_glider/bus": (kind: "chan.in", pos: [-1000.0, -200.0]),
         "/mid_glider/lane": (kind: "tex.in", pos: [-1000.0, 0.0]),
         "/mid_glider/pose": (kind: "chan.in", pos: [-1000.0, 600.0]),

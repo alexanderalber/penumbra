@@ -602,11 +602,21 @@ first output of the kind it reads.
 - **Enter and leave:** I or a double-click goes in, U or the breadcrumb at the top left goes
   up. Wires from outside the level shown end in a stub labelled with where they go.
 - **Dissolve:** the node menu moves the nodes back up.
-- **Expose params:** the component's `expose` param lists inner params, one per line,
-  `speed = noise1.speed` or just `noise1.speed`. They show on the component and act on the
-  inner param.
+- **Params of its own:** the component's `params` text (under more) declares them, one per
+  line. TouchDesigner calls these custom parameters. `@param preset choice(coral|maze) = coral
+  -- the pattern` makes a param that the component holds, in the grammar of a shader header
+  (the `//` may stay). It has a default, a range and a doc, and `node.set` and `node.bind` treat
+  it like any param: a value it does not take is refused at once. `@group look` puts the params
+  after it into a fold. Inner nodes do not follow such a param yet.
+- **Exposed params:** an `@expose speed = noise1.speed` line (or just `@expose noise1.speed`)
+  in the same text shows an inner param on the component. Setting it sets the inner param,
+  which keeps the value and the range. Files from before this text existed listed these lines
+  in a param `expose`; they load into `params`.
+- **Mistakes in the text:** a line that declares nothing shows below the rows, with its line
+  number and the reason. The other lines still work. A name may be declared once, and not as
+  one of the component's own built-in params (`params`, `shelf`, `about`) or `reset`.
 - **Rename:** renaming a node (the name field at the top of the param panel, or `node.rename`)
-  also rewrites the `expose` lines and node references (`tex.select`'s `node`) that name it or a
+  also rewrites the `@expose` lines and node references (`tex.select`'s `node`) that name it or a
   node inside it. One undo takes all of it back. Wires and bindings follow a rename by
   themselves. Params that name a node in plain text, such as `tex.scan`'s `projector`, keep the
   old name: fix them by hand.

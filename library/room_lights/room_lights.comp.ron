@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/room_lights": (kind: "comp.base", params: {"about": "The lights of the room around the screen, from the same arrangement as the stage.", "expose": "pattern = style.row\nwarmth = controls.value0\nintensity = controls.value1\ncolumns = look.columns\nbands = look.bands\nrise = look.rise\ntail = look.tail\nsnap = pulse.b\npatterns = patterns.text\npattern_glide = style_glide.rise\nwidth = look.width\nheight = look.height", "shelf": "music stage/stages"}),
+        "/room_lights": (kind: "comp.base", params: {"about": "The lights of the room around the screen, from the same arrangement as the stage.", "params": "@expose pattern = style.row\n@expose warmth = controls.value0\n@expose intensity = controls.value1\n@expose columns = look.columns\n@expose bands = look.bands\n@expose rise = look.rise\n@expose tail = look.tail\n@expose snap = pulse.b\n@expose patterns = patterns.text\n@expose pattern_glide = style_glide.rise\n@expose width = look.width\n@expose height = look.height", "shelf": "music stage/stages"}),
         "/room_lights/bus": (kind: "chan.in", pos: [-1400.0, 0.0]),
         "/room_lights/controls": (kind: "chan.constant", params: {"rows": 2, "name0": "warmth", "value0": 0.0, "name1": "intensity", "value1": 1.0}, pos: [-1400.0, 400.0]),
         "/room_lights/patterns": (kind: "table.text", params: {"format": "csv", "text": "stripes,pulse,chase\n1,0,0\n0,1,0\n0,0,1"}, pos: [-1400.0, -300.0]),

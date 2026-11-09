@@ -3,8 +3,8 @@
 (
     version: 2,
     nodes: {
-        "/mid_lasers": (kind: "comp.base", params: {"about": "A fan of laser beams.", "expose": "presence = controls.value0\ncount = controls.value1\nfrom = controls.value2\nlow = controls.value3\nreach = controls.value4\nacross = controls.value5\nup = controls.value6\nopen = controls.value7\nsweep = controls.value8\nstrobe = sizes.strobe
-thickness = sizes.thickness\ncolor = beam_lines.color\nline_width = beam_lines.line_width", "shelf": "music stage/mid"}),
+        "/mid_lasers": (kind: "comp.base", params: {"about": "A fan of laser beams.", "params": "@expose presence = controls.value0\n@expose count = controls.value1\n@expose from = controls.value2\n@expose low = controls.value3\n@expose reach = controls.value4\n@expose across = controls.value5\n@expose up = controls.value6\n@expose open = controls.value7\n@expose sweep = controls.value8\n@expose strobe = sizes.strobe
+@expose thickness = sizes.thickness\n@expose color = beam_lines.color\n@expose line_width = beam_lines.line_width", "shelf": "music stage/mid"}),
         "/mid_lasers/bus": (kind: "chan.in", pos: [-1000.0, 0.0]),
         "/mid_lasers/lane": (kind: "tex.in", pos: [-1000.0, 150.0]),
         "/mid_lasers/pose": (kind: "chan.in", pos: [-1000.0, 450.0]),

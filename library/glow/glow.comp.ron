@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/glow": (kind: "comp.base", params: {"about": "The object glowing from inside like a lantern.", "expose": "clock = flame.clock\nbox = flame.box\nflame = flame.flame\nspread = flame.spread\nskin = flame.skin\nfurrow = flame.furrow\nthreshold = flame.threshold\nfull = flame.full\nedge = flame.edge\nflicker = flame.flicker\nsway = flame.sway\nignite = flame.ignite\ndim = flame.dim\nhot = flame.hot", "shelf": "scanned objects"}),
+        "/glow": (kind: "comp.base", params: {"about": "The object glowing from inside like a lantern.", "params": "@expose clock = flame.clock\n@expose box = flame.box\n@expose flame = flame.flame\n@expose spread = flame.spread\n@expose skin = flame.skin\n@expose furrow = flame.furrow\n@expose threshold = flame.threshold\n@expose full = flame.full\n@expose edge = flame.edge\n@expose flicker = flame.flicker\n@expose sway = flame.sway\n@expose ignite = flame.ignite\n@expose dim = flame.dim\n@expose hot = flame.hot", "shelf": "scanned objects"}),
         "/glow/fine": (kind: "tex.in"),
         "/glow/flame": (kind: "tex.shader", params: {"file": "library/glow/glow.wgsl"}, inputs: {"in0": "labels", "in1": "sdf", "in2": "fine", "in3": "wide"}),
         "/glow/labels": (kind: "tex.in"),

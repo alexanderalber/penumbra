@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/water": (kind: "comp.base", params: {"about": "A box seen at a corner as a tank of water.", "expose": "clock = tank.clock\nfront = tank.front\nside = tank.side\nlid = tank.lid\nfront_top = tank.front_top\nfront_bottom = tank.front_bottom\nside_top = tank.side_top\nside_bottom = tank.side_bottom\nrows = tank.rows\nfill = tank.fill\npond = tank.pond\nlevel = tank.level\nwave = tank.wave\ntile = tank.tile\ncaustic = tank.caustic\ngain = tank.gain\ndeep = tank.deep\nshallow = tank.shallow\nfoam = tank.foam\nshimmer = tank.shimmer\nshimmer_color = tank.shimmer_color\nsize = tank.size\ntexture = texture.file", "shelf": "scanned objects"}),
+        "/water": (kind: "comp.base", params: {"about": "A box seen at a corner as a tank of water.", "params": "@expose clock = tank.clock\n@expose front = tank.front\n@expose side = tank.side\n@expose lid = tank.lid\n@expose front_top = tank.front_top\n@expose front_bottom = tank.front_bottom\n@expose side_top = tank.side_top\n@expose side_bottom = tank.side_bottom\n@expose rows = tank.rows\n@expose fill = tank.fill\n@expose pond = tank.pond\n@expose level = tank.level\n@expose wave = tank.wave\n@expose tile = tank.tile\n@expose caustic = tank.caustic\n@expose gain = tank.gain\n@expose deep = tank.deep\n@expose shallow = tank.shallow\n@expose foam = tank.foam\n@expose shimmer = tank.shimmer\n@expose shimmer_color = tank.shimmer_color\n@expose size = tank.size\n@expose texture = texture.file", "shelf": "scanned objects"}),
         "/water/labels": (kind: "tex.in"),
         "/water/out": (kind: "tex.out", inputs: {"in": "tank"}),
         "/water/regions": (kind: "tex.in"),

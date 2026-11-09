@@ -6,6 +6,7 @@
 
 pub mod bind;
 pub mod chan;
+pub mod declare;
 pub mod error;
 pub mod files;
 pub mod id;

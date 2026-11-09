@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/mid_equalisers": (kind: "comp.base", params: {"about": "Rings of equaliser bars on the wall of the tunnel, to fly through.", "expose": "presence = controls.value0\nwarmth = controls.value1\nbrightness = controls.value2\nevery = controls.value3\nturn = controls.value4\ncount = controls.value5\narc = controls.value6\ncells = controls.value7\ntall = controls.value8\nopen = controls.value9\nmiddle = controls.value10\ngap = controls.value11\ndepth = controls.value12\njitter = controls.value13\nkick = controls.value14\npump = controls.value15\nbeats_per_bar = controls.value16", "shelf": "music stage/mid"}),
+        "/mid_equalisers": (kind: "comp.base", params: {"about": "Rings of equaliser bars on the wall of the tunnel, to fly through.", "params": "@expose presence = controls.value0\n@expose warmth = controls.value1\n@expose brightness = controls.value2\n@expose every = controls.value3\n@expose turn = controls.value4\n@expose count = controls.value5\n@expose arc = controls.value6\n@expose cells = controls.value7\n@expose tall = controls.value8\n@expose open = controls.value9\n@expose middle = controls.value10\n@expose gap = controls.value11\n@expose depth = controls.value12\n@expose jitter = controls.value13\n@expose kick = controls.value14\n@expose pump = controls.value15\n@expose beats_per_bar = controls.value16", "shelf": "music stage/mid"}),
         "/mid_equalisers/bus": (kind: "chan.in", pos: [-1000.0, 0.0]),
         "/mid_equalisers/lane": (kind: "tex.in", pos: [-1000.0, 150.0]),
         "/mid_equalisers/pose": (kind: "chan.in", pos: [-1000.0, 450.0]),

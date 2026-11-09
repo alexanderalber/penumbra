@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/floor_gates": (kind: "comp.base", params: {"about": "Stone gates across stage_valley's lane.", "expose": "presence = controls.value0\nseed = controls.value1\nheight = controls.value2\nthick = controls.value3\nlight = controls.value4\npulse = controls.value5\nlane = controls.value6\nclear = controls.value7\nswing = controls.value8\nevery = controls.value9\nnear = controls.value10\nfar = controls.value11\nwarmth = controls.value12\ngroove = controls.value13\nsmooth = level.fall\nease = controls.value14\nhold = controls.value15", "shelf": "music stage/floor"}, pos: [0.0, 0.0]),
+        "/floor_gates": (kind: "comp.base", params: {"about": "Stone gates across stage_valley's lane.", "params": "@expose presence = controls.value0\n@expose seed = controls.value1\n@expose height = controls.value2\n@expose thick = controls.value3\n@expose light = controls.value4\n@expose pulse = controls.value5\n@expose lane = controls.value6\n@expose clear = controls.value7\n@expose swing = controls.value8\n@expose every = controls.value9\n@expose near = controls.value10\n@expose far = controls.value11\n@expose warmth = controls.value12\n@expose groove = controls.value13\n@expose smooth = level.fall\n@expose ease = controls.value14\n@expose hold = controls.value15", "shelf": "music stage/floor"}, pos: [0.0, 0.0]),
         "/floor_gates/bus": (kind: "chan.in", pos: [-1200.0, 0.0]),
         "/floor_gates/lane": (kind: "tex.in", pos: [-1200.0, 150.0]),
         "/floor_gates/pose": (kind: "chan.in", pos: [-1200.0, 300.0]),

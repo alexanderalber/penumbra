@@ -330,6 +330,7 @@ impl ParamPanel {
                     self.groups(ui, input, node, "", &desc.params, auto, actions);
                 }
                 if desc.container {
+                    self.declared(ui, input, node, auto, actions);
                     self.exposed(ui, input, node, auto, actions);
                 }
                 if constant {
@@ -339,7 +340,7 @@ impl ParamPanel {
                 } else {
                     // Values from the project file the type no longer declares.
                     let stray: Vec<(&penumbra_core::Name, &Value)> =
-                        node.params.iter().filter(|(n, _)| desc.param_spec(n.as_str()).is_none()).collect();
+                        node.params.iter().filter(|(n, _)| node.spec(desc, n.as_str()).is_none()).collect();
                     let note = format!("not a param of {}", node.kind);
                     stray_values(ui, input, node, &note, &stray, auto, actions);
                 }
@@ -351,8 +352,29 @@ impl ParamPanel {
         actions.append(&mut self.pending);
     }
 
+    /// A component's own params (its `@param` lines): rows like any node's, their groups folded.
+    fn declared(
+        &mut self,
+        ui: &mut Ui,
+        input: &Inputs<'_>,
+        node: &NodeDef,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) {
+        let Some(own) = input.types.desc(&node.kind).and_then(|d| node.declared(d)) else { return };
+        let specs: Vec<ParamSpec> = own.params().cloned().collect();
+        if specs.is_empty() {
+            return;
+        }
+        ui.add_space(6.0);
+        ui.label(RichText::new("own params").color(theme::TEXT_WEAK).small());
+        let main: Vec<&ParamSpec> = specs.iter().filter(|s| s.group.is_empty()).collect();
+        self.rows(ui, input, node, "params_declared", &main, auto, actions);
+        self.groups(ui, input, node, "declared.", &specs, auto, actions);
+    }
+
     /// A component's exposed params: rows of the inner params they stand for, under the exposed
-    /// names.
+    /// names. Below them, the lines of its `params` text that declare nothing.
     fn exposed(
         &mut self,
         ui: &mut Ui,
@@ -363,14 +385,20 @@ impl ParamPanel {
     ) {
         let mut errors = Vec::new();
         let list = input.net.exposed_with_errors(input.types, node.id, &mut errors);
+        let declares =
+            input.types.desc(&node.kind).and_then(|d| node.declared(d)).is_some_and(|d| !d.lines.is_empty());
         ui.add_space(6.0);
         if list.is_empty() && errors.is_empty() {
-            let hint = "Nothing exposed yet: list inner params under more > expose, one per line, like `speed = lfo1.rate`.";
-            ui.label(RichText::new(hint).color(theme::TEXT_WEAK).small());
+            if !declares {
+                let hint = "No params of its own yet. Add lines under more > params: `@param speed float = 1 0..4` for a param of the component, `@expose speed = lfo1.rate` to show an inner one.";
+                ui.label(RichText::new(hint).color(theme::TEXT_WEAK).small());
+            }
             return;
         }
-        ui.label(RichText::new("exposed").color(theme::TEXT_WEAK).small());
-        let mut problems: Vec<String> = errors;
+        if !list.is_empty() {
+            ui.label(RichText::new("exposed").color(theme::TEXT_WEAK).small());
+        }
+        let mut problems: Vec<String> = errors.into_iter().map(|e| format!("params {e}")).collect();
         egui::Grid::new("params_exposed").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
             for x in &list {
                 let target =

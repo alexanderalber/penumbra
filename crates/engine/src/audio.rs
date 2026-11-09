@@ -708,8 +708,8 @@ fn has_param(e: &Engine, net: &penumbra_graph::Network, path: &NodePath, name: &
     let alias = target != pp;
     net.resolve(target.node())
         .and_then(|id| net.node(id))
-        .and_then(|n| e.types().desc(&n.kind))
-        .is_some_and(|d| (alias && d.extra_params) || d.param_spec(target.param().as_str()).is_some())
+        .and_then(|n| Some((n, e.types().desc(&n.kind)?)))
+        .is_some_and(|(n, d)| (alias && d.extra_params) || n.spec(d, target.param().as_str()).is_some())
 }
 
 fn name_of(text: &str) -> CmdResult<Name> {

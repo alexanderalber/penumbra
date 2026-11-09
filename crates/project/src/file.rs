@@ -274,6 +274,40 @@ fn rename_kinds(nodes: &mut BTreeMap<NodePath, NodeRepr>, types: &NodeTypes, wha
     renamed
 }
 
+/// The param in which components listed their exposed params before those lines moved into
+/// their declarations ([`penumbra_graph::PARAMS`]).
+const OLD_EXPOSE: &str = "expose";
+
+/// Moves the old `expose` list of each component in `nodes` into `@expose` lines at the end of
+/// its [`penumbra_graph::PARAMS`] text. The file is written in the new form when it is saved.
+fn take_expose(nodes: &mut BTreeMap<NodePath, NodeRepr>, types: &NodeTypes, what: &str) {
+    let (Ok(old), Ok(params)) = (Name::new(OLD_EXPOSE), Name::new(penumbra_graph::PARAMS)) else { return };
+    let mut moved = Vec::new();
+    for (path, node) in nodes.iter_mut() {
+        if !types.desc(&node.kind).is_some_and(penumbra_graph::declares) {
+            continue;
+        }
+        let Some(list) = node.params.get(&old).and_then(Value::as_str).map(str::to_string) else { continue };
+        node.params.remove(&old);
+        let lines = penumbra_core::declare::expose_lines(&list);
+        let text = match node.params.get(&params).and_then(Value::as_str) {
+            Some(own) if !own.trim().is_empty() => format!("{own}\n{lines}"),
+            _ => lines,
+        };
+        if !text.trim().is_empty() {
+            node.params.insert(params.clone(), Value::Text(text));
+        }
+        moved.push(path.to_string());
+    }
+    if !moved.is_empty() {
+        log::info!(
+            "{what}: the expose lists of {} became @expose lines of `{}`",
+            moved.join(", "),
+            penumbra_graph::PARAMS
+        );
+    }
+}
+
 fn read(
     text: &str,
     types: &NodeTypes,
@@ -283,6 +317,7 @@ fn read(
 ) -> Result<(Content, Vec<RenamedNode>), Error> {
     let mut repr: FileRepr = ron::from_str(text).map_err(|e| Error::new(format!("{what}: {e}")))?;
     let renamed = rename_kinds(&mut repr.nodes, types, what);
+    take_expose(&mut repr.nodes, types, what);
     if repr.version == 0 || repr.version > FORMAT_VERSION {
         return Err(Error::new(format!(
             "{what}: format version {} is not supported; this build reads version {FORMAT_VERSION}",
@@ -408,9 +443,13 @@ fn check_own<'t>(
         return Err(Error::new(format!("{path}: `{}` is no kind a file may name", node.kind)));
     }
     let d = desc(types, path, &node.kind)?;
+    // A component's own params, declared in its text.
+    let own = penumbra_graph::declared_in(d, &node.params).unwrap_or_default();
+    let spec = |name: &str| d.param_spec(name).or_else(|| own.param(name));
     for (name, value) in node.params.iter().filter(|_| check_params) {
         // Params the kind does not declare are kept ([`Params::Keep`]), as when it is applied.
-        check_param(d, name, value, Params::Keep).map_err(|e| e.context(format!("{path} param")))?;
+        check_param(d, spec(name.as_str()), name, value, Params::Keep)
+            .map_err(|e| e.context(format!("{path} param")))?;
     }
     if node.locked && d.outputs.is_empty() {
         return Err(Error::new(format!("{path} is locked, but `{}` has no outputs to lock", d.kind)));
@@ -426,7 +465,7 @@ fn check_own<'t>(
     }
     for (part, bind) in &node.binds {
         let ctx = || format!("{path} bind `{part}`");
-        let target = match d.param_spec(part.param.as_str()) {
+        let target = match spec(part.param.as_str()) {
             Some(spec) => spec.bind_target(part.component).map_err(|e| e.context(ctx()))?,
             // Checked against the instance's own declaration when it cooks.
             None => BindTarget::Text,
@@ -917,6 +956,39 @@ mod tests {
         assert_eq!(c.nodes[&"/a".parse::<NodePath>().unwrap()].params["value"], Value::Int(2));
         assert_eq!(c.nodes[&"/v".parse::<NodePath>().unwrap()].params["value"], Value::Vec2([1.0, 2.0]));
         assert!(parse("(version: 1)", &types).unwrap().nodes.is_empty());
+    }
+
+    #[test]
+    fn an_old_expose_list_loads_as_expose_lines_and_declared_values_are_checked() {
+        let types = test_types();
+        let text = r#"(version: 2, nodes: {
+            "/c": (kind: "test.comp", params: {"expose": "level = k.value  # main\nk.value", "params": "@param x int = 1 0..9"}),
+            "/d": (kind: "test.comp", params: {"expose": "k.value"}),
+            "/c/k": (kind: "test.const"),
+            "/d/k": (kind: "test.const"),
+        })"#;
+        let c = load(text, &types).unwrap();
+        let params = |path: &str| c.nodes[&path.parse::<NodePath>().unwrap()].params.clone();
+        assert_eq!(
+            params("/c").get("params"),
+            Some(&Value::Text(
+                "@param x int = 1 0..9\n@expose level = k.value  # main\n@expose k.value".into()
+            ))
+        );
+        assert!(!params("/c").contains_key("expose"));
+        assert_eq!(params("/d").get("params"), Some(&Value::Text("@expose k.value".into())));
+        let printed = print(&c, &types).unwrap();
+        assert!(!printed.contains("\"expose\""), "{printed}");
+        assert_eq!(parse(&printed, &types).unwrap(), c);
+        // A declared param's value is checked by its declaration, as the kind's own are.
+        let bad = r#"(version: 2, nodes: {"/c": (kind: "test.comp", params: {"params": "@param x int 0..9", "x": "ten"})})"#;
+        let c = load(bad, &types).unwrap();
+        assert_eq!(c.nodes[&"/c".parse::<NodePath>().unwrap()].kind, broken::BROKEN_KIND);
+        let good = r#"(version: 2, nodes: {"/c": (kind: "test.comp", params: {"params": "@param x int 0..9", "x": 3})})"#;
+        assert_eq!(
+            load(good, &types).unwrap().nodes[&"/c".parse::<NodePath>().unwrap()].params["x"],
+            Value::Int(3)
+        );
     }
 
     #[test]

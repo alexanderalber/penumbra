@@ -87,7 +87,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "node.rename",
-        "Rename a node; the expose lines and node references that name it follow, in the same undo step; {path, name}",
+        "Rename a node; the @expose lines and node references that name it follow, in the same undo step; {path, name}",
         node_rename,
     );
     add("node.set", "Set params, null resets to the default; {path, params: {name: value}}", node_set);
@@ -572,8 +572,18 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
             }
         }
     } else {
-        // Values kept from the project file that the type no longer declares.
-        for (name, value) in node.params.iter().filter(|(n, _)| desc.param_spec(n.as_str()).is_none()) {
+        // A component's own params, declared in its text.
+        let own = node.declared(desc).unwrap_or_default();
+        for spec in own.params() {
+            let explicit = node.params.get(spec.name.as_str());
+            instance.push(json!({
+                "name": spec.name, "kind": spec.kind, "value": explicit.unwrap_or(&spec.default),
+                "default": spec.default, "range": spec.range, "doc": spec.doc, "group": spec.group,
+            }));
+        }
+        // Values kept from the project file that nothing declares.
+        let stray = |n: &str| desc.param_spec(n).is_none() && own.param(n).is_none();
+        for (name, value) in node.params.iter().filter(|(n, _)| stray(n.as_str())) {
             instance.push(json!({"name": name, "value": value, "declared": false}));
         }
     }

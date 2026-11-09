@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/mid_particles": (kind: "comp.base", params: {"about": "Short white streaks that fly at the camera and pass it on all sides.", "expose": "presence = places.presence\ndensity = places.density\nspeed = places.speed\nlength = places.length\nspread = places.spread\nnear = places.near\nfar = places.far\nthickness = sizes.thickness\nbusy = busy.fall\ncolor = streak_lines.color\nline_width = streak_lines.line_width", "shelf": "music stage/mid"}),
+        "/mid_particles": (kind: "comp.base", params: {"about": "Short white streaks that fly at the camera and pass it on all sides.", "params": "@expose presence = places.presence\n@expose density = places.density\n@expose speed = places.speed\n@expose length = places.length\n@expose spread = places.spread\n@expose near = places.near\n@expose far = places.far\n@expose thickness = sizes.thickness\n@expose busy = busy.fall\n@expose color = streak_lines.color\n@expose line_width = streak_lines.line_width", "shelf": "music stage/mid"}),
         "/mid_particles/bus": (kind: "chan.in", pos: [-800.0, 0.0]),
         "/mid_particles/lane": (kind: "tex.in", pos: [-800.0, 150.0]),
         "/mid_particles/onset": (kind: "chan.select", params: {"channels": "onset"}, inputs: {"in": "bus"}, pos: [-600.0, -100.0]),

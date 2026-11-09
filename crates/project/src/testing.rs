@@ -75,7 +75,7 @@ pub fn test_types() -> NodeTypes {
     register(
         &mut t,
         NodeDesc::new("test.comp", "A component")
-            .param(ParamSpec::text(penumbra_graph::EXPOSE, "").multiline())
+            .param(ParamSpec::text(penumbra_graph::PARAMS, "").multiline())
             .container(),
     );
     for (kind, role) in [("test.in", PortRole::In), ("test.out", PortRole::Out)] {

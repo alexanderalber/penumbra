@@ -146,7 +146,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("light.environment", &["environment light"]),
     ("vol.emitter", &["nvidia flow emitter"]),
     ("vol.smoke", &["nvidia flow"]),
-    ("comp.base", &["container"]),
+    ("comp.base", &["container", "custom parameters", "customize component"]),
     ("out.audio", &["audio device out"]),
     ("out.audio_file", &["audio file out"]),
     ("out.data", &["data out", "serial", "udp out", "tcp", "arduino", "com port", "socket", "json", "uart"]),

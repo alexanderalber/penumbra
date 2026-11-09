@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/floor_title": (kind: "comp.base", params: {"about": "The track's title in huge letters lying across the lane, for the camera to fly over.", "expose": "presence = glow.presence\ntext = words.text\nsource = glow.source\nwarmth = glow.warmth\nahead = glow.ahead\nevery = glow.every\nlong = glow.long\nwide = glow.wide\nspan = glow.span\nbrightness = glow.brightness\nrim = glow.rim\nbeats_per_bar = glow.beats_per_bar\nfade = glow.fade\ngone = glow.gone", "shelf": "music stage/floor"}),
+        "/floor_title": (kind: "comp.base", params: {"about": "The track's title in huge letters lying across the lane, for the camera to fly over.", "params": "@expose presence = glow.presence\n@expose text = words.text\n@expose source = glow.source\n@expose warmth = glow.warmth\n@expose ahead = glow.ahead\n@expose every = glow.every\n@expose long = glow.long\n@expose wide = glow.wide\n@expose span = glow.span\n@expose brightness = glow.brightness\n@expose rim = glow.rim\n@expose beats_per_bar = glow.beats_per_bar\n@expose fade = glow.fade\n@expose gone = glow.gone", "shelf": "music stage/floor"}),
         "/floor_title/bus": (kind: "chan.in", pos: [-1000.0, 0.0]),
         "/floor_title/lane": (kind: "tex.in", pos: [-1000.0, 150.0]),
         "/floor_title/track": (kind: "chan.select", params: {"channels": "track_index"}, inputs: {"in": "bus"}, pos: [-800.0, -300.0]),

@@ -220,11 +220,12 @@ fn param_spec<'a>(
     net: &'a Network,
     types: &'a NodeTypes,
     param: &ParamPath,
-) -> Result<(&'a Arc<NodeDef>, &'a ParamSpec), String> {
+) -> Result<(&'a Arc<NodeDef>, std::borrow::Cow<'a, ParamSpec>), String> {
     let id = net.resolve(param.node()).ok_or_else(|| format!("no node at {}", param.node()))?;
     let node = net.node(id).ok_or_else(|| format!("no node at {}", param.node()))?;
     let desc = types.desc(&node.kind).ok_or_else(|| format!("unknown node kind `{}`", node.kind))?;
-    let spec = desc.param_spec(param.param().as_str()).ok_or_else(|| {
+    // A component's own params count; a shader's are known to its cook only.
+    let spec = node.spec(desc, param.param().as_str()).ok_or_else(|| {
         format!("`{}` has no param `{}` (or it is declared by its file)", node.kind, param.param())
     })?;
     Ok((node, spec))
@@ -311,8 +312,8 @@ fn params_at(
         let Some(node) = net.node(id) else { continue };
         let Some(desc) = types.desc(&node.kind) else { continue };
         let mut names: Vec<String> = desc.params.iter().map(|p| p.name.as_str().to_string()).collect();
-        if desc.container {
-            names.extend(net.exposed(types, id).into_iter().map(|e| e.name.as_str().to_string()));
+        if let Some(own) = node.declared(desc) {
+            names.extend(own.lines.iter().map(|d| d.name().to_string()));
         }
         for name in names {
             if pattern.matches_part(levels, &name, budget) {
@@ -464,7 +465,7 @@ fn apply(session: &Session, shared: &OscShared, incoming: &[Incoming], now: Inst
                 .cloned()
                 .or_else(|| node.param(desc, name.as_str()).cloned())
                 .unwrap_or_else(|| spec.default.clone());
-            match value_for(spec, &current, t.component, &m.args) {
+            match value_for(&spec, &current, t.component, &m.args) {
                 Ok(v) => {
                     pending.insert(t.param.clone(), v);
                     set.push(label);

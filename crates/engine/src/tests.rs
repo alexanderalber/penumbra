@@ -610,6 +610,64 @@ fn every_shipped_component_has_a_shelf_and_says_what_it_does() {
     assert!(on_shelf.values().all(|n| *n <= MOST_ON_A_SHELF), "{on_shelf:?}");
 }
 
+/// Every shipped component's `@expose` lines name an inner param that exists: one of its kind,
+/// one its shader's header declares, or a row of a `chan.constant`.
+#[test]
+fn every_shipped_component_exposes_params_that_exist() {
+    use penumbra_graph::{Network, Params};
+    let types = penumbra_ops::builtin_types().unwrap();
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let synthwave = repo.join("examples/music-synthwave");
+    let mut files: Vec<(PathBuf, PathBuf)> = vec![(synthwave.join("project.ron"), synthwave.clone())];
+    for (dir, root) in [(repo.join("library"), repo.clone()), (synthwave.join("library"), synthwave.clone())]
+    {
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let file = entry.path().join(format!("{name}.comp.ron"));
+            if file.is_file() {
+                files.push((file, root.clone()));
+            }
+        }
+    }
+    assert!(files.len() > 80, "{}", files.len());
+    let mut rows = 0;
+    for (file, root) in files {
+        let text = std::fs::read_to_string(&file).unwrap();
+        let content =
+            penumbra_project::parse(&text, &types).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+        assert!(!text.contains("\"expose\""), "{}: old form", file.display());
+        let ops = penumbra_project::diff(&Content::default(), &content);
+        let net = Network::new().apply_with(&types, &ops, Params::Keep).unwrap().network;
+        for comp in net.nodes() {
+            let mut errors = Vec::new();
+            for x in net.exposed_with_errors(&types, comp.id, &mut errors) {
+                let at = || format!("{}: {}.{}", file.display(), net.path_of(comp.id).unwrap(), x.name);
+                let target = x.target.unwrap_or_else(|e| panic!("{}: {e}", at()));
+                let target = net.resolve_alias(&types, &target).unwrap_or_else(|e| panic!("{}: {e}", at()));
+                let inner = net
+                    .resolve(target.node())
+                    .and_then(|id| net.node(id))
+                    .unwrap_or_else(|| panic!("{}", at()));
+                let desc = types.desc(&inner.kind).unwrap();
+                let name = target.param().as_str();
+                let known = desc.param_spec(name).is_some()
+                    || (inner.kind == penumbra_ops::chan::CONSTANT
+                        && (0..penumbra_ops::chan::CONSTANT_MAX_ROWS)
+                            .any(|k| penumbra_ops::chan::constant_row(k).1 == name))
+                    || inner.params.get("file").and_then(|f| f.as_str()).is_some_and(|f| {
+                        let source = std::fs::read_to_string(root.join(f)).unwrap_or_default();
+                        penumbra_gpu::header::parse(&source)
+                            .is_ok_and(|h| h.params.iter().any(|s| s.name == name))
+                    });
+                assert!(known, "{}: {target} declares no such param", at());
+                rows += 1;
+            }
+            assert!(errors.is_empty(), "{}: {errors:?}", file.display());
+        }
+    }
+    assert!(rows > 1500, "{rows}");
+}
+
 #[test]
 fn a_component_file_that_does_not_parse_stays_listed() {
     let f = Fixture::new("broken-comp");
@@ -709,7 +767,7 @@ fn components_group_save_load_and_dissolve() {
     f.call("node.connect", json!({"from": "/lfo", "to": "/fx", "input": 0}));
     f.call("node.connect", json!({"from": "/fx", "output": "gain_out", "to": "/sum", "input": "b"}));
     // Exposed params act on the inner ones.
-    f.call("node.set", json!({"path": "/fx", "params": {"expose": "level = k.value0"}}));
+    f.call("node.set", json!({"path": "/fx", "params": {"params": "@expose level = k.value0"}}));
     f.call("node.set", json!({"path": "/fx", "params": {"level": 5.0}}));
     let k = f.call("node.info", json!({"path": "/fx/k"}));
     assert_eq!(k["params"][0]["value"], 5.0, "{k}");
@@ -1508,6 +1566,70 @@ fn a_project_with_an_old_kind_opens_with_the_new_one_and_saves_it() {
 }
 
 #[test]
+fn a_component_declares_params_of_its_own() {
+    let f = Fixture::new("comp-declares");
+    let lib = ScratchDir::unborn("engine-comp-declares-lib");
+    f.engine.set_library(Some(lib.to_path_buf()));
+    f.call("node.create", json!({"path": "/rd", "kind": "comp.base"}));
+    f.call("node.create", json!({"path": "/rd/k", "kind": "chan.constant"}));
+    f.call("node.create", json!({"path": "/lfo", "kind": "chan.lfo"}));
+    let text = "// @param preset choice(coral|maze|worms) = coral -- the pattern\n\
+                @group look\n\
+                @param glow float = 1 0..4\n\
+                @param oops quaternion\n\
+                @expose level = k.value0";
+    f.call("node.set", json!({"path": "/rd", "params": {"params": text}}));
+    let info = f.call("node.info", json!({"path": "/rd"}));
+    let own = info["instance_params"].as_array().cloned().unwrap_or_default();
+    let names: Vec<&str> = own.iter().filter_map(|p| p["name"].as_str()).collect();
+    assert_eq!(names, ["preset", "glow"], "{info}");
+    assert_eq!(own[0]["doc"], "the pattern");
+    assert_eq!(own[0]["value"], "coral");
+    assert_eq!(own[1]["group"], "look");
+    assert_eq!(info["component"]["exposed"][0]["name"], "level", "{info}");
+    let errors = info["component"]["errors"].as_array().cloned().unwrap_or_default();
+    assert_eq!(errors.len(), 1, "{info}");
+    assert!(errors[0].as_str().unwrap().starts_with("line 4: unknown kind `quaternion`"), "{errors:?}");
+
+    // Set, refuse, bind and reset like any param.
+    f.call("node.set", json!({"path": "/rd", "params": {"preset": "maze", "glow": 2}}));
+    let value = |name: &str| {
+        let info = f.call("node.info", json!({"path": "/rd"}));
+        let own = info["instance_params"].as_array().cloned().unwrap_or_default();
+        own.into_iter().find(|p| p["name"] == name).map(|p| p["value"].clone()).unwrap_or(Json::Null)
+    };
+    assert_eq!(value("preset"), "maze");
+    assert_eq!(value("glow"), 2.0);
+    let e = f.fail("node.set", json!({"path": "/rd", "params": {"preset": "spots"}}));
+    assert!(e.contains("coral") && e.contains("worms"), "{e}");
+    assert!(
+        f.fail("node.set", json!({"path": "/rd", "params": {"glow": "bright"}})).contains("`glow` expects")
+    );
+    f.call("node.bind", json!({"param": "/rd.glow", "from": "/lfo"}));
+    let binds = f.call("node.info", json!({"path": "/rd"}))["binds"].clone();
+    assert_eq!(binds[0]["param"], "glow", "{binds}");
+    assert!(
+        f.fail("node.bind", json!({"param": "/rd.nope", "from": "/lfo"})).contains("preset, glow, level")
+    );
+    f.call("node.unbind", json!({"param": "/rd.glow"}));
+    f.call("node.set", json!({"path": "/rd", "params": {"glow": null}}));
+    assert_eq!(value("glow"), 1.0);
+    f.call("history.undo", json!({}));
+    assert_eq!(value("glow"), 2.0, "undo brings the value back");
+    let e = f.fail("node.set", json!({"path": "/rd", "params": {"expose": "a = k.value0"}}));
+    assert!(e.contains("@expose"), "{e}");
+
+    // Into the library and back: the declarations and the values travel with the component.
+    f.call("comp.save", json!({"path": "/rd"}));
+    let file = std::fs::read_to_string(lib.path().join("rd.comp.ron")).unwrap();
+    assert!(file.contains("\"preset\": \"maze\"") && !file.contains("\"expose\""), "{file}");
+    let loaded = f.call("comp.load", json!({"file": "rd"}));
+    assert_eq!(loaded["path"], "/rd1");
+    let info = f.call("node.info", json!({"path": "/rd1"}));
+    assert_eq!(info["instance_params"][0]["value"], "maze", "{info}");
+}
+
+#[test]
 fn renaming_a_node_in_a_component_keeps_its_exposed_params_and_references() {
     let f = Fixture::new("rename-follows");
     f.call("node.create", json!({"path": "/fx", "kind": "comp.base"}));
@@ -1517,7 +1639,10 @@ fn renaming_a_node_in_a_component_keeps_its_exposed_params_and_references() {
     f.call("node.create", json!({"path": "/far", "kind": "tex.select", "params": {"node": "/fx/n"}}));
     f.call("node.create", json!({"path": "/fx/m", "kind": "chan.math"}));
     f.call("node.bind", json!({"param": "/fx/m.b", "from": "/fx/k"}));
-    f.call("node.set", json!({"path": "/fx", "params": {"expose": "level = k.value0  # main\nn.seed"}}));
+    f.call(
+        "node.set",
+        json!({"path": "/fx", "params": {"params": "@param mix float = 0.5 0..1\n@expose level = k.value0  # main\n@expose n.seed"}}),
+    );
     let param = |path: &str, name: &str| -> Json {
         let info = f.call("node.info", json!({"path": path}));
         let params = info["params"].as_array().cloned().unwrap_or_default();
@@ -1527,7 +1652,10 @@ fn renaming_a_node_in_a_component_keeps_its_exposed_params_and_references() {
     let r = f.call("node.rename", json!({"path": "/fx/k", "name": "konst"}));
     assert_eq!(r["history"], "new", "{r}");
     f.call("node.rename", json!({"path": "/fx/n", "name": "noise"}));
-    assert_eq!(param("/fx", "expose"), "level = konst.value0  # main\nnoise.seed");
+    assert_eq!(
+        param("/fx", "params"),
+        "@param mix float = 0.5 0..1\n@expose level = konst.value0  # main\n@expose noise.seed"
+    );
     assert_eq!(param("/fx/sel", "node"), "noise");
     assert_eq!(param("/far", "node"), "/fx/noise");
     let binds = f.call("node.info", json!({"path": "/fx/m"}))["binds"].clone();
@@ -1539,11 +1667,17 @@ fn renaming_a_node_in_a_component_keeps_its_exposed_params_and_references() {
 
     // One undo step takes back a rename with everything it rewrote.
     f.call("history.undo", json!({}));
-    assert_eq!(param("/fx", "expose"), "level = konst.value0  # main\nn.seed");
+    assert_eq!(
+        param("/fx", "params"),
+        "@param mix float = 0.5 0..1\n@expose level = konst.value0  # main\n@expose n.seed"
+    );
     assert_eq!(param("/fx/sel", "node"), "n");
     assert_eq!(param("/far", "node"), "/fx/n");
     f.call("history.undo", json!({}));
-    assert_eq!(param("/fx", "expose"), "level = k.value0  # main\nn.seed");
+    assert_eq!(
+        param("/fx", "params"),
+        "@param mix float = 0.5 0..1\n@expose level = k.value0  # main\n@expose n.seed"
+    );
     let binds = f.call("node.info", json!({"path": "/fx/m"}))["binds"].clone();
     assert_eq!(binds[0]["from"], "/fx/k", "{binds}");
 }
