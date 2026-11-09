@@ -500,9 +500,16 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
             j
         })
         .collect();
-    // Of a run of inputs, the wired slots and the next free one, as the editor shows them.
+    let status = e.on_cook(move |st| {
+        let watched = st.watched.contains(&id);
+        (st.cooker.status(id), watched)
+    })?;
+    let (status, watched) = status;
+    // Of a run of inputs, the wired slots (and those the node reads unwired) and the next free
+    // one, as the editor shows them.
+    let reads = status.as_ref().map_or(0, |s| s.reads);
     let inputs: Vec<Json> = desc
-        .shown_inputs(|i| node.inputs.get(i).is_some_and(Option::is_some))
+        .shown_inputs(|i| node.inputs.get(i).is_some_and(Option::is_some) || penumbra_graph::reads(reads, i))
         .into_iter()
         .filter_map(|i| {
             let spec = desc.inputs.get(i)?;
@@ -533,11 +540,6 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
             json!({"name": spec.name, "kind": spec.kind, "to": to})
         })
         .collect();
-    let status = e.on_cook(move |st| {
-        let watched = st.watched.contains(&id);
-        (st.cooker.status(id), watched)
-    })?;
-    let (status, watched) = status;
     // A param that does nothing with the others as they are says so, as the panel greys it.
     let kind_type = e.types().get(&node.kind);
     for (v, spec) in params.iter_mut().zip(&desc.params) {

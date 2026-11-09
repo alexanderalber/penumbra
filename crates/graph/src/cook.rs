@@ -526,6 +526,14 @@ pub struct NodeStatus {
     pub bound: BTreeMap<Name, Value>,
     /// Whether the node recooks when time moves (the type's declaration or the instance's).
     pub time_dependent: bool,
+    /// Inputs the instance reads whether wired or not, as known after its last cook
+    /// ([`Operator::reads_inputs`]): bit `i` is input `i`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub reads: u64,
+}
+
+fn is_zero(v: &u64) -> bool {
+    *v == 0
 }
 
 /// What one cook pass did.
@@ -1959,6 +1967,11 @@ impl Cooker {
                 None
             },
             bound: rt.seen_bound.clone(),
+            reads: rt
+                .op
+                .as_ref()
+                .and_then(|op| self.ask(id, "reads_inputs", || op.reads_inputs()))
+                .unwrap_or(0),
             time_dependent: rt.ty.as_ref().is_some_and(|ty| {
                 match time_dependent(ty.desc(), rt.op.as_deref()) {
                     Ok(t) => t,

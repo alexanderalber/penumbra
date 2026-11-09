@@ -2864,6 +2864,7 @@ mod layers;
 mod mesh_out;
 mod palettes;
 mod resample;
+mod shader_inputs;
 mod shader_iterations;
 mod smoke;
 

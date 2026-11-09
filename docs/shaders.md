@@ -109,7 +109,7 @@ var<uniform> pn: PnFrame;          // pn.resolution (pixels), pn.texel (1 / reso
                                    // pn.iteration, pn.iterations (see Several steps per frame)
 var<uniform> pn_time: PnTime;      // pn_time.seconds, pn_time.frame (show time)
 var<uniform> params: Params;       // one field per declared numeric param
-var in0, in1, in2, in3: texture_2d<f32>;      // inputs, transparent black when unconnected
+var in0, in1, ..., in7: texture_2d<f32>;      // inputs, transparent black when unconnected
 var pn_clamp, pn_repeat, pn_mirror: sampler;  // linear filtering, three edge modes
 fn pn_noise(p: vec3f, seed: u32) -> f32       // gradient noise, about -1..1, the same on every GPU
 fn pn_value_noise(p: vec3f, seed: u32) -> f32
@@ -127,6 +127,12 @@ fn pn_band(p: PnPalette, t: f32) -> vec4f     // 0..1 in equal bands, one per co
 
 A shader that reads `pn_time` cooks every frame; one that does not cooks only when its inputs
 or params change.
+
+**Inputs.** The node has up to 8 inputs, `in0` to `in7`. It shows every input up to the highest
+one that is wired or that the shader reads, and one free input after them. Wire the free
+input, and the next one appears. An input the shader reads stays
+visible while nothing is wired there, once the shader has compiled. An unwired input reads as
+transparent black.
 
 `pn_hash` returns three numbers, a `vec3u`: `.w` does not compile. For more random numbers,
 hash its result again: `pn_hash(h ^ vec3u(7u))`.
@@ -159,7 +165,7 @@ several steps per frame. Set the node's `iterations` (under "more"; TouchDesigne
 Passes) to the number of steps. The shader then runs that many times in one cook:
 
 - The first pass reads `in0` as wired. Every later pass reads the pass before as `in0`.
-- `in1` to `in3`, the params and `pn_time` are the same for all passes.
+- `in1` to `in7`, the params and `pn_time` are the same for all passes.
 - The node's output is the last pass.
 - `pn.iteration` is the pass's number, from 0. `pn.iterations` is the count. Schemes that
   alternate between passes, such as red-black relaxation, read them.

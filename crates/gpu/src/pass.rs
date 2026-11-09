@@ -10,7 +10,7 @@
 //!                                    // pn.iteration (0 first), pn.iterations (passes this cook)
 //! var<uniform> pn_time: PnTime;      // pn_time.seconds, pn_time.frame (show time)
 //! var<uniform> params: Params;       // one field per declared numeric parameter
-//! var in0, in1, in2, in3: texture_2d<f32>;      // inputs, transparent black when unconnected
+//! var in0, in1, ..., in7: texture_2d<f32>;      // inputs, transparent black when unconnected
 //! var pn_clamp, pn_repeat, pn_mirror: sampler;  // linear filtering, three edge modes
 //! fn pn_noise(p: vec3f, seed: u32) -> f32       // gradient noise, about -1..1, integer hashes
 //! fn pn_value_noise(p: vec3f, seed: u32) -> f32
@@ -47,8 +47,9 @@ use penumbra_core::{Error, ParamKind, ParamSpec, Value, lock, palette};
 use crate::tex::TexKey;
 use crate::{Deferral, Done, FLOAT_FORMAT, FORMAT, Gpu, Tex};
 
-/// Texture inputs every pass has (`in0` to `in3`).
-pub const INPUTS: usize = 4;
+/// Texture inputs every pass has (`in0` to `in7`). 8 sampled textures per fragment stage, well
+/// inside the 16 that WebGPU guarantees on every adapter (WARP included).
+pub const INPUTS: usize = 8;
 
 const PRELUDE: &str = r#"
 // ---- penumbra prelude ----
@@ -62,9 +63,13 @@ struct PnVertex { @builtin(position) pos: vec4f, @location(0) uv: vec2f }
 @group(1) @binding(1) var in1: texture_2d<f32>;
 @group(1) @binding(2) var in2: texture_2d<f32>;
 @group(1) @binding(3) var in3: texture_2d<f32>;
-@group(1) @binding(4) var pn_clamp: sampler;
-@group(1) @binding(5) var pn_repeat: sampler;
-@group(1) @binding(6) var pn_mirror: sampler;
+@group(1) @binding(4) var in4: texture_2d<f32>;
+@group(1) @binding(5) var in5: texture_2d<f32>;
+@group(1) @binding(6) var in6: texture_2d<f32>;
+@group(1) @binding(7) var in7: texture_2d<f32>;
+@group(1) @binding(8) var pn_clamp: sampler;
+@group(1) @binding(9) var pn_repeat: sampler;
+@group(1) @binding(10) var pn_mirror: sampler;
 
 @vertex
 fn pn_vs(@builtin(vertex_index) i: u32) -> PnVertex {
@@ -608,7 +613,7 @@ impl Pass {
                 .any(|(h, g)| g.name.as_deref() == Some(name) && !info.get_entry_point(entry)[h].is_empty())
         };
         let uses_time = uses("pn_time");
-        let uses_input = [uses("in0"), uses("in1"), uses("in2"), uses("in3")];
+        let uses_input: [bool; INPUTS] = std::array::from_fn(|i| uses(&format!("in{i}")));
 
         let (fields, uniform_size) = layout(&module, params)?;
 
@@ -775,18 +780,22 @@ impl Pass {
             None => &layouts.empty,
         };
         let [clamp, repeat, mirror] = &layouts.samplers;
+        let mut entries: Vec<wgpu::BindGroupEntry<'_>> = (0..INPUTS)
+            .map(|i| wgpu::BindGroupEntry {
+                binding: i as u32,
+                resource: wgpu::BindingResource::TextureView(view(i)),
+            })
+            .collect();
+        for (i, sampler) in [clamp, repeat, mirror].into_iter().enumerate() {
+            entries.push(wgpu::BindGroupEntry {
+                binding: (INPUTS + i) as u32,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            });
+        }
         let group = gpu.device().create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("pass inputs"),
             layout: &layouts.group1,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view(0)) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(view(1)) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(view(2)) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(view(3)) },
-                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(clamp) },
-                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(repeat) },
-                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(mirror) },
-            ],
+            entries: &entries,
         });
         let keys = std::array::from_fn(|i| inputs.get(i).copied().flatten().map(Tex::key));
         kept.push(InputGroup { inputs: keys, group: group.clone() });

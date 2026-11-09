@@ -76,6 +76,7 @@ pub struct Graph {
 pub fn graph(
     net: &Network,
     types: &NodeTypes,
+    layout: &Layout,
     level: Option<NodeId>,
     only: Option<&BTreeSet<NodeId>>,
 ) -> Graph {
@@ -88,7 +89,7 @@ pub fn graph(
         .filter(|n| only.is_none_or(|s| s.contains(&n.id)))
         .filter(|n| !penumbra_ops::note::is_note(n))
     {
-        let (height, ins, outs) = node_ports(net, types, node);
+        let (height, ins, outs) = node_ports(net, types, layout, node);
         in_at.extend(ins.into_iter().map(|(target, y)| (target, (node.id, y))));
         out_at.extend(outs.into_iter().map(|(target, y)| (target, (node.id, y))));
         g.nodes.push((node.id, height));
@@ -145,7 +146,7 @@ pub fn level(
     level: Option<NodeId>,
     only: Option<&BTreeSet<NodeId>>,
 ) -> HashMap<NodeId, Pos2> {
-    let g = graph(net, types, level, only);
+    let g = graph(net, types, layout, level, only);
     let old: HashMap<NodeId, Pos2> =
         g.nodes.iter().filter_map(|(id, _)| Some((*id, layout.get(*id)?))).collect();
     let origin = old.values().fold(None::<Pos2>, |acc, p| Some(acc.map_or(*p, |a| a.min(*p))));
@@ -194,7 +195,7 @@ fn notes_along(
         } else if let Some(h) = height.get(&node.id) {
             taken.push(node_rect(to.get(&node.id).copied().unwrap_or(at), *h));
         } else {
-            taken.push(node_rect(at, crate::editor::node_ports(net, types, node).0));
+            taken.push(node_rect(at, crate::editor::node_ports(net, types, layout, node).0));
         }
     }
     let mut out = HashMap::new();
@@ -1611,7 +1612,7 @@ mod tests {
         let net = Network::new().apply(&types, &ops).unwrap().network;
         let mut layout = Layout::load(None);
         layout.sync(&net);
-        let g = graph(&net, &types, None, None);
+        let g = graph(&net, &types, &Layout::load(None), None, None);
         assert!(g.nodes.len() > 40 && !g.wires.is_empty());
         let old: HashMap<NodeId, Pos2> =
             g.nodes.iter().filter_map(|(id, _)| Some((*id, layout.get(*id)?))).collect();

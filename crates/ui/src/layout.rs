@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use egui::{Pos2, Rect, Vec2, pos2, vec2};
 use penumbra_core::{NodeId, NodePath};
-use penumbra_graph::{Network, Op, ThumbnailMode};
+use penumbra_graph::{Network, NodeStatus, Op, ThumbnailMode};
 use serde::{Deserialize, Serialize};
 
 pub const FILE_NAME: &str = "layout.ron";
@@ -318,6 +318,9 @@ pub struct Layout {
     last_text: Option<String>,
     /// False: the file is read but never written ([`Layout::read_only`]).
     writes: bool,
+    /// Inputs each node reads whether wired or not, from its last cook
+    /// ([`penumbra_graph::NodeStatus::reads`]); only nodes with any. Not kept in the file.
+    reads: HashMap<NodeId, u64>,
 }
 
 impl Layout {
@@ -352,6 +355,7 @@ impl Layout {
             dirty_since: None,
             last_text: None,
             writes: true,
+            reads: HashMap::new(),
         };
         let Some(file) = file else { return layout };
         match read(&file) {
@@ -395,6 +399,18 @@ impl Layout {
     }
 
     /// Where node `id` is drawn.
+    /// Takes the inputs every node reads from the nodes' statuses of the last cook, so a node
+    /// shows an input its shader reads even while nothing is wired there.
+    pub fn set_reads<'a>(&mut self, status: impl IntoIterator<Item = (&'a NodeId, &'a NodeStatus)>) {
+        self.reads.clear();
+        self.reads.extend(status.into_iter().filter(|(_, s)| s.reads != 0).map(|(id, s)| (*id, s.reads)));
+    }
+
+    /// The inputs node `id` reads whether wired or not ([`Layout::set_reads`]): bit `i` is input `i`.
+    pub fn reads(&self, id: NodeId) -> u64 {
+        self.reads.get(&id).copied().unwrap_or(0)
+    }
+
     pub fn get(&self, id: NodeId) -> Option<Pos2> {
         self.pos.get(&id).copied()
     }

@@ -937,10 +937,7 @@ Declares further params per node, from its file or code.
 
 Inputs:
 
-- `in0` (tex)
-- `in1` (tex)
-- `in2` (tex)
-- `in3` (tex)
+- `in0 .. in7` (tex): The pictures the shader reads as in0 to in7. An unwired one reads as transparent black. An input the shader reads stays shown while nothing is wired there. Any number, up to 8: each one wired adds a free slot below it
 
 Outputs: `out` (tex).
 

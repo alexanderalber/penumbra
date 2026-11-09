@@ -1277,6 +1277,7 @@ impl PenumbraApp {
             .show(ui, |ui| {
                 let doc = session.doc();
                 let new_group = || doc.new_group();
+                self.layout.set_reads(&view.status);
                 let input = editor::Inputs {
                     net: &net,
                     types: session.types(),

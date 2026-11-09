@@ -417,11 +417,12 @@ pub fn level_path(net: &Network, level: Option<NodeId>) -> NodePath {
 }
 
 /// The ports of a node on screen: its declared ones, or for a component its input and output
-/// nodes.
+/// nodes. `reads` is what the node reads unwired ([`Layout::reads`]).
 fn ports_of(
     net: &Network,
     types: &NodeTypes,
     node: &penumbra_graph::NodeDef,
+    reads: u64,
 ) -> (Vec<PortGeo>, Vec<PortGeo>) {
     let Some(d) = types.desc(&node.kind) else { return (Vec::new(), Vec::new()) };
     let port = |pos, kind, target, name: &str, doc: &str, previous| PortGeo {
@@ -446,9 +447,10 @@ fn ports_of(
         };
         return (side(ins), side(outs));
     }
-    // Of a run of inputs, the wired slots and one free slot after them.
+    // Of a run of inputs, the wired slots (and those the node reads unwired) and one free slot
+    // after them.
     let ins = d
-        .shown_inputs(|i| node.inputs.get(i).is_some_and(Option::is_some))
+        .shown_inputs(|i| node.inputs.get(i).is_some_and(Option::is_some) || penumbra_graph::reads(reads, i))
         .into_iter()
         .filter_map(|i| {
             let s = d.inputs.get(i)?;
@@ -470,9 +472,10 @@ fn ports_of(
 pub(crate) fn node_ports(
     net: &Network,
     types: &NodeTypes,
+    layout: &Layout,
     node: &penumbra_graph::NodeDef,
 ) -> (f32, Vec<((NodeId, u32), f32)>, Vec<((NodeId, u32), f32)>) {
-    let (ins, outs) = ports_of(net, types, node);
+    let (ins, outs) = ports_of(net, types, node, layout.reads(node.id));
     let body = body_height(types.desc(&node.kind), ins.len().max(outs.len()));
     let side = |ports: Vec<PortGeo>| {
         let n = ports.len();
@@ -524,7 +527,7 @@ impl<'a> Placed<'a> {
         for node in net.children(level) {
             let Some(p) = layout.get(node.id) else { continue };
             let desc = types.desc(&node.kind);
-            let (mut ins, mut outs) = ports_of(net, types, node);
+            let (mut ins, mut outs) = ports_of(net, types, node, layout.reads(node.id));
             let note = penumbra_ops::note::size(node);
             let size = note.map_or_else(
                 || vec2(NODE_SIZE.x, HEADER + body_height(desc, ins.len().max(outs.len()))),

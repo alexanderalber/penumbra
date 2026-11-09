@@ -69,10 +69,13 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     "32-bit floats, about 7 decimal digits, in every pass. A GPU that cannot filter 32-bit floats gets 16f and a warning",
                 ),
         )
-        .input("in0", DataKind::Tex)
-        .input("in1", DataKind::Tex)
-        .input("in2", DataKind::Tex)
-        .input("in3", DataKind::Tex)
+        .input_run_of(
+            "in",
+            DataKind::Tex,
+            penumbra_gpu::pass::INPUTS,
+            1,
+            "The pictures the shader reads as in0 to in7. An unwired one reads as transparent black. An input the shader reads stays shown while nothing is wired there",
+        )
         .output("out", DataKind::Tex)
         .extra_params(),
         || Box::new(Shader::default()) as Box<dyn Operator>,
@@ -229,6 +232,11 @@ impl Operator for Shader {
 
     fn params(&self) -> Option<Vec<ParamSpec>> {
         self.current.as_ref().map(|c| c.header.params.clone())
+    }
+
+    fn reads_inputs(&self) -> u64 {
+        let Some(c) = &self.current else { return 0 };
+        (0..penumbra_gpu::pass::INPUTS).filter(|i| c.pass.uses_input(*i)).fold(0, |mask, i| mask | 1 << i)
     }
 
     fn density(&self, _def: &NodeDef, _desc: &NodeDesc, _input: usize) -> Density {

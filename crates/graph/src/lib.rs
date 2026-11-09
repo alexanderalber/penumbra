@@ -35,7 +35,7 @@ pub use network::{
 pub use node::{
     Block, CookError, Cooked, Data, DataKind, Density, FnNodeType, Inactive, InputChooser, InputRun,
     ListedInput, MAX_RUN, NodeDesc, NodeType, NodeTypes, Operator, PortRole, Search, StateItem, WarmUp,
-    name_found, search_form,
+    name_found, reads, search_form,
 };
 pub use rename::rename;
 pub use replace::{Replacement, replace};

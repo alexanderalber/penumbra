@@ -153,6 +153,11 @@ impl OutputSpec {
 /// Most inputs a run may have ([`NodeDesc::input_run`]).
 pub const MAX_RUN: usize = 64;
 
+/// Whether `mask` ([`Operator::reads_inputs`]) has input `index`.
+pub fn reads(mask: u64, index: usize) -> bool {
+    index < 64 && (mask >> index) & 1 == 1
+}
+
 /// A run of inputs of one kind, `prefix0`, `prefix1`, ... ([`NodeDesc::input_run`]): a node that
 /// takes any number of them, such as the layers of a composite. Every slot is declared, so names
 /// and indices work as for any input; only what is shown follows the wiring
@@ -746,6 +751,14 @@ pub trait Operator: Send {
     /// known after the last cook.
     fn params(&self) -> Option<Vec<ParamSpec>> {
         None
+    }
+
+    /// Inputs this instance reads whether they are wired or not, as known after the last cook:
+    /// bit `i` is input `i` (the first 64 inputs only). A shader that samples `in5` reads input
+    /// 5 even while nothing is wired there. The editor shows such an input of a run as if it
+    /// were wired ([`NodeDesc::shown_inputs`]). 0 by default.
+    fn reads_inputs(&self) -> u64 {
+        0
     }
 
     /// How input `input`'s pixels relate to this node's output pixels: the same frame for most

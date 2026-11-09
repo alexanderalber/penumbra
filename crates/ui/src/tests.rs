@@ -1058,3 +1058,67 @@ fn a_run_without_autosave_leaves_the_project_folder_alone() {
         }
     }
 }
+
+/// A project file written when `tex.shader` had four inputs opens with its wires where they
+/// were, and a node shows every input up to the highest one wired or read by its shader, and
+/// one more.
+#[test]
+fn a_shader_node_shows_the_inputs_it_reads_and_one_more() {
+    let dir = ScratchDir::unborn("ui-shader-inputs");
+    std::fs::create_dir_all(dir.path()).unwrap();
+    let four = "@fragment fn main(v: PnVertex) -> @location(0) vec4f { return textureLoad(in0, vec2i(0), 0) \
+        + textureLoad(in1, vec2i(0), 0) + textureLoad(in2, vec2i(0), 0) + textureLoad(in3, vec2i(0), 0); }";
+    let five =
+        "@fragment fn main(v: PnVertex) -> @location(0) vec4f { return textureLoad(in5, vec2i(0), 0); }";
+    let none = "@fragment fn main(v: PnVertex) -> @location(0) vec4f { return vec4f(v.uv, 0.0, 1.0); }";
+    for (file, text) in [("four.wgsl", four), ("five.wgsl", five), ("none.wgsl", none)] {
+        std::fs::write(dir.path().join(file), text).unwrap();
+    }
+    let project = r#"(
+        version: 2,
+        nodes: {
+            "/n": (kind: "tex.noise", params: {"width": 64, "height": 36}, pos: [0.0, 0.0]),
+            "/four": (kind: "tex.shader", params: {"file": "four.wgsl"}, inputs: {"in0": "n", "in1": "n", "in2": "n", "in3": "n"}, pos: [200.0, 0.0]),
+            "/five": (kind: "tex.shader", params: {"file": "five.wgsl"}, inputs: {"in0": "n"}, pos: [400.0, 0.0]),
+            "/none": (kind: "tex.shader", params: {"file": "none.wgsl", "resolution": "custom", "width": 64, "height": 36}, pos: [600.0, 0.0]),
+        },
+    )"#;
+    std::fs::write(dir.path().join(penumbra_project::FILE_NAME), project).unwrap();
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let session = Arc::new(Session::open(dir.path(), types, &penumbra_project::Content::default()).unwrap());
+    assert_eq!(session.status(std::time::Instant::now()).file_error, None);
+    let engine = Engine::start(session).unwrap();
+    let mut script = Vec::new();
+    for path in ["/four", "/five", "/none"] {
+        script.push(json!({"method": "node.watch", "params": {"path": path}}));
+    }
+    script.push(json!({"wait": 2.0}));
+    for path in ["/four", "/five", "/none"] {
+        script.push(json!({"method": "node.info", "params": {"path": path}}));
+    }
+    for path in ["/four", "/five", "/none"] {
+        script.push(json!({"method": "ui.elements", "params": {"prefix": format!("port.in.{path}.")}}));
+    }
+    let script: Vec<String> = script.iter().map(Json::to_string).collect();
+    let options = headless::Options { size: [1200.0, 800.0], pixels_per_point: 1.0, software: true };
+    let replies = headless::run(engine.clone(), &script.join("\n"), &options).unwrap();
+    engine.shutdown();
+
+    let names = |info: &Json| -> Vec<(String, Json)> {
+        info["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| (i["name"].as_str().unwrap().to_string(), i["from"].clone()))
+            .collect()
+    };
+    let four = names(reply(&replies, "node.info", 0));
+    let wired: Vec<(String, Json)> = (0..4).map(|i| (format!("in{i}"), json!("/n"))).collect();
+    assert_eq!(four[..4], wired[..], "the old file's wires: {four:?}");
+    assert_eq!(four.len(), 5, "in0 to in3 wired and read, in4 free: {four:?}");
+    let five = names(reply(&replies, "node.info", 1));
+    assert_eq!(five.len(), 7, "in5 read though not wired, in6 free: {five:?}");
+    assert_eq!(names(reply(&replies, "node.info", 2)).len(), 1, "reads nothing: in0 only");
+    let ports = |n: usize| reply(&replies, "ui.elements", n)["elements"].as_array().unwrap().len();
+    assert_eq!([ports(0), ports(1), ports(2)], [5, 7, 1], "the editor shows what node.info lists");
+}
