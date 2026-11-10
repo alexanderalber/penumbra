@@ -7,7 +7,7 @@
 //      simulation size. in2: fields.wgsl at the simulation size: r what the inputs add to the
 //      smell, g 1 where the agents may not go, a where agents are born when born is food.
 //
-// @param speed float = 1 0.1..4 -- step length as a share of step_length; 2 moves twice as far per frame
+// @param speed float = 1 0.1..4 -- step length as a share of step_length; 2 moves twice as far per step
 // @param pause bool = false -- holds the agents where they are
 // @param sensor_angle float = 22.5 1..90 -- degrees between the middle sensor and each side sensor
 // @param sensor_distance float = 9 1..40 -- how far ahead the sensors are, in cells
@@ -20,8 +20,11 @@
 
 const TAU: f32 = 6.2831853;
 
+// Fresh numbers in every step: steps above 1 run this shader several times per frame, and
+// pn.iteration counts them (0 and 1 with one step, so one step draws what it always drew).
 fn rand4(p: vec2i, salt: u32) -> vec4f {
-    let h = pn_hash(vec3u(vec2u(p), u32(pn_time.frame) * 4u + salt));
+    let step = u32(pn_time.frame) * u32(max(pn.iterations, 1)) + u32(pn.iteration);
+    let h = pn_hash(vec3u(vec2u(p), step * 4u + salt));
     let h2 = pn_hash(h);
     return vec4f(vec4u(h.x, h.y, h.z, h2.x) >> vec4u(8u)) / 16777216.0;
 }

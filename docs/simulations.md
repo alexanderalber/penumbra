@@ -419,9 +419,11 @@ a food point.
 **Params that matter most.** The `organism` group is the network's character:
 `sensor_angle` and `sensor_distance` (where an agent smells), `turn_angle` (how far it turns
 per step), `step_length`, `jitter`, and the trail's `deposit`, `decay` and `diffusion`. Small
-changes give a different organism. `speed` multiplies the step length: below 1 the network grows
-slower and finer, above 1 faster and coarser. It changes the character, so worms at 2 look like
-fire, and it costs nothing. `agents` is the number of agents in units of 1024 (256 is 262 144).
+changes give a different organism. `steps` is the number of agent steps per frame: the agents
+move, draw their trail and the trail fades that many times in each frame. At `steps` 4 the
+network forms four times as fast and looks as it does at 1. `speed` multiplies the step length
+instead: below 1 the network grows slower and finer, above 1 faster and coarser. It changes the
+character, so worms at 2 look like fire, and it costs nothing. `agents` is the number of agents in units of 1024 (256 is 262 144).
 The trail is equally bright at any agent count. `seed`, `start`, `radius`, `agents`, `width` and
 `height` start over. The `look` group sets the palette (`colors`, dark to bright), `heading`
 (colours by direction instead), `gain`, `contrast` and the glow. For projection onto a real
@@ -440,10 +442,11 @@ picture of things to link into `food` and choose `network`: objects on a table, 
 outputs cost about 0.5 ms of that, and only while something uses them. While `pause` is on, the
 agent and trail steps run no pass. That saves little here: with the outputs unused the example
 costs about 0.95 ms per frame running and about 0.9 ms paused, since drawing the agents and the
-picture goes on.
+picture goes on. Each step more adds about 0.4 ms: with the outputs unused, 1.2 ms at `steps` 1,
+1.7 ms at 2 and 2.45 ms at 4. Paused, the agents are still drawn once per step: 2.0 ms at
+`steps` 4.
 
-**Limits.** One agent step per frame: `speed` lengthens the step and so changes the look; a
-truly faster network would need several steps per frame. lace, foam and dots are nearly still
+**Limits.** `steps` costs every step in full (see Cost). lace, foam and dots are nearly still
 after 20 s; only fire, worms and spirals keep moving, and people stir the rest. With `people_mode`
 `attract`, a person draws one bright vein like a leash, which dominates foam, spirals and fire.
 `dots` coarsens over minutes, and a repelling person's path stays an empty band for a while.
