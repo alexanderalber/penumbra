@@ -441,6 +441,68 @@ fn snapshot_of_a_texture_node() {
 }
 
 #[test]
+fn a_shader_that_fails_inside_a_component_is_listed_without_asking_it() {
+    let f = Fixture::new("shader-problems");
+    let Some(gpu) = warp() else { return };
+    f.engine.attach_gpu(gpu).unwrap();
+    let dir = f.engine.session().dir().to_path_buf();
+    std::fs::write(
+        dir.join("bad.wgsl"),
+        "@fragment fn main(v: PnVertex) -> @location(0) vec4f { return nope; }",
+    )
+    .unwrap();
+    // A param named like one of the node's own fails the same way, before compiling.
+    std::fs::write(
+        dir.join("reserved.wgsl"),
+        "// @param bypass float = 0.5\n@fragment fn main(v: PnVertex) -> @location(0) vec4f { return vec4f(1.0); }",
+    )
+    .unwrap();
+    f.call("node.create", json!({"path": "/c", "kind": "comp.base"}));
+    for (name, file) in [("bad", "bad.wgsl"), ("reserved", "reserved.wgsl"), ("missing", "missing.wgsl")] {
+        f.call(
+            "node.create",
+            json!({"path": format!("/c/{name}"), "kind": "tex.shader", "params": {"file": file, "resolution": "custom", "width": 4, "height": 4}}),
+        );
+    }
+    f.call("node.create", json!({"path": "/c/mix", "kind": "tex.composite"}));
+    for from in ["/c/bad", "/c/reserved", "/c/missing"] {
+        f.call("node.connect", json!({"from": from, "to": "/c/mix"}));
+    }
+    f.call("node.create", json!({"path": "/c/out", "kind": "tex.out"}));
+    f.call("node.connect", json!({"from": "/c/mix", "to": "/c/out"}));
+    f.call("node.create", json!({"path": "/show", "kind": "tex.null"}));
+    f.call("node.connect", json!({"from": "/c/out", "to": "/show"}));
+    f.call("node.watch", json!({"path": "/show"}));
+    // Shaders compile in the background: the errors arrive frames later.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let listed = loop {
+        let list = f.call("node.list", json!({"problems": true}));
+        let nodes = list["nodes"].as_array().cloned().unwrap_or_default();
+        if nodes.iter().filter(|n| n["error"].is_string()).count() >= 3 {
+            break nodes;
+        }
+        assert!(Instant::now() < deadline, "the three shaders were not listed: {list}");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let error = |path: &str| -> String {
+        listed
+            .iter()
+            .find(|n| n["path"] == path)
+            .and_then(|n| n["error"].as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert!(error("/c/bad").contains("bad.wgsl:1"), "{listed:?}");
+    assert!(error("/c/reserved").contains("`bypass` is a param of the node itself"), "{listed:?}");
+    assert!(error("/c/missing").contains("missing.wgsl"), "{listed:?}");
+    // The whole list says the same, and nodes without a problem carry no field.
+    let all = f.call("node.list", json!({}));
+    let show = all["nodes"].as_array().unwrap().iter().find(|n| n["path"] == "/show").cloned().unwrap();
+    assert_eq!(show.get("error"), None, "{all}");
+    assert!(f.call("node.list", json!({"path": "/c"}))["nodes"].to_string().contains("bad.wgsl:1"));
+}
+
+#[test]
 fn bind_a_param_and_read_channels() {
     let f = Fixture::new("bind");
     f.call(

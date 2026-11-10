@@ -5,6 +5,13 @@ and the node reloads it; a version that does not compile leaves the last good on
 the compiler's message on the node. Compiling happens off the show's thread, so saving a shader
 during a show costs no frames.
 
+A shader that has never compiled has no picture. A node that reads it may still draw, without
+it, so the end of the chain can look plausible. Look for the error itself, not at the picture. A missing file, a header
+line that does not parse, a param named like one of the node's own and a compiler error all
+fail the node the same way. The error is written to the log once, with the node's path, and
+`node.list {"problems": true}` lists every node in error with its message, inside components
+too. Neither needs to know which node failed.
+
 ## A first shader
 
 Rings over the input, `rings.wgsl`:

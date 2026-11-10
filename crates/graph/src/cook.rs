@@ -63,6 +63,9 @@ use crate::watch::{FileWatch, Watcher};
 /// Passes without a cook after which a node's operator is trimmed ([`Operator::trim`]): two
 /// seconds at 60 fps, long enough that a node cooking now and then keeps its spares.
 pub const TRIM_AFTER_PASSES: u64 = 120;
+
+/// Least time between two log lines about the errors of one node ([`Cooker::log_error`]).
+const ERROR_LOG_EVERY: Duration = Duration::from_secs(10);
 /// How often the cooker looks for nodes to trim, in passes.
 const TRIM_CHECK_EVERY: u64 = 30;
 
@@ -618,6 +621,10 @@ struct Runtime {
     /// ([`CookContext::since_last_use`]).
     used: Option<FrameTime>,
     error: Option<String>,
+    /// The error as last compared for the log ([`Cooker::log_error`]), and when one was last
+    /// written.
+    logged_error: Option<String>,
+    logged_at: Option<Instant>,
     warning: Option<String>,
     stats: CookStats,
     /// Time spent since the profile was last taken.
@@ -731,6 +738,8 @@ impl Runtime {
             last_thumb_pass: None,
             used: None,
             error: None,
+            logged_error: None,
+            logged_at: None,
             warning: None,
             stats: CookStats::default(),
             spent: NodeSpent::default(),
@@ -1790,6 +1799,26 @@ impl Cooker {
         rt.spent.cook_max = rt.spent.cook_max.max(elapsed);
         rt.measure(id);
         report.cooked.push(id);
+        self.log_error(id);
+    }
+
+    /// Writes a node's error to the log when it is new: once per failure, so a script or a
+    /// headless run sees a node fail that nothing looks at, such as a shader that does not
+    /// compile behind the node it snapshots. A node whose message changes all the time writes
+    /// at most one line per [`ERROR_LOG_EVERY`].
+    fn log_error(&mut self, id: NodeId) {
+        let Some(rt) = self.runtimes.get_mut(&id) else { return };
+        if rt.error == rt.logged_error {
+            return;
+        }
+        rt.logged_error = rt.error.clone();
+        let Some(error) = rt.error.clone() else { return };
+        if rt.logged_at.is_some_and(|at| at.elapsed() < ERROR_LOG_EVERY) {
+            return;
+        }
+        rt.logged_at = Some(Instant::now());
+        let kind = rt.def.kind.clone();
+        log::warn!("{} ({kind}): {error}", self.path(id));
     }
 
     /// Which of `ids` hold outputs that are up to date at `time` without cooking: nothing

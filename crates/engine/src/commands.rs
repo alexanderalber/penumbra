@@ -78,7 +78,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "Node types with their params, inputs, outputs and tags. With a param: its help (what it does, type, default, range, unit, what each choice does). With search: the types whose name contains the text or a tag starts with it (TouchDesigner names, file extensions), as the add dialog finds them; a family word (`noise top`, `lfo chop`) searches that family alone; {kind?, param?, search?}",
         node_kinds,
     );
-    add("node.list", "Nodes under a path; {path?, recursive?}", node_list);
+    add(
+        "node.list",
+        "Nodes under a path, each with its error and warning as of its last cook (a node that has not cooked has none); {path?, recursive?, problems? (true: only the nodes with an error or a warning)}",
+        node_list,
+    );
     add("node.info", "One node: params, connections, cook status; {path}", node_info);
     add("node.create", "Create a node; {path, kind, params?}", node_create);
     add("node.delete", "Delete a node and everything inside it; {path}", node_delete);
@@ -431,6 +435,8 @@ fn node_list(e: &Engine, p: &Json) -> Result<Json> {
         path: NodePath,
         #[serde(default = "yes")]
         recursive: bool,
+        #[serde(default)]
+        problems: bool,
     }
     let a: A = args(p)?;
     let net = e.session().doc().snapshot();
@@ -447,14 +453,36 @@ fn node_list(e: &Engine, p: &Json) -> Result<Json> {
             }
         }
     }
+    // The error and the warning of each node as of its last cook. Without a cook thread (or
+    // when it does not answer) the list still comes, without them.
+    let ids: Vec<NodeId> = nodes.values().map(|n| n.id).collect();
+    let problems: BTreeMap<NodeId, (Option<String>, Option<String>)> = e
+        .on_cook(move |st| {
+            ids.into_iter()
+                .filter_map(|id| {
+                    let s = st.cooker.status_brief(id)?;
+                    (s.error.is_some() || s.warning.is_some()).then_some((id, (s.error, s.warning)))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let list: Vec<Json> = nodes
         .iter()
+        .filter(|(_, n)| !a.problems || problems.contains_key(&n.id))
         .map(|(path, n)| {
             let mut v = json!({"path": path, "kind": n.kind});
-            if n.locked
-                && let Some(o) = v.as_object_mut()
-            {
-                o.insert("locked".into(), json!(true));
+            if let Some(o) = v.as_object_mut() {
+                if n.locked {
+                    o.insert("locked".into(), json!(true));
+                }
+                if let Some((error, warning)) = problems.get(&n.id) {
+                    if let Some(error) = error {
+                        o.insert("error".into(), json!(error));
+                    }
+                    if let Some(warning) = warning {
+                        o.insert("warning".into(), json!(warning));
+                    }
+                }
             }
             v
         })
