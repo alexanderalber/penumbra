@@ -1587,6 +1587,44 @@ fn a_black_cover_shows_its_opacity_and_still_hides() {
     assert_eq!(at(&px, cx, cy), [0.0; 4], "nothing of the black, the wall still hidden");
 }
 
+/// A black cover behind an occluder that shows the background is hidden like anything else,
+/// whichever of the two the geometry lists first.
+#[test]
+fn an_occluder_hides_a_black_cover_behind_it() {
+    let Some(gpu) = gpu() else { return };
+    let ops = vec![
+        create("/box", "geo.primitive", &[("size", Value::Vec3([1.0, 1.0, 1.0]))]),
+        create(
+            "/wall",
+            "geo.primitive",
+            &[("shape", "plane".into()), ("size", Value::Vec3([5.0, 1.0, 3.0]))],
+        ),
+        create("/wall_at", "geo.transform", &[("translate", Value::Vec3([0.0, 1.0, 0.0]))]),
+        connect("/wall", "/wall_at", 0),
+        create("/cover", "mat.occluder", &[("shows", "black".into())]),
+        create("/black_wall", "geo.assign_material", &[]),
+        connect("/wall_at", "/black_wall", 0),
+        connect("/cover", "/black_wall", 1),
+        create("/hole", "mat.occluder", &[]),
+        create("/hidden", "geo.assign_material", &[]),
+        connect("/box", "/hidden", 0),
+        connect("/hole", "/hidden", 1),
+        create("/both", "geo.merge", &[]),
+        connect("/black_wall", "/both", 0),
+        connect("/hidden", "/both", 1),
+        render("/seen", &[("position", Value::Vec3([0.0, -2.5, 0.0])), ("fov", Value::Float(40.0))]),
+        connect("/both", "/seen", 0),
+    ];
+    let mut rig = rig(gpu, None, &ops);
+    let (cx, cy) = ((super::W / 2) as u32, (super::H / 2) as u32);
+    let px = rig.pixels("/seen");
+    assert_eq!(at(&px, cx, cy), [0.0; 4], "the box hides the black wall and shows nothing");
+    assert_eq!(at(&px, 4, cy), [0.0, 0.0, 0.0, 1.0], "the black wall beside it");
+    rig.cook("/seen");
+    let d = data(&rig, "/seen");
+    assert_eq!(at(&d, cx, cy), [0.0; 4], "nothing in the data pass either");
+}
+
 /// A far thin prism, thinner than a pixel and a little off the vertical, as a wireframe with
 /// four samples per pixel: a whole line with soft edges, as bright along its length as across
 /// it allows, and present in the data pass on every row. A line thinner than a pixel fades and

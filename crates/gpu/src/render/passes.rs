@@ -31,6 +31,9 @@ pub(super) struct DrawCall {
     wire: bool,
     /// Shows nothing but hides what is behind it: drawn before everything else.
     occluder: bool,
+    /// An occluder that shows black. It draws after the occluders that show nothing: one of
+    /// those in front of it leaves the colour as it is, so black drawn first would stay.
+    covers: bool,
     /// A wireframe with hidden faces: drawn after everything else in the colour, data and
     /// measuring passes, its faces' depth first, then its lines where that is the nearest.
     hides: bool,
@@ -48,7 +51,8 @@ pub(super) struct Calls {
     pub(super) bytes: Vec<u8>,
     align: u64,
     /// Everything but the wireframes with hidden faces, occluders first: they leave the colour as
-    /// it is, so what was drawn before them would show through.
+    /// it is, so what was drawn before them would show through. Among them the black covers
+    /// come last.
     rest: Vec<usize>,
     /// Wireframes with hidden faces, which the colour, data and measuring passes draw last.
     hiding: Vec<usize>,
@@ -142,6 +146,7 @@ impl Calls {
                     clear,
                     wire,
                     occluder,
+                    covers: occluder && m.cover,
                     hides,
                     shadows: m.shadows,
                     depth: if depth.is_finite() { depth } else { 0.0 },
@@ -152,7 +157,7 @@ impl Calls {
             (0..calls.len()).filter(|k| calls.get(*k).is_some_and(f)).collect()
         };
         let mut order: Vec<usize> = (0..calls.len()).collect();
-        order.sort_by_key(|k| calls.get(*k).is_none_or(|c| !c.occluder));
+        order.sort_by_key(|k| calls.get(*k).map_or((true, false), |c| (!c.occluder, c.covers)));
         let hiding = pick(|c| c.hides);
         let rest = order.into_iter().filter(|k| !hiding.contains(k)).collect();
         let mut behind = pick(|c| c.clear);
