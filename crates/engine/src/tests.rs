@@ -1475,6 +1475,9 @@ mod restart_tests;
 #[path = "preset_tests.rs"]
 mod preset_tests;
 
+#[path = "simulation_tests.rs"]
+mod simulation_tests;
+
 #[path = "mouse_tests.rs"]
 mod mouse_tests;
 

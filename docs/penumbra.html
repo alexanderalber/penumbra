@@ -104,6 +104,8 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><a href="#navigation">Looking around in 3D</a>: the viewer's free view, steering a camera, the 3D mouse.
 </li>
+<li><a href="#simulations">Simulations</a>: falling sand and the other simulations from the library: choosing a setup, tuning it, what to feed them in an installation.
+</li>
 <li><a href="#shaders">Shaders</a>: writing a <a class="ref" href="#tex.shader"><code>tex.shader</code></a> in WGSL, porting from Shadertoy, a shader in a feedback loop that follows the music.
 </li>
 <li><a href="#scripts">Scripts</a>: writing a <a class="ref" href="#script.python"><code>script.python</code></a> node.
@@ -124,7 +126,7 @@ details.target { outline: 2px solid var(--accent); }
 </ul>
 </section>
 <nav class="toc">
-<p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#glossary">Glossary</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#serial-udp-tcp">Serial, UDP and TCP</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#screen">Screen and window capture</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#mapping-without-camera">Mapping without a camera</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
+<p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#glossary">Glossary</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#serial-udp-tcp">Serial, UDP and TCP</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#screen">Screen and window capture</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#mapping-without-camera">Mapping without a camera</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#simulations">Simulations</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
 <p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-audio">audio</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-vol">vol</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-ui">ui</a> <a href="#family-component-ports">Component ports</a></p>
 <p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-app">app</a> <a href="#group-audio">audio</a> <a href="#group-audio_file_out">audio_file_out</a> <a href="#group-beats">beats</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-camera">camera</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-http">http</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-midi">midi</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-net">net</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-screen">screen</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
@@ -1950,6 +1952,48 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 </li>
 </ul>
 </div></details>
+<details class="entry guide" id="simulations"><summary><span class="name">Simulations</span></summary>
+<div class="body">
+<p>A simulation is a picture that grows from its own last frame: sand that piles up, waves that spread. Each one ships as a component in penumbra's library and sits in the add dialog's <code>simulations</code> tab. Its inputs are pictures from the room, such as a scan mask of an object or the tracked people. Its output is a picture for the projectors, plus a few channels.</p>
+<h3 id="simulations-how-to-use-one">How to use one</h3>
+<ul>
+<li><strong>Add it</strong> from the <code>simulations</code> tab, or by command: <a class="ref" href="#comp.load"><code>comp.load {&quot;file&quot;: &quot;sand&quot;}</code></a>. Adding copies its shaders into the project's <code>library/&lt;name&gt;/</code>.
+</li>
+<li><strong>Choose a setup</strong> with its main choice param (<code>scene</code> in sand). Choosing an entry writes that entry's values into the params below it, as one undo step. Then the values are yours: tune any slider, and the project saves the tuned value. A line under the choice names the params that differ from the entry, with a &quot;back&quot; button. The mechanism is the component's presets: <a href="nodes/comp.base.md">comp.base, Presets</a>.
+</li>
+<li><strong>Start over:</strong> a new entry starts the simulation over by itself. Bind the component's <code>reset</code> to a key for a restart by hand. Held, <code>reset</code> keeps the simulation at its start.
+</li>
+<li><strong>Size:</strong> <code>width</code> and <code>height</code> on the component are the simulation's size in cells. The inputs can have any size; the component samples them.
+</li>
+<li><strong>Params no entry writes</strong> stay as you set them, such as <code>seed</code>, <code>pause</code>, <code>width</code> and <code>height</code>. <a class="ref" href="#node.info"><code>node.info</code></a> lists the params the entries write under <code>component.presets</code>, <code>owns</code>.
+</li>
+</ul>
+<h3 id="simulations-sand">sand</h3>
+<p><img src="../assets/simulations/sand-scenes.jpg" alt="The ten scenes of sand, each after a few seconds to half a minute"></p>
+<p>Falling sand: grains pour, fall, slide down slopes and pile up on walls. A grain never vanishes or doubles on its way. Only a pour, a drain, an open edge and <code>in_wall</code> <code>delete</code> change the count. The <a href="../examples/sand/README.md">sand example</a> feeds it a word as walls and two moving dots as sources.</p>
+<p><strong>Scenes.</strong> <code>scene</code> picks one. Each writes the walls, the start, where sand comes from, the edges and the palette.</p>
+<table>
+<thead><tr><th>scene</th><th>what you see</th></tr></thead>
+<tbody>
+<tr><td><code>steady</code></td><td>Rain on the wall input. The floor is open, so as much sand falls out as comes in.</td></tr>
+<tr><td><code>letters</code></td><td>Rain on the wall input over a closed floor. Heaps grow on every shape and the floor fills up.</td></tr>
+<tr><td><code>blob</code></td><td>Sand pours from the bright parts of the source input, onto the wall input.</td></tr>
+<tr><td><code>gravity</code></td><td>A band of layered sand on the wall input, nothing pours. Turn <code>gravity</code>.</td></tr>
+<tr><td><code>hourglass</code></td><td>Layered sand runs through a narrow neck.</td></tr>
+<tr><td><code>cups</code></td><td>Rain into three bowls that overflow.</td></tr>
+<tr><td><code>pegs</code></td><td>A heavy, narrow stream through a board of pins.</td></tr>
+<tr><td><code>ramps</code></td><td>A narrow rain on a zigzag of shelves.</td></tr>
+<tr><td><code>drain</code></td><td>Rain over bowls and a floor of sand. The drain input swallows sand.</td></tr>
+<tr><td><code>mover</code></td><td>A bar moves through a pile of layered sand.</td></tr>
+</tbody>
+</table>
+<p><strong>Inputs.</strong> <code>wall</code>: white where sand cannot go, while <code>object</code> is on. Grains under a wall that appears move out on top of it (<code>in_wall</code>). <code>source</code>: sand pours where it is bright, with strength <code>blobs</code>, in its colour when <code>colors</code> is <code>source</code>. <code>drain</code>: sand vanishes where it is bright, at the rate <code>drain</code>.</p>
+<p><strong>Outputs.</strong> <code>out</code> is the picture, 1920 x 1080 (<code>out_width</code>, <code>out_height</code>). <code>grains</code> is the number of grains, as a channel.</p>
+<p><strong>Params that matter most.</strong> <code>amount</code> scales the pour of every scene: bind it to a sound level to pour with the music. <code>gravity</code> is the direction of the fall in degrees, 0 down and 90 right; bind it to tilt the world. <code>steps</code> is sand steps per frame (48): fewer is slower sand and costs less. The setup a scene writes can be mixed: <code>shape</code> puts a built-in wall (<code>hourglass</code>, <code>cups</code>, <code>ramps</code>, <code>pegs</code>, <code>bar</code>) under any scene, <code>rain</code> with <code>rain_from</code> and <code>rain_to</code> is the rain line along the top, <code>pour</code> the chance per step that a bright source cell makes a grain, <code>edges</code> closed, open or wrapping. The <code>grains</code> group sets how grains move (<code>fall</code>, <code>slide</code>, <code>roll</code>, <code>sticky</code>). The <code>look</code> group sets the palette, the light on the piles and how visible the walls are. For projection onto a real object, set <code>wall_fill</code> and <code>outline</code> to 0.</p>
+<p><strong>In an installation.</strong> Feed a scan mask of the object into <code>wall</code>, so sand piles on the real object. Feed <a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a>'s picture of the people into <code>source</code> and choose scene <code>blob</code>, so sand pours where people stand. A drain can be any mask: a hole in the floor, a hand.</p>
+<p><strong>Cost.</strong> About 3 ms per frame for the whole example: 640 x 360 cells, 48 steps, picture 1920 x 1080, on an RTX 3090 at a 280 W power limit. The cost grows with <code>width</code> times <code>height</code> times <code>steps</code>.</p>
+<p><strong>Limits.</strong> Slopes carry little sand; with <code>amount</code> above about 2 on a narrow stream, piles grow steeper than 45 degrees. The <code>mover</code> bar and the colour over time (<code>colors</code> <code>time</code>) follow the show clock, so a restart does not restart them.</p>
+</div></details>
 <details class="entry guide" id="shaders"><summary><span class="name">Shaders</span></summary>
 <div class="body">
 <p><a class="ref" href="#tex.shader"><code>tex.shader</code></a> runs a WGSL fragment shader from a file in the project directory. Save the file and the node reloads it; a version that does not compile leaves the last good one running, with the compiler's message on the node. Compiling happens off the show's thread, so saving a shader during a show costs no frames.</p>
@@ -2430,7 +2474,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>slots</code></td><td>int</td><td><code>4</code></td><td>0 to 8 (soft, held within 0 to 32)</td><td>Blobs in <code>chans</code>, each as id, x, y, area with the slot's number (id 0: empty)</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#tracking">Tracking</a>, <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
+<p class="mentions">Mentioned in: <a href="#tracking">Tracking</a>, <a href="#simulations-sand">Simulations › sand</a>, <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
 </div></details>
 <details class="entry node" id="tex.blur"><summary><code class="name">tex.blur</code><span class="sum">Softens a picture: a Gaussian blur, in every direction or only across or only up and down</span></summary>
 <div class="body">
@@ -7009,7 +7053,7 @@ node.bind {param: &quot;/sim.reset&quot;, from: &quot;/keys&quot;, channel: &quo
 <details class="entry command" id="comp.load"><summary><code class="name">comp.load</code><span class="sum">Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/&lt;name&gt;/ first</span></summary>
 <div class="body">
 <p>Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/&lt;name&gt;/ first; {file, path?}</p>
-<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#simulations-how-to-use-one">Simulations › How to use one</a></p>
 </div></details>
 <details class="entry command" id="comp.put_param"><summary><code class="name">comp.put_param</code><span class="sum">Make an inner param a param of its component that it follows: an @param line copied from it, its value moved up, a binding to parent.&lt;name&gt;; a param of that name the component has already is followed when it fits</span></summary>
 <div class="body">
@@ -7302,7 +7346,7 @@ node.bind {param: &quot;/sim.reset&quot;, from: &quot;/keys&quot;, channel: &quo
 <details class="entry command" id="node.info"><summary><code class="name">node.info</code><span class="sum">One node: params, connections, cook status</span></summary>
 <div class="body">
 <p>One node: params, connections, cook status; {path}</p>
-<p class="mentions">Mentioned in: <a href="#concepts-params">Concepts › Params</a>, <a href="#control-taking-turns">Control › Taking turns</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-params">Concepts › Params</a>, <a href="#simulations-how-to-use-one">Simulations › How to use one</a>, <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
 <details class="entry command" id="node.kinds"><summary><code class="name">node.kinds</code><span class="sum">Node types with their params, inputs, outputs and tags. With a param: its help (what it does, type, default, range, unit, what each choice does). With search: the types whose name contains the text or a tag starts with it (TouchDesigner names, file extensions), as the add dialog finds them; a family word (<code>noise top</code>, <code>lfo chop</code>) searches that family alone</span></summary>
 <div class="body">

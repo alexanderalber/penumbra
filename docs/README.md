@@ -27,6 +27,7 @@ offline: [penumbra.html](penumbra.html), which the `?` on every node opens.
 - [Mapping without a camera](mapping-without-camera.md): corners, mesh warp, soft edges and masks by eye, with `tex.mapper` and `tex.shapes`.
 - [Scanning](scanning.md): structured light: which camera pixel each projector pixel lands on, the objects in front of a wall, blend weights, content on objects across projectors.
 - [Looking around in 3D](navigation.md): the viewer's free view, steering a camera, the 3D mouse.
+- [Simulations](simulations.md): falling sand and the other simulations from the library: choosing a setup, tuning it, what to feed them in an installation.
 - [Shaders](shaders.md): writing a `tex.shader` in WGSL, porting from Shadertoy, a shader in a feedback loop that follows the music.
 - [Scripts](scripts.md): writing a `script.python` node.
 - [Control](control.md): the control channel, `penumbra-cli ctl`, the MCP server, headless runs, environment variables.

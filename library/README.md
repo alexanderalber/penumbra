@@ -5,6 +5,8 @@ scan leaves behind (`scan.scene`'s and `scan.regions`' pictures, camera stills),
 region numbers of one particular scene, so they fit any scanned scene. The last group is a stage
 for music: worlds that a `chan.beat_grid` drives (a synthwave world, a valley at night), with
 elements to swap in and out.
+Simulations, such as falling sand, run on their own and sit in the add dialog's `simulations`
+tab.
 
 Each folder holds the component (`<name>.comp.ron`), its shaders and pictures, and `preview.png`.
 For a scan effect the preview is the effect rendered headless on a real scan of a few crates with
@@ -264,6 +266,27 @@ Glazed tiles with grout and a wooden rim on a rectified face, appearing one by o
   centimetres, as given to `scan.scene`), `tile`, `grout`, `rim`, `decor` (share of decorated
   tiles), `grout_color`, `wood`, `gain`, `seed`, `atlas` (the decorated tile in the left half, a
   plain one in the right).
+
+## Simulations
+
+In the add dialog's `simulations` tab (shelf `simulations`). Each one picks its setup with one
+choice param; choosing an entry writes its values into the params, then they are yours. How
+they work and what to feed them: [Simulations](../docs/simulations.md).
+
+### sand
+
+![sand](sand/preview.png)
+
+Falling sand: grains pour, slide down slopes, pile up on walls and run off their edges. Ten
+scenes, such as rain on a word, an hourglass, bowls that overflow and a board of pins.
+
+- In: `wall` (white where sand cannot go: a scan mask, a text), `source` (sand pours where it is
+  bright, in its colour: `tex.blob_track`), `drain` (sand vanishes where it is bright). Any size.
+- Out: `out` (the picture, 1920 x 1080), `grains` (the number of grains, a channel).
+- Params: `scene`, `seed`, `steps`, `amount`, `gravity`, `pause`, `colors`; the setup a scene
+  writes (`shape`, `object`, `neck`, `slope`, the rain, `blobs`, `pour`, `edges`, `drain`, the
+  start); how grains move; the look; `width` and `height` of the simulation (640 x 360).
+- Example: [sand](../examples/sand/README.md).
 
 ## A stage for music
 

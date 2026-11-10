@@ -27,6 +27,7 @@ saves into it.)
 | [python-pictures](python-pictures/README.md) | Python scripts that draw a picture and build a mesh with numpy: rings on a wavy sheet | `/render` | Python 3.12 or later with numpy |
 | [projection-room](projection-room/README.md) | a 3D room lit by a projector, lamps and its surroundings | `/view`, `/through_beamer` | |
 | [smoke](smoke/README.md) | smoke in a box in space from three emitters: a ball blowing sideways, a moving ball, a flat box; hot smoke glows in colours of its own | `/out` | |
+| [sand](sand/README.md) | falling sand from the library: grains rain on a word, pile up and pour off its edges; ten scenes from an hourglass to a board of pins, chosen on one param, then tuned | `/out` | |
 | [raymarch](raymarch/README.md) | three raymarched looks that follow music: a tunnel, melting shapes and a fractal, chosen with one slider; a built-in beat drives them | `/out` | (for real music: a microphone or line input) |
 | [fluid](fluid/README.md) | a fluid stirred by motion: optical flow and blobs push it, the picture colours it | `/view` | |
 | [music-synthwave](music-synthwave/README.md) | a complete show on one song: 15 elements on two stages, a synthwave world that rolls up into a tunnel at the drop after the break, the arrangement written by one command from the beats and sections found in the file; the song is by Krzna and not under penumbra's licenses | `/out` | speakers or headphones |
