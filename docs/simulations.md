@@ -9,7 +9,7 @@ the tracked people. Its output is a picture for the projectors, plus a few chann
 
 - **Add it** from the `simulations` tab, or by command: `comp.load {"file": "sand"}`. Adding
   copies its shaders into the project's `library/<name>/`.
-- **Choose a setup** with its main choice param (`scene` in sand, `preset` in growth). Choosing an entry writes that
+- **Choose a setup** with its main choice param (`scene` in sand, `preset` in growth and chladni). Choosing an entry writes that
   entry's values into the params below it, as one undo step. Then the values are yours: tune
   any slider, and the project saves the tuned value. A line under the choice names the params
   that differ from the entry, with a "back" button. The mechanism is the component's presets:
@@ -141,3 +141,72 @@ need another `full`. `snowflake` stops at half the picture; that is the physics 
 The covered phase of `window` changes little between about 20 s and the warm spell. A
 regrown path reads as a comb of parallel fingers, coarser than the first growth. Covered ice
 shows a few lighter rectangles with straight edges.
+
+## chladni
+
+![The eight presets of chladni at one figure each, and the shaped plate cut to a star and to a letter](../assets/simulations/chladni-presets.jpg)
+
+Chladni figures (cymatics): sand lies on a vibrating plate, jumps away from the parts that move
+and gathers on the lines that stand still. Every tone gives another figure. The plate is a
+square or a round one, or any shape from a picture. The
+[chladni example](../examples/chladni/README.md) plays a melody to it and gives it a guitar
+outline as the shape.
+
+**Presets.** `preset` picks one. Each writes the plate (`plate`, `membrane_steps`, `size`,
+`turn`) and the whole look: the view, the colours, how visible the plate is.
+
+| preset | what you see |
+|---|---|
+| `square` | Light sand on a dark square plate. |
+| `gold` | Gold sand on the square plate. |
+| `circle` | Light sand on a round plate: rings and spokes. |
+| `ice` | Pale blue sand on the round plate. |
+| `shape` | Light sand on a plate cut to the input `shape`: lines that follow its outline. |
+| `ember` | Orange sand on the plate cut to the input `shape`. |
+| `motion` | The shaped plate's motion in blue under the sand. |
+| `lines` | The nodal lines of the square plate, drawn crisp, with no sand. |
+
+**Inputs.** `tone`: a channel named `note`, a note number (60 is middle C). `chan.audio_pitch`
+gives it from a microphone; any channel named `note` works. Figure 0 is the note `lowest` (48,
+C3), and each semitone up is the next figure, 20 figures in all. Notes outside are held at
+figure 0 or 19. A new tone never starts over: the sand is tossed up for `toss_time` (0.25 s)
+and the new lines are whole again after about 0.75 s. `shape`: the plate's outline for `plate`
+`shape`, white on the plate. Any size; keep its sides at 16:9 or the outline is stretched. An
+unwired `shape` is black, so the shaped plate shows nothing.
+
+**Outputs.** `out` is the picture, 1920 x 1080 (`width`, `height`). `motion` is how far a grain
+moved per step lately, in pixels, as a channel. It is about 0.2 when the sand lies on its lines,
+0.4 on the shaped plate, and about 9 while the sand is tossed at a new figure.
+
+**Params that matter most.** `source` `figure` makes the figure follow the param `figure` (0 to
+19) instead of the tone. `morph` blends two neighbouring figures by the fraction of a semitone.
+`level` is how hard the plate is played: bind it to the music's loudness, 0 lets the sand rest.
+`kick` throws every grain up: bind it to an envelope of the beat. `speed` scales the grain
+steps per frame (4 at 1): 2 gathers twice as fast. `detune` multiplies the shaped plate's pitch:
+sweep it to find the tones where a shape gives clean lines. The `grains` group sets how sand
+jumps and slides, the `membrane` group the shaped plate's damping and where it is driven. For
+projection onto a real object, set `outline` to 0, so only the sand shows.
+
+**The shaped plate is a membrane.** penumbra simulates a stretched membrane with the wave
+equation. A metal plate bends instead, which this simulation does not model. So its figures are
+of the same kind as a metal plate's, and their exact lines differ from those of a metal plate of
+that outline. The square and round plates use the formulas of a membrane with free edges, which
+are exact for a membrane too. `membrane_steps` is the
+membrane's steps per frame. The shaped presets write 64, so a figure settles within about a
+second. The other presets write 1, since square and round plates do not use the membrane.
+
+**In an installation.** Feed a microphone through `chan.audio_pitch` into `tone`, and sing,
+whistle or play one note at a time. Chords and loud drums confuse the pitch tracker. Feed a scan
+mask of an object into `shape` and choose preset `shape`, so the figures follow the object's
+outline.
+
+**Cost.** About 1.6 ms per frame for the example with preset `square`, and about 4.3 ms with a
+shaped plate (64 membrane steps), with 262 144 grains at 1920 x 1080, on an RTX 3090 at a 280 W
+power limit. The membrane's steps are most of the difference. A million grains (`grains` 1024)
+cost about 2.8 ms on the square plate.
+
+**Limits.** Figures 2 and 3 of the shaped plate are the same. Figure 0 of the shaped plate is a
+ring around the driving point, since its tone lies below the membrane's lowest one. Dense lines
+show a fine lattice of holes, more at `speed` 2. High figures on the round plate keep a grey
+haze in the calm middle. With nothing wired into `tone`, the inner `pick` node warns, also when
+`source` is `figure`; the figure is still right.

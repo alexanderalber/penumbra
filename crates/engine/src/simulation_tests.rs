@@ -52,10 +52,12 @@ fn every_simulation_in_the_library_draws_a_picture() {
         let path = format!("/{name}");
         let loaded = f.call("comp.load", json!({"file": name, "path": path}));
         assert!(loaded["copied"].as_array().is_some_and(|c| !c.is_empty()), "{name}: {loaded}");
-        // The simulation and its picture small, so the software adapter keeps up.
+        // The simulation and its picture small, so the software adapter keeps up. `grains` is
+        // chladni's grain count, in units of 1024.
         let names = shown(&f, &path);
         let mut size = serde_json::Map::new();
-        for (param, value) in [("width", 96), ("height", 54), ("out_width", 192), ("out_height", 108)] {
+        let sizes = [("width", 96), ("height", 54), ("out_width", 192), ("out_height", 108), ("grains", 4)];
+        for (param, value) in sizes {
             if names.iter().any(|n| n == param) {
                 size.insert(param.into(), json!(value));
             }

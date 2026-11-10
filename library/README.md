@@ -307,6 +307,23 @@ snowflake, coral around a mask and a Lichtenberg figure.
   look; `width` and `height` of the simulation (960 x 540).
 - Example: [growth](../examples/growth/README.md).
 
+### chladni
+
+![chladni](chladni/preview.png)
+
+Chladni figures (cymatics): sand on a vibrating plate gathers on the lines that stand still, and
+every tone gives another figure. Eight presets: a square, a round and a shaped plate in
+several colours, and the nodal lines drawn without sand.
+
+- In: `tone` (a channel `note`, a note number: `chan.audio_pitch` on a microphone), `shape` (the
+  plate's outline for the shaped plate, white on the plate: a scan mask, a text). Any size.
+- Out: `out` (the picture, 1920 x 1080), `motion` (how far the grains move per step, a
+  channel).
+- Params: `preset`, `source`, `lowest`, `figure`, `morph`, `level`, `kick`, `toss`, `speed`; the
+  plate a preset writes (`plate`, `membrane_steps`, `size`, `turn`) and `detune`; the look; how
+  grains jump and slide; the shaped plate's membrane; `width`, `height` and `grains` (262 144).
+- Example: [chladni](../examples/chladni/README.md).
+
 ## A stage for music
 
 A world that moves with a sound file: a stage (a synthwave floor, a tunnel, a tower to climb or
