@@ -48,6 +48,8 @@ explained [below](#bindings), references under [Paths](#paths).
   it is drawn dashed. This is the only way to build a loop. A binding closes a loop the same way:
   bind to a `chan.feedback`, and wire the end of the loop into its `previous`. The source of a
   `previous` input cooks in every frame its feedback node cooks, even when nothing else shows it.
+  A `tex.feedback`'s `repeat` runs its loop several times per frame (see
+  [A step of several nodes](shaders.md#a-step-of-several-nodes)).
 - **Inputs a node skips.** `tex.switch` with `inactive: skip` and `tex.sequence` cook only the
   inputs they show. So do `geo.merge` and `tex.composite` with a `show` input: channel k of
   `show` says whether `in<k>` shows, and at 0 or below it does not. The chains behind the others

@@ -57,7 +57,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(1.0, 16.0)
                 .more()
                 .doc(
-                    "How often the shader runs per cook, TouchDesigner's Passes. From the second pass on, in0 is the pass before. The shader reads its pass as pn.iteration, from 0. For simulations that take several steps a frame",
+                    "How often the shader runs per cook, TouchDesigner's Passes. From the second pass on, in0 is the pass before. The shader reads its pass as pn.iteration, from 0. For simulations that take several steps a frame. In a loop that a tex.feedback's `repeat` runs several times, pn.iteration counts on over the runs",
                 ),
         )
         .param(
@@ -209,6 +209,8 @@ impl Operator for Shader {
         };
         // 0 and below run once, like 1.
         let iterations = u32::try_from(cx.int("iterations")?.clamp(1, MAX_ITERATIONS)).unwrap_or(1);
+        // In a loop that runs several times per frame, the passes count on over the runs.
+        let (run, runs) = cx.run();
         let palettes = self.palettes.pass_values(cx, &current.header.params);
         let param = |name: &str| palettes.get(name).cloned().or_else(|| cx.param(name).cloned());
         // Every pass renders at the output's size, so from the second pass on in0 has that size
@@ -227,7 +229,13 @@ impl Operator for Shader {
                 }
             }
             let input = PassInput { inputs: &ins, seconds, frame, param: &param };
-            current.pass.render_iteration(gpu, &target, &input, i, iterations)?;
+            current.pass.render_iteration(
+                gpu,
+                &target,
+                &input,
+                run.saturating_mul(iterations).saturating_add(i),
+                runs.saturating_mul(iterations),
+            )?;
             previous = Some(target);
         }
         if iterations == 1 {

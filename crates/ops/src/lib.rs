@@ -93,6 +93,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("tex.dilate", &["grow", "expand", "thicken", "maximum", "morphology"]),
     ("tex.erode", &["shrink", "thin", "minimum", "morphology"]),
     ("tex.face_content", &["projection mapping"]),
+    ("tex.feedback", &["substeps", "iterate", "passes", "repeat"]),
     ("tex.fluid", &["simulation", "physics", "smoke", "ink"]),
     ("tex.from_chan", &["chop to"]),
     ("tex.hsv", &["hsv adjust"]),

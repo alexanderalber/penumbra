@@ -1,7 +1,8 @@
 //! `iterations` on `tex.shader` on WARP: N passes equal N chained nodes, 1 is one pass, the
 //! passes know their number, hostile counts are clamped, the size rule with `custom`, a bound
-//! count; `format` 32f through every pass, with its fallback to 16f; and `bypass`, which runs
-//! no pass and holds a loop where it stands.
+//! count; `format` 32f through every pass, with its fallback to 16f; `bypass`, which runs
+//! no pass and holds a loop where it stands; and a loop that a `tex.feedback` runs several times
+//! per frame.
 
 use penumbra_core::Value;
 use penumbra_gpu::Pixels;
@@ -265,4 +266,74 @@ fn bypass_holds_a_loop_and_runs_no_pass() {
     let ops = [count(Value::Int(3), None), super::set("/count.bypass", Value::Bool(true))];
     let Some(px) = run("iter_bypass_unwired", &ops, "/count") else { return };
     assert_eq!(px.get(0, 0).map(|p| p[0]), Some(3.0));
+}
+
+/// A loop through a `tex.feedback` with `repeat` 3 runs its shader three times per frame: the
+/// same bits as three frames of the loop without it. The passes count on over the runs, and
+/// `bypass` holds the loop in every run.
+#[test]
+fn a_repeated_loop_equals_frames_and_counts_its_passes_over_the_runs() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("iter_repeat");
+    std::fs::write(dir.join("nudge.wgsl"), NUDGE).unwrap();
+    std::fs::write(dir.join("count.wgsl"), COUNT).unwrap();
+    let ring = |repeat: i64| {
+        let [one, n, _] = nudge("32f");
+        let mut ops = vec![
+            one,
+            n,
+            create("/loop", "tex.feedback", &[]),
+            connect("/one", "/loop", 0),
+            connect("/n", "/loop", 1),
+            connect("/loop", "/n", 0),
+        ];
+        if repeat != 1 {
+            ops.push(super::set("/loop.repeat", Value::Int(repeat)));
+        }
+        ops
+    };
+    let red = |rig: &mut Rig| {
+        rig.cook("/n");
+        let r = gpu.read(&rig.tex("/n").unwrap()).unwrap().get(0, 0).unwrap()[0];
+        rig.clock.advance(1);
+        r
+    };
+    let mut plain = Rig::new(gpu.clone(), Some(&dir), &ring(1));
+    plain.cook_until_new("/n", 0);
+    let mut by_frame = vec![gpu.read(&plain.tex("/n").unwrap()).unwrap().get(0, 0).unwrap()[0]];
+    plain.clock.advance(1);
+    for _ in 0..8 {
+        by_frame.push(red(&mut plain));
+    }
+    let mut rig = Rig::new(gpu.clone(), Some(&dir), &ring(3));
+    rig.cook_until_new("/n", 0);
+    let first = gpu.read(&rig.tex("/n").unwrap()).unwrap().get(0, 0).unwrap()[0];
+    rig.clock.advance(1);
+    // The first frame may cook before the shader compiled; from the frame after, three runs.
+    let start = by_frame.iter().position(|r| *r == first).expect("a value of the plain loop");
+    assert_eq!(red(&mut rig), by_frame[start + 3]);
+    assert_eq!(red(&mut rig), by_frame[start + 6]);
+    let running = by_frame[start + 6];
+    rig.edit(&[super::set("/n.bypass", Value::Bool(true))]);
+    for _ in 0..3 {
+        assert_eq!(red(&mut rig), running, "bypassed, the loop stands in every run");
+    }
+
+    // Two passes in each of three runs: pass numbers 0 to 5 of 6, red counts six passes.
+    let ops = [
+        create("/zero", "tex.constant", &[("width", Value::Int(2)), ("height", Value::Int(2))]),
+        count(Value::Int(2), None),
+        create("/loop", "tex.feedback", &[("repeat", Value::Int(3))]),
+        connect("/zero", "/loop", 0),
+        connect("/count", "/loop", 1),
+        connect("/loop", "/count", 0),
+    ];
+    let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+    let before = gpu.read(&rig.cook_until_new("/count", 0)).unwrap().get(0, 0).unwrap()[0];
+    rig.clock.advance(1);
+    rig.cook("/count");
+    let px = gpu.read(&rig.tex("/count").unwrap()).unwrap();
+    let [r, iteration, iterations, _] = px.get(0, 0).unwrap();
+    assert_eq!((iteration, iterations), (5.0, 6.0));
+    assert_eq!(r - before, 6.0, "one frame is six passes");
 }

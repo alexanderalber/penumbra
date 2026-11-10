@@ -335,6 +335,7 @@ Outputs: `out` (tex).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `reset` | bool | `false` |  | Pass `initial` instead, while on |
+| `repeat` | int | `1` | 1 to 8 (soft, held within 1 to 64) | How often the loop runs per frame. Every node between this one and the end wired into `previous` cooks this many times, each run reading the run before; nodes outside the loop cook once. For a simulation whose step is several nodes. Costs the loop's time this many times. Shaders in the loop read their run as pn.iteration |
 | `persist` *(more)* | bool | `true` |  | Keep the loop's last frame in the state snapshots, so a restart carries on from it |
 
 ### tex.fit
@@ -977,7 +978,7 @@ Outputs: `out` (tex).
 | `width` | int | `1920` | 1 to 16384 px | Width of the output in pixels, used with resolution custom or without in0. res.optimize may change it unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the output in pixels, used with resolution custom or without in0. res.optimize may change it unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
-| `iterations` *(more)* | int | `1` | 1 to 16 (soft, held within 1 to 64) | How often the shader runs per cook, TouchDesigner's Passes. From the second pass on, in0 is the pass before. The shader reads its pass as pn.iteration, from 0. For simulations that take several steps a frame |
+| `iterations` *(more)* | int | `1` | 1 to 16 (soft, held within 1 to 64) | How often the shader runs per cook, TouchDesigner's Passes. From the second pass on, in0 is the pass before. The shader reads its pass as pn.iteration, from 0. For simulations that take several steps a frame. In a loop that a tex.feedback's `repeat` runs several times, pn.iteration counts on over the runs |
 | `bypass` *(more)* | bool | `false` |  | While on, the output is in0 as it is and no pass runs, TouchDesigner's Bypass flag. Bind a simulation's pause to it: a step whose in0 is its own last frame then holds the picture and costs nothing. While in0 is unwired the shader runs as usual |
 | `format` *(more)* | 16f \| 32f | `"16f"` |  | Number format of the output, TouchDesigner's Pixel Format. Use 32f for simulation state that 16f rounds away. 32f takes twice the memory; 16f: half floats, about 3 decimal digits, like every other picture; 32f: 32-bit floats, about 7 decimal digits, in every pass. A GPU that cannot filter 32-bit floats gets 16f and a warning |
 

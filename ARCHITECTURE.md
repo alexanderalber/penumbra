@@ -71,7 +71,9 @@ Three declarations on a node type change the pull. An input marked `previous` re
 source made the pass before: it is no dependency, so a wire into it may close a loop
 (`tex.feedback`). A node with an input chooser (`tex.switch`, `tex.sequence`) names the inputs
 it needs before they cook; its steering inputs (`steers`) cook first, so the choice can read
-them. An `eager` node (`chan.clock`, `chan.sequence`) cooks in every pass, wanted or not. The
+them. An `eager` node (`chan.clock`, `chan.sequence`) cooks in every pass, wanted or not. A
+feedback node's `repeat` param above 1 cooks every node on its loop that many times per pass,
+before anything outside the loop reads it. The
 user-facing version is in [Concepts](docs/concepts.md#how-the-network-runs).
 
 Time is integer ticks derived from the frame number, not wall-clock deltas, so a show is

@@ -81,6 +81,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .stateful()
         .param(ParamSpec::bool("reset", false).doc("Pass `initial` instead, while on"))
         .param(
+            ParamSpec::int(penumbra_graph::REPEAT, 1)
+                .clamp(1.0, penumbra_graph::MAX_REPEAT as f64)
+                .range(1.0, 8.0)
+                .doc(
+                    "How often the loop runs per frame. Every node between this one and the end wired into `previous` cooks this many times, each run reading the run before; nodes outside the loop cook once. For a simulation whose step is several nodes. Costs the loop's time this many times. Shaders in the loop read their run as pn.iteration",
+                ),
+        )
+        .param(
             ParamSpec::bool("persist", true)
                 .more()
                 .doc("Keep the loop's last frame in the state snapshots, so a restart carries on from it"),

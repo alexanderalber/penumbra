@@ -28,6 +28,15 @@ work on but `initial`.
 With `persist` on (the default), the loop's last frame goes into the state snapshots, so a
 restart carries on from where it stopped.
 
+## Several runs per frame
+
+`repeat` runs the loop several times per frame. With `repeat` 3, every node between the feedback
+and the end wired into `previous` cooks three times, each run starting from the run before. A
+trail then grows three times as fast and looks as it does at 1. Nodes outside the loop cook
+once: what feeds the loop from outside, and what reads its result. The clock stands still
+between runs. The loop costs its time three times. Details for simulations and shaders:
+[A step of several nodes](../shaders.md#a-step-of-several-nodes).
+
 ## Example
 
 The `feedback` example project: text drawn over a loop that zooms, turns, dims and shifts the hue

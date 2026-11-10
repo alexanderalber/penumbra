@@ -196,6 +196,32 @@ runs as usual.
 reads the wired `in0`, at its own size; later passes read an `in0` of the output's size. Take
 the size from `textureDimensions(in0)` in each pass.
 
+## A step of several nodes
+
+`iterations` repeats one shader. A step that needs several nodes (agents that move, a
+`tex.scatter` that draws them, a shader that spreads the trail) repeats with the `repeat` param
+of the loop's `tex.feedback`. With `repeat` 4, every node on the loop through that feedback
+cooks 4 times per frame, and each run reads the run before through the feedback.
+
+- Nodes outside the loop cook once per frame: the inputs it reads and the nodes that read its
+  result. Those see the last run.
+- Loops that share a node run together, as often as the largest `repeat` among their
+  feedbacks says. A loop the step only reads from keeps its own count.
+- `pn_time` and every `chan.clock` are the same in all runs. A shader that needs different
+  random numbers per run uses `pn.iteration`: it counts the passes of the frame over all runs,
+  and `pn.iterations` is their total (`repeat` times `iterations`). With `repeat` 1 both are as
+  before.
+- A shader that adds a time step per cook adds it in every run. Divide by `pn.iterations`, or
+  keep the time in the state.
+- A `chan.from_tex` on the loop reads back in every run. Put measurements after the loop.
+- A paused clock or a locked feedback stops the runs: the loop stands as without `repeat`.
+- Cost: the loop's nodes `repeat` times. `repeat` is held between 1 and 64 and can be bound,
+  for example to a component's `steps`.
+
+TouchDesigner runs a Feedback TOP loop once per frame. For several steps it offers a GLSL TOP's
+passes for one shader, or copies of the step network side by side. `repeat` does the second
+without copies.
+
 ## Precision: 16f or 32f
 
 Every picture between nodes is RGBA in half floats (`16f`): about 3 decimal digits. Between 1

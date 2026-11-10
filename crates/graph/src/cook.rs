@@ -32,6 +32,16 @@
 //! [`ThumbnailPolicy::mode`]; which pictures are still up to date without cooking is
 //! [`Cooker::current`]. Not to be confused with locking a node
 //! ([`crate::NodeDef::locked`]), which holds its outputs, not just its picture.
+//!
+//! Loops that run several times per frame: a node with a previous-result input and a [`REPEAT`]
+//! param set above 1 (a `tex.feedback`) makes every node on a loop through it run that many times
+//! per pass. Before the first of those nodes is evaluated in a pass, the runs but the last are
+//! cooked: each evaluates what the loop's previous-result inputs read, then the loop's nodes count
+//! as not evaluated again and its feedback nodes cook once more. The last run is the ordinary
+//! pull of the pass, so what reads the loop from outside sees the last run's results. Nodes
+//! outside the loop cook once per pass, the clock does not move between runs, and a run in which
+//! no feedback node of the loop cooked (a paused clock, a locked node) ends the runs. Without a
+//! `repeat` set, nothing of this runs.
 
 use std::any::{Any, TypeId};
 use std::cell::{Cell, RefCell};
@@ -74,6 +84,12 @@ const TRIM_CHECK_EVERY: u64 = 30;
 /// result is kept.
 const PANIC_RETRY: Duration = Duration::from_secs(2);
 
+/// The param of a feedback node that runs its loop several times per frame (see the module
+/// text). A node kind declares it to offer it; an int, 1 by default.
+pub const REPEAT: &str = "repeat";
+/// Most runs of a loop per frame. A bound value gone wild cannot stall the show for longer.
+pub const MAX_REPEAT: i64 = 64;
+
 /// What an operator sees while cooking.
 pub struct CookContext<'a> {
     node: NodeId,
@@ -95,6 +111,7 @@ pub struct CookContext<'a> {
     wanted_changed: bool,
     since_last_use: Option<f64>,
     exact: bool,
+    run: (u32, u32),
     spawner: &'a Spawner,
     services: &'a Services,
     warning: RefCell<Option<String>>,
@@ -217,6 +234,14 @@ impl<'a> CookContext<'a> {
     /// frame gives the same picture on every run and every machine.
     pub fn exact_frames(&self) -> bool {
         self.exact
+    }
+
+    /// Which run of its loop this cook is in the frame, from 0, and how many runs the loop has:
+    /// (0, 1) outside a loop that a feedback's [`REPEAT`] runs several times. The show time is
+    /// the same in every run, so a node that needs different random numbers per run mixes this
+    /// in.
+    pub fn run(&self) -> (u32, u32) {
+        self.run
     }
 
     /// A shared service the host provided with [`Cooker::provide`], e.g. the GPU.
@@ -651,6 +676,28 @@ struct Runtime {
     /// Per bound choice with presets: what its binding gave when last asked
     /// ([`Cooker::bound_presets`]).
     preset_edges: BTreeMap<Name, PresetEdge>,
+    /// A feedback node of a loop with several runs: it cooks in the next run although its
+    /// clock and inputs did not move ([`Cooker::run_loop`]).
+    again: bool,
+    /// Which run of its loop the next cook is, and of how many ([`CookContext::run`]).
+    run: (u32, u32),
+}
+
+/// A loop that runs several times per pass: the nodes on the loops through the nodes whose
+/// [`REPEAT`] is set or bound. Loops that share a node are one.
+#[derive(Clone, Debug, Default)]
+struct Repeat {
+    /// The nodes whose `repeat` is set or bound; the loop runs as often as the largest says.
+    counters: Vec<NodeId>,
+    /// Every node on the loop.
+    members: Vec<NodeId>,
+    /// Members with a wired previous-result input whose source is on the loop: they cook once
+    /// more in each run.
+    feedback: Vec<NodeId>,
+    /// Those sources: each run evaluates them.
+    tails: Vec<NodeId>,
+    /// The pass whose runs are done.
+    done: u64,
 }
 
 /// What the binding of a choice with presets gave when last asked: only a change of it writes
@@ -752,6 +799,8 @@ impl Runtime {
             restart_seen: None,
             restart_pass: 0,
             preset_edges: BTreeMap::new(),
+            again: false,
+            run: (0, 1),
         }
     }
 
@@ -872,6 +921,10 @@ pub struct Cooker {
     /// Components with a bound choice with presets, as of the last sync
     /// ([`Cooker::bound_presets`]).
     choosers: Vec<NodeId>,
+    /// Loops that run several times per pass, as of the last sync, and the loop of each of
+    /// their nodes. Both empty while no node has its `repeat` set or bound.
+    repeats: Vec<Repeat>,
+    repeat_of: BTreeMap<NodeId, usize>,
     /// Nodes are evaluated for thumbnails now, which does not count as use.
     for_thumbnails: bool,
     /// Time of the passes since the profile was last taken.
@@ -906,6 +959,8 @@ impl Cooker {
             feedback: Vec::new(),
             restarters: Vec::new(),
             choosers: Vec::new(),
+            repeats: Vec::new(),
+            repeat_of: BTreeMap::new(),
             for_thumbnails: false,
             spent: PassSpent::default(),
             exact: false,
@@ -1190,6 +1245,7 @@ impl Cooker {
             .values()
             .any(|rt| rt.ty.as_ref().is_some_and(|t| t.desc().outputs.iter().any(|o| o.lazy)));
         self.restarters = self.find_restarters(net);
+        self.find_repeats(net);
         self.choosers = self
             .runtimes
             .iter()
@@ -1243,6 +1299,172 @@ impl Cooker {
             }
         }
         out
+    }
+
+    /// The loops that run several times per pass ([`Repeat`]): per node whose `repeat` is set
+    /// or bound, the nodes both upstream and downstream of it, through every input and binding,
+    /// previous-result inputs included. Loops that share a node merge.
+    fn find_repeats(&mut self, net: &Network) {
+        for id in self.repeats.iter().flat_map(|r| r.members.iter()) {
+            if let Some(rt) = self.runtimes.get_mut(id) {
+                rt.run = (0, 1);
+            }
+        }
+        self.repeats.clear();
+        self.repeat_of.clear();
+        let counters: Vec<NodeId> = self
+            .feedback
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.runtimes.get(id).is_some_and(|rt| {
+                    rt.ty.as_ref().is_some_and(|t| t.desc().param_spec(REPEAT).is_some())
+                        && (rt.def.params.contains_key(REPEAT) || rt.def.is_bound(REPEAT))
+                })
+            })
+            .collect();
+        if counters.is_empty() {
+            return;
+        }
+        let mut readers: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+        for def in net.nodes() {
+            for src in def.sources() {
+                readers.entry(src).or_default().push(def.id);
+            }
+        }
+        let reach = |start: NodeId, next: &dyn Fn(NodeId) -> Vec<NodeId>| {
+            let mut seen = BTreeSet::new();
+            let mut todo = vec![start];
+            while let Some(id) = todo.pop() {
+                if seen.insert(id) {
+                    todo.extend(next(id));
+                }
+            }
+            seen
+        };
+        let mut loops: Vec<(Vec<NodeId>, BTreeSet<NodeId>)> = Vec::new();
+        for counter in counters {
+            let up = reach(counter, &|id| net.node(id).map(|d| d.sources().collect()).unwrap_or_default());
+            let down = reach(counter, &|id| readers.get(&id).cloned().unwrap_or_default());
+            let mut members: BTreeSet<NodeId> = up.intersection(&down).copied().collect();
+            let mut with = vec![counter];
+            // Merge every loop sharing a node with this one.
+            let mut i = 0;
+            while i < loops.len() {
+                if loops.get(i).is_some_and(|(_, m)| !m.is_disjoint(&members)) {
+                    let (c, m) = loops.swap_remove(i);
+                    with.extend(c);
+                    members.extend(m);
+                } else {
+                    i += 1;
+                }
+            }
+            loops.push((with, members));
+        }
+        for (counters, members) in loops {
+            let mut feedback = Vec::new();
+            let mut tails = BTreeSet::new();
+            for id in &members {
+                let Some(def) = net.node(*id) else { continue };
+                let sources: Vec<NodeId> = def
+                    .inputs
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| def.is_previous(*i))
+                    .filter_map(|(_, p)| p.map(|p| p.node))
+                    .filter(|src| members.contains(src))
+                    .collect();
+                if !sources.is_empty() {
+                    feedback.push(*id);
+                    tails.extend(sources);
+                }
+            }
+            let index = self.repeats.len();
+            for id in &members {
+                self.repeat_of.insert(*id, index);
+            }
+            self.repeats.push(Repeat {
+                counters,
+                members: members.into_iter().collect(),
+                feedback,
+                tails: tails.into_iter().collect(),
+                done: 0,
+            });
+        }
+    }
+
+    /// How often the loop of node `id` with a [`REPEAT`] param runs in this pass: its bound
+    /// value, else its own, rounded and held to 1 to [`MAX_REPEAT`].
+    fn runs_of(&self, id: NodeId) -> i64 {
+        let Some(rt) = self.runtimes.get(&id) else { return 1 };
+        let bound = if rt.def.is_bound(REPEAT) { self.resolve_binds(rt).get(REPEAT).cloned() } else { None };
+        bound
+            .or_else(|| rt.stored_or_default(REPEAT))
+            .and_then(|v| v.as_f64())
+            .filter(|v| v.is_finite())
+            .map_or(1, |v| v.round().clamp(1.0, MAX_REPEAT as f64) as i64)
+    }
+
+    /// Cooks all runs but the last of loop `index` in this pass ([`Repeat`]); the ordinary pull
+    /// of the pass is the last run. Called before the first node of the loop is evaluated in the
+    /// pass, so nothing outside the loop has read a result of it yet.
+    fn run_loop(&mut self, index: usize, time: FrameTime, report: &mut CookReport) {
+        let pass = self.pass;
+        let Some(repeat) = self.repeats.get_mut(index) else { return };
+        repeat.done = pass;
+        let repeat = repeat.clone();
+        // What the counts follow cooks first, unless it is on the loop itself (then the value
+        // of its last cook counts).
+        for counter in &repeat.counters {
+            let sources: Vec<NodeId> = self
+                .runtimes
+                .get(counter)
+                .map(|rt| rt.def.binds.values().map(|b| b.node).collect())
+                .unwrap_or_default();
+            for src in sources {
+                if self.repeat_of.get(&src) != Some(&index) {
+                    self.evaluate(src, time, report);
+                }
+            }
+        }
+        let runs = repeat.counters.iter().map(|c| self.runs_of(*c)).max().unwrap_or(1);
+        let runs = u32::try_from(runs).unwrap_or(1);
+        let mark = |cooker: &mut Self, run: u32| {
+            for id in &repeat.members {
+                if let Some(rt) = cooker.runtimes.get_mut(id) {
+                    rt.run = (run, runs);
+                }
+            }
+        };
+        mark(self, 0);
+        for run in 1..runs {
+            for &tail in &repeat.tails {
+                self.evaluate(tail, time, report);
+            }
+            // A feedback node cooked in the run just done: it cooked in this pass, and the call
+            // to cook again that the run before left it was used up.
+            let moved = repeat
+                .feedback
+                .iter()
+                .any(|id| self.runtimes.get(id).is_some_and(|rt| rt.cooked_pass == pass && !rt.again));
+            if !moved {
+                // The loop stands still in this pass: the clock is paused or a node is locked.
+                break;
+            }
+            for id in &repeat.members {
+                if let Some(rt) = self.runtimes.get_mut(id)
+                    && rt.evaluated_pass == pass
+                {
+                    rt.evaluated_pass = 0;
+                }
+            }
+            for id in &repeat.feedback {
+                if let Some(rt) = self.runtimes.get_mut(id) {
+                    rt.again = true;
+                }
+            }
+            mark(self, run);
+        }
     }
 
     /// After component `id` cooked in this pass: when its `reset` is on, or the value in effect
@@ -1411,6 +1633,14 @@ impl Cooker {
         let mut stack = vec![(root, Visit::Expand)];
         let mut expanded = BTreeSet::new();
         while let Some((id, visit)) = stack.pop() {
+            // The first node of a loop with several runs evaluated in this pass: the runs but
+            // the last cook now.
+            if matches!(visit, Visit::Expand)
+                && let Some(&index) = self.repeat_of.get(&id)
+                && self.repeats.get(index).is_some_and(|r| r.done != self.pass)
+            {
+                self.run_loop(index, time, report);
+            }
             let Some(rt) = self.runtimes.get(&id) else { continue };
             let upstream: Vec<NodeId> = match visit {
                 Visit::Cook => {
@@ -1625,6 +1855,7 @@ impl Cooker {
 
         let Some(rt) = self.runtimes.get_mut(&id) else { return };
         rt.evaluated_pass = self.pass;
+        let again = std::mem::take(&mut rt.again);
         rt.seen_bound = bound;
         if rt.bind_warning != bind_warning {
             rt.bind_warning = bind_warning;
@@ -1665,7 +1896,14 @@ impl Cooker {
         // A channel driving a parameter is a parameter change, but only when the value moved:
         // a source that recooked to the same number does not recook this node.
         let params_changed = rt.params_changed || bound_changed;
-        if !(rt.fresh || params_changed || rt.notified || time_moved || inputs_changed || wanted_changed) {
+        if !(rt.fresh
+            || params_changed
+            || rt.notified
+            || time_moved
+            || inputs_changed
+            || wanted_changed
+            || again)
+        {
             return;
         }
         // A node whose operator panicked is made anew only after an edit of its params, a change
@@ -1715,6 +1953,7 @@ impl Cooker {
             wanted_changed,
             since_last_use,
             exact: self.exact,
+            run: rt.run,
             spawner: &self.spawner,
             services: &self.services,
             warning: RefCell::new(None),
@@ -3657,6 +3896,216 @@ mod tests {
         f.edit(&[Op::Lock { path: pp("/c/d/sim"), locked: true }]);
         f.set("/key.value", Value::Float(1.0));
         assert_eq!(step(&mut f), (0.0, 7.0, 2.0));
+    }
+
+    /// `/seed` (0) starts the loop `/loop` -> `/add` (+ `/one`) -> `/loop`; `/show` reads the
+    /// loop from outside. `/loop` runs `repeat` times per pass when given.
+    fn ring(repeat: Option<i64>) -> Fixture {
+        let mut f = Fixture::new(&[
+            create("/seed", "test.const"),
+            create("/one", "test.const"),
+            create("/loop", "test.loop"),
+            create("/add", "test.add"),
+            create("/zero", "test.const"),
+            create("/show", "test.add"),
+            connect("/seed", "/loop", 0),
+            connect("/add", "/loop", 1),
+            connect("/loop", "/add", 0),
+            connect("/one", "/add", 1),
+            connect("/add", "/show", 0),
+            connect("/zero", "/show", 1),
+        ]);
+        f.set("/one.value", Value::Float(1.0));
+        if let Some(n) = repeat {
+            f.set("/loop.repeat", Value::Int(n));
+        }
+        f
+    }
+
+    fn bind_to(param: &str, from: &str, name: Option<&str>) -> Op {
+        Op::Bind {
+            param: ParamPath::parse(param).unwrap(),
+            component: None,
+            from: pp(from),
+            channel: None,
+            cell: None,
+            format: None,
+            from_param: name.map(|n| Name::new(n).unwrap()),
+        }
+    }
+
+    #[test]
+    fn n_runs_of_a_loop_in_a_frame_equal_n_frames() {
+        const FRAMES: usize = 6;
+        for n in [1_usize, 2, 5] {
+            let mut plain = ring(None);
+            let mut by_frame = Vec::new();
+            for _ in 0..n * FRAMES {
+                plain.cook(&["/show"]);
+                by_frame.push(plain.value("/show").unwrap());
+                plain.clock.advance(1);
+            }
+            let mut f = ring(Some(n as i64));
+            for frame in 0..FRAMES {
+                let cooked = f.cook(&["/show"]);
+                let want = by_frame[n * (frame + 1) - 1];
+                assert_eq!(f.value("/show"), Some(want), "{n} runs, frame {frame}");
+                assert_eq!(f.value("/add"), Some(want));
+                let times = |p: &str| cooked.iter().filter(|c| *c == p).count();
+                assert_eq!((times("/loop"), times("/add")), (n, n), "{n} runs, frame {frame}: {cooked:?}");
+                // Outside the loop: once per pass, or not at all when nothing changed.
+                assert_eq!(times("/show"), 1);
+                assert!(times("/one") <= 1 && times("/seed") <= 1);
+                f.clock.advance(1);
+            }
+            assert_eq!(f.value("/show"), Some((n * FRAMES) as f64));
+        }
+    }
+
+    #[test]
+    fn the_runs_cook_in_order_and_know_their_number() {
+        let mut f = Fixture::new(&[
+            create("/seed", "test.const"),
+            create("/loop", "test.loop"),
+            create("/run", "test.run"),
+            create("/after", "test.run"),
+            connect("/seed", "/loop", 0),
+            connect("/run", "/loop", 1),
+            connect("/loop", "/run", 0),
+            connect("/run", "/after", 0),
+        ]);
+        f.set("/loop.repeat", Value::Int(3));
+        f.cook(&["/after"]);
+        // Runs 0, 1, 2 leave their number plus 1 as the next digit; outside, run 0 of 1.
+        assert_eq!(f.value("/run"), Some(123.0));
+        assert_eq!(f.value("/after"), Some(1231.0));
+        f.clock.advance(1);
+        f.cook(&["/after"]);
+        assert_eq!(f.value("/run"), Some(123_123.0));
+        // Back to one run: run 0 of 1 again.
+        f.set("/loop.repeat", Value::Int(1));
+        f.clock.advance(1);
+        f.cook(&["/after"]);
+        assert_eq!(f.value("/run"), Some(1_231_231.0));
+    }
+
+    /// With `repeat` at 1, bound or not, a loop cooks as before the runs existed: the same
+    /// nodes in the same order, the same values.
+    #[test]
+    fn one_run_cooks_as_a_loop_without_repeat() {
+        let mut plain = ring(None);
+        let mut bound = ring(None);
+        bound.edit(&[create("/k", "test.const")]);
+        bound.set("/k.value", Value::Float(1.0));
+        bound.edit(&[bind_to("/loop.repeat", "/k", None)]);
+        // A typed 1 is the default and is not stored.
+        let mut typed = ring(Some(1));
+        assert!(!typed.net.node(typed.id("/loop")).unwrap().params.contains_key(REPEAT));
+        assert_eq!(bound.cooker.repeats.len(), 0, "not synced yet");
+        for frame in 0..8 {
+            let a = plain.cook(&["/show"]);
+            let b: Vec<String> = bound.cook(&["/show"]).into_iter().filter(|p| p != "/k").collect();
+            let c = typed.cook(&["/show"]);
+            assert_eq!(a, b, "frame {frame}");
+            assert_eq!(a, c, "frame {frame}");
+            assert_eq!(plain.value("/show"), bound.value("/show"));
+            assert_eq!(plain.value("/show"), Some(frame as f64 + 1.0));
+            for f in [&mut plain, &mut bound, &mut typed] {
+                f.clock.advance(1);
+            }
+        }
+        assert_eq!(bound.cooker.repeats.len(), 1, "the bound loop is known");
+        assert!(typed.cooker.repeats.is_empty());
+    }
+
+    #[test]
+    fn a_loop_in_a_component_follows_its_steps_restarts_and_stands_with_the_clock() {
+        let mut f = Fixture::new(&[
+            create("/c", "test.comp"),
+            create("/c/seed", "test.const"),
+            create("/c/one", "test.const"),
+            create("/c/loop", "test.loop"),
+            create("/c/add", "test.add"),
+            create("/key", "test.const"),
+            connect("/c/seed", "/c/loop", 0),
+            connect("/c/add", "/c/loop", 1),
+            connect("/c/loop", "/c/add", 0),
+            connect("/c/one", "/c/add", 1),
+        ]);
+        f.set("/c/one.value", Value::Float(1.0));
+        f.set("/c.params", Value::Text("@param steps int = 3 1..8".into()));
+        f.edit(&[bind_to("/c/loop.repeat", "/c", Some("steps")), bind_to("/c.reset", "/key", None)]);
+        let frame = |f: &mut Fixture| {
+            f.cook(&["/c/add"]);
+            f.clock.advance(1);
+            f.value("/c/add").unwrap()
+        };
+        assert_eq!(frame(&mut f), 3.0);
+        assert_eq!(frame(&mut f), 6.0);
+        // A new count counts in the same pass.
+        f.set("/c.steps", Value::Int(5));
+        assert_eq!(frame(&mut f), 11.0);
+        // A reset starts the loop over from its seed, and the runs go on from there.
+        f.set("/key.value", Value::Float(1.0));
+        assert_eq!(frame(&mut f), 5.0);
+        assert_eq!(frame(&mut f), 5.0, "held at the start while reset is on");
+        f.set("/key.value", Value::Float(0.0));
+        assert_eq!(frame(&mut f), 10.0);
+        f.cook(&["/c/add"]);
+        assert_eq!(f.value("/c/add"), Some(15.0));
+        // A clock that stands: no run moves the loop, however often the pass cooks.
+        for _ in 0..3 {
+            let cooked = f.cook(&["/c/add"]);
+            assert!(cooked.is_empty(), "{cooked:?}");
+            assert_eq!(f.value("/c/add"), Some(15.0));
+        }
+        // A locked feedback holds the loop as well.
+        f.edit(&[Op::Lock { path: pp("/c/loop"), locked: true }]);
+        f.clock.advance(1);
+        assert_eq!(frame(&mut f), 15.0);
+        f.edit(&[Op::Lock { path: pp("/c/loop"), locked: false }]);
+        assert_eq!(frame(&mut f), 20.0);
+    }
+
+    /// Two loops that share a node run together, as often as the larger count says, and a
+    /// loop the first one only reads from runs its own count, once per pass.
+    #[test]
+    fn loops_sharing_a_node_run_together() {
+        let mut f = Fixture::new(&[
+            create("/seed", "test.const"),
+            create("/one", "test.const"),
+            create("/a", "test.loop"),
+            create("/b", "test.loop"),
+            create("/sum", "test.add"),
+            create("/up", "test.add"),
+            create("/src_loop", "test.loop"),
+            create("/src", "test.add"),
+            connect("/seed", "/src_loop", 0),
+            connect("/src", "/src_loop", 1),
+            connect("/src_loop", "/src", 0),
+            connect("/one", "/src", 1),
+            connect("/seed", "/a", 0),
+            connect("/seed", "/b", 0),
+            connect("/a", "/sum", 0),
+            connect("/b", "/sum", 1),
+            connect("/sum", "/up", 0),
+            connect("/src", "/up", 1),
+            connect("/up", "/a", 1),
+            connect("/sum", "/b", 1),
+        ]);
+        f.set("/one.value", Value::Float(1.0));
+        f.set("/a.repeat", Value::Int(2));
+        f.set("/b.repeat", Value::Int(3));
+        f.set("/src_loop.repeat", Value::Int(4));
+        let cooked = f.cook(&["/up"]);
+        let times = |p: &str| cooked.iter().filter(|c| *c == p).count();
+        assert_eq!((times("/a"), times("/b"), times("/sum"), times("/up")), (3, 3, 3, 3), "{cooked:?}");
+        assert_eq!((times("/src_loop"), times("/src")), (4, 4));
+        assert_eq!(f.cooker.repeats.len(), 2);
+        // src is 4 throughout; a and b start at 0: up = a + b + 4 each run, b takes a + b.
+        // Run 0: sum 0, up 4. Run 1: a 4, b 0, sum 4, up 8. Run 2: a 8, b 4, sum 12, up 16.
+        assert_eq!(f.value("/src"), Some(4.0));
+        assert_eq!(f.value("/up"), Some(16.0));
     }
 
     #[test]

@@ -270,6 +270,33 @@ pub fn test_types() -> NodeTypes {
             .time_dependent(),
         |cx| chan(input(cx, 0)),
     );
+    simple(
+        &mut t,
+        NodeDesc::new(
+            "test.loop",
+            "A feedback: `previous` once it has a value, else `initial`; `repeat` runs its loop several times a frame",
+        )
+        .stateful()
+        .param(ParamSpec::int(crate::REPEAT, 1).clamp(1.0, crate::MAX_REPEAT as f64))
+        .input("initial", DataKind::Chan)
+        .input_previous("previous", DataKind::Chan)
+        .output("out", DataKind::Chan)
+        .time_dependent(),
+        |cx| match (cx.input(1), cx.input(0)) {
+            (Some(d), _) | (None, Some(d)) => Ok(Cooked::Outputs(vec![d.clone()])),
+            (None, None) => Err(CookError::Pending),
+        },
+    );
+    simple(
+        &mut t,
+        NodeDesc::new(
+            "test.run",
+            "Its input times 10 plus its run number plus 1: the runs' order in the digits",
+        )
+        .input("in", DataKind::Chan)
+        .output("out", DataKind::Chan),
+        |cx| chan(input(cx, 0) * 10.0 + f64::from(cx.run().0) + 1.0),
+    );
     t.register(FnNodeType::new(
         NodeDesc::new("test.counter", "Counts its cooks (time-dependent); keeps the count as state")
             .time_dependent()

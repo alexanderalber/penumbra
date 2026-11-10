@@ -24,8 +24,8 @@ pub mod watch;
 mod testing;
 
 pub use cook::{
-    CookContext, CookReport, CookStats, Cooker, InputChoice, Kept, NodeSpent, NodeStatus, PassSpent, Profile,
-    ResetOutcome, ThumbnailMode, ThumbnailPolicy, Waker,
+    CookContext, CookReport, CookStats, Cooker, InputChoice, Kept, MAX_REPEAT, NodeSpent, NodeStatus,
+    PassSpent, Profile, REPEAT, ResetOutcome, ThumbnailMode, ThumbnailPolicy, Waker,
 };
 pub use declared::{Exposed, PARAMS, Planned, Put, RESET, declared_in, declares, exposed_of, spec_in};
 pub use document::{Document, EditOutcome};

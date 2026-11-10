@@ -287,7 +287,7 @@ details.target { outline: 2px solid var(--accent); }
 <p>All three make the source cook first. A bound param recooks its node only when the value it takes changes. Wires may not form a loop, except into a feedback input (below). Bindings are explained <a href="#concepts-bindings">below</a>, references under <a href="#concepts-paths">Paths</a>.</p>
 <h4 id="concepts-inputs-and-nodes-that-cook-differently">Inputs and nodes that cook differently</h4>
 <ul>
-<li><strong>Feedback (<code>previous</code>).</strong> The <code>previous</code> input of a <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a> or a <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a> sees what its source made in the frame before. The wire into it may run backwards and close a loop; it is drawn dashed. This is the only way to build a loop. A binding closes a loop the same way: bind to a <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a>, and wire the end of the loop into its <code>previous</code>. The source of a <code>previous</code> input cooks in every frame its feedback node cooks, even when nothing else shows it.
+<li><strong>Feedback (<code>previous</code>).</strong> The <code>previous</code> input of a <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a> or a <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a> sees what its source made in the frame before. The wire into it may run backwards and close a loop; it is drawn dashed. This is the only way to build a loop. A binding closes a loop the same way: bind to a <a class="ref" href="#chan.feedback"><code>chan.feedback</code></a>, and wire the end of the loop into its <code>previous</code>. The source of a <code>previous</code> input cooks in every frame its feedback node cooks, even when nothing else shows it. A <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a>'s <code>repeat</code> runs its loop several times per frame (see <a href="#shaders-a-step-of-several-nodes">A step of several nodes</a>).
 </li>
 <li><strong>Inputs a node skips.</strong> <a class="ref" href="#tex.switch"><code>tex.switch</code></a> with <code>inactive: skip</code> and <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> cook only the inputs they show. So do <a class="ref" href="#geo.merge"><code>geo.merge</code></a> and <a class="ref" href="#tex.composite"><code>tex.composite</code></a> with a <code>show</code> input: channel k of <code>show</code> says whether <code>in&lt;k&gt;</code> shows, and at 0 or below it does not. The chains behind the others stand still and cost nothing until they are shown again. A feedback loop, cache or time machine there carries on from where it stopped.
 </li>
@@ -2270,6 +2270,25 @@ fn pn_band(p: PnPalette, t: f32) -&gt; vec4f     // 0..1 in equal bands, one per
 <p><strong>Steps from a channel.</strong> <code>iterations</code> can be bound like any number param, for example <a class="ref" href="#node.bind"><code>node.bind {param: &quot;/step.iterations&quot;, from: &quot;/speed&quot;}</code></a>. A pass that returns <code>in0</code> unchanged still costs a full pass. Bind the count to what a look needs, rather than running 64 passes and skipping most of them in the shader.</p>
 <p><strong>Pause.</strong> Bind the node's <code>bypass</code> (under &quot;more&quot;; TouchDesigner's Bypass flag) to the simulation's pause. While it is on, the output is <code>in0</code> as it is and no pass runs. In a loop through a <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a>, <code>in0</code> is the step's own last frame, so the state stands and costs nothing; when <code>bypass</code> goes off, the passes carry on from it. While <code>in0</code> is unwired, the shader runs as usual.</p>
 <p><strong>Size.</strong> Every pass renders at the output's size. With <code>resolution</code> <code>custom</code> only the first pass reads the wired <code>in0</code>, at its own size; later passes read an <code>in0</code> of the output's size. Take the size from <code>textureDimensions(in0)</code> in each pass.</p>
+<h3 id="shaders-a-step-of-several-nodes">A step of several nodes</h3>
+<p><code>iterations</code> repeats one shader. A step that needs several nodes (agents that move, a <a class="ref" href="#tex.scatter"><code>tex.scatter</code></a> that draws them, a shader that spreads the trail) repeats with the <code>repeat</code> param of the loop's <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a>. With <code>repeat</code> 4, every node on the loop through that feedback cooks 4 times per frame, and each run reads the run before through the feedback.</p>
+<ul>
+<li>Nodes outside the loop cook once per frame: the inputs it reads and the nodes that read its result. Those see the last run.
+</li>
+<li>Loops that share a node run together, as often as the largest <code>repeat</code> among their feedbacks says. A loop the step only reads from keeps its own count.
+</li>
+<li><code>pn_time</code> and every <a class="ref" href="#chan.clock"><code>chan.clock</code></a> are the same in all runs. A shader that needs different random numbers per run uses <code>pn.iteration</code>: it counts the passes of the frame over all runs, and <code>pn.iterations</code> is their total (<code>repeat</code> times <code>iterations</code>). With <code>repeat</code> 1 both are as before.
+</li>
+<li>A shader that adds a time step per cook adds it in every run. Divide by <code>pn.iterations</code>, or keep the time in the state.
+</li>
+<li>A <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> on the loop reads back in every run. Put measurements after the loop.
+</li>
+<li>A paused clock or a locked feedback stops the runs: the loop stands as without <code>repeat</code>.
+</li>
+<li>Cost: the loop's nodes <code>repeat</code> times. <code>repeat</code> is held between 1 and 64 and can be bound, for example to a component's <code>steps</code>.
+</li>
+</ul>
+<p>TouchDesigner runs a Feedback TOP loop once per frame. For several steps it offers a GLSL TOP's passes for one shader, or copies of the step network side by side. <code>repeat</code> does the second without copies.</p>
 <h3 id="shaders-precision-16f-or-32f">Precision: 16f or 32f</h3>
 <p>Every picture between nodes is RGBA in half floats (<code>16f</code>): about 3 decimal digits. Between 1 and 2 the values lie 1/1024 apart. A simulation that keeps its state in a picture loses every change smaller than that. A wave equation then slowly loses its energy, and a temperature resting near 1 stops cooling.</p>
 <p><strong><code>format</code> 32f.</strong> Set the node's <code>format</code> (under &quot;more&quot;; TouchDesigner calls it Pixel Format) to <code>32f</code> on the node that writes the state. Its output is then 32-bit floats: about 7 decimal digits. With <code>iterations</code> above 1, every pass is 32f. A <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a> passes the 32f picture on unchanged, and its state file keeps the 32-bit values.</p>
@@ -2993,6 +3012,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
 <tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>Pass <code>initial</code> instead, while on</td></tr>
+<tr><td><code>repeat</code></td><td>int</td><td><code>1</code></td><td>1 to 8 (soft, held within 1 to 64)</td><td>How often the loop runs per frame. Every node between this one and the end wired into <code>previous</code> cooks this many times, each run reading the run before; nodes outside the loop cook once. For a simulation whose step is several nodes. Costs the loop's time this many times. Shaders in the loop read their run as pn.iteration</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>persist</code></td><td>bool</td><td><code>true</code></td><td></td><td>Keep the loop's last frame in the state snapshots, so a restart carries on from it</td></tr>
 </tbody>
@@ -3013,10 +3033,12 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="tex.feedback-keeping-it-in-check">Keeping it in check</h5>
 <p>Every step repeats every frame, so small values matter: a <a class="ref" href="#tex.level"><code>tex.level</code></a> with <code>brightness</code> 0.96 lets a trail die out within a few seconds, at 1 nothing ever fades and the picture fills up. A <a class="ref" href="#tex.transform"><code>tex.transform</code></a> with <code>scale</code> 1.01 zooms the trails slowly outwards. Mix new content in near the end of the chain (a <a class="ref" href="#tex.composite"><code>tex.composite</code></a> with the content as <code>in1</code>), or the loop has nothing to work on but <code>initial</code>.</p>
 <p>With <code>persist</code> on (the default), the loop's last frame goes into the state snapshots, so a restart carries on from where it stopped.</p>
+<h5 id="tex.feedback-several-runs-per-frame">Several runs per frame</h5>
+<p><code>repeat</code> runs the loop several times per frame. With <code>repeat</code> 3, every node between the feedback and the end wired into <code>previous</code> cooks three times, each run starting from the run before. A trail then grows three times as fast and looks as it does at 1. Nodes outside the loop cook once: what feeds the loop from outside, and what reads its result. The clock stands still between runs. The loop costs its time three times. Details for simulations and shaders: <a href="#shaders-a-step-of-several-nodes">A step of several nodes</a>.</p>
 <h5 id="tex.feedback-example">Example</h5>
 <p>The <code>feedback</code> example project: text drawn over a loop that zooms, turns, dims and shifts the hue of the last frame a little, so the text leaves trails that drift outwards and change colour.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-state">The Helpers window › State</a>, <a href="#shaders-several-steps-per-frame">Shaders › Several steps per frame</a>, <a href="#shaders-precision-16f-or-32f">Shaders › Precision: 16f or 32f</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-state">The Helpers window › State</a>, <a href="#shaders-several-steps-per-frame">Shaders › Several steps per frame</a>, <a href="#shaders-a-step-of-several-nodes">Shaders › A step of several nodes</a>, <a href="#shaders-precision-16f-or-32f">Shaders › Precision: 16f or 32f</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.fit"><summary><code class="name">tex.fit</code><span class="sum">Fits a picture into a frame of another size or shape: whole with bars, cropped to fill, or stretched</span></summary>
 <div class="body">
@@ -3822,6 +3844,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </ol>
 <p>A display shader on <code>trail</code> colours it. The deposit is drawn between two steps of the agents. So <code>iterations</code> on <code>agents</code> runs several moves per deposit, not several moves each with its own deposit.</p>
 </div>
+<p class="mentions">Mentioned in: <a href="#shaders-a-step-of-several-nodes">Shaders › A step of several nodes</a></p>
 </div></details>
 <details class="entry node" id="tex.screen_in"><summary><code class="name">tex.screen_in</code><span class="sum">A monitor or a window of this machine as a picture (Windows)</span></summary>
 <div class="body">
@@ -3929,7 +3952,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>1 to 16384 px</td><td>Height of the output in pixels, used with resolution custom or without in0. res.optimize may change it unless keep_size is on</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
-<tr><td><code>iterations</code></td><td>int</td><td><code>1</code></td><td>1 to 16 (soft, held within 1 to 64)</td><td>How often the shader runs per cook, TouchDesigner's Passes. From the second pass on, in0 is the pass before. The shader reads its pass as pn.iteration, from 0. For simulations that take several steps a frame</td></tr>
+<tr><td><code>iterations</code></td><td>int</td><td><code>1</code></td><td>1 to 16 (soft, held within 1 to 64)</td><td>How often the shader runs per cook, TouchDesigner's Passes. From the second pass on, in0 is the pass before. The shader reads its pass as pn.iteration, from 0. For simulations that take several steps a frame. In a loop that a tex.feedback's <code>repeat</code> runs several times, pn.iteration counts on over the runs</td></tr>
 <tr><td><code>bypass</code></td><td>bool</td><td><code>false</code></td><td></td><td>While on, the output is in0 as it is and no pass runs, TouchDesigner's Bypass flag. Bind a simulation's pause to it: a step whose in0 is its own last frame then holds the picture and costs nothing. While in0 is unwired the shader runs as usual</td></tr>
 <tr><td><code>format</code></td><td>16f | 32f</td><td><code>&quot;16f&quot;</code></td><td></td><td>Number format of the output, TouchDesigner's Pixel Format. Use 32f for simulation state that 16f rounds away. 32f takes twice the memory<ul><li><code>16f</code>: half floats, about 3 decimal digits, like every other picture</li><li><code>32f</code>: 32-bit floats, about 7 decimal digits, in every pass. A GPU that cannot filter 32-bit floats gets 16f and a warning</li></ul></td></tr>
 </tbody>
@@ -4463,7 +4486,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>mode</code></td><td>once | loop | free</td><td><code>&quot;once&quot;</code></td><td></td><td>What the clock does once <code>length</code> has passed<ul><li><code>once</code>: it stops at the end and holds there</li><li><code>loop</code>: it starts over from 0, round after round</li><li><code>free</code>: it runs on: seconds grow without end, fraction past 1</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-time">Concepts › Time</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-time">Concepts › Time</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#shaders-a-step-of-several-nodes">Shaders › A step of several nodes</a></p>
 </div></details>
 <details class="entry node" id="chan.constant"><summary><code class="name">chan.constant</code><span class="sum">Numbers set by hand, each a named channel: values to bind params to, one setting that drives several things</span></summary>
 <div class="body">
@@ -4832,7 +4855,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </ol>
 <p>For &quot;has filled the screen&quot;, add a second <a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>above</code> and combine both with <a class="ref" href="#chan.math"><code>chan.math</code></a> <code>max</code>.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#shaders-precision-16f-or-32f">Shaders › Precision: 16f or 32f</a>, <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#shaders-a-step-of-several-nodes">Shaders › A step of several nodes</a>, <a href="#shaders-precision-16f-or-32f">Shaders › Precision: 16f or 32f</a>, <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
 </div></details>
 <details class="entry node" id="chan.http_in"><summary><code class="name">chan.http_in</code><span class="sum">A control page in the browser (a phone on the LAN) or another program sends JSON over HTTP or a WebSocket: every address a channel</span></summary>
 <div class="body">
