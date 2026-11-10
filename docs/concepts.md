@@ -117,7 +117,8 @@ The families:
   `tex.from_chan` turns it into a picture (a row per channel, a pixel per sample) for shaders to
   look values up in. `chan.from_tex` measures a picture, or a few areas of it, as channels: the
   mean (at 1 x 1, its mean colour), the sum, the smallest or largest value, or the share of pixels
-  above a threshold. A sum of 0 and 1 counts pixels exactly (see
+  above a threshold. With `layout` `texels` it reads every texel of a small picture as channels
+  of their own, named by `names`. A sum of 0 and 1 counts pixels exactly (see
   [chan.from_tex](reference/nodes.md#chanfrom_tex)). Channels named `r`, `g`, `b` (and `a`), as
   `chan.from_tex` makes them, come back from `tex.from_chan` as a colour.
 - **`audio`**: sound. A device input, a test tone, a mix, ready-made instruments and drones.

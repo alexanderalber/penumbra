@@ -17,6 +17,8 @@
 //! of 0 and 1 is an exact count up to 2^24 (16.7 million) pixels. Without 32-bit float targets
 //! one step writes half floats (exact for sums of 0 and 1, about three digits otherwise) and the
 //! rest is added up on the CPU in 64-bit floats.
+//! With `layout` `texels` every texel of a small picture becomes channels of its own, row by row
+//! from the top left, named by `names`: a state strip of timers and counters read out directly.
 //! The readback waits up to [`WAIT`] within the cook, so with a quick GPU the channels belong to
 //! the frame that just arrived; when it takes longer the node cooks again once the copy is
 //! there, and a frame arriving in between is skipped rather than queued.
@@ -52,6 +54,9 @@ const STALE: Duration = Duration::from_secs(2);
 fn wait_for(cx: &CookContext<'_>) -> Duration {
     if cx.exact_frames() { STALE } else { WAIT }
 }
+/// Most texels `layout` `texels` reads: with four components each, as many channels as a node
+/// may have.
+pub const MAX_TEXELS: u32 = 1024;
 /// Most a reduction step reduces by along each axis: a texel of its output reads at most
 /// 16 x 16 texels.
 const REDUCE_STEP: u32 = 16;
@@ -91,7 +96,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             FROM_TEX,
-            "Turns a picture into numbers: its average colour, the sum, smallest or largest value, or how much of it is lit, as channels to drive things with. Also per area",
+            "Turns a picture into numbers: its average colour, the sum, smallest or largest value, or how much of it is lit, as channels to drive things with. Also per area, or each texel of a small picture as a named channel",
         )
         .param(
             ParamSpec::choice("measure", &["mean", "sum", "min", "max", "coverage"])
@@ -112,25 +117,43 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .applies_when("measure", &["coverage"]),
         )
         .param(
+            ParamSpec::choice("layout", &["areas", "texels"])
+                .doc("How the picture becomes channels")
+                .choice_doc("areas", "the picture is cut into `columns` x `rows` areas, and each area is measured")
+                .choice_doc(
+                    "texels",
+                    "every texel gives its own channels, row by row from the top left, one sample each. For small pictures such as a state strip: at most 1024 texels, read back from the GPU every frame something uses them",
+                ),
+        )
+        .param(
             ParamSpec::int("columns", 1)
                 .clamp(1.0, 4096.0)
                 .range(1.0, 256.0)
-                .doc("Samples of each channel. The picture is cut into this many columns, and each channel gets one sample per column, left to right. A binding reads the last sample: the right-hand column. For a channel per area, use rows"),
+                .doc("Samples of each channel. The picture is cut into this many columns, and each channel gets one sample per column, left to right. A binding reads the last sample: the right-hand column. For a channel per area, use rows")
+                .applies_when("layout", &["areas"]),
         )
         .param(
             ParamSpec::int("rows", 1)
                 .clamp(1.0, 1024.0)
                 .range(1.0, 64.0)
-                .doc("Separate channels. The picture is cut into this many rows, and each row gives its own channels, numbered from the top: r0, r1, ... (g0, lum0 likewise). To read several pixels as channels of their own, stack them in one column and set rows to their number"),
+                .doc("Separate channels. The picture is cut into this many rows, and each row gives its own channels, numbered from the top: r0, r1, ... (g0, lum0 likewise). To read each pixel as channels of its own, use layout texels")
+                .applies_when("layout", &["areas"]),
         )
         .param(
-            ParamSpec::choice("components", &["rgba", "rgb", "red", "luminance"])
-                .doc("Which channels a row gives; values are linear and premultiplied, as the picture holds them")
+            ParamSpec::choice("components", &["rgba", "rgb", "red", "luminance", "rg"])
+                .doc("Which channels a row or a texel gives; values are linear and premultiplied, as the picture holds them")
                 .choice_doc("rgba", "r, g, b and a")
                 .choice_doc("rgb", "r, g and b")
                 .choice_doc("red", "r only")
-                .choice_doc("luminance", "lum, the brightness as the eye weighs it (Rec. 709)"),
+                .choice_doc("luminance", "lum, the brightness as the eye weighs it (Rec. 709)")
+                .choice_doc("rg", "r and g"),
         )
+        .param(ParamSpec::text("names", "").doc(
+            "Space-separated names for the channels, in order: `coverage activity` names the first two. \
+             `-` leaves a channel out. With `layout` texels the order is texel by texel, and within a texel \
+             r, g, b, a; a channel past the names is called chan and its number from 0, so chan2 follows two names. With areas they keep their own \
+             names (r, g0, ...)",
+        ))
         .input("in", DataKind::Tex)
         .output("out", DataKind::Chan)
         .describe_output(
@@ -303,6 +326,8 @@ struct FromTex {
     /// The readback in flight, when it started and what it was started for.
     pending: Option<(PendingRead, Instant, Request)>,
     out: Option<Data>,
+    /// What the last readback's channels lack (names left over), shown until the next one.
+    warning: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -311,12 +336,14 @@ enum Components {
     Rgb,
     Red,
     Luminance,
+    Rg,
 }
 
 impl Components {
     fn parse(s: &str) -> Self {
         match s {
             "rgb" => Components::Rgb,
+            "rg" => Components::Rg,
             "red" => Components::Red,
             "luminance" => Components::Luminance,
             _ => Components::Rgba,
@@ -329,6 +356,7 @@ impl Components {
             Components::Rgb => &["r", "g", "b"],
             Components::Red => &["r"],
             Components::Luminance => &["lum"],
+            Components::Rg => &["r", "g"],
         }
     }
 }
@@ -365,9 +393,13 @@ impl Measure {
 }
 
 /// What a readback was started for: enough to turn the small picture into channels.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Request {
     components: Components,
+    /// Every texel its own channels (`layout` `texels`) rather than areas.
+    texels: bool,
+    /// The `names` text, split at spaces.
+    names: Vec<String>,
     measure: Measure,
     /// Columns and rows.
     cells: (u32, u32),
@@ -400,9 +432,14 @@ impl Operator for FromTex {
         match ready {
             ReadState::Ready => {
                 if let Some((read, _, request)) = self.pending.take() {
-                    let chans = chans_of(&read, &request, cx.rate().as_f64());
+                    let made = chans_of(&read, &request, cx.rate().as_f64());
                     self.pool = read.recycle();
-                    let out = Data::new(DataKind::Chan, chans.map_err(CookError::failed)?);
+                    let (chans, warning) = made.map_err(CookError::failed)?;
+                    self.warning = warning;
+                    if let Some(w) = &self.warning {
+                        cx.warn(w.clone());
+                    }
+                    let out = Data::new(DataKind::Chan, chans);
                     self.out = Some(out.clone());
                     return Ok(Cooked::Outputs(vec![out]));
                 }
@@ -415,7 +452,12 @@ impl Operator for FromTex {
         }
         match &self.out {
             // Shown at the next frame or once the readback arrives.
-            Some(_) => Ok(Cooked::Unchanged),
+            Some(_) => {
+                if let Some(w) = &self.warning {
+                    cx.warn(w.clone());
+                }
+                Ok(Cooked::Unchanged)
+            }
             None => Err(CookError::Pending),
         }
     }
@@ -445,8 +487,21 @@ impl FromTex {
     fn start(&mut self, cx: &CookContext<'_>, gpu: &Gpu, src: &Tex) -> Result<(), CookError> {
         let side =
             |name: &str| -> Result<u32, CookError> { Ok(u32::try_from(cx.int(name)?).unwrap_or(1).max(1)) };
-        let (columns, rows) = (side("columns")?, side("rows")?);
+        let texels = cx.text("layout")? == "texels";
         let components = Components::parse(cx.text("components")?);
+        let (columns, rows) = if texels {
+            let (w, h) = src.size();
+            let count = u64::from(w) * u64::from(h);
+            if count > u64::from(MAX_TEXELS) {
+                return Err(CookError::failed(format!(
+                    "the picture has {w} x {h} = {count} texels, and layout texels reads at most {MAX_TEXELS}; \
+                     make it smaller with a tex.resolution, or use layout areas"
+                )));
+            }
+            (w.max(1), h.max(1))
+        } else {
+            (side("columns")?, side("rows")?)
+        };
         let measure = Measure::parse(cx.text("measure")?);
         let threshold = cx.float("threshold")?;
         let per_row = components.names().len();
@@ -496,7 +551,9 @@ impl FromTex {
         } else {
             gpu.read_async_notify(&[&from], &mut self.pool, ready)?
         };
-        let request = Request { components, measure, cells: (columns, rows), src: src.size(), per };
+        let names = cx.text("names")?.split_whitespace().map(str::to_string).collect();
+        let request =
+            Request { components, texels, names, measure, cells: (columns, rows), src: src.size(), per };
         self.pending = Some((read, Instant::now(), request));
         Ok(())
     }
@@ -529,8 +586,10 @@ fn area_len(cell: u32, src: u32, cells: u32) -> u64 {
 }
 
 /// The readback as channels: per row of areas (top first) one channel per component, a sample
-/// per column. Partial results of an area are combined here in 64-bit floats.
-fn chans_of(read: &PendingRead, request: &Request, rate: f64) -> Result<Chans, String> {
+/// per column; with `texels`, per texel (row by row) one channel per component with one sample.
+/// Partial results of an area are combined here in 64-bit floats. Then `names` renames them in
+/// order; the text says so when names are left over.
+fn chans_of(read: &PendingRead, request: &Request, rate: f64) -> Result<(Chans, Option<String>), String> {
     let (w, h) = read.size(0).ok_or("nothing was read back")?;
     let (columns, rows) = request.cells;
     let (px, py) = request.per;
@@ -586,20 +645,47 @@ fn chans_of(read: &PendingRead, request: &Request, rate: f64) -> Result<Chans, S
         })
     };
     let names = request.components.names();
-    let mut channels = Vec::with_capacity(rows as usize * names.len());
-    for cy in 0..rows {
-        let values: Vec<[f64; 4]> = (0..columns).map(|cx| area(cx, cy)).collect();
-        for (i, name) in names.iter().enumerate() {
-            let name = if rows == 1 { (*name).to_string() } else { format!("{name}{cy}") };
-            channels.push(Channel {
-                name: Name::new(&name).map_err(|e| e.to_string())?,
-                samples: values.iter().map(|v| v.get(i).copied().unwrap_or(0.0)).collect(),
-            });
+    // Each channel's own name and its samples, in order.
+    let mut raw: Vec<(String, Vec<f64>)> = Vec::with_capacity((rows * columns) as usize * names.len());
+    if request.texels {
+        for cy in 0..rows {
+            for cx in 0..columns {
+                let v = area(cx, cy);
+                for i in 0..names.len() {
+                    let k = raw.len();
+                    raw.push((format!("chan{k}"), vec![v.get(i).copied().unwrap_or(0.0)]));
+                }
+            }
+        }
+    } else {
+        for cy in 0..rows {
+            let values: Vec<[f64; 4]> = (0..columns).map(|cx| area(cx, cy)).collect();
+            for (i, name) in names.iter().enumerate() {
+                let name = if rows == 1 { (*name).to_string() } else { format!("{name}{cy}") };
+                raw.push((name, values.iter().map(|v| v.get(i).copied().unwrap_or(0.0)).collect()));
+            }
         }
     }
+    let count = raw.len();
+    let mut channels = Vec::with_capacity(count);
+    for (k, (own, samples)) in raw.into_iter().enumerate() {
+        let name = match request.names.get(k).map(String::as_str) {
+            Some("-") => continue,
+            Some(n) => Name::new(n).map_err(|e| format!("`names`: {e}"))?,
+            None => Name::new(&own).map_err(|e| e.to_string())?,
+        };
+        channels.push(Channel { name, samples });
+    }
+    let warning = (request.names.len() > count).then(|| {
+        format!(
+            "{} names for {count} channels: {} not used",
+            request.names.len(),
+            request.names.get(count..).unwrap_or_default().join(" ")
+        )
+    });
     // Samples are pixels along a row, not moments.
     Chans::new(rate, channels)
-        .map(|c| c.with_axis(penumbra_core::SampleAxis::Index))
+        .map(|c| (c.with_axis(penumbra_core::SampleAxis::Index), warning))
         .map_err(|e| e.to_string())
 }
 

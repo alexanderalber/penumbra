@@ -5,7 +5,7 @@ use penumbra_core::{Chans, Value};
 use penumbra_gpu::{AdapterChoice, Gpu};
 use penumbra_graph::Op;
 
-use super::{Rig, chans_of, connect, create, gpu, scratch, uv_picture};
+use super::{Rig, chans_of, connect, create, gpu, scratch, set, uv_picture};
 
 /// Red is 1 on a sparse pattern of pixels and 0 elsewhere, green steps 0, 0.25, 0.5, 0.75
 /// across, blue is 0 and alpha 1.
@@ -170,4 +170,135 @@ fn without_32_bit_float_targets_the_count_stays_exact() {
     let c = measure(gpu.clone(), "reduce_half_mean", pattern("16f"), &[]);
     assert!((value(&c, "g") - 0.375).abs() < 1e-9, "{c:?}");
     assert_eq!(gpu.errors().count, 0);
+}
+
+/// A 3 x 2 picture whose texel at x, y holds red x + 10 y and green 100 + x + 10 y.
+const STRIP: &str = "@fragment fn main(v: PnVertex) -> @location(0) vec4f { \
+    let p = floor(v.pos.xy); \
+    let n = p.x + 10.0 * p.y; \
+    return vec4f(n, 100.0 + n, 0.5, 1.0); }";
+
+fn strip(width: i64, height: i64) -> Op {
+    create(
+        "/p",
+        "tex.shader",
+        &[
+            ("file", "strip.wgsl".into()),
+            ("resolution", "custom".into()),
+            ("width", Value::Int(width)),
+            ("height", Value::Int(height)),
+            ("format", "32f".into()),
+        ],
+    )
+}
+
+fn named(c: &Chans) -> Vec<(String, f64)> {
+    c.channels().iter().map(|ch| (ch.name.to_string(), ch.samples[0])).collect()
+}
+
+#[test]
+fn every_texel_becomes_named_channels_row_by_row() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("reduce_texels");
+    std::fs::write(dir.join("strip.wgsl"), STRIP).unwrap();
+    let texels = |names: &str| {
+        create(
+            "/c",
+            "chan.from_tex",
+            &[("layout", "texels".into()), ("components", "rg".into()), ("names", names.into())],
+        )
+    };
+    let ops = [strip(3, 2), texels("a b - d"), connect("/p", "/c", 0)];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let c = chans_of(&mut rig, "/c");
+    assert!(c.channels().iter().all(|ch| ch.samples.len() == 1), "{c:?}");
+    let want: Vec<(String, f64)> = [
+        ("a", 0.0),
+        ("b", 100.0),
+        ("d", 101.0),
+        ("chan4", 2.0),
+        ("chan5", 102.0),
+        ("chan6", 10.0),
+        ("chan7", 110.0),
+        ("chan8", 11.0),
+        ("chan9", 111.0),
+        ("chan10", 12.0),
+        ("chan11", 112.0),
+    ]
+    .iter()
+    .map(|(n, v)| ((*n).to_string(), *v))
+    .collect();
+    assert_eq!(named(&c), want);
+    let s = rig.cooker.status(rig.id("/c")).unwrap();
+    assert!(s.warning.is_none() && s.error.is_none(), "{s:?}");
+
+    // A size change brings as many channels as the picture now has texels.
+    rig.edit(&[set("/p.width", Value::Int(1)), set("/c.names", "x y z".into())]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let c = loop {
+        let c = chans_of(&mut rig, "/c");
+        if c.channels().len() == 4 || std::time::Instant::now() > deadline {
+            break c;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    let want: Vec<(String, f64)> = [("x", 0.0), ("y", 100.0), ("z", 10.0), ("chan3", 110.0)]
+        .iter()
+        .map(|(n, v)| ((*n).to_string(), *v))
+        .collect();
+    assert_eq!(named(&c), want);
+
+    // More names than channels: the rest are named in a warning.
+    rig.edit(&[set("/c.names", "a b c d e f".into())]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let c = chans_of(&mut rig, "/c");
+        let s = rig.cooker.status(rig.id("/c")).unwrap();
+        if c.get("a").is_some() {
+            let w = s.warning.unwrap_or_default();
+            assert!(w.contains("e f not used"), "{w}");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{c:?}");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn texels_refuse_a_large_picture_and_areas_take_names_too() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("reduce_texels_cap");
+    std::fs::write(dir.join("strip.wgsl"), STRIP).unwrap();
+    let ops = [
+        strip(40, 30),
+        create("/big", "chan.from_tex", &[("layout", "texels".into())]),
+        connect("/p", "/big", 0),
+        create("/area", "chan.from_tex", &[("components", "rg".into()), ("names", "mean_r".into())]),
+        connect("/p", "/area", 0),
+        create("/rows", "chan.from_tex", &[("rows", Value::Int(2)), ("components", "rg".into())]),
+        connect("/p", "/rows", 0),
+    ];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    // Areas: the names rename in order, the rest keep their own names; rg gives r and g.
+    let area = chans_of(&mut rig, "/area");
+    let names: Vec<&str> = area.names().map(|n| n.as_str()).collect();
+    assert_eq!(names, ["mean_r", "g"]);
+    // Mean of x + 10 y over 40 x 30: 19.5 + 10 * 14.5.
+    assert!((value(&area, "mean_r") - 164.5).abs() < 1e-3, "{area:?}");
+    let rows = chans_of(&mut rig, "/rows");
+    let names: Vec<&str> = rows.names().map(|n| n.as_str()).collect();
+    assert_eq!(names, ["r0", "g0", "r1", "g1"]);
+    // 1200 texels are more than layout texels reads.
+    let id = rig.id("/big");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let error = loop {
+        rig.gpu.poll();
+        rig.cook("/big");
+        if let Some(e) = rig.cooker.status(id).unwrap().error {
+            break e;
+        }
+        assert!(std::time::Instant::now() < deadline, "no error for 1200 texels");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    assert!(error.contains("40 x 30 = 1200 texels") && error.contains("at most 1024"), "{error}");
 }

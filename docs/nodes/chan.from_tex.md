@@ -22,7 +22,37 @@ measured on its own.
   reads the last sample, the right-hand column.
 
 So `columns` 3 and `rows` 1 gives one `r` channel of three samples, and a binding sees only the
-third. To read three pixels as three channels, stack them in one column and set `rows` to 3.
+third. To read three pixels as three channels, use `layout` `texels` (below).
+
+`components` `rg` gives `r` and `g` only.
+
+## Names
+
+`names` gives the channels names of your own, in order: `coverage activity` calls the first
+channel `coverage` and the second `activity`. A `-` leaves a channel out. So a 1 x 1 measure
+whose red is the coverage and whose blue means nothing becomes `coverage activity -` with
+`components` `rgb`. Channels past the names keep the names they would have had: `r`, `g0`, ...
+With names, a component's channel output needs only a `chan.select` per output, and no
+`chan.rename`.
+
+## Every texel as a channel
+
+With `layout` `texels` each texel of the picture gives channels of its own, with one sample
+each. This is for a small state texture: a strip of timers, counters and flags that a
+simulation keeps in a 1 x N or N x 1 picture.
+
+- **Order:** texel by texel, row by row from the top left; within a texel `r`, `g`, `b`, `a` as
+  `components` picks them. A 2 x 2 picture with `components` `red` gives top left, top right,
+  bottom left, bottom right.
+- **Names:** `names` names them in that order. A channel past the names is called `chan` with its
+  number from 0, as in `chan.constant`: after two names comes `chan2`.
+- **Size:** the channels follow the picture. A picture that grows gives more channels at the next
+  readback; the names stay in order.
+- **Limit:** at most 1024 texels. A larger picture is an error that says its size. Every frame
+  something uses the channels, the texels are read back from the GPU, and the cook waits for
+  them as it does for a measure of a whole picture (see below). `columns` and `rows` do nothing here. `measure` still applies,
+  to one texel at a time: mean, sum, min and max all give the texel's value, and `coverage` gives
+  0 or 1.
 
 ## Exact counts
 

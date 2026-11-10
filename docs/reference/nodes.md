@@ -1582,7 +1582,7 @@ Outputs: `out` (chan).
 
 ### chan.from_tex
 
-Turns a picture into numbers: its average colour, the sum, smallest or largest value, or how much of it is lit, as channels to drive things with. Also per area
+Turns a picture into numbers: its average colour, the sum, smallest or largest value, or how much of it is lit, as channels to drive things with. Also per area, or each texel of a small picture as a named channel
 
 Inputs:
 
@@ -1596,9 +1596,11 @@ Outputs:
 |---|---|---|---|---|
 | `measure` | mean \| sum \| min \| max \| coverage | `"mean"` |  | What each channel says about the pixels of its area; mean: the average value; sum: all values added up: in a picture of 0 and 1, the number of pixels that are 1, exact up to 16 million; min: the smallest value; max: the largest value; coverage: the share of pixels above `threshold`: 0 for none, 1 for all |
 | `threshold` | float | `0.5` | 0 to 1 (soft) | A pixel counts for coverage when its value is above this. Does something only with measure coverage. |
-| `columns` | int | `1` | 1 to 256 (soft, held within 1 to 4096) | Samples of each channel. The picture is cut into this many columns, and each channel gets one sample per column, left to right. A binding reads the last sample: the right-hand column. For a channel per area, use rows |
-| `rows` | int | `1` | 1 to 64 (soft, held within 1 to 1024) | Separate channels. The picture is cut into this many rows, and each row gives its own channels, numbered from the top: r0, r1, ... (g0, lum0 likewise). To read several pixels as channels of their own, stack them in one column and set rows to their number |
-| `components` | rgba \| rgb \| red \| luminance | `"rgba"` |  | Which channels a row gives; values are linear and premultiplied, as the picture holds them; rgba: r, g, b and a; rgb: r, g and b; red: r only; luminance: lum, the brightness as the eye weighs it (Rec. 709) |
+| `layout` | areas \| texels | `"areas"` |  | How the picture becomes channels; areas: the picture is cut into `columns` x `rows` areas, and each area is measured; texels: every texel gives its own channels, row by row from the top left, one sample each. For small pictures such as a state strip: at most 1024 texels, read back from the GPU every frame something uses them |
+| `columns` | int | `1` | 1 to 256 (soft, held within 1 to 4096) | Samples of each channel. The picture is cut into this many columns, and each channel gets one sample per column, left to right. A binding reads the last sample: the right-hand column. For a channel per area, use rows. Does something only with layout areas. |
+| `rows` | int | `1` | 1 to 64 (soft, held within 1 to 1024) | Separate channels. The picture is cut into this many rows, and each row gives its own channels, numbered from the top: r0, r1, ... (g0, lum0 likewise). To read each pixel as channels of its own, use layout texels. Does something only with layout areas. |
+| `components` | rgba \| rgb \| red \| luminance \| rg | `"rgba"` |  | Which channels a row or a texel gives; values are linear and premultiplied, as the picture holds them; rgba: r, g, b and a; rgb: r, g and b; red: r only; luminance: lum, the brightness as the eye weighs it (Rec. 709); rg: r and g |
+| `names` | text |  |  | Space-separated names for the channels, in order: `coverage activity` names the first two. `-` leaves a channel out. With `layout` texels the order is texel by texel, and within a texel r, g, b, a; a channel past the names is called chan and its number from 0, so chan2 follows two names. With areas they keep their own names (r, g0, ...) |
 
 ### chan.http_in
 

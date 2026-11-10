@@ -146,7 +146,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("chan.filter", &["lag"]),
     ("chan.from_table", &["dat to", "lookup", "select dat"]),
     ("chan.feedback", &["delay", "previous frame"]),
-    ("chan.from_tex", &["top to", "analyze"]),
+    ("chan.from_tex", &["top to chop", "analyze", "pixel", "texel", "sample", "readback"]),
     ("chan.http_in", &["web server", "websocket"]),
     ("chan.integrator", &["speed"]),
     ("chan.math", &["function", "limit", "quantize", "round", "ceil", "floor"]),
