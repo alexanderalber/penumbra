@@ -20,7 +20,8 @@ use penumbra_graph::{
 const MAX_SOURCE_BYTES: u64 = 1 << 20;
 
 /// Parameters every shader node has; the header adds its own.
-const FIXED: &[&str] = &["file", "resolution", "width", "height", super::KEEP_SIZE, "iterations", "format"];
+const FIXED: &[&str] =
+    &["file", "resolution", "width", "height", super::KEEP_SIZE, "iterations", "format", "bypass"];
 
 /// Most passes per cook. A cheap simulation step costs roughly 0.2 ms per pass at 1920 x 1080
 /// on a desktop GPU, so 64 passes still fit a 60 fps frame there; a bound value gone wild cannot
@@ -57,6 +58,13 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .more()
                 .doc(
                     "How often the shader runs per cook, TouchDesigner's Passes. From the second pass on, in0 is the pass before. The shader reads its pass as pn.iteration, from 0. For simulations that take several steps a frame",
+                ),
+        )
+        .param(
+            ParamSpec::bool("bypass", false)
+                .more()
+                .doc(
+                    "While on, the output is in0 as it is and no pass runs, TouchDesigner's Bypass flag. Bind a simulation's pause to it: a step whose in0 is its own last frame then holds the picture and costs nothing. While in0 is unwired the shader runs as usual",
                 ),
         )
         .param(
@@ -150,6 +158,14 @@ impl Operator for Shader {
                 let pass = Pass::compile_in(&gpu, &label, &source, &header.params, format).map_err(|e| e.0)?;
                 Ok(Compiled { pass: Arc::new(pass), header })
             }));
+        }
+
+        // Bypassed: in0 goes out unchanged. The compile above still starts, so the shader is
+        // ready when bypass goes off.
+        if cx.bool("bypass")?
+            && let Some(t) = cx.input_as::<Tex>(0)
+        {
+            return Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, t.clone())]));
         }
 
         let Some(current) = &self.current else {

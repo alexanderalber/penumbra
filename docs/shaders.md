@@ -32,7 +32,7 @@ under "from the shader", and are set, bound to channels, saved and undone like a
 Some names are taken, and a shader that declares one does not load:
 
 - **The node's own params:** `file`, `resolution`, `width`, `height`, `keep_size`,
-  `iterations`, `format`. Call a line width `line`, not `width`. The error lists them.
+  `iterations`, `format`, `bypass`. Call a line width `line`, not `width`. The error lists them.
 - **WGSL's reserved words**, since every param becomes a field `params.<name>`: `active`,
   `type`, `target`, `static`, `super`... and keywords such as `loop` or `default`. The error says
   which word it is.
@@ -178,6 +178,12 @@ into the feedback's `previous`. Each pass costs as much as one more node with th
 `node.bind {param: "/step.iterations", from: "/speed"}`. A pass that returns `in0` unchanged
 still costs a full pass. Bind the count to what a look needs, rather than running 64 passes and
 skipping most of them in the shader.
+
+**Pause.** Bind the node's `bypass` (under "more"; TouchDesigner's Bypass flag) to the
+simulation's pause. While it is on, the output is `in0` as it is and no pass runs. In a loop
+through a `tex.feedback`, `in0` is the step's own last frame, so the state stands and costs
+nothing; when `bypass` goes off, the passes carry on from it. While `in0` is unwired, the shader
+runs as usual.
 
 **Size.** Every pass renders at the output's size. With `resolution` `custom` only the first pass
 reads the wired `in0`, at its own size; later passes read an `in0` of the output's size. Take

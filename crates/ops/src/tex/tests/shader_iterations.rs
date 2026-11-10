@@ -1,6 +1,7 @@
 //! `iterations` on `tex.shader` on WARP: N passes equal N chained nodes, 1 is one pass, the
 //! passes know their number, hostile counts are clamped, the size rule with `custom`, a bound
-//! count; and `format` 32f through every pass, with its fallback to 16f.
+//! count; `format` 32f through every pass, with its fallback to 16f; and `bypass`, which runs
+//! no pass and holds a loop where it stands.
 
 use penumbra_core::Value;
 use penumbra_gpu::Pixels;
@@ -217,4 +218,51 @@ fn format_32f_falls_back_to_16f_with_a_warning_without_float_filtering() {
     let warning = s.warning.unwrap_or_default();
     assert!(warning.contains("cannot filter or render 32-bit floats, so the node writes 16f"), "{warning}");
     assert_eq!(gpu.errors().count, 0);
+}
+
+/// `bypass` hands in0 on as it is and runs no pass. In a loop through a `tex.feedback` that
+/// holds the state where it stands, frame after frame, and the passes carry on from there once
+/// it goes off. Unwired in0: the shader runs as usual.
+#[test]
+fn bypass_holds_a_loop_and_runs_no_pass() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("iter_bypass");
+    std::fs::write(dir.join("nudge.wgsl"), NUDGE).unwrap();
+    std::fs::write(dir.join("count.wgsl"), COUNT).unwrap();
+    let [one, n, _] = nudge("32f");
+    let ops = [
+        one,
+        n,
+        create("/loop", "tex.feedback", &[]),
+        connect("/one", "/loop", 0),
+        connect("/n", "/loop", 1),
+        connect("/loop", "/n", 0),
+    ];
+    let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+    let step = 6.0 / 8192.0;
+    rig.cook_until_new("/n", 0);
+    let red = |rig: &mut Rig| {
+        rig.clock.advance(1);
+        rig.cook("/n");
+        gpu.read(&rig.tex("/n").unwrap()).unwrap().get(0, 0).unwrap()[0]
+    };
+    let running = red(&mut rig);
+    assert_eq!(running, 1.0 + 2.0 * step, "two cooks of six passes");
+
+    rig.edit(&[super::set("/n.bypass", Value::Bool(true))]);
+    for _ in 0..5 {
+        assert_eq!(red(&mut rig), running, "bypassed, the loop stands");
+    }
+    // No pass ran: the output is the very texture the loop hands in.
+    let out = rig.tex("/n").unwrap();
+    let held = rig.tex("/loop").unwrap();
+    assert!(out.same(&held));
+
+    rig.edit(&[super::set("/n.bypass", Value::Bool(false))]);
+    assert_eq!(red(&mut rig), running + step, "on from where it stood");
+
+    // Nothing to hand on: the shader runs.
+    let ops = [count(Value::Int(3), None), super::set("/count.bypass", Value::Bool(true))];
+    let Some(px) = run("iter_bypass_unwired", &ops, "/count") else { return };
+    assert_eq!(px.get(0, 0).map(|p| p[0]), Some(3.0));
 }

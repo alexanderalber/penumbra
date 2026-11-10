@@ -29,7 +29,7 @@
         "/reaction_diffusion/share_named": (kind: "chan.rename", params: {"names": "g=coverage"}, inputs: {"in": "share"}, pos: [1600.0, 320.0]),
         "/reaction_diffusion/show": (kind: "tex.shader", params: {"colors": "263040 708599 59f2ff", "file": "library/reaction_diffusion/show.wgsl", "keep_size": true, "resolution": "custom", "through": 0, "top": 0.55}, inputs: {"in0": "step", "in1": "soft", "in2": "people"}, pos: [500.0, 0.0]),
         "/reaction_diffusion/soft": (kind: "tex.blur", params: {"size": 6.0}, inputs: {"in": "mask"}, pos: [-400.0, 100.0]),
-        "/reaction_diffusion/step": (kind: "tex.shader", params: {"file": "library/reaction_diffusion/step.wgsl", "format": "32f", "keep_size": true, "map": false, "touch": "wipe", "use_mask": false}, inputs: {"in0": "loop", "in1": "soft", "in2": "people", "in3": "seed", "in4": "guard"}, binds: {"iterations": "passes:steps", "pause": "parent.pause"}, pos: [250.0, 0.0]),
+        "/reaction_diffusion/step": (kind: "tex.shader", params: {"file": "library/reaction_diffusion/step.wgsl", "format": "32f", "keep_size": true, "map": false, "touch": "wipe", "use_mask": false}, inputs: {"in0": "loop", "in1": "soft", "in2": "people", "in3": "seed", "in4": "guard"}, binds: {"bypass": "parent.pause", "iterations": "passes:steps", "pause": "parent.pause"}, pos: [250.0, 0.0]),
         "/reaction_diffusion/time": (kind: "chan.clock", params: {"mode": "free"}, pos: [-400.0, -380.0]),
         "/reaction_diffusion/world": (kind: "tex.constant", params: {"color": [0.0, 0.0, 0.0, 0.0], "keep_size": true}, binds: {"height": "parent.height", "width": "parent.width"}, pos: [-600.0, -50.0]),
     },

@@ -74,7 +74,8 @@ sand pours where people stand. A drain can be any mask: a hole in the floor, a h
 
 **Cost.** About 3 ms per frame for the whole example: 640 x 360 cells, 48 steps, picture
 1920 x 1080, on an RTX 3090 at a 280 W power limit. The cost grows with `width` times
-`height` times `steps`.
+`height` times `steps`. While `pause` is on, the step runs no pass: the example then costs
+about 0.8 ms per frame.
 
 **Limits.** Slopes carry little sand; with `amount` above about 2 on a narrow stream, piles grow
 steeper than 45 degrees. The `mover` bar and the colour over time (`colors` `time`) follow the
@@ -138,7 +139,8 @@ object's edges or coral grows around it. Feed `tex.blob_track`'s picture of the 
 **Cost.** About 1.5 ms per frame for the example with `window` (12 steps) and about 2.3 ms
 with `snowflake` or `lightning` (32 steps): 960 x 540 texels, picture 1920 x 1080, on an RTX
 3090 at a 280 W power limit. About 0.5 ms of it is the `coverage` measure, which waits for the
-GPU's answer. The cost grows with `width` times `height` times the steps per frame.
+GPU's answer. The cost grows with `width` times `height` times the steps per frame. While
+`pause` is on, the step runs no pass: the example then costs about 1.2 ms per frame.
 
 **Limits.** The full mark of `coral` and `lightning` depends on the mask: another shape may
 need another `full`. `snowflake` stops at half the picture; that is the physics of a closed box.
@@ -270,7 +272,8 @@ a wake. Feed an envelope of the music's beat into `beat` and choose scene `beat`
 
 **Cost.** About 1.4 ms per frame for the example in scene `pond`, and about 2.9 ms at `speed` 4
 (32 steps), with a simulation of 1280 x 720 and a picture of 1920 x 1080, on an RTX 3090 at a
-280 W power limit. The cost grows with `width` times `height` times the steps.
+280 W power limit. The cost grows with `width` times `height` times the steps. While `pause` is
+on, the step runs no pass: the example then costs about 1.15 ms per frame at any `speed`.
 
 **Limits.** The wave equation has no dispersion. Real water has it: a drop leaves a widening
 train of rings, a slow boat a wake of its own shape. Here a dent travels as one ring of fixed
@@ -279,8 +282,7 @@ only a dimple travelling with them. Wave speed and drop sizes count in texels, s
 `width` and `height` the same waves look smaller and slower. The water view is a stylised pool:
 refraction only shifts the floor, and the caustics are a trick of the curvature. `drop` repeats
 itself: the next drop comes about 4 s after the last, always of the same shape. A shape that
-presses lowers the mean level while it stands there. `pause` still runs the step's passes,
-which leave the water as it is.
+presses lowers the mean level while it stands there.
 
 ## reaction-diffusion
 
@@ -356,14 +358,14 @@ or a `chan.dropdown` with `morph` on, so one pattern grows into the next.
 **Cost.** About 1.3 ms per frame for the example with `coral` (8 steps), 1.5 ms with `uskate`
 (16 steps) and 3.9 ms with `uskate` at `speed` 4 (64 steps): 960 x 540 texels, picture
 1920 x 1080, on an RTX 3090 at a 280 W power limit. The cost grows with `width` times
-`height` times the steps per frame; 64 steps is the most.
+`height` times the steps per frame; 64 steps is the most. While `pause` is on, the step runs no
+pass: the example then costs about 1.05 ms per frame at any `speed`.
 
 **Limits.** `map` has a flat area at the left with soft colour bands, and a thin line at the top
 and bottom edge, where the wrapping edges meet different rates. `holes` is the weakest preset.
 A stir in `coral` and `maze` is hard to see: the holes close within a second or two. Only feed
 and kill glide; the colours and the rest of a preset change at once. With `letters` and no mask
-wired, nothing can grow, and the pattern starts over every 3 s. `pause` still runs the step's
-passes, which leave the pattern as it is.
+wired, nothing can grow, and the pattern starts over every 3 s.
 
 ## physarum
 
@@ -529,7 +531,8 @@ the world.
 simulations, because every point sums a whole disc of neighbours: the cost grows with the
 square of `radius` times `scale`, and so with the fourth power of the simulation's height. Twice
 the `width` and `height` give the same picture with finer edges at about ten times the cost
-(gliders at 1024 x 576: about 20 ms).
+(gliders at 1024 x 576: about 20 ms). While `pause` is on, the step runs no pass: the example
+then costs about 0.8 ms per frame.
 
 **Limits.** Gliders that meet now and then light up the whole field; `auto_restart` catches it
 after a second, which is a visible jump to a fresh start. A glider lives until it meets another,
@@ -537,5 +540,4 @@ so `gliders` needs a steady supply of drops. In `home`, thin strokes of the mask
 life. `swarm`, `tissue`, `labyrinth` and `word` are textures more than creatures, and `tissue`
 and `labyrinth` stand nearly still once grown; a stir's holes heal within seconds. `push` is weak
 in `labyrinth`: the worms close behind the person at once. `morph` shows little, since a change
-of rules kills most creatures. `pause` still runs the step's passes, which leave the world as
-it is.
+of rules kills most creatures.
