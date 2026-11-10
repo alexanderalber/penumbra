@@ -843,7 +843,7 @@ merges and the wire arrives with it.
 **The next save** (autosave after an edit, `project.save`, closing after an edit) first copies
 the file to `project.ron.bak`, then writes it without the wire. The bar at the top and
 `project.info` keep listing the wire, and `left_out_backup` names the copy. The note stays
-until the project is opened again.
+until the project is opened again, or until an edit of `project.ron` brings the wire back.
 
 **An edit of `project.ron` while the project is open** that would close a loop does not merge.
 The bar shows "project file not merged" with the loop, autosave pauses, and the file stays as

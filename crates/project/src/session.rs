@@ -124,8 +124,9 @@ pub struct SessionStatus {
     pub renamed: Vec<RenamedNode>,
     /// What the file held as the project opened that the document left out, with the reason:
     /// bindings and connections that would make a loop. The next save writes the file without
-    /// them, after copying it to [`BACKUP_NAME`]. Listed until the project is opened again, or
-    /// until an edit of the file takes them out before that save.
+    /// them, after copying it to [`BACKUP_NAME`]. Listed until the project is opened again,
+    /// until an edit of the file takes them out before that save, or until an edit of the file
+    /// brings them back into the document.
     pub left_out: Vec<String>,
     /// The copy that holds the parts in `left_out` once the file was written without them;
     /// `None` while the file still holds them.
@@ -159,8 +160,8 @@ struct State {
     dirty_since: Option<Instant>,
     /// Nodes of the file read last that name an old kind ([`SessionStatus::renamed`]).
     renamed: Vec<RenamedNode>,
-    /// [`SessionStatus::left_out`].
-    left_out: Vec<String>,
+    /// [`SessionStatus::left_out`], each with the op that would make it.
+    left_out: Vec<(String, Op)>,
     /// [`SessionStatus::left_out_backup`]. While `left_out` is not empty and this is `None`,
     /// the file holds what the document left out, and the next write copies it to
     /// [`BACKUP_NAME`] first.
@@ -211,12 +212,17 @@ pub struct Session {
 /// file's values, so an edit of the file that sets one again still counts as a change.
 /// Also returns what was left out ([`SessionStatus::left_out`]) and `content` without it, the
 /// base of the next merge: a file that still holds a left-out part tries it again.
-fn build(content: &Content, types: &NodeTypes) -> Result<(Network, Vec<String>, Content), Error> {
+type LeftOut = Vec<(String, Op)>;
+
+fn build(content: &Content, types: &NodeTypes) -> Result<(Network, LeftOut, Content), Error> {
     let ops = diff(&Content::default(), content);
     let applied = Network::new().apply_with(types, &ops, Params::Keep)?;
-    let base = without(content, applied.skipped.iter().filter_map(|i| ops.get(*i)));
-    let (net, left_out) = (applied.network, applied.left_out);
-    for why in &left_out {
+    // Under `Params::Keep` each left-out part is one skipped op, in the same order.
+    let skipped: Vec<Op> = applied.skipped.iter().filter_map(|i| ops.get(*i).cloned()).collect();
+    let base = without(content, skipped.iter());
+    let net = applied.network;
+    let left_out: LeftOut = applied.left_out.into_iter().zip(skipped).collect();
+    for (why, _) in &left_out {
         log::warn!(
             "{FILE_NAME} opened without this part: {why}. The file keeps it until the next save, which \
              copies the file to {BACKUP_NAME} first"
@@ -250,6 +256,23 @@ fn build(content: &Content, types: &NodeTypes) -> Result<(Network, Vec<String>, 
             log::warn!("params that open at their default stay as stored: {e}");
             Ok((net, left_out, base))
         }
+    }
+}
+
+/// Whether the connection or binding `op` makes is in `net`.
+fn present(net: &Network, op: &Op) -> bool {
+    match op {
+        Op::Connect { from, output, to, input } => {
+            let (Some(src), Some(dst)) = (net.resolve(from), net.resolve(to)) else { return false };
+            net.node(dst).and_then(|n| n.inputs.get(*input as usize).copied().flatten())
+                == Some(penumbra_graph::Port { node: src, output: *output })
+        }
+        Op::Bind { param, component, from, .. } => {
+            let (Some(src), Some(dst)) = (net.resolve(from), net.resolve(param.node())) else { return false };
+            let part = penumbra_core::ParamPart::new(param.param().clone(), *component);
+            net.node(dst).and_then(|n| n.binds.get(&part)).is_some_and(|b| b.node == src)
+        }
+        _ => false,
     }
 }
 
@@ -599,7 +622,7 @@ impl Session {
             write_error: state.write_error.clone(),
             broken,
             renamed: state.renamed.clone(),
-            left_out: state.left_out.clone(),
+            left_out: state.left_out.iter().map(|(why, _)| why.clone()).collect(),
             left_out_backup: state.left_out_backup.clone(),
             can_undo,
             can_redo,
@@ -802,9 +825,15 @@ impl Session {
                 state.rewrite = !renamed.is_empty();
                 state.renamed = renamed;
                 // The file merged whole, so it holds nothing the document left out. Parts
-                // already written away stay listed with their copy.
+                // already written away stay listed with their copy, until the document has them
+                // again.
                 if state.left_out_backup.is_none() {
                     state.left_out.clear();
+                }
+                let net = self.doc.snapshot();
+                state.left_out.retain(|(_, op)| !present(&net, op));
+                if state.left_out.is_empty() {
+                    state.left_out_backup = None;
                 }
                 if state.file_error.take().is_some() {
                     log::info!("{} loads again", self.file.display());
@@ -1470,6 +1499,34 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.path().join(BACKUP_NAME)).unwrap(), LOOPED);
         let status = s.status(Instant::now());
         assert_eq!((status.left_out.len(), status.left_out_backup.is_some()), (1, true));
+    }
+
+    #[test]
+    fn a_wire_written_away_and_brought_back_by_a_file_edit_is_no_longer_listed() {
+        let (dir, s) = open_looped("test-loop-back", LOOPED);
+        let t0 = Instant::now();
+        s.edit(Actor::User, &[set_k(2.0)], None, "", t0).unwrap();
+        s.poll(t0 + 2 * S);
+        s.poll(t0 + 3 * S);
+        assert!(dir.path().join(BACKUP_NAME).exists());
+        assert!(s.status(t0 + 3 * S).left_out_backup.is_some());
+        // The user puts the wire back by hand and breaks the loop elsewhere.
+        let back = file(&s)
+            .replace(
+                r#""/seed": (kind: "test.add", inputs: {"a": "tail", "b": "k"})"#,
+                r#""/seed": (kind: "test.add", inputs: {"b": "k"})"#,
+            )
+            .replace(
+                r#""/tail": (kind: "test.add", inputs: {"b": "k"})"#,
+                r#""/tail": (kind: "test.add", inputs: {"a": "fb", "b": "k"})"#,
+            );
+        std::fs::write(s.file(), &back).unwrap();
+        s.poll(t0 + 5 * S);
+        assert!(has_wire(&s, LEFT_OUT));
+        let status = s.status(t0 + 5 * S);
+        assert_eq!(status.file_error, None);
+        assert!(status.left_out.is_empty(), "{:?}", status.left_out);
+        assert_eq!(status.left_out_backup, None);
     }
 
     #[test]

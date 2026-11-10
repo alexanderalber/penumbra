@@ -811,7 +811,8 @@ impl PenumbraApp {
                             format!("left out as a loop, now only in project.ron.bak: {what}"),
                             format!(
                                 "project.ron no longer holds them. The file as it was is in {copy}. This \
-                                 note stays until the project is opened again."
+                                 note stays until the project is opened again or an edit of \
+                                 project.ron brings them back."
                             ),
                         ),
                     };
