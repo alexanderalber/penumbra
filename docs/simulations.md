@@ -437,7 +437,10 @@ picture of things to link into `food` and choose `network`: objects on a table, 
 **Cost.** About 1.3 ms per frame for the example with `lace` (262 144 agents), 1.2 ms with
 `network` and 1.5 ms with a million agents (`agents` 1024): 960 x 540 cells, picture
 1920 x 1080, with `coverage` and `alive` in use, on an RTX 3090 at a 280 W power limit. The two
-outputs cost about 0.5 ms of that, and only while something uses them.
+outputs cost about 0.5 ms of that, and only while something uses them. While `pause` is on, the
+agent and trail steps run no pass. That saves little here: with the outputs unused the example
+costs about 0.95 ms per frame running and about 0.9 ms paused, since drawing the agents and the
+picture goes on.
 
 **Limits.** One agent step per frame: `speed` lengthens the step and so changes the look; a
 truly faster network would need several steps per frame. lace, foam and dots are nearly still
