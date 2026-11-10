@@ -9,12 +9,13 @@ the tracked people. Its output is a picture for the projectors, plus a few chann
 
 - **Add it** from the `simulations` tab, or by command: `comp.load {"file": "sand"}`. Adding
   copies its shaders into the project's `library/<name>/`.
-- **Choose a setup** with its main choice param (`scene` in sand and waves, `preset` in growth, chladni and reaction-diffusion). Choosing an entry writes that
+- **Choose a setup** with its main choice param (`scene` in sand and waves, `preset` in growth, chladni, reaction-diffusion and physarum). Choosing an entry writes that
   entry's values into the params below it, as one undo step. Then the values are yours: tune
   any slider, and the project saves the tuned value. A line under the choice names the params
   that differ from the entry, with a "back" button. The mechanism is the component's presets:
   [comp.base, Presets](nodes/comp.base.md#presets).
-- **Start over:** a new entry starts the simulation over by itself. Bind the component's `reset`
+- **Start over:** a new entry starts the simulation over by itself. In physarum it carries on
+  from what is there unless `fresh` is on, and in reaction-diffusion while `morph` is on. Bind the component's `reset`
   to a key for a restart by hand. Held, `reset` keeps the simulation at its start.
 - **Size:** `width` and `height` on the component are the simulation's size in cells. The
   inputs can have any size; the component samples them.
@@ -360,3 +361,85 @@ A stir in `coral` and `maze` is hard to see: the holes close within a second or 
 and kill glide; the colours and the rest of a preset change at once. With `letters` and no mask
 wired, nothing can grow, and the pattern starts over every 3 s. `pause` still runs the step's
 passes, which leave the pattern as it is.
+
+## physarum
+
+![The eleven presets of physarum, each after 15 to 30 seconds, and lace turning into foam](../assets/simulations/physarum-presets.jpg)
+
+Physarum, the slime mould: many agents follow a trail and lay one. Each agent smells the trail
+at three points ahead and turns towards the strongest. The trail spreads and fades. The agents
+agree on paths, and the paths become a network of glowing veins. Depending on a few numbers the
+network is fine lace, smooth veins, soap foam, a field of dots, spirals, restless fire or
+wriggling worms. With points as food it links them with veins, the classic slime mould picture.
+The component is `physarum`. The [physarum example](../examples/physarum/README.md) feeds it a
+word as the mask, a moving blob as the people and twelve dots as the food.
+
+**Presets.** `preset` picks one. Each writes the organism (the sensors, the turn, the step and
+the trail), how agents die and are born, the start, what the mask and the people do, the food
+rate, the brightness and which inputs show.
+
+| preset | what you see |
+|---|---|
+| `lace` | Fine polygon lace with bright knots. It moves slowly. |
+| `veins` | Long, smooth, branching veins with faint side veins. |
+| `foam` | Round cells like soap foam. People push it away. |
+| `dots` | A dense field of glowing dots. People push them away. Over minutes the dots grow fewer and larger. |
+| `spirals` | A few knots with rays, and long winding veins. |
+| `fire` | A restless field of filaments. It never settles. |
+| `worms` | Wriggling closed worms that keep changing shape. |
+| `word` | Foam that writes the mask's shape in single strokes and links it to the cells around it. |
+| `walls` | Lace that flows around the mask. The mask shows as a grey ground. |
+| `network` | Veins link the food input's bright points. Agents are born on the food, and 2 % of them die each step. |
+| `heading` | Veins coloured by the direction the agents travel. |
+
+**From one preset to the next.** A new preset carries on from the network that is there: the
+agents change their ways, and the network reshapes within a second or two. With `fresh` on, a
+new preset starts over from its own start instead. Key 0 on `reset` starts over in either case.
+
+**Inputs.** `mask`: the object, white where it is. `mask_mode` says what it does: `attract`
+(the agents follow its shape), `outline` (they follow its edge), `wall` (they flow around it),
+`inside` (they live only on it) or `food` (it feeds the trail). `people`: bright where someone
+is. `people_mode` says what they do: `attract` (a vein reaches for them), `repel` (the network
+keeps away and leaves a dark hole), `wall` (the agents flow around them) or `feed` (they feed
+the trail); `strength` says how strongly. `food`: bright points that feed the trail by
+`food_rate` per step. With `born` `food` new agents appear only there. The pictures can have
+any size; an unwired one counts as black.
+
+**Outputs.** `out` is the picture, 1920 x 1080 (`out_width`, `out_height`). `coverage` is the
+share of the area with visible trail, from 0 to 1, as a channel: about 0.1 to 0.2 once a network
+stands. `mark` sets how bright a trail must be to count. `alive` is the number of agents alive:
+all of them in every preset except `network`, where about half of them wait to be born again on
+a food point.
+
+**Params that matter most.** The `organism` group is the network's character:
+`sensor_angle` and `sensor_distance` (where an agent smells), `turn_angle` (how far it turns
+per step), `step_length`, `jitter`, and the trail's `deposit`, `decay` and `diffusion`. Small
+changes give a different organism. `speed` multiplies the step length: below 1 the network grows
+slower and finer, above 1 faster and coarser. It changes the character, so worms at 2 look like
+fire, and it costs nothing. `agents` is the number of agents in units of 1024 (256 is 262 144).
+The trail is equally bright at any agent count. `seed`, `start`, `radius`, `agents`, `width` and
+`height` start over. The `look` group sets the palette (`colors`, dark to bright), `heading`
+(colours by direction instead), `gain`, `contrast` and the glow. For projection onto a real
+object, turn `show_inputs` off: no walls, people markers or food dots in the picture, whatever
+the preset says.
+
+**In an installation.** Feed a scan mask of the object into `mask` and choose `word` (the
+network writes the object's shape), `walls` (it flows around the object), or any preset with
+`mask_mode` `inside`, so the mould lives on the object only. Feed `tex.blob_track`'s picture of
+the people into `people`, so a vein follows them or the network parts around them. Feed a
+picture of things to link into `food` and choose `network`: objects on a table, cities on a map.
+
+**Cost.** About 1.3 ms per frame for the example with `lace` (262 144 agents), 1.2 ms with
+`network` and 1.5 ms with a million agents (`agents` 1024): 960 x 540 cells, picture
+1920 x 1080, with `coverage` and `alive` in use, on an RTX 3090 at a 280 W power limit. The two
+outputs cost about 0.5 ms of that, and only while something uses them.
+
+**Limits.** One agent step per frame: `speed` lengthens the step and so changes the look; a
+truly faster network would need several steps per frame. lace, foam and dots are nearly still
+after 20 s; only fire, worms and spirals keep moving, and people stir the rest. With `people_mode`
+`attract`, a person draws one bright vein like a leash, which dominates foam, spirals and fire.
+`dots` coarsens over minutes, and a repelling person's path stays an empty band for a while.
+`network` keeps a faint haze and web of side veins between the main veins, and in the first
+seconds the points shine as stars before veins link them; without a food input it is a dim web. `word`
+misses parts of some letters (the bowls of b and a). With `walls`, agents caught in a closed
+letter shape show as small bright dots there.

@@ -360,6 +360,24 @@ preset grows out of the other.
   simulation (960 x 540).
 - Example: [reaction-diffusion](../examples/reaction-diffusion/README.md).
 
+### physarum
+
+![physarum](physarum/preview.png)
+
+Physarum (slime mould): many agents lay and follow a trail, and the trail grows into a network
+of glowing veins: lace, foam, dots, fire, worms, or veins that link points. Eleven presets; a new
+one carries on from the network that is there.
+
+- In: `mask` (the object: the network writes it, flows around it or lives on it; a scan mask, a
+  text), `people` (a vein reaches for them or the network parts around them: `tex.blob_track`),
+  `food` (bright points the network links). Any size.
+- Out: `out` (the picture, 1920 x 1080), `coverage` (the share of the area with visible trail,
+  a channel), `alive` (the number of agents alive, a channel).
+- Params: `preset`, `fresh`, `seed`, `speed`, `mask_mode`, `people_mode`, `strength`, `pause`;
+  the organism a preset writes (sensors, turn, step, trail); how agents die, are born and start;
+  the inputs; the look; `agents`, `width` and `height` (262 144 agents on 960 x 540 cells).
+- Example: [physarum](../examples/physarum/README.md).
+
 ## A stage for music
 
 A world that moves with a sound file: a stage (a synthwave floor, a tunnel, a tower to climb or
