@@ -3,6 +3,7 @@
 //! example's copy of its files is the library's own.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value as Json, json};
 
@@ -36,7 +37,8 @@ fn shown(f: &Fixture, path: &str) -> Vec<String> {
 }
 
 /// Every simulation in the library loads by `comp.load` and, at a small size, draws a picture
-/// that is not the empty ground after a few seconds of its default preset.
+/// that is not the empty ground after a few seconds of its default preset, or of the first
+/// entry of its main choice that draws without inputs.
 #[test]
 fn every_simulation_in_the_library_draws_a_picture() {
     let f = Fixture::new("simulations");
@@ -61,12 +63,41 @@ fn every_simulation_in_the_library_draws_a_picture() {
         f.call("node.set", json!({"path": path, "params": Json::Object(size)}));
         let out = format!("{path}/out");
         f.call("node.watch", json!({"path": out}));
-        f.call("cook.step", json!({"frames": 180}));
-        let shot = f.call("node.snapshot", json!({"path": out}));
-        assert_eq!(shot["error"], Json::Null, "{name}: {shot}");
-        let max = shot["stats"]["max"].as_array().cloned().unwrap_or_default();
-        let brightest = max.iter().take(3).filter_map(Json::as_f64).fold(0.0, f64::max);
-        assert!(brightest > 0.2, "{name}: nothing drawn after 3 s: {shot}");
+        // The software adapter compiles a large shader in the background for seconds, and a
+        // stepped frame does not wait for it: step until the picture exists.
+        let started = Instant::now();
+        while !f.call("node.info", json!({"path": out}))["status"]["has_output"].as_bool().unwrap_or(false) {
+            assert!(started.elapsed() < Duration::from_secs(300), "{name}: no picture after 5 minutes");
+            f.call("cook.step", json!({"frames": 1}));
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // The default entry first. At this small size and with no inputs wired, some entries
+        // draw nothing within seconds (frost that starts on a mask's edges), so the next
+        // entries of the main choice follow until one draws.
+        let family = f.call("node.info", json!({"path": path}))["component"]["presets"][0].clone();
+        let mut entries: Vec<Option<String>> = vec![None];
+        for entry in family["entries"].as_array().into_iter().flatten() {
+            if entry["name"] != family["chosen"] {
+                entries.push(entry["name"].as_str().map(str::to_string));
+            }
+        }
+        let mut drawn = None;
+        for entry in &entries {
+            if let (Some(entry), Some(choice)) = (entry, family["choice"].as_str()) {
+                f.call("node.set", json!({"path": path, "params": {choice: entry}}));
+            }
+            f.call("cook.step", json!({"frames": 180}));
+            let shot = f.call("node.snapshot", json!({"path": out}));
+            assert_eq!(shot["error"], Json::Null, "{name} {entry:?}: {shot}");
+            let max = shot["stats"]["max"].as_array().cloned().unwrap_or_default();
+            let brightest = max.iter().take(3).filter_map(Json::as_f64).fold(0.0, f64::max);
+            if brightest > 0.2 {
+                drawn = Some(entry.clone().unwrap_or_else(|| "its default".into()));
+                break;
+            }
+        }
+        let Some(drawn) = drawn else { panic!("{name}: nothing drawn after 3 s in any entry") };
+        println!("{name}: drawn with {drawn}");
         let presets = &f.call("node.info", json!({"path": path}))["component"]["presets"];
         for family in presets.as_array().into_iter().flatten() {
             assert_eq!(family["problems"], json!([]), "{name}: {family}");

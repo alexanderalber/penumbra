@@ -1959,7 +1959,7 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 <ul>
 <li><strong>Add it</strong> from the <code>simulations</code> tab, or by command: <a class="ref" href="#comp.load"><code>comp.load {&quot;file&quot;: &quot;sand&quot;}</code></a>. Adding copies its shaders into the project's <code>library/&lt;name&gt;/</code>.
 </li>
-<li><strong>Choose a setup</strong> with its main choice param (<code>scene</code> in sand). Choosing an entry writes that entry's values into the params below it, as one undo step. Then the values are yours: tune any slider, and the project saves the tuned value. A line under the choice names the params that differ from the entry, with a &quot;back&quot; button. The mechanism is the component's presets: <a href="nodes/comp.base.md">comp.base, Presets</a>.
+<li><strong>Choose a setup</strong> with its main choice param (<code>scene</code> in sand, <code>preset</code> in growth). Choosing an entry writes that entry's values into the params below it, as one undo step. Then the values are yours: tune any slider, and the project saves the tuned value. A line under the choice names the params that differ from the entry, with a &quot;back&quot; button. The mechanism is the component's presets: <a href="nodes/comp.base.md">comp.base, Presets</a>.
 </li>
 <li><strong>Start over:</strong> a new entry starts the simulation over by itself. Bind the component's <code>reset</code> to a key for a restart by hand. Held, <code>reset</code> keeps the simulation at its start.
 </li>
@@ -1993,6 +1993,32 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 <p><strong>In an installation.</strong> Feed a scan mask of the object into <code>wall</code>, so sand piles on the real object. Feed <a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a>'s picture of the people into <code>source</code> and choose scene <code>blob</code>, so sand pours where people stand. A drain can be any mask: a hole in the floor, a hand.</p>
 <p><strong>Cost.</strong> About 3 ms per frame for the whole example: 640 x 360 cells, 48 steps, picture 1920 x 1080, on an RTX 3090 at a 280 W power limit. The cost grows with <code>width</code> times <code>height</code> times <code>steps</code>.</p>
 <p><strong>Limits.</strong> Slopes carry little sand; with <code>amount</code> above about 2 on a narrow stream, piles grow steeper than 45 degrees. The <code>mover</code> bar and the colour over time (<code>colors</code> <code>time</code>) follow the show clock, so a restart does not restart them.</p>
+<h3 id="simulations-growth">growth</h3>
+<p><img src="../assets/simulations/growth-presets.jpg" alt="The eleven presets of growth, each after 8 to 30 seconds, and window in a warm spell"></p>
+<p>Slow growth of three kinds: frost crystals that grow over glass and melt where people stand, branching trees like coral and lightning (diffusion-limited aggregation, DLA), and colonies of lichen, mould and rust that spread and die. Growth starts on the edges of a mask, at bright points or by itself. The <a href="../examples/growth/README.md">growth example</a> feeds it a word as the mask, a soft moving blob as a person and seven dots.</p>
+<p><strong>Presets.</strong> <code>preset</code> picks one. Each writes what grows (<code>model</code>), where it may grow (<code>area</code>), what is there at the start, the steps per frame, whether it starts over when full, every setting of its model, how visible the inputs are and the colours.</p>
+<table>
+<thead><tr><th>preset</th><th>what you see</th></tr></thead>
+<tbody>
+<tr><td><code>window</code></td><td>Window frost. Crystals start on the mask's edges and here and there and cover the glass in about 20 s. A warm spell every 60 s melts it all, then it grows again. People melt paths, which freeze again with fingers growing in from their edges.</td></tr>
+<tr><td><code>snowflake</code></td><td>One six-armed crystal from the centre in still, cold air. It stops at about half the picture, stays 20 s and starts over. People do not melt it.</td></tr>
+<tr><td><code>fern</code></td><td>Four-armed, strongly aligned frost from the mask's edges only, with warm spells.</td></tr>
+<tr><td><code>edges</code></td><td>Frost from the mask's edges only. It covers everything in about 20 s and starts over. People do not melt it.</td></tr>
+<tr><td><code>dots</code></td><td>One crystal from each bright point of the dots input.</td></tr>
+<tr><td><code>trail</code></td><td>Window frost without warm spells. What people melt is the only change. When the glass is full, it starts over.</td></tr>
+<tr><td><code>coral</code></td><td>Ragged coral trees from the mask's edges and the bottom, around the mask and not into it.</td></tr>
+<tr><td><code>lightning</code></td><td>One thin tree from the centre, a Lichtenberg figure. It starts over at 5 % of the picture, after about 20 s.</td></tr>
+<tr><td><code>lichen</code></td><td>14 colonies spread with growth rings and stop where they meet. After about a minute they die from their centres and are grown over. People do not harm them.</td></tr>
+<tr><td><code>mould</code></td><td>Pale colonies inside the mask only. People wipe them away.</td></tr>
+<tr><td><code>rust</code></td><td>Rust patches spread from the mask's edges. People wipe them away.</td></tr>
+</tbody>
+</table>
+<p><strong>Inputs.</strong> <code>mask</code>: the object, white where it is. Growth starts on its edges, and with <code>area</code> <code>inside</code> or <code>outside</code> it grows only on one side of them. <code>heat</code>: people. Frost melts and branches and colonies die where it is bright, at the strength <code>heat</code>. <code>dots</code>: bright points. With <code>dot_seeds</code> on, a crystal starts at each. The inputs can have any size. An unwired input counts as black.</p>
+<p><strong>Outputs.</strong> <code>out</code> is the picture, 1920 x 1080 (<code>out_width</code>, <code>out_height</code>). <code>coverage</code> is the share of the area that is covered, from 0 to 1, as a channel. The area is where growth may happen: outside the mask for <code>coral</code>, inside it for <code>mould</code>.</p>
+<p><strong>Params that matter most.</strong> <code>speed</code> scales the steps per frame of the preset (<code>steps</code>): 2 grows twice as fast and costs twice as much. <code>heat</code> is how strongly people melt or wipe away, 0 for not at all. <code>afterglow</code> is the warmth a person leaves behind: at 0 a melted path freezes again within seconds, at 2 it stays open for many seconds. <code>auto_restart</code> starts over by itself once the share <code>full</code> has been covered for <code>hold</code> seconds; key 0 on <code>reset</code> starts over by hand. The setup a preset writes can be mixed: <code>model</code> with <code>area</code>, <code>pattern</code>, <code>count</code> and <code>radius</code>, and <code>edge_seeds</code>, <code>dot_seeds</code> and <code>spawn</code> for where new growth starts. The <code>frost</code> group shapes the crystals (<code>arms</code>, <code>aniso</code>, <code>latent</code>, the cooling, the warm spells). The <code>branch and lichen</code> group shapes trees and colonies (<code>eta</code> from dense blobs to thin lightning, <code>grow</code>, <code>supply</code>, <code>lifespan</code>, <code>spread</code>). The <code>look</code> group sets the colours and the light on the ice. For projection onto a real object, set <code>through</code> and <code>warm</code> to 0, so neither the mask nor the people show in the picture.</p>
+<p><strong>In an installation.</strong> Feed a scan mask of the object into <code>mask</code>, so frost starts on the object's edges or coral grows around it. Feed <a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a>'s picture of the people into <code>heat</code>, so frost melts where people stand and grows back behind them.</p>
+<p><strong>Cost.</strong> About 1.5 ms per frame for the example with <code>window</code> (12 steps) and about 2.3 ms with <code>snowflake</code> or <code>lightning</code> (32 steps): 960 x 540 texels, picture 1920 x 1080, on an RTX 3090 at a 280 W power limit. About 0.5 ms of it is the <code>coverage</code> measure, which waits for the GPU's answer. The cost grows with <code>width</code> times <code>height</code> times the steps per frame.</p>
+<p><strong>Limits.</strong> The full mark of <code>coral</code> and <code>lightning</code> depends on the mask: another shape may need another <code>full</code>. <code>snowflake</code> stops at half the picture; that is the physics of a closed box. The covered phase of <code>window</code> changes little between about 20 s and the warm spell. A regrown path reads as a comb of parallel fingers, coarser than the first growth. Covered ice shows a few lighter rectangles with straight edges.</p>
 </div></details>
 <details class="entry guide" id="shaders"><summary><span class="name">Shaders</span></summary>
 <div class="body">
@@ -2474,7 +2500,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>slots</code></td><td>int</td><td><code>4</code></td><td>0 to 8 (soft, held within 0 to 32)</td><td>Blobs in <code>chans</code>, each as id, x, y, area with the slot's number (id 0: empty)</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#tracking">Tracking</a>, <a href="#simulations-sand">Simulations › sand</a>, <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
+<p class="mentions">Mentioned in: <a href="#tracking">Tracking</a>, <a href="#simulations-sand">Simulations › sand</a>, <a href="#simulations-growth">Simulations › growth</a>, <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
 </div></details>
 <details class="entry node" id="tex.blur"><summary><code class="name">tex.blur</code><span class="sum">Softens a picture: a Gaussian blur, in every direction or only across or only up and down</span></summary>
 <div class="body">

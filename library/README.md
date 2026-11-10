@@ -288,6 +288,25 @@ scenes, such as rain on a word, an hourglass, bowls that overflow and a board of
   start); how grains move; the look; `width` and `height` of the simulation (640 x 360).
 - Example: [sand](../examples/sand/README.md).
 
+### growth
+
+![growth](growth/preview.png)
+
+Slow growth: frost crystals that melt where people stand, coral and lightning trees (DLA), and
+lichen, mould and rust colonies. Eleven presets, such as window frost with warm spells, one
+snowflake, coral around a mask and a Lichtenberg figure.
+
+- In: `mask` (the object: growth starts on its edges, or only inside or outside it; a scan
+  mask, a text), `heat` (people: frost melts and colonies die where it is bright:
+  `tex.blob_track`), `dots` (bright points where crystals start). Any size.
+- Out: `out` (the picture, 1920 x 1080), `coverage` (the share of the area that is covered, a
+  channel).
+- Params: `preset`, `seed`, `speed`, `heat`, `afterglow`, `pause`; when it starts over by itself
+  (`auto_restart`, `full`, `hold`); the setup a preset writes (`model`, `area`, the start,
+  `steps`, where new growth starts); the frost settings; the branch and lichen settings; the
+  look; `width` and `height` of the simulation (960 x 540).
+- Example: [growth](../examples/growth/README.md).
+
 ## A stage for music
 
 A world that moves with a sound file: a stage (a synthwave floor, a tunnel, a tower to climb or
