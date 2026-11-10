@@ -503,6 +503,68 @@ fn a_shader_that_fails_inside_a_component_is_listed_without_asking_it() {
 }
 
 #[test]
+fn a_shader_that_fails_two_levels_down_marks_both_components_until_it_is_fixed() {
+    let f = Fixture::new("errors-inside");
+    let Some(gpu) = warp() else { return };
+    f.engine.attach_gpu(gpu).unwrap();
+    let dir = f.engine.session().dir().to_path_buf();
+    let shader = dir.join("step.wgsl");
+    std::fs::write(&shader, "@fragment fn main(v: PnVertex) -> @location(0) vec4f { return nope; }").unwrap();
+    f.call("node.create", json!({"path": "/outer", "kind": "comp.base"}));
+    f.call("node.create", json!({"path": "/outer/inner", "kind": "comp.base"}));
+    f.call(
+        "node.create",
+        json!({"path": "/outer/inner/step", "kind": "tex.shader", "params": {"file": "step.wgsl", "resolution": "custom", "width": 4, "height": 4}}),
+    );
+    // An unwired port fails too, but the component shows that as an empty socket.
+    f.call("node.create", json!({"path": "/outer/inner/src", "kind": "tex.in"}));
+    f.call("node.watch", json!({"path": "/outer/inner/step"}));
+    f.call("node.watch", json!({"path": "/outer/inner/src"}));
+    let top_level = |f: &Fixture| f.call("node.list", json!({"recursive": false, "problems": true}));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let list = top_level(&f);
+        if list["nodes"].as_array().is_some_and(|n| !n.is_empty()) {
+            // Only the component at the top level, naming the shader inside.
+            assert_eq!(
+                list["nodes"],
+                json!([{"path": "/outer", "kind": "comp.base", "errors_inside": ["/outer/inner/step"]}])
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "the shader's error did not reach /outer: {list}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let all = f.call("node.list", json!({"problems": true}));
+    let entry = |path: &str| all["nodes"].as_array().unwrap().iter().find(|n| n["path"] == path).cloned();
+    assert_eq!(entry("/outer/inner").unwrap()["errors_inside"], json!(["/outer/inner/step"]), "{all}");
+    assert!(
+        entry("/outer/inner/src").unwrap()["error"].as_str().unwrap().contains("nothing is wired"),
+        "{all}"
+    );
+    for comp in ["/outer", "/outer/inner"] {
+        let info = f.call("node.info", json!({"path": comp}));
+        let inside = info["errors_inside"].as_array().cloned().unwrap_or_default();
+        assert_eq!(inside.len(), 1, "{info}");
+        assert_eq!(inside[0]["path"], "/outer/inner/step", "{info}");
+        assert!(inside[0]["error"].as_str().unwrap().contains("step.wgsl:1"), "{info}");
+    }
+    // Fixed, the shader compiles and both components are clear again.
+    std::fs::write(&shader, "@fragment fn main(v: PnVertex) -> @location(0) vec4f { return vec4f(1.0); }")
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while top_level(&f)["nodes"].as_array().is_some_and(|n| !n.is_empty()) {
+        assert!(Instant::now() < deadline, "the fixed shader still marks /outer");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    for comp in ["/outer", "/outer/inner"] {
+        let info = f.call("node.info", json!({"path": comp}));
+        assert_eq!(info["errors_inside"], json!([]), "{info}");
+    }
+    assert_eq!(f.call("node.info", json!({"path": "/outer/inner/step"}))["errors_inside"], Json::Null);
+}
+
+#[test]
 fn bind_a_param_and_read_channels() {
     let f = Fixture::new("bind");
     f.call(

@@ -28,6 +28,18 @@ outputs. What is wired to an input outside comes out of the matching `.in` node 
 into a `.out` node inside comes out of the component. Bindings and `tex.select` are not wires:
 they may reach in and out of components by path.
 
+## When a node inside fails
+
+A component turns red when a node inside it is in error, at any depth: a red outline and a red
+"!" beside its name. A shader that does not compile three levels down shows on every component
+around it. The tooltip names the first such node by path, with its error, and says how many
+more there are. Warnings inside do not mark the component. An input port nothing is wired to
+does not either: the component shows that as an empty socket.
+
+`node.info` of a component lists the nodes in error inside it as `errors_inside`, each with its
+path and error. `node.list` gives a component the paths, and `node.list {"recursive": false,
+"problems": true}` finds a failing component at the top level.
+
 ## Params of its own
 
 The quickest way is the menu. Inside the component, the link button of a param has a section

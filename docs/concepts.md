@@ -751,6 +751,7 @@ edit of yours ends that turn right away.
 | white outline | selected |
 | blue outline, fading | changed by Claude or the project file in the last seconds; also the nodes of the change under the pointer |
 | badge | an error or a warning; the message is in the param panel |
+| red badge and outline on a component | a node inside it is in error, at any depth; the tooltip names it |
 | padlock | locked |
 | "not cooked" | nothing needed the node since it last changed, so there is no current picture |
 | dashed line | a binding (green), a node reference, or a wire into a feedback loop's `previous` |

@@ -45,11 +45,27 @@ const NOTE_TEXT: f32 = 16.0;
 pub const SHOW_MODE_KEYS: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT), Key::L);
 
+/// The tooltip lines of a component with `count` nodes in error inside it, `first` the first
+/// of them in path order: that node's path and error, and how many more there are.
+fn error_inside_lines(input: &Inputs<'_>, first: NodeId, count: usize) -> String {
+    let at = input.net.path_of(first).map_or_else(String::new, |p| p.to_string());
+    let error = input.status.get(&first).and_then(|s| s.error.as_deref()).unwrap_or_default();
+    let mut text = format!("\nerror from {at} inside: {}", error.trim_end());
+    match count {
+        0 | 1 => {}
+        2 => text.push_str("\nand 1 more node inside with an error"),
+        n => text.push_str(&format!("\nand {} more nodes inside with an error", n - 1)),
+    }
+    text
+}
+
 /// What the editor needs from the app each frame.
 pub struct Inputs<'a> {
     pub net: &'a Network,
     pub types: &'a NodeTypes,
     pub status: &'a std::collections::BTreeMap<NodeId, NodeStatus>,
+    /// Each component with nodes in error inside it, at any depth (`ViewFrame::errors_inside`).
+    pub errors_inside: &'a std::collections::BTreeMap<NodeId, Vec<NodeId>>,
     pub outputs: &'a std::collections::BTreeMap<NodeId, Vec<Data>>,
     /// The nodes whose picture is drawn (up to date, see `ViewFrame::pictures`); others show
     /// none rather than an outdated one.
@@ -1882,8 +1898,11 @@ impl Editor {
             // A component warns for the params inside that follow it and cannot.
             let followers_warn =
                 g.comp && !penumbra_graph::follow::problems(input.net, input.status, g.id).is_empty();
-            if error.is_some() || warning.is_some() || followers_warn {
-                let c = if error.is_some() { theme::ERROR } else { theme::WARNING };
+            // A component is in error when a node inside it is, at any depth: a shader that does
+            // not compile three levels down otherwise shows only as a wrong picture.
+            let failing_inside = g.comp && input.errors_inside.contains_key(&g.id);
+            if error.is_some() || failing_inside || warning.is_some() || followers_warn {
+                let c = if error.is_some() || failing_inside { theme::ERROR } else { theme::WARNING };
                 let center = pos2(right - 6.0 * zoom, header.center().y);
                 painter.circle_filled(center, 6.5 * zoom, c);
                 painter.text(
@@ -1957,6 +1976,11 @@ impl Editor {
                     let at = input.net.node(id).map_or_else(String::new, |n| n.name.to_string());
                     tip.push_str(&format!("\nwarning from {at} inside: {w}"));
                 }
+                if let Some(inside) = input.errors_inside.get(&g.id)
+                    && let Some(first) = inside.first()
+                {
+                    tip.push_str(&error_inside_lines(input, *first, inside.len()));
+                }
             }
             let outputs = input.outputs.get(&g.id).into_iter().flatten();
             for chans in outputs.filter_map(|d| d.get::<penumbra_core::Chans>()) {
@@ -1985,7 +2009,7 @@ impl Editor {
             Some(Stroke::new(2.0, theme::CLAUDE))
         } else if let Some(age) = recent.filter(|a| *a < theme::RECENT_SECONDS) {
             Some(Stroke::new(2.0, theme::CLAUDE.gamma_multiply(1.0 - age / theme::RECENT_SECONDS)))
-        } else if status.is_some_and(|s| s.error.is_some()) {
+        } else if status.is_some_and(|s| s.error.is_some()) || input.errors_inside.contains_key(&g.id) {
             Some(Stroke::new(1.5, theme::ERROR))
         } else if input.viewer == Some(g.id) {
             Some(Stroke::new(1.0, theme::TEXT_WEAK))

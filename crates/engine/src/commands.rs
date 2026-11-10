@@ -80,10 +80,14 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "node.list",
-        "Nodes under a path, each with its error and warning as of its last cook (a node that has not cooked has none); {path?, recursive?, problems? (true: only the nodes with an error or a warning)}",
+        "Nodes under a path, each with its error and warning as of its last cook (a node that has not cooked has none), and a component with errors_inside: the nodes inside it in error, at any depth; {path?, recursive?, problems? (true: only the nodes with an error, a warning or errors_inside)}",
         node_list,
     );
-    add("node.info", "One node: params, connections, cook status; {path}", node_info);
+    add(
+        "node.info",
+        "One node: params, connections, cook status; a component also errors_inside, each node inside it in error with its path and error; {path}",
+        node_info,
+    );
     add("node.create", "Create a node; {path, kind, params?}", node_create);
     add("node.delete", "Delete a node and everything inside it; {path}", node_delete);
     add(
@@ -466,14 +470,20 @@ fn node_list(e: &Engine, p: &Json) -> Result<Json> {
                 .collect()
         })
         .unwrap_or_default();
+    // Components count the nodes in error inside them also below the listed levels.
+    let inside = errors_inside(e, &net);
     let list: Vec<Json> = nodes
         .iter()
-        .filter(|(_, n)| !a.problems || problems.contains_key(&n.id))
+        .filter(|(_, n)| !a.problems || problems.contains_key(&n.id) || inside.contains_key(&n.id))
         .map(|(path, n)| {
             let mut v = json!({"path": path, "kind": n.kind});
             if let Some(o) = v.as_object_mut() {
                 if n.locked {
                     o.insert("locked".into(), json!(true));
+                }
+                if let Some(failing) = inside.get(&n.id) {
+                    let paths: Vec<String> = failing.iter().map(|(p, _)| p.to_string()).collect();
+                    o.insert("errors_inside".into(), json!(paths));
                 }
                 if let Some((error, warning)) = problems.get(&n.id) {
                     if let Some(error) = error {
@@ -492,6 +502,28 @@ fn node_list(e: &Engine, p: &Json) -> Result<Json> {
 
 fn yes() -> bool {
     true
+}
+
+/// Each component with nodes in error inside it, at any depth, to those nodes' paths and
+/// errors in path order, as of their last cook ([`Network::inside_components`]). Empty without
+/// a cook thread.
+fn errors_inside(e: &Engine, net: &Network) -> BTreeMap<NodeId, Vec<(NodePath, String)>> {
+    let ids: Vec<NodeId> = net.nodes().map(|n| n.id).collect();
+    let errors: BTreeMap<NodeId, String> = e
+        .on_cook(move |st| {
+            ids.into_iter().filter_map(|id| Some((id, st.cooker.status_brief(id)?.error?))).collect()
+        })
+        .unwrap_or_default();
+    net.inside_components(e.types(), errors.keys().copied())
+        .into_iter()
+        .map(|(comp, failing)| {
+            let named = failing
+                .into_iter()
+                .filter_map(|id| Some((net.path_of(id)?, errors.get(&id)?.clone())))
+                .collect();
+            (comp, named)
+        })
+        .collect()
 }
 
 fn node_info(e: &Engine, p: &Json) -> Result<Json> {
@@ -698,6 +730,14 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
         "watched": watched,
         "status": status,
     });
+    if desc.container
+        && let Some(o) = info.as_object_mut()
+    {
+        let failing = errors_inside(e, &net).remove(&id).unwrap_or_default();
+        let list: Vec<Json> =
+            failing.iter().map(|(path, error)| json!({"path": path, "error": error})).collect();
+        o.insert("errors_inside".into(), json!(list));
+    }
     if let Some(k) = crate::keyboard::info(e, &node)
         && let Some(o) = info.as_object_mut()
     {

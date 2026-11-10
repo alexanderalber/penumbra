@@ -650,6 +650,35 @@ impl Network {
         NodePath::from_names(names).ok()
     }
 
+    /// Which of the nodes in `failing` lie inside each component, at any depth: the component
+    /// to those nodes, in path order. A component with none of them inside is not in the map.
+    /// A component's port nodes do not count: one fails only while nothing is wired to it,
+    /// which the component shows as an empty socket. One step per node in `failing` and level
+    /// above it, so a caller can run it every frame with the nodes in error
+    /// ([`crate::NodeStatus::error`]).
+    pub fn inside_components(
+        &self,
+        types: &NodeTypes,
+        failing: impl IntoIterator<Item = NodeId>,
+    ) -> BTreeMap<NodeId, Vec<NodeId>> {
+        let mut found: Vec<(NodePath, NodeId)> = failing
+            .into_iter()
+            .filter(|id| self.port_role(types, *id).is_none())
+            .filter_map(|id| Some((self.path_of(id)?, id)))
+            .collect();
+        found.sort();
+        found.dedup();
+        let mut out: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+        for (_, id) in found {
+            let mut up = self.nodes.get(&id).and_then(|n| n.parent);
+            while let Some(p) = up {
+                out.entry(p).or_default().push(id);
+                up = self.nodes.get(&p).and_then(|n| n.parent);
+            }
+        }
+        out
+    }
+
     /// The stored params of the nodes in `ids` that differ between `self` and `after`; `None`
     /// stands for a param that is not stored (its default). Nodes missing on either side are
     /// skipped.
@@ -1620,6 +1649,32 @@ mod tests {
         let n = &applied.network;
         assert_eq!(n.node(n.resolve(&p("/a")).unwrap()).unwrap().inputs[0], None);
         assert!(n.node(n.resolve(&p("/c")).unwrap()).unwrap().inputs[1].is_some());
+    }
+
+    #[test]
+    fn nodes_in_error_count_on_every_component_around_them() {
+        let types = test_types();
+        let ops = [
+            create("/outer", "test.group"),
+            create("/outer/inner", "test.group"),
+            create("/outer/inner/b", "test.const"),
+            create("/outer/inner/a", "test.const"),
+            create("/outer/c", "test.const"),
+            create("/outer/port", "test.in"),
+            create("/top", "test.const"),
+        ];
+        let net = Network::new().apply(&types, &ops).unwrap().network;
+        let id = |path: &str| net.resolve(&p(path)).unwrap();
+        let found = net.inside_components(&types, [id("/outer/inner/b"), id("/top"), id("/outer/inner/a")]);
+        // In path order, on both levels; a node at the top level counts on no component.
+        assert_eq!(found.get(&id("/outer/inner")), Some(&vec![id("/outer/inner/a"), id("/outer/inner/b")]));
+        assert_eq!(found.get(&id("/outer")), Some(&vec![id("/outer/inner/a"), id("/outer/inner/b")]));
+        assert_eq!(found.len(), 2);
+        // A port node fails while unwired; the component shows that as an empty socket.
+        let found = net.inside_components(&types, [id("/outer/c"), id("/outer/port"), NodeId(999)]);
+        assert_eq!(found.get(&id("/outer")), Some(&vec![id("/outer/c")]));
+        assert_eq!(found.len(), 1);
+        assert!(net.inside_components(&types, []).is_empty());
     }
 
     #[test]

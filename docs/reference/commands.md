@@ -225,9 +225,9 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `node.cut` | Copy side-by-side nodes, then delete them (one undo step); {paths} |
 | `node.delete` | Delete a node and everything inside it; {path} |
 | `node.disconnect` | Clear an input; {to, input} |
-| `node.info` | One node: params, connections, cook status; {path} |
+| `node.info` | One node: params, connections, cook status; a component also errors_inside, each node inside it in error with its path and error; {path} |
 | `node.kinds` | Node types with their params, inputs, outputs and tags. With a param: its help (what it does, type, default, range, unit, what each choice does). With search: the types whose name contains the text or a tag starts with it (TouchDesigner names, file extensions), as the add dialog finds them; a family word (`noise top`, `lfo chop`) searches that family alone; {kind?, param?, search?} |
-| `node.list` | Nodes under a path, each with its error and warning as of its last cook (a node that has not cooked has none); {path?, recursive?, problems? (true: only the nodes with an error or a warning)} |
+| `node.list` | Nodes under a path, each with its error and warning as of its last cook (a node that has not cooked has none), and a component with errors_inside: the nodes inside it in error, at any depth; {path?, recursive?, problems? (true: only the nodes with an error, a warning or errors_inside)} |
 | `node.lock` | Lock (hold outputs) or unlock a node; {path, locked?} |
 | `node.memory` | Video memory per node, largest first. Also what the editor holds (pictures of geometry, display copies) and the render attachments that renderers of one size share. All of it against what wgpu has allocated, and wgpu's allocations by label; {limit?} (default 30 of each) |
 | `node.paste` | Paste the nodes copied last (or `text`) into a component or the root; {into?, text?} |

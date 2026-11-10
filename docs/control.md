@@ -154,8 +154,9 @@ script never asks for it: a shader that does not compile inside a component, beh
 `/out` the script snapshots, shows up as `WARN ... /waves/step (tex.shader): error: ...`.
 Shaders compile in the background, so the line can come a few frames after the node first
 cooks. `node.list {"problems": true}` lists every node with an error or a warning as of its
-last cook, with the message; a node that has not cooked yet has none. The run's exit code does
-not depend on them.
+last cook, with the message; a node that has not cooked yet has none. A component with nodes in
+error inside it, at any depth, carries their paths as `errors_inside` and is listed too. The
+run's exit code does not depend on them.
 Without `--project` it works on a fresh copy of the demo in the temp directory, so no project
 is touched. With `--project` the run leaves the project folder as it found it. A param the
 script sets is gone when the run ends, and the next run starts from the same file. The run

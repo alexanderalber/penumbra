@@ -1304,6 +1304,7 @@ impl PenumbraApp {
                     net: &net,
                     types: session.types(),
                     status: &view.status,
+                    errors_inside: &view.errors_inside,
                     outputs: &view.outputs,
                     pictures: &view.pictures,
                     thumbnail_mode: net.thumbnails().0,

@@ -183,6 +183,9 @@ pub struct ViewFrame {
     pub elapsed: Duration,
     /// Status of every node the cooker knows, without instance params.
     pub status: BTreeMap<NodeId, NodeStatus>,
+    /// Each component with nodes in error inside it, at any depth, to those nodes in path order
+    /// ([`Network::inside_components`]).
+    pub errors_inside: BTreeMap<NodeId, Vec<NodeId>>,
     /// Outputs of the viewers and of the nodes in `pictures`.
     pub outputs: BTreeMap<NodeId, Vec<Data>>,
     /// The thumbnails to draw. An outdated picture is worse than none, so a picture nobody cooks is
@@ -695,6 +698,10 @@ impl CookState {
                 frame.status.insert(node.id, status);
             }
         }
+        frame.errors_inside = net.inside_components(
+            types,
+            frame.status.iter().filter(|(_, s)| s.error.is_some()).map(|(id, _)| *id),
+        );
         let now = self.clock.now();
         frame.pictures = match frame.thumbnails {
             ThumbnailMode::Always => {
