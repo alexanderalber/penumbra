@@ -9,7 +9,7 @@ the tracked people. Its output is a picture for the projectors, plus a few chann
 
 - **Add it** from the `simulations` tab, or by command: `comp.load {"file": "sand"}`. Adding
   copies its shaders into the project's `library/<name>/`.
-- **Choose a setup** with its main choice param (`scene` in sand and waves, `preset` in growth and chladni). Choosing an entry writes that
+- **Choose a setup** with its main choice param (`scene` in sand and waves, `preset` in growth, chladni and reaction-diffusion). Choosing an entry writes that
   entry's values into the params below it, as one undo step. Then the values are yours: tune
   any slider, and the project saves the tuned value. A line under the choice names the params
   that differ from the entry, with a "back" button. The mechanism is the component's presets:
@@ -277,3 +277,86 @@ refraction only shifts the floor, and the caustics are a trick of the curvature.
 itself: the next drop comes about 4 s after the last, always of the same shape. A shape that
 presses lowers the mean level while it stands there. `pause` still runs the step's passes,
 which leave the water as it is.
+
+## reaction-diffusion
+
+![The eleven presets of reaction_diffusion, each after 6 to 60 seconds, and maze gliding into solitons](../assets/simulations/reaction-diffusion-presets.jpg)
+
+Reaction-diffusion after Gray and Scott: two chemicals react and spread over a surface, and
+Turing patterns grow out of a few spots. Two rates decide the pattern: `feed`, how fast the
+first chemical is fed in, and `kill`, how fast the second is removed. The picture becomes
+branching coral, a labyrinth, dividing spots (mitosis), worms or a field of still dots. A mask
+can give the object one pattern and its surroundings another. The component is
+`reaction_diffusion`. The [reaction-diffusion example](../examples/reaction-diffusion/README.md)
+feeds it a word as the mask and a moving blob as the people.
+
+**Presets.** `preset` picks one. Each writes the rates, the steps per frame, the start, what
+people do, the guards' marks, the colours and what grows outside the mask.
+
+| preset | what you see |
+|---|---|
+| `coral` | Branching coral grows from random blobs and fills the surface in about 15 s. Then it creeps on as a slow labyrinth that gets a few holes every 20 s. |
+| `mitosis` | Spots that divide until they fill the surface, in about a minute. |
+| `solitons` | A packed field of still dots. People leave a dark trail that closes again. |
+| `maze` | A labyrinth of stripes within 5 s. A person's path fills with stripes again. |
+| `worms` | Loose worms, rings and forks on dark ground. |
+| `uskate` | Thin lines and gliding specks on a filled ground. |
+| `holes` | Dark specks in a filled field. |
+| `loops` | Busy blobs and loops that never settle. |
+| `letters` | Glossy coral tubes only where the mask is bright. |
+| `word` | A labyrinth where the mask is bright, still dots around it. |
+| `map` | Feed rises from bottom to top and kill from left to right: stripes, spots and chaos side by side. |
+
+**Outside the mask.** `outside` is a second choice with values of its own. It says what grows
+where the mask input is dark: `off` ignores the mask, `dead` lets nothing grow there, so the
+pattern lives on the object only, and a pattern's name grows that pattern there. Choosing one
+writes `use_mask`, `outside_feed`, `outside_kill` and `coverage_in`. A preset writes `outside`
+too (`letters` chooses `dead`, `word` chooses `solitons`, the others `off`). So to put any
+preset on the object only, choose the preset first, then `outside` `dead`.
+
+**From one preset to the next.** A new preset starts the pattern over from its own start. With
+`morph` on, it grows out of the pattern that is there instead. Feed and kill then glide to the
+new values, 95 % of the way after `glide` seconds (6), and a hand-dragged `feed` or `kill`
+glides the same way. Maze to solitons and coral to mitosis turn stripes into spots. Some pairs
+flood the surface with one colour (maze to worms); the guard counts that as dead and starts over
+3 s later.
+
+**Inputs.** `mask`: the object, white where it is. With `use_mask` on, the preset's rates hold
+where it is bright and the outside rates where it is dark. Pattern `mask` seeds only there.
+`people`: bright where someone is. `touch` says what they do: `wipe` clears the pattern and it
+grows back behind them, `seed` ignites new pattern, `kill` lets it die away under them. The
+pictures can have any size; an unwired one counts as black. The mask's edge is softened by
+`mask_blur`.
+
+**Outputs.** `out` is the picture, 1920 x 1080 (`out_width`, `out_height`). `coverage` is the
+share of the surface with pattern, from 0 to 1, as a channel; with `coverage_in` `mask` it
+counts only where the mask is bright. `activity` is how much the pattern still changes: about
+0.1 while it grows, below 0.03 once it settles, 0.8 in `loops`.
+
+**Params that matter most.** `speed` scales the steps per frame of the preset (`steps`): 2
+grows twice as fast and costs twice as much. `feed` and `kill` are the pattern itself; small
+steps of 0.002 change it. `map` spreads both over the picture instead. `seed`, `pattern`, `size`
+and `density` set the start, and a change of any of them starts over. The `guards` group keeps
+the picture alive: with `revive` on, a pattern that has died (nothing left, or one flat colour
+everywhere) starts over after `revive_after` seconds; with `stir` on, a pattern that has stood
+still (`activity` below `still`) for `stir_after` seconds gets `stir_count` holes that grow back.
+The `look` group sets the palette (`colors`, the last colour lights the rims), the relief and
+the light. For projection onto a real object, set `through` and `marker` to 0, so neither the
+mask nor the people show in the picture.
+
+**In an installation.** Feed a scan mask of the object into `mask` and choose `letters`, or any
+preset with `outside` `dead`, so the pattern grows on the object only. Feed `tex.blob_track`'s
+picture of the people into `people`, so they wipe paths that grow back. Bind `preset` to a key
+or a `chan.dropdown` with `morph` on, so one pattern grows into the next.
+
+**Cost.** About 1.3 ms per frame for the example with `coral` (8 steps), 1.5 ms with `uskate`
+(16 steps) and 3.9 ms with `uskate` at `speed` 4 (64 steps): 960 x 540 texels, picture
+1920 x 1080, on an RTX 3090 at a 280 W power limit. The cost grows with `width` times
+`height` times the steps per frame; 64 steps is the most.
+
+**Limits.** `map` has a flat area at the left with soft colour bands, and a thin line at the top
+and bottom edge, where the wrapping edges meet different rates. `holes` is the weakest preset.
+A stir in `coral` and `maze` is hard to see: the holes close within a second or two. Only feed
+and kill glide; the colours and the rest of a preset change at once. With `letters` and no mask
+wired, nothing can grow, and the pattern starts over every 3 s. `pause` still runs the step's
+passes, which leave the pattern as it is.

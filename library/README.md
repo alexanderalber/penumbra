@@ -341,6 +341,25 @@ scenes, chosen on one param.
   look and the light of the water view; `width` and `height` of the simulation (1280 x 720).
 - Example: [waves](../examples/waves/README.md).
 
+### reaction_diffusion
+
+![reaction_diffusion](reaction_diffusion/preview.png)
+
+Reaction-diffusion (Gray-Scott): Turing patterns that grow as branching coral, a labyrinth,
+dividing spots or worms, everywhere or on a mask only. Eleven presets, and with `morph` on one
+preset grows out of the other.
+
+- In: `mask` (the object: a pattern of its own on it, or only on it; a scan mask, a text),
+  `people` (they wipe, seed or kill the pattern: `tex.blob_track`). Any size.
+- Out: `out` (the picture, 1920 x 1080), `coverage` (the share of the surface with pattern, a
+  channel), `activity` (how much the pattern still changes, a channel).
+- Params: `preset`, `morph`, `glide`, `seed`, `speed`, `outside` (what grows where the mask is
+  dark, a choice that writes the outside rates), `touch`, `touch_strength`, `pause`; the rates
+  and steps a preset writes (`feed`, `kill`, `map`, `steps`); the start; the guards that revive
+  a dead pattern and stir a still one; the look; the diffusion; `width` and `height` of the
+  simulation (960 x 540).
+- Example: [reaction-diffusion](../examples/reaction-diffusion/README.md).
+
 ## A stage for music
 
 A world that moves with a sound file: a stage (a synthwave floor, a tunnel, a tower to climb or
