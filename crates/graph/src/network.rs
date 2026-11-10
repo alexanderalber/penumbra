@@ -340,7 +340,13 @@ pub struct Applied {
     /// ([`Params::Keep`]) a binding or connection that would make a loop; in an interactive edit a value of a
     /// preset that does not go in ([`crate::preset`]).
     pub left_out: Vec<String>,
+    /// The ops of the batch that [`Params::Keep`] left out whole, by their place in the batch:
+    /// one for each loop in [`Applied::left_out`]. A caller that must apply the batch strictly
+    /// takes them out first.
+    pub skipped: Vec<usize>,
     params: Params,
+    /// The place in the batch of the op being applied.
+    at: usize,
 }
 
 /// How [`Network::apply_with`] treats a parameter the node type does not declare.
@@ -775,9 +781,12 @@ impl Network {
             created: Vec::new(),
             touched: BTreeSet::new(),
             left_out: Vec::new(),
+            skipped: Vec::new(),
             params,
+            at: 0,
         };
         for (i, op) in ops.iter().enumerate() {
+            work.at = i;
             let done = match params {
                 // Interactive edits: choosing a preset writes its values ([`crate::preset`]).
                 Params::Strict => work.apply_interactive(types, op),
@@ -1154,6 +1163,7 @@ impl Applied {
                     // One wire in a file must not keep the rest of the project from opening.
                     if self.params == Params::Keep {
                         self.left_out.push(why);
+                        self.skipped.push(self.at);
                         return Ok(());
                     }
                     return Err(Error::new(why));
@@ -1259,6 +1269,7 @@ impl Applied {
                     }
                     if self.params == Params::Keep {
                         self.left_out.push(why);
+                        self.skipped.push(self.at);
                         return Ok(());
                     }
                     return Err(Error::new(why));
@@ -1645,6 +1656,7 @@ mod tests {
         let after = Op::Connect { from: p("/a"), output: 0, to: p("/c"), input: 1 };
         let applied = net.apply_with(&types, &[back, after], Params::Keep).unwrap();
         assert_eq!(applied.left_out.len(), 1, "{:?}", applied.left_out);
+        assert_eq!(applied.skipped, [0]);
         assert!(applied.left_out[0].contains("/c to /a"), "{:?}", applied.left_out);
         let n = &applied.network;
         assert_eq!(n.node(n.resolve(&p("/a")).unwrap()).unwrap().inputs[0], None);

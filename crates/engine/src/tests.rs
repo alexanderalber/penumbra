@@ -924,6 +924,80 @@ fn a_component_file_that_does_not_parse_stays_listed() {
 }
 
 #[test]
+fn a_component_file_with_a_loop_loads_without_that_wire_and_a_save_keeps_the_old_file() {
+    let f = Fixture::new("loop-comp");
+    let lib = ScratchDir::unborn("engine-loop-comp");
+    std::fs::create_dir_all(lib.path()).unwrap();
+    // /loopy/seed feeds the feedback's `initial` and reads /loopy/fade, which reads the
+    // feedback: a loop, since `initial` is read in the same frame.
+    let text = r#"(version: 2, nodes: {
+        "/loopy": (kind: "comp.base"),
+        "/loopy/src": (kind: "tex.in"),
+        "/loopy/fb": (kind: "tex.feedback", inputs: {"initial": "seed", "previous": "fade"}),
+        "/loopy/fade": (kind: "tex.level", params: {"brightness": 0.9}, inputs: {"in": "fb"}),
+        "/loopy/seed": (kind: "tex.level", inputs: {"in": "fade"}),
+        "/loopy/out": (kind: "tex.out", inputs: {"in": "fade"}),
+    })"#;
+    let file = lib.path().join("loopy.comp.ron");
+    std::fs::write(&file, text).unwrap();
+    f.engine.set_library(Some(lib.to_path_buf()));
+
+    let loaded = f.call("comp.load", json!({"file": "loopy"}));
+    assert_eq!(loaded["path"], "/loopy", "{loaded}");
+    assert_eq!(loaded["file"], file.display().to_string(), "{loaded}");
+    let left_out = loaded["left_out"].as_array().cloned().unwrap_or_default();
+    assert_eq!(left_out.len(), 1, "{loaded}");
+    assert!(
+        left_out[0].as_str().unwrap().contains(
+            "the connection from /loopy/fade to /loopy/seed (input `in`) would close a loop: \
+             /loopy/seed -> /loopy/fb (`initial`) -> /loopy/fade (`in`) -> /loopy/seed (`in`)"
+        ),
+        "{loaded}"
+    );
+    assert!(loaded["note"].as_str().unwrap().contains("loopy.comp.ron keeps them"), "{loaded}");
+    // Every node, and every wire but that one.
+    let inside: Vec<String> = f.call("node.list", json!({"path": "/loopy"}))["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["path"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(inside, ["/loopy/fade", "/loopy/fb", "/loopy/out", "/loopy/seed", "/loopy/src"]);
+    let from = |path: &str| -> Vec<Json> {
+        f.call("node.info", json!({"path": path}))["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| json!([i["name"], i["from"]]))
+            .collect()
+    };
+    assert!(from("/loopy/fb").contains(&json!(["initial", "/loopy/seed"])));
+    assert!(from("/loopy/fb").contains(&json!(["previous", "/loopy/fade"])));
+    assert!(from("/loopy/fade").contains(&json!(["in", "/loopy/fb"])));
+    assert!(from("/loopy/out").contains(&json!(["in", "/loopy/fade"])));
+    assert!(!from("/loopy/seed").contains(&json!(["in", "/loopy/fade"])));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+    // One undo step, named for what it left out, takes the whole component away.
+    let undone = f.call("history.undo", json!({}));
+    assert!(undone.to_string().contains("without a wire that would close a loop"), "{undone}");
+    assert!(f.call("node.list", json!({}))["nodes"].as_array().unwrap().is_empty());
+    f.call("history.redo", json!({}));
+
+    // Saving over the file keeps the old one beside it, since it held the wire.
+    let saved = f.call("comp.save", json!({"path": "/loopy"}));
+    assert_eq!(saved["replaced"], true, "{saved}");
+    let backup = lib.path().join("loopy.comp.ron.bak");
+    assert_eq!(saved["backup"], backup.display().to_string(), "{saved}");
+    assert_eq!(std::fs::read_to_string(&backup).unwrap(), text);
+    // The library does not offer the copy, and the new file loads whole.
+    assert_eq!(f.call("comp.library", json!({}))["components"].as_array().unwrap().len(), 1);
+    let again = f.call("comp.load", json!({"file": "loopy"}));
+    assert_eq!(again.get("left_out"), None, "{again}");
+    let resaved = f.call("comp.save", json!({"path": "/loopy"}));
+    assert_eq!(resaved.get("backup"), None, "{resaved}");
+}
+
+#[test]
 fn shipped_components_bring_their_files() {
     let f = Fixture::new("shipped");
     let lib = ScratchDir::unborn("engine-shipped-user");

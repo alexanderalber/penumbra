@@ -162,6 +162,12 @@ pub fn save(engine: &Engine, id: NodeId) -> Result<String, Error> {
             saved.dropped.join(", ")
         ));
     }
+    if let Some(backup) = &saved.backup {
+        text.push_str(&format!(
+            "; the old file held a wire that would close a loop and is kept in {}",
+            backup.display()
+        ));
+    }
     Ok(text)
 }
 
@@ -172,7 +178,9 @@ pub fn remove(engine: &Engine, name: &str) -> Result<String, Error> {
     Ok(format!("took `{name}` out of the library; the file is now {}", to.display()))
 }
 
-/// Adds the library's component `name` inside `level` at `at`, selected.
+/// Adds the library's component `name` inside `level` at `at`, selected. The message for the
+/// status bar when the file held a wire that would close a loop, which the component goes
+/// without.
 pub fn add(
     engine: &Engine,
     editor: &mut Editor,
@@ -180,16 +188,17 @@ pub fn add(
     level: Option<NodeId>,
     at: Pos2,
     now: Instant,
-) -> Result<(), Error> {
+) -> Result<Option<String>, Error> {
     let net = engine.session().doc().snapshot();
     let level_path = level_path(&net, level);
     let loaded = comps::load(engine, Actor::User, name, None, &level_path).map_err(err)?;
+    let message = loaded.left_out_message();
     let path = loaded.path;
     place(engine, &loaded.outcome, [(path.clone(), at)], now)?;
     if let Some(id) = engine.session().doc().snapshot().resolve(&path) {
         editor.select([id]);
     }
-    Ok(())
+    Ok(message)
 }
 
 /// The component files on offer and where each lies (project first, then the library; a name

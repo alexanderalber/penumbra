@@ -544,6 +544,7 @@ water      15
 </li>
 </ul>
 <p>Files a component refers to (a shader, an image) are relative to the project. A component in a folder of its own, <code>&lt;name&gt;/&lt;name&gt;.comp.ron</code> (as all of penumbra's are), brings the other files of that folder along: adding it copies them into the project's <code>library/&lt;name&gt;/</code>, which is where its nodes name them (<code>library/water/water.wgsl</code>). A file the project has already is kept, so a changed copy survives adding the component again; <a class="ref" href="#comp.load"><code>comp.load</code></a> says what it <code>copied</code> and <code>kept</code>. Its preview picture and notes stay behind. Saving a component does not collect its files yet.</p>
+<p>A wire or a binding in a component file that would close a loop costs only itself, as in <code>project.ron</code>. The component is added with every node and every other wire. The status bar, the log and the reply of <a class="ref" href="#comp.load"><code>comp.load</code></a> (<code>left_out</code>, <code>file</code>) name the file and walk the loop. The file keeps the wire. Saving the component over that file first copies it to <code>&lt;name&gt;.comp.ron.bak</code> beside it, and the reply of <a class="ref" href="#comp.save"><code>comp.save</code></a> names the copy (<code>backup</code>).</p>
 <h3 id="concepts-undo-and-the-change-log">Undo and the change log</h3>
 <p>Every edit, by hand, by Claude over the control channel, or by editing <code>project.ron</code> in a text editor, is an entry in one linear history, shown under Changes. Ctrl+Z undoes the latest, whoever made it; to take back one of Claude's changes while keeping later tweaks of your own, ask Claude to revert it. Moving nodes is an edit like any other: a drag (or one arrange) is one entry, and <a class="ref" href="#history.undo"><code>history.undo</code></a> takes it back as well.</p>
 <p>Values that arrive by OSC are live control, not edits: they stay out of the history, and undo or redo of other edits does not roll them back. An edit by hand to the same param takes it back into the history.</p>
@@ -588,7 +589,7 @@ water      15
 <p>A wire or a binding in the file that would close a loop does not stop the rest either. The project opens with every node and without that one wire, and says which and why: in the bar at the top of the window, in the log, and in <a class="ref" href="#project.info"><code>project.info</code></a> and the reply of <a class="ref" href="#project.open"><code>project.open</code></a> (<code>left_out</code>). The message walks the loop round, input by input:</p>
 <pre><code>the connection from /fb to /tail (input `in`) would close a loop: /tail -&gt; /seed (`in`) -&gt; /fb (`initial`) -&gt; /tail (`in`)
 </code></pre>
-<p>Of a loop's wires, the one into the node whose path sorts last is left out; bindings load after all wires. A feedback's <code>initial</code> input counts like any other: it is read in the same frame, only <code>previous</code> waits a frame. The file keeps the wire until the next save, which first copies the file to <code>project.ron.bak</code>. In the editor and from commands such a wire is refused.</p>
+<p>Of a loop's wires, the one into the node whose path sorts last is left out; bindings load after all wires. A feedback's <code>initial</code> input counts like any other: it is read in the same frame, only <code>previous</code> waits a frame. The file keeps the wire until the next save, which first copies the file to <code>project.ron.bak</code>. In the editor and from commands such a wire is refused. A component file loads the same way (see Components).</p>
 <p>A file that does not parse at all, or has a format version this build does not read, is reported and left alone (autosave pauses) until it is fixed. <a class="ref" href="#project.save"><code>project.save</code></a> writes over it anyway; it first copies the file to <code>project.ron.bak</code> (also when nodes are kept as placeholders; one copy, the next such save replaces it).</p>
 </div></details>
 <details class="entry guide" id="glossary"><summary><span class="name">Glossary</span></summary>
@@ -7266,9 +7267,9 @@ node.bind {param: &quot;/sim.reset&quot;, from: &quot;/keys&quot;, channel: &quo
 <div class="body">
 <p>Component files in the project's components/, the user's library and penumbra's own library, each with its shelf, one line on what it does and its picture</p>
 </div></details>
-<details class="entry command" id="comp.load"><summary><code class="name">comp.load</code><span class="sum">Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/&lt;name&gt;/ first</span></summary>
+<details class="entry command" id="comp.load"><summary><code class="name">comp.load</code><span class="sum">Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/&lt;name&gt;/ first; a wire or binding in the file that would close a loop is left out and named in left_out</span></summary>
 <div class="body">
-<p>Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/&lt;name&gt;/ first; {file, path?}</p>
+<p>Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/&lt;name&gt;/ first; a wire or binding in the file that would close a loop is left out and named in left_out; {file, path?}</p>
 <p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#simulations-how-to-use-one">Simulations › How to use one</a></p>
 </div></details>
 <details class="entry command" id="comp.put_param"><summary><code class="name">comp.put_param</code><span class="sum">Make an inner param a param of its component that it follows: an @param line copied from it, its value moved up, a binding to parent.&lt;name&gt;; a param of that name the component has already is followed when it fits</span></summary>
@@ -7280,9 +7281,10 @@ node.bind {param: &quot;/sim.reset&quot;, from: &quot;/keys&quot;, channel: &quo
 <div class="body">
 <p>Take a component file out of the library (into its removed/ folder); {name, place?: project | library}</p>
 </div></details>
-<details class="entry command" id="comp.save"><summary><code class="name">comp.save</code><span class="sum">Write a component to a file (default: the library, &lt;name&gt;.comp.ron)</span></summary>
+<details class="entry command" id="comp.save"><summary><code class="name">comp.save</code><span class="sum">Write a component to a file (default: the library, &lt;name&gt;.comp.ron); a file it replaces that holds a wire or binding a load leaves out is copied to &lt;file&gt;.bak first</span></summary>
 <div class="body">
-<p>Write a component to a file (default: the library, &lt;name&gt;.comp.ron); {path, file?}</p>
+<p>Write a component to a file (default: the library, &lt;name&gt;.comp.ron); a file it replaces that holds a wire or binding a load leaves out is copied to &lt;file&gt;.bak first; {path, file?}</p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
 </div></details>
 <details class="entry command" id="comp.show_param"><summary><code class="name">comp.show_param</code><span class="sum">Show an inner param on its component as a row: an @expose line; value and spec stay inside</span></summary>
 <div class="body">

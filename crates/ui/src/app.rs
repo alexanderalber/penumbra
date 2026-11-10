@@ -429,7 +429,13 @@ impl PenumbraApp {
                     self.library.1 = None;
                 }),
                 Action::AddComponent { name, level, at } => {
-                    crate::components::add(&self.engine, &mut self.editor, &name, level, at, now)
+                    crate::components::add(&self.engine, &mut self.editor, &name, level, at, now).map(
+                        |message| {
+                            if let Some(m) = message {
+                                self.message = Some((m, now));
+                            }
+                        },
+                    )
                 }
                 Action::Copy(ids) => {
                     crate::clipboard::copy(&self.engine, &ids).map(|c| self.copied_now(c, now))

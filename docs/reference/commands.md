@@ -93,10 +93,10 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `comp.collapse` | Group side-by-side nodes into a new component, ports where wires cross; {paths, name?} |
 | `comp.expand` | Dissolve a component, its nodes move up beside it; {path} |
 | `comp.library` | Component files in the project's components/, the user's library and penumbra's own library, each with its shelf, one line on what it does and its picture |
-| `comp.load` | Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/<name>/ first; {file, path?} |
+| `comp.load` | Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/<name>/ first; a wire or binding in the file that would close a loop is left out and named in left_out; {file, path?} |
 | `comp.put_param` | Make an inner param a param of its component that it follows: an @param line copied from it, its value moved up, a binding to parent.<name>; a param of that name the component has already is followed when it fits; {param, name?} |
 | `comp.remove` | Take a component file out of the library (into its removed/ folder); {name, place?: project \| library} |
-| `comp.save` | Write a component to a file (default: the library, <name>.comp.ron); {path, file?} |
+| `comp.save` | Write a component to a file (default: the library, <name>.comp.ron); a file it replaces that holds a wire or binding a load leaves out is copied to <file>.bak first; {path, file?} |
 | `comp.show_param` | Show an inner param on its component as a row: an @expose line; value and spec stay inside; {param, name?} |
 
 ## cook

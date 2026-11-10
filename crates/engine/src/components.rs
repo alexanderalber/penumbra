@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use penumbra_core::{Name, NodeId, NodePath};
-use penumbra_graph::{EditOutcome, Network, NodeTypes, Op, PortRole};
+use penumbra_graph::{EditOutcome, Network, NodeTypes, Op, Params, PortRole};
 use penumbra_ops::comp::{ABOUT, COMP_KIND, SHELF};
 use penumbra_project::component::{self, FILE_SUFFIX};
 use penumbra_project::{Actor, Content, diff};
@@ -38,12 +38,12 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("comp.expand", "Dissolve a component, its nodes move up beside it; {path}", comp_expand);
     add(
         "comp.save",
-        "Write a component to a file (default: the library, <name>.comp.ron); {path, file?}",
+        "Write a component to a file (default: the library, <name>.comp.ron); a file it replaces that holds a wire or binding a load leaves out is copied to <file>.bak first; {path, file?}",
         comp_save,
     );
     add(
         "comp.load",
-        "Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/<name>/ first; {file, path?}",
+        "Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/<name>/ first; a wire or binding in the file that would close a loop is left out and named in left_out; {file, path?}",
         comp_load,
     );
     add(
@@ -367,6 +367,25 @@ pub struct Saved {
     pub replaced: bool,
     /// References to the outside the file could not carry.
     pub dropped: Vec<String>,
+    /// Where the replaced file was copied first: it held parts a load leaves out
+    /// ([`left_out_of`]), which the new file no longer has.
+    pub backup: Option<PathBuf>,
+}
+
+/// Suffix of the copy [`save`] makes of a file it replaces that held parts a load leaves out.
+pub const BACKUP_SUFFIX: &str = ".bak";
+
+/// What loading component file `text` leaves out, each with the reason: wires and bindings
+/// that would close a loop. Empty for a file that does not parse.
+fn left_out_of(types: &NodeTypes, text: &str) -> Vec<String> {
+    let Ok(comp) = component::parse(text, types) else { return Vec::new() };
+    let Some(top) = comp.nodes.keys().find(|k| k.names().len() == 1).cloned() else { return Vec::new() };
+    let empty = Content::default();
+    let Ok(next) = component::instantiate(&empty, types, &comp, &top) else { return Vec::new() };
+    Network::new()
+        .apply_with(types, &diff(&empty, &next), Params::Keep)
+        .map(|a| a.left_out)
+        .unwrap_or_default()
 }
 
 /// Writes the component at `path` to `file` (absolute or in the project; default: the library).
@@ -387,10 +406,22 @@ pub fn save(e: &Engine, path: &NodePath, file: Option<&str>) -> Result<Saved> {
         std::fs::create_dir_all(dir).map_err(|err| format!("cannot create {}: {err}", dir.display()))?;
     }
     let replaced = file.exists();
+    // A file whose wire a load left out keeps it until here; the copy keeps it after.
+    let mut backup = None;
+    if replaced
+        && let Ok(old) = std::fs::read_to_string(&file)
+        && !left_out_of(types, &old).is_empty()
+    {
+        let mut name = file.file_name().unwrap_or_default().to_os_string();
+        name.push(BACKUP_SUFFIX);
+        let copy = file.with_file_name(name);
+        std::fs::copy(&file, &copy).map_err(|err| format!("cannot copy {}: {err}", file.display()))?;
+        backup = Some(copy);
+    }
     let tmp = file.with_extension("ron.tmp");
     std::fs::write(&tmp, &text).map_err(|err| format!("cannot write {}: {err}", tmp.display()))?;
     std::fs::rename(&tmp, &file).map_err(|err| format!("cannot write {}: {err}", file.display()))?;
-    Ok(Saved { file, replaced, dropped: dropped.lines })
+    Ok(Saved { file, replaced, dropped: dropped.lines, backup })
 }
 
 fn comp_save(e: &Engine, p: &Json) -> Result<Json> {
@@ -402,7 +433,20 @@ fn comp_save(e: &Engine, p: &Json) -> Result<Json> {
     }
     let a: A = args(p)?;
     let s = save(e, &a.path, a.file.as_deref())?;
-    Ok(json!({"file": s.file.display().to_string(), "replaced": s.replaced, "dropped": s.dropped}))
+    let mut out = json!({"file": s.file.display().to_string(), "replaced": s.replaced, "dropped": s.dropped});
+    if let Some(backup) = &s.backup
+        && let Some(o) = out.as_object_mut()
+    {
+        o.insert("backup".into(), json!(backup.display().to_string()));
+        o.insert(
+            "note".into(),
+            json!(format!(
+                "the old file held a wire or binding that would close a loop; it is kept in {}",
+                backup.display()
+            )),
+        );
+    }
+    Ok(out)
 }
 
 /// The file `name` stands for: a path (absolute or in the project), else a component of that
@@ -422,7 +466,12 @@ fn find_component(e: &Engine, name: &str) -> Result<PathBuf> {
 /// What loading a component did.
 pub struct Loaded {
     pub path: NodePath,
+    /// The file it came from.
+    pub file: PathBuf,
     pub outcome: EditOutcome,
+    /// What the file holds that the component was added without, each with the reason: wires
+    /// and bindings that would close a loop. The file keeps them.
+    pub left_out: Vec<String>,
     /// Files the component brought along, copied into the project (relative to it).
     pub copied: Vec<String>,
     /// Files it brings that the project had already; those are left as they are.
@@ -458,7 +507,10 @@ fn bring_files(e: &Engine, file: &Path) -> Result<(Vec<String>, Vec<String>)> {
         .map(|entry| entry.path())
         .filter(|p| {
             let n = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-            !n.ends_with(FILE_SUFFIX) && !n.starts_with("preview.") && !n.ends_with(".md")
+            !n.ends_with(FILE_SUFFIX)
+                && !n.ends_with(BACKUP_SUFFIX)
+                && !n.starts_with("preview.")
+                && !n.ends_with(".md")
         })
         .take(MAX_FILES + 1)
         .collect();
@@ -533,9 +585,44 @@ pub fn load(
         top.pos = None;
     }
     let (copied, kept) = bring_files(e, &file)?;
-    let ops = diff(&base, &next);
-    let outcome = edit_as(e, actor, &ops, &format!("add component {at}"))?;
-    Ok(Loaded { path: at, outcome, copied, kept })
+    let mut ops = diff(&base, &next);
+    // A wire or binding in the file that would close a loop costs only itself, as in a project
+    // file: a trial run finds it, and the edit goes without it. Anything else the edit refuses
+    // as before.
+    let mut left_out = Vec::new();
+    if let Ok(trial) = net.apply_with(types, &ops, Params::Keep)
+        && !trial.skipped.is_empty()
+    {
+        let mut i = 0;
+        ops.retain(|_| {
+            i += 1;
+            !trial.skipped.contains(&(i - 1))
+        });
+        left_out = trial.left_out;
+    }
+    let label = match left_out.len() {
+        0 => format!("add component {at}"),
+        1 => format!("add component {at} without a wire that would close a loop"),
+        n => format!("add component {at} without {n} wires that would close a loop"),
+    };
+    let outcome = edit_as(e, actor, &ops, &label)?;
+    for why in &left_out {
+        log::warn!("{} loaded without this part: {why}. The file keeps it", file.display());
+    }
+    Ok(Loaded { path: at, file, outcome, left_out, copied, kept })
+}
+
+impl Loaded {
+    /// One line for the status bar when the component came without part of its file.
+    pub fn left_out_message(&self) -> Option<String> {
+        let first = self.left_out.first()?;
+        let name = self.file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let mut text = format!("{} is added without part of {name}: {first}", self.path);
+        if self.left_out.len() > 1 {
+            text.push_str(&format!(" (and {} more, see the log)", self.left_out.len() - 1));
+        }
+        Some(text)
+    }
 }
 
 fn comp_load(e: &Engine, p: &Json) -> Result<Json> {
@@ -547,7 +634,22 @@ fn comp_load(e: &Engine, p: &Json) -> Result<Json> {
     }
     let a: A = args(p)?;
     let l = load(e, Actor::Claude, &a.file, a.path, &NodePath::root())?;
-    Ok(json!({"path": l.path, "copied": l.copied, "kept": l.kept, "history": history(&l.outcome)}))
+    let mut out = json!({"path": l.path, "copied": l.copied, "kept": l.kept, "history": history(&l.outcome)});
+    if !l.left_out.is_empty()
+        && let Some(o) = out.as_object_mut()
+    {
+        o.insert("file".into(), json!(l.file.display().to_string()));
+        o.insert("left_out".into(), json!(l.left_out));
+        o.insert(
+            "note".into(),
+            json!(format!(
+                "{} is added without the parts in left_out, each with the reason; {} keeps them",
+                l.path,
+                l.file.display()
+            )),
+        );
+    }
+    Ok(out)
 }
 
 fn comp_remove(e: &Engine, p: &Json) -> Result<Json> {

@@ -720,6 +720,12 @@ changed copy survives adding the component again; `comp.load` says what it `copi
 `kept`. Its preview picture and notes stay behind. Saving a component does not collect its
 files yet.
 
+A wire or a binding in a component file that would close a loop costs only itself, as in
+`project.ron`. The component is added with every node and every other wire. The status bar,
+the log and the reply of `comp.load` (`left_out`, `file`) name the file and walk the loop. The
+file keeps the wire. Saving the component over that file first copies it to
+`<name>.comp.ron.bak` beside it, and the reply of `comp.save` names the copy (`backup`).
+
 ## Undo and the change log
 
 Every edit, by hand, by Claude over the control channel, or by editing `project.ron` in a text
@@ -828,7 +834,8 @@ Of a loop's
 wires, the one into the node whose path sorts last is left out; bindings load after all wires.
 A feedback's `initial` input counts like any other: it is read in the same frame, only
 `previous` waits a frame. The file keeps the wire until the next save, which first copies the
-file to `project.ron.bak`. In the editor and from commands such a wire is refused.
+file to `project.ron.bak`. In the editor and from commands such a wire is refused. A component
+file loads the same way (see Components).
 
 A file that does not parse at all, or has a format version this build does not read, is reported
 and left alone (autosave pauses) until it is fixed. `project.save` writes over it anyway; it first
