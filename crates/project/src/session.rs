@@ -21,9 +21,10 @@
 //!   purpose, after copying it to [`BACKUP_NAME`]. A file that cannot be read pauses autosave
 //!   the same way, until the next read succeeds.
 //!
-//! - **A binding that would make a loop** is left out of the document, so the rest of the
-//!   file still opens or merges; it is listed in [`SessionStatus::left_out`] with the reason, and
-//!   the next save writes the file without it.
+//! - **A binding or a connection that would make a loop** is left out of the document, so the
+//!   rest of the file still opens or merges; it is listed in [`SessionStatus::left_out`] with the
+//!   reason and logged as a warning. The file keeps it until the next write, which first copies
+//!   the file to [`BACKUP_NAME`] (autosave included), so what was left out stays on disk.
 //!
 //! - **Renamed kinds:** a node whose kind the file names by an old name
 //!   ([`NodeTypes::renamed_kind`]) loads as the new kind; the nodes are listed in
@@ -114,8 +115,8 @@ pub struct SessionStatus {
     /// the file last merged. The next save writes the new names.
     pub renamed: Vec<RenamedNode>,
     /// What the file holds that the document left out, with the reason, as the project opened
-    /// or the file last merged: bindings that would make a loop. The next save writes the file
-    /// without them.
+    /// or the file last merged: bindings and connections that would make a loop. The next save
+    /// writes the file without them, after copying it to [`BACKUP_NAME`].
     pub left_out: Vec<String>,
     pub can_undo: bool,
     pub can_redo: bool,
@@ -148,6 +149,9 @@ struct State {
     renamed: Vec<RenamedNode>,
     /// [`SessionStatus::left_out`].
     left_out: Vec<String>,
+    /// The file holds what the document left out: the next write copies it to [`BACKUP_NAME`]
+    /// first.
+    backup_due: bool,
     /// The file names old kinds: it is written again even though the document is the one it
     /// holds.
     rewrite: bool,
@@ -187,7 +191,10 @@ fn build(content: &Content, types: &NodeTypes) -> Result<(Network, Vec<String>),
     let applied = Network::new().apply_with(types, &diff(&Content::default(), content), Params::Keep)?;
     let (net, left_out) = (applied.network, applied.left_out);
     for why in &left_out {
-        log::warn!("{FILE_NAME}: left out {why}");
+        log::warn!(
+            "{FILE_NAME} opened without this part: {why}. The file keeps it until the next save, which \
+             copies the file to {BACKUP_NAME} first"
+        );
     }
     let resets: Vec<Op> = net
         .nodes()
@@ -363,6 +370,7 @@ impl Session {
                 dirty_since: None,
                 rewrite: !renamed.is_empty(),
                 renamed,
+                backup_due: !left_out.is_empty(),
                 left_out,
             }),
         })
@@ -716,10 +724,14 @@ impl Session {
         match merged {
             Ok((theirs, renamed, left_out)) => {
                 for why in &left_out {
-                    log::warn!("{FILE_NAME}: left out {why}");
+                    log::warn!(
+                        "{FILE_NAME} merged without this part: {why}. The file keeps it until the next save, which \
+             copies the file to {BACKUP_NAME} first"
+                    );
                 }
                 state.rewrite = !renamed.is_empty();
                 state.renamed = renamed;
+                state.backup_due |= !left_out.is_empty();
                 state.left_out = left_out;
                 if state.file_error.take().is_some() {
                     log::info!("{} loads again", self.file.display());
@@ -781,7 +793,12 @@ impl Session {
         }
         let changed = state.file_text.as_ref() != Some(&text);
         if changed {
+            let backup = std::mem::take(&mut state.backup_due);
             drop(state);
+            if backup && let Err(e) = self.backup() {
+                lock(&self.state).backup_due = true;
+                return Err(e);
+            }
             write_atomic(&self.file, &text)?;
             state = lock(&self.state);
             state.file_text = Some(text);
@@ -1087,6 +1104,95 @@ mod tests {
         let status = s.status(t0 + 3 * S);
         assert_eq!(status.file_error, None);
         assert!(status.left_out.iter().any(|w| w.contains("/c.value to /sum")), "{:?}", status.left_out);
+    }
+
+    /// Every connection of `net` as `(reader, input, source)` paths, sorted.
+    fn wires(net: &Network) -> Vec<(String, usize, String)> {
+        let mut out: Vec<_> = net
+            .nodes()
+            .flat_map(|n| {
+                n.inputs.iter().enumerate().filter_map(|(i, p)| {
+                    let p = (*p)?;
+                    Some((net.path_of(n.id)?.to_string(), i, net.path_of(p.node)?.to_string()))
+                })
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Opens `text` as a project file; checks that every node and every connection but the
+    /// one from `from` into `to` loaded, and that the reason names `words`.
+    fn opens_without_one_wire(name: &str, text: &str, nodes: usize, from: &str, to: &str, words: &[&str]) {
+        let dir = ScratchDir::unborn(name);
+        std::fs::create_dir_all(dir.path()).unwrap();
+        std::fs::write(dir.path().join(FILE_NAME), text).unwrap();
+        let s = open(&dir);
+        let status = s.status(Instant::now());
+        assert_eq!(status.file_error, None);
+        assert_eq!(status.nodes, nodes);
+        assert_eq!(status.left_out.len(), 1, "{:?}", status.left_out);
+        let why = &status.left_out[0];
+        assert!(why.contains(&format!("the connection from {from} to {to}")), "{why}");
+        for w in words {
+            assert!(why.contains(w), "{w:?} not in {why}");
+        }
+        // What the file holds, minus that one wire.
+        let types = test_types();
+        let full = crate::content::diff(&Content::default(), &crate::file::load(text, &types).unwrap());
+        let connects = full.iter().filter(|op| matches!(op, Op::Connect { .. })).count();
+        let got = wires(&s.doc().snapshot());
+        assert_eq!(got.len(), connects - 1, "{got:?}");
+        assert!(!got.iter().any(|(r, _, f)| r == to && f == from), "{got:?}");
+
+        // The file keeps the wire until a save, which copies it aside first.
+        let before = file(&s);
+        assert_eq!(before, text);
+        assert!(s.save().unwrap());
+        assert_eq!(std::fs::read_to_string(dir.path().join(BACKUP_NAME)).unwrap(), text);
+        let reopened = open(&dir);
+        assert_eq!(wires(&reopened.doc().snapshot()), got);
+        assert!(reopened.status(Instant::now()).left_out.is_empty());
+    }
+
+    #[test]
+    fn a_connection_that_would_make_a_loop_costs_only_itself() {
+        // /seed feeds the feedback's `initial` and reads /tail, which reads the feedback: a loop,
+        // since `initial` is read in the same frame. Connections load in the order of the
+        // reading node's path, so the one into /tail comes last and is the one left out.
+        let text = r#"(version: 2, nodes: {
+            "/k": (kind: "test.const", params: {"value": 1.0}),
+            "/fb": (kind: "test.feedback", inputs: {"initial": "seed", "previous": "tail"}),
+            "/tail": (kind: "test.add", inputs: {"a": "fb", "b": "k"}),
+            "/seed": (kind: "test.add", inputs: {"a": "tail", "b": "k"}),
+            "/other": (kind: "test.add", inputs: {"a": "k"}),
+        })"#;
+        opens_without_one_wire(
+            "test-wire-loop",
+            text,
+            5,
+            "/fb",
+            "/tail",
+            &[
+                "(input `a`) would close a loop: /tail -> /seed (`a`) -> /fb (`initial`) -> /tail (`a`)",
+                "/fb reads `initial` in the same frame, only `previous` a frame later",
+            ],
+        );
+    }
+
+    #[test]
+    fn a_loop_inside_a_component_costs_only_its_connection() {
+        let text = r#"(version: 2, nodes: {
+            "/k": (kind: "test.const", params: {"value": 1.0}),
+            "/c": (kind: "test.comp"),
+            "/c/src": (kind: "test.in", inputs: {"in": "/k"}),
+            "/c/fb": (kind: "test.feedback", inputs: {"initial": "seed", "previous": "tail"}),
+            "/c/tail": (kind: "test.add", inputs: {"a": "fb", "b": "src"}),
+            "/c/seed": (kind: "test.add", inputs: {"a": "tail", "b": "src"}),
+            "/c/out": (kind: "test.out", inputs: {"in": "tail"}),
+            "/sink": (kind: "test.add", inputs: {"a": "c/out"}),
+        })"#;
+        opens_without_one_wire("test-wire-loop-comp", text, 8, "/c/fb", "/c/tail", &["/c/fb (`initial`)"]);
     }
 
     #[test]

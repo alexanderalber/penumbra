@@ -50,7 +50,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let mut add = engine_commands(registry, engine);
     add(
         "project.info",
-        "Project directory, unsaved changes, file errors, nodes that did not load (broken), who is editing",
+        "Project directory, unsaved changes, file errors, nodes that did not load (broken), wires and bindings left out as loops (left_out), who is editing",
         project_info,
     );
     add(

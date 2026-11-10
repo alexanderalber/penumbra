@@ -270,7 +270,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `project.demo` | Open the demo project, made afresh: changes, state and layout from before are gone |
 | `project.example` | Open a shipped example from a fresh copy in the user's data folder (the shipped one stays as it is). Changes last until the example is opened again; project.save_as keeps them; {name} |
 | `project.examples` | The examples shipped with penumbra, by name, and where they lie |
-| `project.info` | Project directory, unsaved changes, file errors, nodes that did not load (broken), who is editing |
+| `project.info` | Project directory, unsaved changes, file errors, nodes that did not load (broken), wires and bindings left out as loops (left_out), who is editing |
 | `project.new` | Make an empty project in dir (created if missing, must hold no project.ron) and open it; {dir} |
 | `project.open` | Close this project (state saved, changes written) and open the one in dir; {dir} |
 | `project.recent` | Recently opened projects, newest first (the demo is not listed), and the open one |

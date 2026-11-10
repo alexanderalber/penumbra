@@ -782,8 +782,18 @@ impl PenumbraApp {
                     {
                         ui.separator();
                     }
-                    let n = status.left_out.len();
-                    let what = if n == 1 { "1 binding".to_string() } else { format!("{n} bindings") };
+                    let wires = status.left_out.iter().filter(|w| w.starts_with("the connection")).count();
+                    let binds = status.left_out.len() - wires;
+                    let count = |n: usize, one: &str| match n {
+                        0 => None,
+                        1 => Some(format!("1 {one}")),
+                        n => Some(format!("{n} {one}s")),
+                    };
+                    let what = [count(wires, "connection"), count(binds, "binding")]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join(" and ");
                     let r = ui.colored_label(
                         theme::ERROR,
                         format!("not loaded from the project file: {what} that would make a loop"),

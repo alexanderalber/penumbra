@@ -475,21 +475,29 @@ struct DirArg {
 }
 
 /// The reply of the commands that open a project; with the nodes that loaded under a new kind
-/// name, when there are any.
+/// name and what the project opened without, when there are any.
 fn reply(e: &Engine, r: Result<Opened, Error>) -> Result<Json, CommandError> {
     let opened = r?;
     let mut out = json!({"dir": opened.dir, "switched": opened.switched});
-    let renamed = e.session().status(std::time::Instant::now()).renamed;
-    if !renamed.is_empty()
-        && let Some(obj) = out.as_object_mut()
-    {
-        obj.insert("renamed".into(), json!(renamed));
-        obj.insert(
-            "note".into(),
-            json!(
-                "these nodes name an old kind and loaded as the new one; the next save writes the new name"
-            ),
-        );
+    let status = e.session().status(std::time::Instant::now());
+    let mut notes = Vec::new();
+    if let Some(obj) = out.as_object_mut() {
+        if !status.renamed.is_empty() {
+            obj.insert("renamed".into(), json!(status.renamed));
+            notes.push(
+                "these nodes name an old kind and loaded as the new one; the next save writes the new name",
+            );
+        }
+        if !status.left_out.is_empty() {
+            obj.insert("left_out".into(), json!(status.left_out));
+            notes.push(
+                "the project opened without the parts in left_out, each with the reason; the file keeps them \
+                 until the next save, which copies it to project.ron.bak first",
+            );
+        }
+        if !notes.is_empty() {
+            obj.insert("note".into(), json!(notes.join(". ")));
+        }
     }
     Ok(out)
 }

@@ -811,6 +811,21 @@ it carry nothing. Saving writes its line back as it was, so nothing is lost by o
 saving. It can be renamed or deleted; to change it, fix its line in `project.ron`, and the
 fixed node takes its place.
 
+A wire or a binding in the file that would close a loop does not stop the rest either. The
+project opens with every node and without that one wire, and says which and why: in the bar at
+the top of the window, in the log, and in `project.info` and the reply of `project.open`
+(`left_out`). The message walks the loop round, input by input:
+
+```
+the connection from /fb to /tail (input `in`) would close a loop: /tail -> /seed (`in`) -> /fb (`initial`) -> /tail (`in`)
+```
+
+Of a loop's
+wires, the one into the node whose path sorts last is left out; bindings load after all wires.
+A feedback's `initial` input counts like any other: it is read in the same frame, only
+`previous` waits a frame. The file keeps the wire until the next save, which first copies the
+file to `project.ron.bak`. In the editor and from commands such a wire is refused.
+
 A file that does not parse at all, or has a format version this build does not read, is reported
 and left alone (autosave pauses) until it is fixed. `project.save` writes over it anyway; it first
 copies the file to `project.ron.bak` (also when nodes are kept as placeholders; one copy, the next

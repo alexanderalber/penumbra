@@ -337,7 +337,7 @@ pub struct Applied {
     /// Every node the batch created, changed or deleted (for the change log).
     pub touched: BTreeSet<NodeId>,
     /// What the batch left out instead of failing, each with the reason: from the project file
-    /// ([`Params::Keep`]) a binding that would make a loop; in an interactive edit a value of a
+    /// ([`Params::Keep`]) a binding or connection that would make a loop; in an interactive edit a value of a
     /// preset that does not go in ([`crate::preset`]).
     pub left_out: Vec<String>,
     params: Params,
@@ -351,8 +351,10 @@ pub enum Params {
     Strict,
     /// Keep it as a stray value: loading the project file, where it is most likely a param a
     /// built-in node lost in a newer version. One stray value must not keep a whole project
-    /// from opening; the cooker warns about it and the UI offers to remove it. A binding that
-    /// would make a loop is left out for the same reason ([`Applied::left_out`]).
+    /// from opening; the cooker warns about it and the UI offers to remove it. A binding or a
+    /// connection that would make a loop is left out for the same reason
+    /// ([`Applied::left_out`]): of a loop's connections, the one applied last, which in a load
+    /// is the one into the node whose path sorts last.
     Keep,
 }
 
@@ -782,6 +784,66 @@ impl Network {
         false
     }
 
+    /// How `start` depends on `target`, for an error: the shortest chain of readers from `target`
+    /// to `start`, as `(reader, what it reads by)` with the input's name or `binding of <param>`;
+    /// empty when it does not. Also the inputs on the way that look like a frame's delay but
+    /// are not: a non-`previous` input of a node that has a `previous` input.
+    fn dependency_route(
+        &self,
+        types: &NodeTypes,
+        start: NodeId,
+        target: NodeId,
+    ) -> (Vec<(NodeId, String)>, Vec<String>) {
+        // reader of each node found, walking upstream from `start`
+        let mut read_by: BTreeMap<NodeId, (NodeId, String)> = BTreeMap::new();
+        let mut queue = std::collections::VecDeque::from([start]);
+        let mut seen = BTreeSet::from([start]);
+        while let Some(id) = queue.pop_front() {
+            if id == target {
+                break;
+            }
+            let Some(n) = self.nodes.get(&id) else { continue };
+            let desc = types.desc(&n.kind);
+            let input_name = |i: usize| {
+                desc.and_then(|d| d.inputs.get(i))
+                    .map(|s| s.name.to_string())
+                    .unwrap_or_else(|| format!("{i}"))
+            };
+            let inputs = n
+                .inputs
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !n.is_previous(*i))
+                .filter_map(|(i, p)| p.map(|p| (p.node, input_name(i))));
+            let binds = n.binds.iter().map(|(part, b)| (b.node, format!("binding of {part}")));
+            for (up, via) in inputs.chain(binds) {
+                if seen.insert(up) {
+                    read_by.insert(up, (id, via));
+                    queue.push_back(up);
+                }
+            }
+        }
+        let mut route = Vec::new();
+        let mut notes = Vec::new();
+        let mut at = target;
+        while at != start {
+            let Some((reader, via)) = read_by.get(&at) else { return (Vec::new(), Vec::new()) };
+            let delayed = self
+                .nodes
+                .get(reader)
+                .and_then(|n| types.desc(&n.kind))
+                .and_then(|d| d.inputs.iter().find(|i| i.previous).map(|i| i.name.to_string()));
+            if let (Some(prev), Some(path)) = (delayed, self.path_of(*reader))
+                && !via.starts_with("binding of ")
+            {
+                notes.push(format!("{path} reads `{via}` in the same frame, only `{prev}` a frame later"));
+            }
+            route.push((*reader, via.clone()));
+            at = *reader;
+        }
+        (route, notes)
+    }
+
     fn descendants(&self, id: NodeId) -> BTreeSet<NodeId> {
         let mut out = BTreeSet::from([id]);
         let mut stack = vec![id];
@@ -1036,9 +1098,36 @@ impl Applied {
                 }
                 // A previous-result input closes loops on purpose.
                 if !in_spec.previous && net.depends_on(src, dst) {
-                    return Err(Error::new(
-                        "that connection would make a loop; feedback needs a feedback node",
-                    ));
+                    let (route, mut notes) = net.dependency_route(types, src, dst);
+                    let mut way = to.to_string();
+                    for (reader, via) in &route {
+                        let path = net.path_of(*reader).map(|p| p.to_string()).unwrap_or_default();
+                        way.push_str(&format!(" -> {path} (`{via}`)"));
+                    }
+                    way.push_str(&format!(" -> {to} (`{}`)", in_spec.name));
+                    // A feedback's other input (`initial`) is read in the same frame, so it
+                    // closes a loop like any input; only `previous` waits a frame.
+                    if let Some(prev) = dst_desc.inputs.iter().find(|i| i.previous) {
+                        notes.push(format!(
+                            "{to} reads `{}` in the same frame, only `{}` a frame later",
+                            in_spec.name, prev.name
+                        ));
+                    }
+                    let mut why = format!(
+                        "the connection from {from} to {to} (input `{}`) would close a loop: {way}. \
+                         A loop goes through the `previous` input of a feedback node",
+                        in_spec.name
+                    );
+                    notes.dedup();
+                    for note in notes {
+                        why.push_str(&format!("; {note}"));
+                    }
+                    // One wire in a file must not keep the rest of the project from opening.
+                    if self.params == Params::Keep {
+                        self.left_out.push(why);
+                        return Ok(());
+                    }
+                    return Err(Error::new(why));
                 }
                 let port = Port { node: src, output: *output };
                 let slot = self.node_mut(dst)?.inputs.get_mut(*input as usize);
@@ -1504,6 +1593,33 @@ mod tests {
         assert!(net.apply(&types, &[back]).unwrap_err().0.contains("loop"));
         let own = Op::Connect { from: p("/a"), output: 0, to: p("/a"), input: 1 };
         assert!(net.apply(&types, &[own]).unwrap_err().0.contains("loop"));
+    }
+
+    #[test]
+    fn a_loop_names_its_way_round_and_a_file_leaves_only_it_out() {
+        let types = test_types();
+        let ops = [
+            create("/a", "test.add"),
+            create("/b", "test.add"),
+            create("/c", "test.add"),
+            Op::Connect { from: p("/a"), output: 0, to: p("/b"), input: 1 },
+            Op::Connect { from: p("/b"), output: 0, to: p("/c"), input: 0 },
+        ];
+        let net = Network::new().apply(&types, &ops).unwrap().network;
+        let back = Op::Connect { from: p("/c"), output: 0, to: p("/a"), input: 0 };
+        let e = net.apply(&types, std::slice::from_ref(&back)).unwrap_err().0;
+        assert!(
+            e.contains("the connection from /c to /a (input `a`) would close a loop: /a -> /b (`b`) -> /c (`a`) -> /a (`a`)"),
+            "{e}"
+        );
+        // From a file the batch goes on without it, and says why.
+        let after = Op::Connect { from: p("/a"), output: 0, to: p("/c"), input: 1 };
+        let applied = net.apply_with(&types, &[back, after], Params::Keep).unwrap();
+        assert_eq!(applied.left_out.len(), 1, "{:?}", applied.left_out);
+        assert!(applied.left_out[0].contains("/c to /a"), "{:?}", applied.left_out);
+        let n = &applied.network;
+        assert_eq!(n.node(n.resolve(&p("/a")).unwrap()).unwrap().inputs[0], None);
+        assert!(n.node(n.resolve(&p("/c")).unwrap()).unwrap().inputs[1].is_some());
     }
 
     #[test]

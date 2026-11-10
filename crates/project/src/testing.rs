@@ -70,6 +70,13 @@ pub fn test_types() -> NodeTypes {
             .param(ParamSpec::choice("mode", &["over", "add"]))
             .output("out", DataKind::Chan),
     );
+    register(
+        &mut t,
+        NodeDesc::new("test.feedback", "Its `previous` input a frame late, `initial` until then")
+            .input("initial", DataKind::Chan)
+            .input_previous("previous", DataKind::Chan)
+            .output("out", DataKind::Chan),
+    );
     register(&mut t, NodeDesc::new("test.table", "A table").output("out", DataKind::Table));
     register(&mut t, NodeDesc::new("test.group", "Holds nodes").container());
     register(
