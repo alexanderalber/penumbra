@@ -324,6 +324,23 @@ several colours, and the nodal lines drawn without sand.
   grains jump and slide; the shaped plate's membrane; `width`, `height` and `grains` (262 144).
 - Example: [chladni](../examples/chladni/README.md).
 
+### waves
+
+![waves](waves/preview.png)
+
+Ripples on water (the wave equation): rain on a pool, drops on a beat, interference behind a
+double slit and of two sources, waves that bounce off a mask, a wake behind people. Eight
+scenes, chosen on one param.
+
+- In: `mask` (an object standing in the water: waves reflect off it; a scan mask, a text),
+  `people` (they push the water: `tex.blob_track`), `beat` (a channel `beat`, a drop on each
+  rise). Any size.
+- Out: `out` (the picture, 1920 x 1080), `ripple` (how much the water moves, a channel).
+- Params: `scene`, `speed`, `push_strength`, `damping`, `pause`; the setup a scene writes (the
+  walls, the wave sources, the drops and the start, the wave speed, `push` and the edges); the
+  look and the light of the water view; `width` and `height` of the simulation (1280 x 720).
+- Example: [waves](../examples/waves/README.md).
+
 ## A stage for music
 
 A world that moves with a sound file: a stage (a synthwave floor, a tunnel, a tower to climb or

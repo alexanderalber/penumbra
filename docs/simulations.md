@@ -9,7 +9,7 @@ the tracked people. Its output is a picture for the projectors, plus a few chann
 
 - **Add it** from the `simulations` tab, or by command: `comp.load {"file": "sand"}`. Adding
   copies its shaders into the project's `library/<name>/`.
-- **Choose a setup** with its main choice param (`scene` in sand, `preset` in growth and chladni). Choosing an entry writes that
+- **Choose a setup** with its main choice param (`scene` in sand and waves, `preset` in growth and chladni). Choosing an entry writes that
   entry's values into the params below it, as one undo step. Then the values are yours: tune
   any slider, and the project saves the tuned value. A line under the choice names the params
   that differ from the entry, with a "back" button. The mechanism is the component's presets:
@@ -210,3 +210,70 @@ ring around the driving point, since its tone lies below the membrane's lowest o
 show a fine lattice of holes, more at `speed` 2. High figures on the round plate keep a grey
 haze in the calm middle. With nothing wired into `tone`, the inner `pick` node warns, also when
 `source` is `figure`; the figure is still right.
+
+## waves
+
+![The eight scenes of waves, and double_slit and plane in the energy view](../assets/simulations/waves-scenes.jpg)
+
+Ripples on water (the wave equation): drops fall as rain, on a beat or by themselves, steady
+sources make straight or round waves, and the waves reflect off walls, bend around objects and
+interfere. A moving person pushes the water. The level of the water stays where it is: a drop
+lifts as much water as it pushes down. The [waves example](../examples/waves/README.md) feeds it
+a word as the mask, a moving blob as the people and a metronome as the beat.
+
+**Scenes.** `scene` picks one. Each writes the walls, the wave sources, the drops, the start,
+the edges, what people do and the look.
+
+| scene | what you see |
+|---|---|
+| `pond` | Rain on a tiled pool. The mask input stands in the water and the rings bounce off it. People push the water. |
+| `drop` | One drop in the middle, a train of rings. Once the water has been calm for 1.5 s, the next drop falls at a random place. |
+| `double_slit` | A straight wave from the left runs through two slits. Two fans of waves interfere behind the wall. |
+| `two_points` | Two bobbing points: the textbook picture of interference. |
+| `plane` | A straight wave rolls past the mask input. It reflects in front and bends into the shadow behind. |
+| `wake` | People moving faster than the waves leave a V on open water. A drop falls after 4 s of calm water. |
+| `beat` | One big drop on each beat of the beat input. |
+| `posts` | Rain among round posts over a sandy floor. |
+
+**Inputs.** `mask`: white where an object stands in the water, while `use_mask` is on. Waves
+reflect off it and bend around it. `people`: bright where someone is. With `push` `move` the
+water is pushed where the picture changes, so a moving shape leaves a wake. With `push` `press`
+the water is held down under the bright part, as under a person standing in it. `beat`: a
+channel named `beat`; each rise above 0.5 drops a drop while `rain` is `beat`. The pictures can
+have any size; an unwired one counts as black.
+
+**Outputs.** `out` is the picture, 1920 x 1080 (`out_width`, `out_height`). With `cutout` on,
+the walls are black and transparent. `ripple` is how much the water moves, as a channel: 0 when
+still, about 0.04 in `pond`, 0.03 in `two_points`, under 0.02 in `drop`. It needs a multiply
+before it drives a light.
+
+**Params that matter most.** `speed` scales the water steps per frame (8 at 1): 2 runs the water
+twice as fast and costs more. Damping counts per step, so at a higher speed rings also fade
+sooner. `push_strength` is how hard people push. `damping` is how fast rings fade. The setup a
+scene writes can be mixed: `shape` puts a drawn wall (`slit`, `double_slit`, `grating`,
+`pillars`, `box`) under any scene, `source` a steady wave maker (`plane`, `point`, `two`),
+`rain` drops at random or on the beat, `start` the water at the start, `edges` a rim that
+reflects, open water that absorbs, or edges that wrap. `calm_drop` drops a drop after `idle`
+seconds of calm water, so a quiet scene never stays dead. The `look` group picks the view: the
+lit `water` over a floor, the `height` in colours, the `energy` (where the water moves on
+average, which shows interference best) or a grey `relief`. The `surface` group sets the light
+of the water view.
+
+**In an installation.** Feed a scan mask of the object into `mask`, so the waves bounce off the
+real object, and turn on `cutout`, so nothing is projected onto it. Set `marker` to 0 so the
+people are not drawn. Feed `tex.blob_track`'s picture of the people into `people`, so they leave
+a wake. Feed an envelope of the music's beat into `beat` and choose scene `beat`.
+
+**Cost.** About 1.4 ms per frame for the example in scene `pond`, and about 2.9 ms at `speed` 4
+(32 steps), with a simulation of 1280 x 720 and a picture of 1920 x 1080, on an RTX 3090 at a
+280 W power limit. The cost grows with `width` times `height` times the steps.
+
+**Limits.** The wave equation has no dispersion. Real water has it: a drop leaves a widening
+train of rings, a slow boat a wake of its own shape. Here a dent travels as one ring of fixed
+shape. So a drop starts as a train of rings already, and a person slower than the waves leaves
+only a dimple travelling with them. Wave speed and drop sizes count in texels, so on a larger
+`width` and `height` the same waves look smaller and slower. The water view is a stylised pool:
+refraction only shifts the floor, and the caustics are a trick of the curvature. `drop` repeats
+itself: the next drop comes about 4 s after the last, always of the same shape. A shape that
+presses lowers the mean level while it stands there. `pause` still runs the step's passes,
+which leave the water as it is.
