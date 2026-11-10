@@ -677,8 +677,10 @@ first output of the kind it reads.
   an entry of a choice writes into the params. A `preset=*` line lists the params the presets
   write and the value every entry starts from. Choosing writes in the same edit, so one undo
   takes it back. Afterwards the values are ordinary values: tune them, and they are saved.
-  Opening a project writes nothing. A choice bound to a key or a dropdown writes the entry and
-  its values one frame after the binding changes, without an undo step. More in [comp.base](reference/nodes.md#compbase).
+  While some differ from the entry, the choice's row says so (`feed, kill changed · back`), and
+  "back" writes the entry's values again. Opening a project writes nothing. A choice bound to a
+  key or a dropdown writes the entry and its values one frame after the binding changes,
+  without an undo step. More in [comp.base](reference/nodes.md#compbase).
 - **Mistakes in the text:** a line that declares nothing shows right below the text, with its
   line number and the reason. The other lines still work. A name may be declared once, and not as
   one of the component's own built-in params (`params`, `shelf`, `about`, `reset`).

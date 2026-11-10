@@ -668,6 +668,125 @@ fn every_shipped_component_exposes_params_that_exist() {
     assert!(rows > 1500, "{rows}");
 }
 
+/// Every component that ships (the library, the examples' projects and their libraries), each
+/// with the folder its file paths are relative to.
+fn shipped_component_files() -> Vec<(PathBuf, PathBuf)> {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut libraries = vec![(repo.join("library"), repo.clone())];
+    let mut examples: Vec<PathBuf> =
+        std::fs::read_dir(repo.join("examples")).unwrap().flatten().map(|e| e.path()).collect();
+    examples.sort();
+    for example in examples.into_iter().filter(|e| e.join("project.ron").is_file()) {
+        files.push((example.join("project.ron"), example.clone()));
+        libraries.push((example.join("library"), example));
+    }
+    for (dir, root) in libraries.into_iter().filter(|(d, _)| d.is_dir()) {
+        let mut entries: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let file = entry.path().join(format!("{name}.comp.ron"));
+            if file.is_file() {
+                files.push((file, root.clone()));
+            }
+        }
+    }
+    files
+}
+
+/// What is wrong with the presets of component `comp` as shipped, one line each that names the
+/// component, the choice and the params. A param whose value differs from the chosen entry's
+/// means the builder did not choose the entry before saving. A shader param at its default is
+/// read from the header of the file the shader names, relative to `root`.
+fn preset_faults(
+    net: &penumbra_graph::Network,
+    types: &penumbra_graph::NodeTypes,
+    comp: penumbra_core::NodeId,
+    root: &std::path::Path,
+) -> Vec<String> {
+    let at = net.path_of(comp).map_or_else(|| "?".to_string(), |p| p.to_string());
+    let header_default = |t: &penumbra_core::ParamPath| {
+        let file = net.node(net.resolve(t.node())?)?.params.get("file")?.as_str()?.to_string();
+        let source = std::fs::read_to_string(root.join(file)).ok()?;
+        let header = penumbra_gpu::header::parse(&source).ok()?;
+        header.params.into_iter().find(|s| s.name == t.param().as_str()).map(|s| s.default)
+    };
+    let mut faults = Vec::new();
+    for p in net.preset_status(types, comp, header_default) {
+        let family = format!("{at}, presets of `{}`", p.choice);
+        if !p.changed.is_empty() {
+            let names: Vec<&str> = p.changed.iter().map(|n| n.as_str()).collect();
+            faults.push(format!(
+                "{family}: changed against entry `{}`: {}; choose `{}` once before saving",
+                p.chosen,
+                names.join(", "),
+                p.chosen
+            ));
+        }
+        for problem in &p.problems {
+            faults.push(format!("{family}: {problem}"));
+        }
+        if !p.entries.iter().any(|(name, _)| *name == p.chosen) {
+            faults.push(format!("{family}: the chosen entry `{}` is not an entry of the choice", p.chosen));
+        }
+    }
+    faults
+}
+
+/// The components of a file as it loads: nothing written by presets.
+fn loaded(text: &str, types: &penumbra_graph::NodeTypes) -> penumbra_graph::Network {
+    use penumbra_graph::{Network, Params};
+    let content = penumbra_project::parse(text, types).unwrap();
+    let ops = penumbra_project::diff(&Content::default(), &content);
+    Network::new().apply_with(types, &ops, Params::Keep).unwrap().network
+}
+
+/// A shipped component with presets opens as its chosen entry says: nothing `changed`, no
+/// `problems`, and the chosen entry is one of the choice's.
+#[test]
+fn every_shipped_component_with_presets_opens_as_its_chosen_entry() {
+    let types = penumbra_ops::builtin_types().unwrap();
+    let files = shipped_component_files();
+    assert!(files.len() > 80, "{}", files.len());
+    let mut faults = Vec::new();
+    for (file, root) in files {
+        let text = std::fs::read_to_string(&file).unwrap();
+        let net = loaded(&text, &types);
+        for comp in net.nodes() {
+            for fault in preset_faults(&net, &types, comp.id, &root) {
+                faults.push(format!("{}: {fault}", file.display()));
+            }
+        }
+    }
+    assert!(faults.is_empty(), "{}", faults.join("\n"));
+}
+
+/// The check above finds a tuned value and a value that cannot go in, and names them. A chosen
+/// entry the choice lacks cannot be built here: loading refuses it already.
+#[test]
+fn the_preset_check_names_the_component_the_choice_and_the_params() {
+    let types = penumbra_ops::builtin_types().unwrap();
+    let text = r#"(
+        version: 2,
+        nodes: {
+            "/rd": (kind: "comp.base", params: {"feed": 0.07, "params": "@param preset choice(coral|maze) = coral\n@param feed float = 0.05 0..0.1\n@expose kill = step.kill\n@preset preset=* feed=0.05 kill=0.06\n@preset preset=maze feed=0.03"}),
+            "/ok": (kind: "comp.base", params: {"preset": "maze", "feed": 0.03, "params": "@param preset choice(coral|maze) = coral\n@param feed float = 0.05 0..0.1\n@preset preset=* feed=0.05\n@preset preset=maze feed=0.03"}),
+        },
+    )"#;
+    let net = loaded(text, &types);
+    let root = std::path::Path::new(".");
+    let id = |p: &str| net.resolve(&penumbra_core::NodePath::parse(p).unwrap()).unwrap();
+    let faults = preset_faults(&net, &types, id("/rd"), root);
+    assert_eq!(faults.len(), 2, "{faults:?}");
+    assert!(
+        faults[0].starts_with("/rd, presets of `preset`: changed against entry `coral`: feed;"),
+        "{faults:?}"
+    );
+    assert!(faults[1].starts_with("/rd, presets of `preset`: `kill`"), "{faults:?}");
+    assert_eq!(preset_faults(&net, &types, id("/ok"), root), Vec::<String>::new());
+}
+
 #[test]
 fn a_component_file_that_does_not_parse_stays_listed() {
     let f = Fixture::new("broken-comp");

@@ -11,6 +11,10 @@
 //! The circled "i" before each name (`param.<path>.info`) opens the param's help: what it does,
 //! what each choice does, default, range and unit ([`ParamSpec::help`], the same as
 //! `node.kinds {kind, param}` returns). A click outside or Escape closes it.
+//!
+//! A component's choice with presets gets a quiet line under its row while it has something to
+//! say: the params that differ from the chosen entry with "back" (`param.<path>.back`), and the
+//! entry a binding names while the stored one is in effect (`param.<path>.binding`).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -159,6 +163,9 @@ pub struct ParamPanel {
     /// The row being drawn is a component's row of an inner param (an `@expose` line): its link
     /// menu offers no component section, the row being on the component already.
     on_component: bool,
+    /// The row being drawn is a component's choice with presets. Bound, it shows the stored
+    /// entry: that entry and its values stay in effect until the binding gives another one.
+    preset_choice: bool,
 }
 
 /// The note at the right end of a component's row.
@@ -399,6 +406,11 @@ impl ParamPanel {
         let Some(path) = input.net.path_of(node.id) else { return };
         let followers = input.net.followers(node.id);
         let exposed = penumbra_graph::exposed_of(&path, &declared);
+        // A shader param at its default is known from the header the cook thread published.
+        let presets = input.net.preset_status(input.types, node.id, |t| {
+            let id = input.net.resolve(t.node())?;
+            input.inner.get(&id)?.iter().find(|s| s.name == t.param().as_str()).map(|s| s.default.clone())
+        });
         let mut groups: Vec<&str> = vec![""];
         for d in &declared.lines {
             let g = declaration_group(d);
@@ -406,7 +418,10 @@ impl ParamPanel {
                 groups.push(g);
             }
         }
-        let mut problems: Vec<String> = Vec::new();
+        let mut problems: Vec<String> = presets
+            .iter()
+            .flat_map(|p| p.problems.iter().map(|e| format!("presets of {}: {e}", p.choice)))
+            .collect();
         ui.add_space(4.0);
         for group in groups {
             let lines: Vec<&Declaration> =
@@ -432,7 +447,22 @@ impl ParamPanel {
                                         })
                                         .unwrap_or_default();
                                     me.tag = Some(Tag::Used(list));
-                                    me.row(ui, input, node, spec, auto, actions);
+                                    match presets.iter().find(|p| p.choice.as_str() == spec.name) {
+                                        Some(status) => {
+                                            me.preset_choice = true;
+                                            me.row(
+                                                ui,
+                                                input,
+                                                node,
+                                                &with_entry_docs(spec, status),
+                                                auto,
+                                                actions,
+                                            );
+                                            me.preset_choice = false;
+                                            preset_note(ui, input, node, status, auto, actions);
+                                        }
+                                        None => me.row(ui, input, node, spec, auto, actions),
+                                    }
                                     me.tag = None;
                                 }
                                 Declaration::Expose(line) => {
@@ -809,7 +839,8 @@ impl ParamPanel {
             node.binds.keys().filter(|k| k.param.as_str() == spec.name).map(|k| k.component).collect();
         // A bound param shows what the node cooks with.
         let live = input.status.and_then(|s| s.bound.get(spec.name.as_str()));
-        let value = live.filter(|_| !bound.is_empty()).unwrap_or(&stored).clone();
+        let preset_choice = std::mem::take(&mut self.preset_choice);
+        let value = live.filter(|_| !bound.is_empty() && !preset_choice).unwrap_or(&stored).clone();
         let name_edit = self.name_edit.take();
         let tag = self.tag.take();
         let on_component = self.on_component;
@@ -1199,7 +1230,7 @@ impl ParamPanel {
             ParamKind::Choice(choices) => {
                 let current = value.as_str().unwrap_or("");
                 let options: Vec<&str> = choices.iter().map(String::as_str).collect();
-                ui.add_enabled_ui(!whole_bound, |ui| choice_box(ui, key, current, &options, new));
+                ui.add_enabled_ui(!whole_bound, |ui| choice_box(ui, key, current, &options, Some(spec), new));
             }
             ParamKind::Palette => {
                 let project = self.project_palettes(input.project_dir);
@@ -1256,7 +1287,7 @@ impl ParamPanel {
                 {
                     let current = value.as_str().unwrap_or("");
                     let options: Vec<&str> = options.iter().map(String::as_str).collect();
-                    ui.add_enabled_ui(!whole_bound, |ui| choice_box(ui, key, current, &options, new));
+                    ui.add_enabled_ui(!whole_bound, |ui| choice_box(ui, key, current, &options, None, new));
                     return;
                 }
                 let current = value.as_str().unwrap_or("").to_string();
@@ -2256,18 +2287,120 @@ fn palette_menu(
     auto.add(format!("param.{key}.menu"), r.response.rect, "palettes");
 }
 
-fn choice_box(ui: &mut Ui, key: &str, current: &str, options: &[&str], new: &mut Option<Value>) {
+/// A choice's box. An entry that `spec` describes shows its doc under the pointer.
+fn choice_box(
+    ui: &mut Ui,
+    key: &str,
+    current: &str,
+    options: &[&str],
+    spec: Option<&ParamSpec>,
+    new: &mut Option<Value>,
+) {
     egui::ComboBox::from_id_salt(key)
         .selected_text(current)
         .width(ui.available_width())
         .height(400.0)
         .show_ui(ui, |ui| {
             for &choice in options {
-                if ui.selectable_label(choice == current, choice).clicked() && choice != current {
+                let mut r = ui.selectable_label(choice == current, choice);
+                if let Some(doc) = spec.and_then(|s| s.doc_of_choice(choice)).filter(|d| !d.is_empty()) {
+                    r = r.on_hover_text(doc);
+                }
+                if r.clicked() && choice != current {
                     *new = Some(Value::Text(choice.to_string()));
                 }
             }
         });
+}
+
+/// `spec` of a choice with presets, with the doc of each entry's `@preset` lines as the doc
+/// of that entry where the spec has none: the help and the box show them.
+fn with_entry_docs(spec: &ParamSpec, status: &penumbra_graph::PresetStatus) -> ParamSpec {
+    let mut spec = spec.clone();
+    for (entry, doc) in &status.entries {
+        if !doc.is_empty() && spec.doc_of_choice(entry).is_none() {
+            spec = spec.choice_doc(entry, doc);
+        }
+    }
+    spec
+}
+
+/// Most names a note lists before it counts the rest.
+const NOTE_NAMES: usize = 3;
+
+/// `feed, kill, steps +2`: the first [`NOTE_NAMES`] names and how many more.
+fn short_list(names: &[Name]) -> String {
+    let shown: Vec<&str> = names.iter().take(NOTE_NAMES).map(Name::as_str).collect();
+    let mut text = shown.join(", ");
+    if names.len() > NOTE_NAMES {
+        text.push_str(&format!(" +{}", names.len() - NOTE_NAMES));
+    }
+    text
+}
+
+/// The quiet line under a component's choice with presets, drawn only when it has something
+/// to say: the params the presets write whose value differs from the chosen entry, with "back"
+/// to write the entry's values again (`param.<path>.back`, one undo step), and the entry a
+/// binding names while another one is in effect (`param.<path>.binding`).
+fn preset_note(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    node: &NodeDef,
+    status: &penumbra_graph::PresetStatus,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    let Some(path) = input.net.path_of(node.id) else { return };
+    let Ok(param) = named(&path, status.choice.as_str()) else { return };
+    let key = param.to_string();
+    let chosen = status.chosen.as_str();
+    let binding = node
+        .is_bound(status.choice.as_str())
+        .then_some(())
+        .and_then(|_| input.status?.bound.get(status.choice.as_str()))
+        .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_string))
+        .filter(|e| e != chosen);
+    if status.changed.is_empty() && binding.is_none() {
+        return;
+    }
+    ui.label("");
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let weak = |text: &str| RichText::new(text).small().color(theme::TEXT_WEAK);
+        if !status.changed.is_empty() {
+            let text = format!("{} changed", short_list(&status.changed));
+            let all: Vec<&str> = status.changed.iter().map(Name::as_str).collect();
+            let r = ui.label(weak(&text)).on_hover_text(format!(
+                "These params differ from the values of {chosen}: {}. \"back\" sets them to those values again.",
+                all.join(", ")
+            ));
+            auto.add(format!("param.{key}.changed"), r.rect, text);
+            let back = ui
+                .add_enabled(input.can_edit, egui::Button::new(RichText::new("back").small()).small())
+                .on_hover_text(format!("set the values of {chosen} again"));
+            auto.add(format!("param.{key}.back"), back.rect, format!("back to {chosen}"));
+            if back.clicked() {
+                actions.push(Action::Edit {
+                    ops: vec![Op::Set { param: param.clone(), value: Value::Text(chosen.to_string()) }],
+                    label: format!("back to {chosen}"),
+                    group: None,
+                });
+            }
+        }
+        if let Some(entry) = &binding {
+            if !status.changed.is_empty() {
+                ui.label(weak("\u{b7}"));
+            }
+            let text = format!("binding says {entry}");
+            let r = ui
+                .label(RichText::new(&text).small().color(theme::kind_color(DataKind::Chan)))
+                .on_hover_text(format!(
+                    "The binding names {entry}. {chosen} and its values stay in effect until the binding gives another entry."
+                ));
+            auto.add(format!("param.{key}.binding"), r.rect, text);
+        }
+    });
+    ui.end_row();
 }
 
 /// The `value` of a `chan.dropdown`: a box offering its entries. While `value` names none, the

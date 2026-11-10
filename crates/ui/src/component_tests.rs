@@ -110,3 +110,70 @@ fn put_follow_and_show_from_the_link_menu() {
     }
     engine.shutdown();
 }
+
+const PRESETS: &str = r#"(
+    version: 2,
+    nodes: {
+        "/rd": (kind: "comp.base", params: {"params": "@param preset choice(coral|maze) = coral -- the pattern\n@param feed float = 0.05 0..0.1\n@param kill float = 0.06 0..0.1\n@param speed float = 1 0..4\n@preset preset=* feed=0.05 kill=0.06\n@preset preset=maze feed=0.03 -- a labyrinth"}),
+        "/pick": (kind: "chan.dropdown", params: {"entries": "coral\nmaze", "value": "maze"}),
+    },
+)"#;
+
+/// The note under a choice with presets: what differs from the chosen entry, "back" as one
+/// undo step, and the entry a binding names while another is in effect.
+#[test]
+fn a_preset_choice_says_what_changed_and_goes_back() {
+    let dir = ScratchDir::unborn("ui-comp-presets");
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let content = penumbra_project::parse(PRESETS, &types).unwrap();
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
+    let engine = Engine::start(session).unwrap();
+    let script = [
+        json!({"wait": 1.0}),
+        json!({"method": "ui.select", "params": {"paths": ["/rd"]}}),
+        json!({"wait": 0.2}),
+        json!({"method": "ui.elements", "params": {"prefix": "param./rd.preset"}}),
+        // Tuned: speed is no preset's, so only feed and kill count.
+        json!({"method": "node.set", "params": {"path": "/rd", "params": {"feed": 0.07, "kill": 0.01, "speed": 2}}}),
+        json!({"wait": 0.3}),
+        json!({"method": "ui.elements", "params": {"prefix": "param./rd.preset"}}),
+        json!({"method": "ui.click", "params": {"id": "param./rd.preset.back"}}),
+        json!({"wait": 0.3}),
+        json!({"method": "node.info", "params": {"path": "/rd"}}),
+        json!({"method": "ui.elements", "params": {"prefix": "param./rd.preset"}}),
+        // Commands wait while the user edits; the click was the user's.
+        json!({"wait": 3.2}),
+        json!({"method": "history.undo", "params": {}}),
+        json!({"wait": 0.3}),
+        json!({"method": "node.info", "params": {"path": "/rd"}}),
+        json!({"method": "history.redo", "params": {}}),
+        // Bound to maze: a binding made anew writes maze. Coral by hand stays until the
+        // binding changes, and the row says what the binding names.
+        json!({"method": "node.bind", "params": {"param": "/rd.preset", "from": "/pick"}}),
+        json!({"wait": 0.5}),
+        json!({"method": "node.set", "params": {"path": "/rd", "params": {"preset": "coral"}}}),
+        json!({"wait": 0.5}),
+        json!({"method": "node.info", "params": {"path": "/rd"}}),
+        json!({"method": "ui.elements", "params": {"prefix": "param./rd.preset"}}),
+    ];
+    let script: Vec<String> = script.iter().map(Json::to_string).collect();
+    let options = headless::Options { size: [1400.0, 1000.0], pixels_per_point: 1.0, software: true };
+    let replies = headless::run(engine.clone(), &script.join("\n"), &options).unwrap();
+    for (m, r) in &replies {
+        eprintln!("{m}: {}", r.to_string().chars().take(600).collect::<String>());
+    }
+    let has = |nth: usize, id: &str| ids(reply(&replies, "ui.elements", nth)).contains(&id.to_string());
+    assert!(has(0, "param./rd.preset"), "the row is there");
+    assert!(!has(0, "param./rd.preset.back"), "nothing changed at the start");
+    let tuned = reply(&replies, "ui.elements", 1);
+    assert!(has(1, "param./rd.preset.back"), "{tuned}");
+    assert!(tuned.to_string().contains("feed, kill changed"), "{tuned}");
+    let presets = |nth: usize| reply(&replies, "node.info", nth)["component"]["presets"][0].clone();
+    assert_eq!(presets(0)["changed"], json!([]), "back writes coral again: {}", presets(0));
+    assert!(!has(2, "param./rd.preset.back"), "the note is gone");
+    assert_eq!(presets(1)["changed"], json!(["feed", "kill"]), "one undo takes back all of back");
+    assert_eq!(presets(2)["chosen"], "coral", "{}", presets(2));
+    let bound = reply(&replies, "ui.elements", 3);
+    assert!(bound.to_string().contains("binding says maze"), "{bound}");
+    engine.shutdown();
+}

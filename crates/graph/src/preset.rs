@@ -142,9 +142,12 @@ impl Network {
             match target {
                 Ok(t) if self.resolve(t.node()).is_none() => (None, Err(format!("no node at {}", t.node()))),
                 Ok(t) => {
+                    // Stored, else the default of the inner node's kind or declaration, else
+                    // what `read` knows (a shader's header).
                     let stored = self
                         .resolve(t.node())
-                        .and_then(|n| self.stored_param(n, t.param()).flatten().cloned());
+                        .and_then(|n| self.node(n))
+                        .and_then(|n| n.value(types.desc(&n.kind)?, t.param().as_str()));
                     (stored.or_else(|| read(&t)), Ok(Some(t)))
                 }
                 Err(e) => (None, Err(e.0)),
@@ -423,5 +426,17 @@ mod tests {
         let changed: Vec<&str> = status[0].changed.iter().map(Name::as_str).collect();
         assert_eq!(changed, ["kill", "level"]);
         assert_eq!(status[1].chosen, "off");
+    }
+
+    /// An inner param at the default of its kind counts as its value: a component saved
+    /// without choosing its entry once shows it as changed.
+    #[test]
+    fn an_inner_param_at_its_default_counts_for_changed() {
+        let types = test_types();
+        let n = net();
+        let c = n.resolve(&"/c".parse().unwrap()).unwrap();
+        let status = n.preset_status(&types, c, |_| None);
+        let changed: Vec<&str> = status[0].changed.iter().map(Name::as_str).collect();
+        assert_eq!(changed, ["feed", "kill", "level"], "the declared defaults differ from the base");
     }
 }

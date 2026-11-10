@@ -93,10 +93,10 @@ More in the Components section of the concepts guide.
 
 ## Presets
 
-A preset is a set of values for some of the component's params, chosen by its name in a choice.
-Choosing an entry writes its values into the params. After that the values are yours: tune a
-slider, and the tuned value is saved with the project. TouchDesigner's palette has the
-presetManager for this job.
+A preset is a set of values for some of the component's params, named by an entry of a choice.
+Choosing the entry writes those values into the params. After that the values are ordinary
+values: tune a slider, and the tuned value is saved with the project. TouchDesigner's palette
+has the presetManager for this job.
 
 ```text
 @param preset choice(coral|maze) = coral -- the pattern
@@ -107,41 +107,53 @@ presetManager for this job.
 @preset preset=maze feed=0.029 kill=0.057 -- a labyrinth
 ```
 
+- **A line** reads `@preset <choice>=<entry> <name>=<value> ... -- doc`. The first pair names
+  the choice and the entry; the pairs after it are values. Several lines for one entry add up.
+  The doc after `--` shows on the entry in the choice's box and in its help. `@preset` lines
+  may stand anywhere in the text, and take no `#` comment.
 - **The `*` line** lists the params the presets write, each with the value every entry starts
-  from. Choosing `maze` writes the `*` values, then maze's own. A preset never writes a param on
-  no `*` line: `speed` above stays where you put it.
-- **Entry lines** give one entry's own values. Several lines for one entry add up. The text
-  after `--` describes the entry.
+  from. Choosing `maze` writes the `*` values, then maze's own. A param on no `*` line is never
+  written: `speed` above stays where you put it. An entry without lines of its own gets the `*`
+  values.
 - **Values** read like an `@param` default: `0.03`, `true`, `[1, 0.5, 0, 1]`, an entry of a
-  choice by name, a palette by name or colours. A preset may write `@param` and `@expose` names.
+  choice by name, a palette by name or colours. A value runs up to the next `name=`, so a vector
+  may hold spaces. A preset may write the `@param` and `@expose` names of the text, but not its
+  own choice.
 - **Choosing** writes the values in the same edit, and one undo takes all of them back. This
-  holds for the panel, `node.set`, `node.batch` and OSC. Choosing the entry that is chosen
-  already writes its values again: back to the preset. Opening a project writes nothing, and
-  neither does a hand edit of `project.ron`.
-- **A bound choice:** bind the choice to a key, a channel or a `chan.dropdown`. When the
-  binding gives another entry, the component writes that entry and its values one frame later.
-  That frame still runs the old entry with the old values, so no frame mixes the two. The write
-  makes no undo step, also works while the show is locked, and is saved with the project. A
-  dropdown names the entry; a number picks it by place, 0 for the first. Only a change of the
-  binding writes: opening a project writes nothing, and a choice set by hand stays until the
-  binding gives another entry. A binding made anew writes its entry at once when it differs.
-- **`node.set` with several names** sets the choice first: `node.set {path: "/rd", params:
-  {preset: "maze", feed: 0.03}}` gives maze with `feed` at 0.03.
+  holds for the panel, `node.set`, `node.batch` and OSC. Choosing the chosen entry again writes
+  its values again. Opening a project writes nothing, and neither does a hand edit of
+  `project.ron`.
+- **The panel** shows a quiet line under the choice while params differ from the chosen entry:
+  `feed, kill changed · back`. "back" writes the entry's values again, as one undo step. More
+  than three names end in a count, such as `feed, kill, steps +2`. `node.info` lists them all
+  under `changed`.
 - **Reset** of a param a preset writes goes to the chosen entry's value: the row's reset
   button, or `null` in `node.set`.
+- **`node.set` with several names** sets the choice first: `node.set {path: "/rd", params:
+  {preset: "maze", feed: 0.03}}` gives maze with `feed` at 0.03.
 - **A second choice with presets:** `outside` may have its own `@preset outside=* ...` lines.
   The main presets may write `outside`, and the values of the entry they pick follow. This
-  reaches one level: the presets of `outside` cannot write a third choice that has presets.
+  reaches one level: the presets of `outside` cannot write a third choice that has presets. Two
+  choices may not write the same param.
+- **A bound choice:** bind the choice to a key, a channel or a `chan.dropdown`. When the
+  binding gives another entry, the component writes that entry and its values one frame later.
+  That frame still runs the old entry, so no frame mixes the two. The write makes no undo step,
+  works while the show is locked, and is saved with the project. A dropdown names the entry; a
+  number picks it by place, 0 for the first. A new binding writes its entry at once. After that
+  only a change of the binding writes. So after opening a project, or after a choice by hand,
+  the stored entry stays in effect until the binding changes. The row then shows that entry and
+  says `binding says maze`.
+- **A bound param among the values:** a preset writes its stored value, and the binding decides
+  the value in effect. `node.info` lists such params under `bound`.
+- **Starting over** on a new preset: `@reset preset`, or `@reset preset unless morph`. See
+  "Starting over" below.
 - **Mistakes** cost their line or their value and show below the text. Examples: an entry the
   choice lacks, a name on an entry line but on no `*` line, a name given twice, a value its
-  `@param` does not take, a param that the presets of two choices write. An inner param may
-  refuse a value when the entry is chosen. That value is skipped, and the edit's reply names it
-  under `left_out`.
-- **A bound param among the values:** a preset writes its stored value, and the binding still
-  decides the value in effect. `node.info` lists such params under `bound`.
-- **`node.info`** lists `component.presets`: the entries, the params the presets own (`owns`),
-  the chosen entry, `changed` (owned params whose value differs from the chosen entry's),
-  `problems` (values an inner param would refuse now) and `bound`.
+  `@param` does not take. An inner param (a shader's) is asked only when the entry is chosen:
+  a value it refuses is skipped, and the edit's reply names it under `left_out`. The panel lists
+  such values under the rows, `node.info` under `problems`.
+- **Before saving a component** to the library, choose its entry once. Otherwise its params
+  hold their declared defaults, and the component opens with them listed as changed.
 
 ## Starting over
 
