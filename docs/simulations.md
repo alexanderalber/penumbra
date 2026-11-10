@@ -8,17 +8,20 @@ the tracked people. Its output is a picture for the projectors, plus a few chann
 ## How to use one
 
 - **Add it** from the `simulations` tab, or by command: `comp.load {"file": "sand"}`. Adding
-  copies its shaders into the project's `library/<name>/`.
-- **Choose a setup** with its main choice param (`scene` in sand and waves, `preset` in growth, chladni, reaction-diffusion and physarum). Choosing an entry writes that
-  entry's values into the params below it, as one undo step. Then the values are yours: tune
-  any slider, and the project saves the tuned value. A line under the choice names the params
-  that differ from the entry, with a "back" button. The mechanism is the component's presets:
+  copies its shaders and other files into the project's `library/<name>/`.
+- **Choose a setup** with its main choice param (`scene` in sand and waves, `preset` in growth,
+  chladni, reaction-diffusion, physarum and lenia). Choosing an entry writes that entry's values
+  into the params below it, as one undo step. Then the values are yours: tune any slider, and
+  the project saves the tuned value. A line under the choice names the params that differ from
+  the entry, with a "back" button. The mechanism is the component's presets:
   [comp.base, Presets](nodes/comp.base.md#presets).
 - **Start over:** a new entry starts the simulation over by itself. In physarum it carries on
-  from what is there unless `fresh` is on, and in reaction-diffusion while `morph` is on. Bind the component's `reset`
-  to a key for a restart by hand. Held, `reset` keeps the simulation at its start.
-- **Size:** `width` and `height` on the component are the simulation's size in cells. The
-  inputs can have any size; the component samples them.
+  from what is there unless `fresh` is on, and in reaction-diffusion and lenia it does so while
+  `morph` is on. Bind the component's `reset` to a key for a restart by hand. Held, `reset`
+  keeps the simulation at its start.
+- **Size:** `width` and `height` on the component are the simulation's size in cells (some
+  sections say texels, the pixels of the simulation's own picture). The inputs can have any
+  size; the component samples them.
 - **Params no entry writes** stay as you set them, such as `seed`, `pause`, `width` and
   `height`. `node.info` lists the params the entries write under `component.presets`, `owns`.
 
@@ -443,3 +446,96 @@ after 20 s; only fire, worms and spirals keep moving, and people stir the rest. 
 seconds the points shine as stars before veins link them; without a food input it is a dim web. `word`
 misses parts of some letters (the bowls of b and a). With `walls`, agents caught in a closed
 letter shape show as small bright dots there.
+
+## lenia
+
+![The nine presets of lenia, each after 20 to 40 seconds, and swarm turning into trio with morph on](../assets/simulations/lenia-presets.jpg)
+
+Lenia, a continuous cellular automaton, a smooth relative of Conway's Game of Life. Every point
+of the world holds a level of life from 0 to 1. Each step, a point takes the mean level in a
+ring around it (the kernel). Life grows where that mean is near a sweet spot and shrinks
+everywhere else. Depending on a few numbers, the world holds soft gliders, a jiggling swarm,
+spiky tissue, a labyrinth of worms, SmoothLife rings or three kinds that invade each other. The
+component is `lenia`. The [lenia example](../examples/lenia/README.md) feeds it a word as the
+mask and a moving blob as the people.
+
+The presets were found by a parameter search in penumbra's own runs, and the two creatures that
+start and drop in (a glider and a ring) were taken from those runs. No published Lenia species
+or creature pattern is included.
+
+**Presets.** `preset` picks one. Each writes the rules (the kernel, the growth, the steps per
+frame), the start and its creature, what the mask and the people do, the guards' marks and the
+look.
+
+| preset | what you see |
+|---|---|
+| `gliders` | Crescent gliders cross the field in about 8 s, meet and die. New ones are dropped in when few are left, and where people walk. |
+| `swarm` | A dense field of small cells that jiggle and shuffle. People push a channel through it. |
+| `tissue` | Spiky filaments fill the field within 3 s, then reorganise slowly. People kill. |
+| `labyrinth` | Worms fill the field as a labyrinth. People carve a path that closes behind them. Holes are punched in when it stands still. |
+| `smoothlife` | Ring creatures glide (the SmoothLife rule). New ones, dropped in and under people, start colonies that spread and break up again. |
+| `trio` | Red, green and blue kinds invade each other in round fronts. People push. |
+| `home` | The three kinds of trio live only where the mask is bright. They are refilled when less than 30 % of the mask is alive. People kill. |
+| `word` | Coarse worms where the mask is bright, fine worms around it, so the mask reads by texture alone. |
+| `wake` | An empty field until someone walks. Gliders appear behind them and swim off. |
+
+**From one preset to the next.** A new preset starts the world over from its own start. With
+`morph` on, the new rules act on the world that is there instead. Lenia's creatures rarely
+survive a change of rules: within seconds they die or turn into the new preset's texture (swarm
+to trio becomes trio in one colour). Key 0 on `reset` starts over in either case.
+
+**Inputs.** `mask`: the object, white where it is. `mask_mode` says what it does: `home` (life
+only where it is bright), `wall` (nothing lives where it is bright) or `rules` (other-sized
+creatures where it is dark, `outside_size` times the radius). Start `mask` puts the first life
+only where it is bright. `people`: bright where someone is. `people_mode` says what they do:
+`spawn` (new creatures appear where they are), `feed` (life grows there), `kill` (life dies
+there) or `push` (life drifts out of their way, by `push`); `strength` says how strongly. The
+pictures can have any size; an unwired one counts as black.
+
+**Outputs.** `out` is the picture, 1920 x 1080 (`out_width`, `out_height`). `coverage` is the
+share of the area that is alive, from 0 to 1, as a channel: about 0.002 per glider, 0.22 to 0.37
+in the dense presets. Where `mask_mode` lets nothing live, the area does not count. `mark` sets
+the level of life that counts. `activity` is how much the world still changes: about 0.03 for
+one glider, 4 in `trio`.
+
+**Params that matter most.** The `rules` group is the creature itself. `rule` picks the family:
+`lenia` (one kind), `smoothlife` (Rafler's SmoothLife; `rings`, `core`, `mu` and `sigma` do not
+act there) or `three` (three kinds). `radius` is how far a point looks, in texels of a simulation
+288 texels high, so a creature keeps its share of the picture at any `width` and `height`.
+`rings` and `core` shape the kernel, `mu` and `sigma` set where and how narrowly life grows, `dt`
+the time per step. Small changes of `sigma` (0.002) give a different world or kill it. `speed`
+scales the steps per frame of the preset (`steps`): 2 runs twice as fast and costs twice as
+much, and the creatures stay the same. `scale` makes the creatures larger or smaller; the cost
+grows with its square. `seed`, `rule`, `radius`, `scale`, the `start` group, `width` and
+`height` start over. The `guards` group keeps the world alive: with `revive` on, a world below
+`dead` coverage starts over after `revive_after` seconds; with `auto_restart` on, a world above
+`full` starts over after `hold` seconds (two gliders that meet can light up the whole field);
+below `few` coverage, creatures are dropped in at `refill` per second, and `spawn` drops them at
+any time; with `stir` on, a world that has stood still (`activity` below `still`) for
+`stir_after` seconds gets `stir_count` holes. A drop lands only where life may live and nothing
+lives yet. The `look` group sets the palette (`colors`, faint to full), `gain`, the halo and the
+relief; `tint_g` and `tint_b` colour the second and third kind. For projection onto a real
+object, turn `show_inputs` off: neither the mask nor the people show in the picture.
+
+**In an installation.** Feed a scan mask of the object into `mask` and choose `home`, so the
+three kinds live on the object only, or `word`, so the object stands out by the size of its
+worms. Feed `tex.blob_track`'s picture of the people into `people` and choose `wake` or
+`gliders`, so creatures appear behind the visitors, or `swarm` or `trio`, so they push through
+the world.
+
+**Cost.** About 2.8 ms per frame for the example with `gliders` (2 steps) and 4.8 ms with
+`tissue` (4 steps, a larger kernel): 512 x 288 texels, picture 1920 x 1080, with `coverage` and
+`activity` in use, on an RTX 3090 at a 280 W power limit. One step costs more than in the other
+simulations, because every point sums a whole disc of neighbours: the cost grows with the
+square of `radius` times `scale`, and so with the fourth power of the simulation's height. Twice
+the `width` and `height` give the same picture with finer edges at about ten times the cost
+(gliders at 1024 x 576: about 20 ms).
+
+**Limits.** Gliders that meet now and then light up the whole field; `auto_restart` catches it
+after a second, which is a visible jump to a fresh start. A glider lives until it meets another,
+so `gliders` needs a steady supply of drops. In `home`, thin strokes of the mask hold little
+life. `swarm`, `tissue`, `labyrinth` and `word` are textures more than creatures, and `tissue`
+and `labyrinth` stand nearly still once grown; a stir's holes heal within seconds. `push` is weak
+in `labyrinth`: the worms close behind the person at once. `morph` shows little, since a change
+of rules kills most creatures. `pause` still runs the step's passes, which leave the world as
+it is.

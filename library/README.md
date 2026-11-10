@@ -378,6 +378,25 @@ one carries on from the network that is there.
   the inputs; the look; `agents`, `width` and `height` (262 144 agents on 960 x 540 cells).
 - Example: [physarum](../examples/physarum/README.md).
 
+### lenia
+
+![lenia](lenia/preview.png)
+
+Lenia, a continuous cellular automaton like SmoothLife: soft creatures glide, swarm, split and
+chase each other on a dark ground. Nine presets, from lone gliders to a labyrinth of worms and
+three kinds that invade each other. The rules were found by search in penumbra's own runs; no
+published Lenia species is included.
+
+- In: `mask` (the object: life only on it, nothing on it, or other-sized creatures around it; a
+  scan mask, a text), `people` (drop new creatures, feed, kill or push life: `tex.blob_track`).
+  Any size.
+- Out: `out` (the picture, 1920 x 1080), `coverage` (the share of the area that is alive, a
+  channel), `activity` (how much the world still changes, a channel).
+- Params: `preset`, `morph`, `seed`, `speed`, `scale`, `people_mode`, `strength`, `mask_mode`,
+  `pause`; the rules a preset writes (`rule`, `radius`, rings, growth, `steps`); the start; the
+  guards that restart, refill and stir the world; the look; `width` and `height` (512 x 288).
+- Example: [lenia](../examples/lenia/README.md).
+
 ## A stage for music
 
 A world that moves with a sound file: a stage (a synthwave floor, a tunnel, a tower to climb or
