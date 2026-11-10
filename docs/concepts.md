@@ -660,8 +660,10 @@ first output of the kind it reads.
   which keeps the value and the range. Files from before this text existed listed these lines
   in a param `expose`; they load into `params`.
 - **The component's rows** follow the order of the text. At the right end of each row, "used
-  by step" names who follows it (a click lists them and goes there), and "unused" marks a param
-  nothing follows yet: it changes nothing. A shown row names the inner param it sets
+  by step" names who follows it (a click lists them and goes there). A param nothing follows
+  says its job instead: "writes 12" for a choice with presets, "restart rule" for a
+  bool an `@reset` line asks, "restarts" for a name on an `@reset` line. "unused" marks a param
+  with none of these: it changes nothing. A shown row names the inner param it sets
   (`step.feed`). A follower inside shows `parent.preset` in the components' turquoise; a click
   goes to the component. When a follower cannot take the value, the component lists the warning
   at the top of its panel and its node shows a warning badge.

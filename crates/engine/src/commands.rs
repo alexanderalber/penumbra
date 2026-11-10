@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use penumbra_core::declare::Job;
 use penumbra_core::{
     Cell, Chans, Error, Name, NodeId, NodePath, NumberFormat, ParamPart, ParamPath, Table, Value,
 };
@@ -605,8 +606,23 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
                 "name": spec.name, "kind": spec.kind, "value": explicit.unwrap_or(&spec.default),
                 "default": spec.default, "range": spec.range, "doc": spec.doc, "group": spec.group,
             });
-            if let (Some(list), Some(o)) = (followers.remove(spec.name.as_str()), v.as_object_mut()) {
-                o.insert("followed_by".into(), json!(list));
+            let followed = followers.remove(spec.name.as_str());
+            if let Some(o) = v.as_object_mut() {
+                // Its job through the component's own lines; with neither a job nor a follower
+                // the param changes nothing.
+                let job = match own.job(spec.name.as_str()) {
+                    Some(Job::Writes(names)) => Some(("writes", json!(names))),
+                    Some(Job::Condition) => Some(("restart_condition", json!(true))),
+                    Some(Job::Restarts) => Some(("restarts", json!(true))),
+                    None if followed.is_none() => Some(("unused", json!(true))),
+                    None => None,
+                };
+                if let Some((field, value)) = job {
+                    o.insert(field.into(), value);
+                }
+                if let Some(list) = followed {
+                    o.insert("followed_by".into(), json!(list));
+                }
             }
             instance.push(v);
         }

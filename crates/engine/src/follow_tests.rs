@@ -200,3 +200,39 @@ fn a_table_row_follows_a_components_choice_by_name_in_the_same_cook() {
     // The file keeps the key as an ordinary follower.
     eventually("autosave", || f.file().contains(r#"binds: {"key": "parent.look"}"#));
 }
+
+/// `node.info` says what a component's own param does when nothing inside follows it: a choice
+/// with presets writes params, a bool decides an `@reset` line, a name on one restarts, and only
+/// a param with none of these is unused.
+#[test]
+fn node_info_says_the_job_of_a_param_nothing_follows() {
+    let f = Fixture::new("param_jobs");
+    let text = "@param preset choice(a|b)\n\
+                @param fresh bool\n\
+                @param seed int\n\
+                @param spare float\n\
+                @param feed float = 0.05\n\
+                @preset preset=* feed=0.05\n\
+                @preset preset=b feed=0.03\n\
+                @reset preset if fresh\n\
+                @reset seed";
+    f.call("node.create", json!({"path": "/rd", "kind": "comp.base", "params": {"params": text}}));
+    f.call("node.create", json!({"path": "/rd/c", "kind": "chan.constant"}));
+    f.call("node.bind", json!({"param": "/rd/c.value0", "from": "parent.feed"}));
+    let get = |name: &str| row(&f, "/rd", "instance_params", name);
+    assert_eq!(get("preset")["writes"], json!(["feed"]));
+    assert_eq!(get("fresh")["restart_condition"], true);
+    assert_eq!(get("seed")["restarts"], true);
+    assert_eq!(get("spare")["unused"], true);
+    let feed = get("feed");
+    assert_eq!(feed["followed_by"], json!(["/rd/c.value0"]), "{feed}");
+    let fields = ["unused", "writes", "restart_condition", "restarts"];
+    for (name, own) in
+        [("preset", "writes"), ("fresh", "restart_condition"), ("seed", "restarts"), ("feed", "")]
+    {
+        let r = get(name);
+        let has: Vec<&str> = fields.iter().copied().filter(|k| r.get(*k).is_some()).collect();
+        let want: Vec<&str> = [own].into_iter().filter(|k| !k.is_empty()).collect();
+        assert_eq!(has, want, "{name}: {r}");
+    }
+}

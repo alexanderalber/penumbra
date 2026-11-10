@@ -530,7 +530,7 @@ water      15
 </li>
 <li><strong>Exposed params:</strong> an <code>@expose speed = noise1.speed</code> line (or just <code>@expose noise1.speed</code>) in the same text shows an inner param on the component. Setting it sets the inner param, which keeps the value and the range. Files from before this text existed listed these lines in a param <code>expose</code>; they load into <code>params</code>.
 </li>
-<li><strong>The component's rows</strong> follow the order of the text. At the right end of each row, &quot;used by step&quot; names who follows it (a click lists them and goes there), and &quot;unused&quot; marks a param nothing follows yet: it changes nothing. A shown row names the inner param it sets (<code>step.feed</code>). A follower inside shows <code>parent.preset</code> in the components' turquoise; a click goes to the component. When a follower cannot take the value, the component lists the warning at the top of its panel and its node shows a warning badge.
+<li><strong>The component's rows</strong> follow the order of the text. At the right end of each row, &quot;used by step&quot; names who follows it (a click lists them and goes there). A param nothing follows says its job instead: &quot;writes 12&quot; for a choice with presets, &quot;restart rule&quot; for a bool an <code>@reset</code> line asks, &quot;restarts&quot; for a name on an <code>@reset</code> line. &quot;unused&quot; marks a param with none of these: it changes nothing. A shown row names the inner param it sets (<code>step.feed</code>). A follower inside shows <code>parent.preset</code> in the components' turquoise; a click goes to the component. When a follower cannot take the value, the component lists the warning at the top of its panel and its node shows a warning badge.
 </li>
 <li><strong>Starting over:</strong> a component's <code>reset</code> starts every node inside that remembers earlier frames over (feedback loops, simulations, trails, clocks), in each frame while it is on. Bind it to a key, such as a <a class="ref" href="#chan.keyboard_in"><code>chan.keyboard_in</code></a>'s <code>key_0</code>, and the key restarts the simulation; TouchDesigner users know this as a pulse parameter. A line <code>@reset preset seed</code> in the text starts the component over once when one of these params changes, by hand, by undo or through a binding. The new start uses the new value in the same frame. <code>@reset preset unless morph</code> counts only while the bool <code>morph</code> is off. The <code>reset</code> button in the panel's header restarts once. More in <a href="#comp.base">comp.base</a>.
 </li>
@@ -6620,7 +6620,18 @@ def cook(cx):
 <li><strong>follow preset:</strong> the param follows the component's <code>preset</code>.
 </li>
 </ul>
-<p>The component's rows say at their right end who follows them (&quot;used by step&quot;, a click lists them) or which inner param they set (<code>step.feed</code>). &quot;unused&quot; marks a param nothing follows yet.</p>
+<p>The component's rows say at their right end who follows them (&quot;used by step&quot;, a click lists them) or which inner param they set (<code>step.feed</code>). A param nothing follows can still have a job through the text, and the row says so:</p>
+<ul>
+<li>&quot;writes 12&quot;: a choice with presets, whose entries write 12 params. The hover names them.
+</li>
+<li>&quot;restart rule&quot;: a bool that an <code>@reset ... if</code> or <code>unless</code> line asks.
+</li>
+<li>&quot;restarts&quot;: a param on an <code>@reset</code> line.
+</li>
+<li>&quot;unused&quot;: neither a follower nor such a job. The param changes nothing.
+</li>
+</ul>
+<p><a class="ref" href="#node.info"><code>node.info</code></a> says the same in each row of <code>instance_params</code>: <code>followed_by</code>, <code>writes</code>, <code>restart_condition</code>, <code>restarts</code> or <code>unused</code>.</p>
 <p>Behind the menu is the <code>params</code> text (&quot;edit params&quot; under the rows), one line per param. TouchDesigner calls these custom parameters. A line uses the grammar of a shader header, and the <code>//</code> in front may stay when you paste one:</p>
 <pre><code class="lang-text">@param preset choice(coral|maze|worms) = coral -- the pattern
 @param feed float = 0.055 0..0.1
@@ -6666,7 +6677,7 @@ def cook(cx):
 </li>
 <li><strong>Choosing</strong> writes the values in the same edit, and one undo takes all of them back. This holds for the panel, <a class="ref" href="#node.set"><code>node.set</code></a>, <a class="ref" href="#node.batch"><code>node.batch</code></a> and OSC. Choosing the chosen entry again writes its values again. Opening a project writes nothing, and neither does a hand edit of <code>project.ron</code>.
 </li>
-<li><strong>The panel</strong> shows a quiet line under the choice while params differ from the chosen entry: <code>feed, kill changed · back</code>. &quot;back&quot; writes the entry's values again, as one undo step. More than three names end in a count, such as <code>feed, kill, steps +2</code>. <a class="ref" href="#node.info"><code>node.info</code></a> lists them all under <code>changed</code>.
+<li><strong>The panel</strong> marks the choice's row &quot;writes 2&quot; at its right end when nothing inside follows the choice itself; its hover names the params. A bool that only an <code>@reset</code> line asks (<code>morph</code> below) says &quot;restart rule&quot;. The panel shows a quiet line under the choice while params differ from the chosen entry: <code>feed, kill changed · back</code>. &quot;back&quot; writes the entry's values again, as one undo step. More than three names end in a count, such as <code>feed, kill, steps +2</code>. <a class="ref" href="#node.info"><code>node.info</code></a> lists them all under <code>changed</code>.
 </li>
 <li><strong>Reset</strong> of a param a preset writes goes to the chosen entry's value: the row's reset button, or <code>null</code> in <a class="ref" href="#node.set"><code>node.set</code></a>.
 </li>

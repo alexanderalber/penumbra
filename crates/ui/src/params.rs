@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use egui::{RichText, Ui};
-use penumbra_core::declare::Declaration;
+use penumbra_core::declare::{Declaration, Job, Reset};
 use penumbra_core::{
     Cell, Chans, GroupId, Index, Name, NodeId, ParamKind, ParamPath, ParamSpec, Table, Value, palette,
 };
@@ -171,8 +171,9 @@ pub struct ParamPanel {
 /// The note at the right end of a component's row.
 enum Tag {
     /// A param the component holds (an `@param` line), and the params that follow it: their
-    /// nodes and how the row names them (`step.preset`).
-    Used(Vec<(NodeId, String)>),
+    /// nodes and how the row names them (`step.preset`). Then its job through the component's
+    /// own lines (presets, `@reset`), which makes it do something even when nothing follows it.
+    Used(Vec<(NodeId, String)>, Option<Job>, Vec<Reset>),
     /// An inner param shown on the component (an `@expose` line): its node and how the row
     /// names it (`step.feed`).
     Inside(NodeId, String),
@@ -446,7 +447,9 @@ impl ParamPanel {
                                                 .collect()
                                         })
                                         .unwrap_or_default();
-                                    me.tag = Some(Tag::Used(list));
+                                    let job = declared.job(&spec.name);
+                                    let resets = declared.resets.clone();
+                                    me.tag = Some(Tag::Used(list, job, resets));
                                     match presets.iter().find(|p| p.choice.as_str() == spec.name) {
                                         Some(status) => {
                                             me.preset_choice = true;
@@ -847,8 +850,8 @@ impl ParamPanel {
         // Bound only by following a component's param: told apart from a channel's binding.
         let follows_only =
             node.binds.iter().filter(|(k, _)| k.param.as_str() == spec.name).all(|(_, b)| b.param.is_some());
-        // A component's param that no node follows does nothing.
-        let unused = matches!(&tag, Some(Tag::Used(list)) if list.is_empty());
+        // A component's param that no node follows and its own lines give no job does nothing.
+        let unused = matches!(&tag, Some(Tag::Used(list, None, _)) if list.is_empty());
         let removable = self.removable;
         let mut remove_clicked = false;
         let mut label = RichText::new(self.label.as_deref().unwrap_or(&spec.name));
@@ -2836,14 +2839,21 @@ fn tag_cell(
     actions: &mut Vec<Action>,
 ) {
     match tag {
-        Tag::Used(list) if list.is_empty() => {
+        Tag::Used(list, Some(job), resets) if list.is_empty() => {
+            let name = key.rsplit('.').next().unwrap_or(key);
+            let (text, hover) = job_text(name, job, resets);
+            let r = ui.add(egui::Label::new(RichText::new(&text).color(theme::TEXT_WEAK)).truncate());
+            auto.add(format!("param.{key}.used"), r.rect, text);
+            r.on_hover_text(hover);
+        }
+        Tag::Used(list, None, _) if list.is_empty() => {
             let r = ui.add(egui::Label::new(RichText::new("unused").color(theme::TEXT_IDLE)).truncate());
             auto.add(format!("param.{key}.used"), r.rect, "unused");
             r.on_hover_text(
                 "No node inside follows this param, so it changes nothing yet. To use it, open the link menu of a param inside and pick it under \"component\".",
             );
         }
-        Tag::Used(list) => {
+        Tag::Used(list, _, _) => {
             let nodes: Vec<&str> = list.iter().map(|(_, l)| l.split('.').next().unwrap_or(l)).collect();
             let text = match nodes.as_slice() {
                 [one] => format!("used by {one}"),
@@ -2886,6 +2896,47 @@ fn tag_cell(
                 "This row sets {text}, a param of {node} inside the component; the value is kept there. Click to go to {node}."
             ));
             reveal_on_click(ui, &r, *id, actions);
+        }
+    }
+}
+
+/// The tag text and its hover for a component's param that no inner param follows but that has
+/// a job through the component's lines.
+fn job_text(name: &str, job: &Job, resets: &[Reset]) -> (String, String) {
+    match job {
+        Job::Writes(names) => {
+            let list: Vec<&str> = names.iter().map(|n| n.as_str()).collect();
+            // The cell is narrow: the count only, the hover names the params.
+            let text = format!("writes {}", list.len());
+            (text, format!("Choosing an entry writes its values into {}.", list.join(", ")))
+        }
+        Job::Condition => {
+            let mut on: Vec<&str> = Vec::new();
+            let mut off: Vec<&str> = Vec::new();
+            for r in resets {
+                match &r.when {
+                    Some(w) if w.param.as_str() == name && w.unless => off.push(r.name.as_str()),
+                    Some(w) if w.param.as_str() == name => on.push(r.name.as_str()),
+                    _ => {}
+                }
+            }
+            let mut lines = Vec::new();
+            if !on.is_empty() {
+                lines.push(format!(
+                    "While {name} is on, a change of {} starts the component over.",
+                    on.join(", ")
+                ));
+            }
+            if !off.is_empty() {
+                lines.push(format!(
+                    "While {name} is off, a change of {} starts the component over.",
+                    off.join(", ")
+                ));
+            }
+            ("restart rule".to_string(), lines.join(" "))
+        }
+        Job::Restarts => {
+            ("restarts".to_string(), "A change of this param starts the component over.".to_string())
         }
     }
 }

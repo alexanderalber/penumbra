@@ -41,7 +41,16 @@ named after the component:
 - **follow preset:** the param follows the component's `preset`.
 
 The component's rows say at their right end who follows them ("used by step", a click lists
-them) or which inner param they set (`step.feed`). "unused" marks a param nothing follows yet.
+them) or which inner param they set (`step.feed`). A param nothing follows can still have a
+job through the text, and the row says so:
+
+- "writes 12": a choice with presets, whose entries write 12 params. The hover names them.
+- "restart rule": a bool that an `@reset ... if` or `unless` line asks.
+- "restarts": a param on an `@reset` line.
+- "unused": neither a follower nor such a job. The param changes nothing.
+
+`node.info` says the same in each row of `instance_params`: `followed_by`, `writes`,
+`restart_condition`, `restarts` or `unused`.
 
 Behind the menu is the `params` text ("edit params" under the rows), one line per param. TouchDesigner calls
 these custom parameters. A line uses the grammar of a shader header, and the `//` in front may
@@ -123,7 +132,10 @@ has the presetManager for this job.
   holds for the panel, `node.set`, `node.batch` and OSC. Choosing the chosen entry again writes
   its values again. Opening a project writes nothing, and neither does a hand edit of
   `project.ron`.
-- **The panel** shows a quiet line under the choice while params differ from the chosen entry:
+- **The panel** marks the choice's row "writes 2" at its right end when nothing inside
+  follows the choice itself; its hover names the params. A bool that only an `@reset` line asks
+  (`morph` below) says "restart rule".
+  The panel shows a quiet line under the choice while params differ from the chosen entry:
   `feed, kill changed · back`. "back" writes the entry's values again, as one undo step. More
   than three names end in a count, such as `feed, kill, steps +2`. `node.info` lists them all
   under `changed`.

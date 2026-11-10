@@ -252,6 +252,33 @@ impl Declared {
     pub fn owner(&self, name: &str) -> Option<&Presets> {
         self.presets.iter().find(|p| p.owns(name))
     }
+
+    /// What the component's own param `name` does by these lines alone, without any inner
+    /// param following it; `None` when the lines give it no job. A param that nothing follows
+    /// and that has no job here changes nothing.
+    pub fn job(&self, name: &str) -> Option<Job> {
+        if let Some(p) = self.presets_of(name) {
+            return Some(Job::Writes(p.base.iter().map(|(n, _)| n.clone()).collect()));
+        }
+        if self.resets.iter().any(|r| r.when.as_ref().is_some_and(|w| w.param.as_str() == name)) {
+            return Some(Job::Condition);
+        }
+        if self.resets.iter().any(|r| r.name.as_str() == name) {
+            return Some(Job::Restarts);
+        }
+        None
+    }
+}
+
+/// The job a component's own param has through its text: see [`Declared::job`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum Job {
+    /// A choice with presets: choosing an entry writes these params.
+    Writes(Vec<Name>),
+    /// A bool that an `@reset` line asks whether a change starts the component over.
+    Condition,
+    /// Named on an `@reset` line: a change of its value starts the component over.
+    Restarts,
 }
 
 /// One name of an `@reset` line: a change of its value starts the component over, when the
@@ -1014,6 +1041,34 @@ mod tests {
         }
         let when = d.resets.first().and_then(|r| r.when.clone()).unwrap();
         assert!(when.holds(false) && !when.holds(true), "unless: holds while off");
+    }
+
+    #[test]
+    fn a_param_has_a_job_through_presets_and_reset_lines() {
+        let d = component(
+            "@param preset choice(a|b)
+             @param fresh bool
+             @param morph bool
+             @param seed int
+             @param spare bool
+             @param feed float
+             @param kill float
+             @preset preset=* feed=0.05 kill=0.06
+             @preset preset=b feed=0.03
+             @reset preset if fresh
+             @reset preset unless morph
+             @reset seed",
+            none,
+        );
+        assert!(d.errors.is_empty(), "{:?}", d.errors);
+        let writes: Vec<Name> = ["feed", "kill"].iter().filter_map(|n| Name::new(n).ok()).collect();
+        assert_eq!(d.job("preset"), Some(Job::Writes(writes)), "the presets win over its own reset line");
+        assert_eq!(d.job("fresh"), Some(Job::Condition));
+        assert_eq!(d.job("morph"), Some(Job::Condition));
+        assert_eq!(d.job("seed"), Some(Job::Restarts));
+        assert_eq!(d.job("feed"), None, "written by a preset, but nothing reads it");
+        assert_eq!(d.job("spare"), None);
+        assert_eq!(d.job("nothing"), None);
     }
 
     #[test]
