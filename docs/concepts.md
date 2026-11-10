@@ -798,7 +798,7 @@ to the nearest free place. The demo and the examples use notes to explain their 
 | `components/` | the project's own component files |
 | `library/` | the files of components added from a library (`library/<name>/`) |
 | `palettes.txt` | the project's own [palettes](#palettes), one per line |
-| `project.ron.bak` | the file as it was before `project.save` wrote over a file that did not load; worth a line in a project's `.gitignore` |
+| `project.ron.bak` | the file as it was before penumbra wrote over a file that did not load or held a wire that would close a loop; worth a line in a project's `.gitignore` |
 | anything else | shaders, scripts, images, videos, meshes, referenced by relative path |
 
 `project.ron` is plain text, meant to be read and edited. The app notices a change to it and
@@ -833,11 +833,26 @@ the connection from /fb to /tail (input `in`) would close a loop: /tail -> /seed
 Of a loop's
 wires, the one into the node whose path sorts last is left out; bindings load after all wires.
 A feedback's `initial` input counts like any other: it is read in the same frame, only
-`previous` waits a frame. The file keeps the wire until the next save, which first copies the
-file to `project.ron.bak`. In the editor and from commands such a wire is refused. A component
+`previous` waits a frame. In the editor and from commands such a wire is refused. A component
 file loads the same way (see Components).
+
+**Until the next save** the file keeps the wire. Opening and closing without an edit write
+nothing. To get the wire back, take another wire of the loop out of `project.ron`: the edit
+merges and the wire arrives with it.
+
+**The next save** (autosave after an edit, `project.save`, closing after an edit) first copies
+the file to `project.ron.bak`, then writes it without the wire. The bar at the top and
+`project.info` keep listing the wire, and `left_out_backup` names the copy. The note stays
+until the project is opened again.
+
+**An edit of `project.ron` while the project is open** that would close a loop does not merge.
+The bar shows "project file not merged" with the loop, autosave pauses, and the file stays as
+you typed it until the loop is gone.
 
 A file that does not parse at all, or has a format version this build does not read, is reported
 and left alone (autosave pauses) until it is fixed. `project.save` writes over it anyway; it first
 copies the file to `project.ron.bak` (also when nodes are kept as placeholders; one copy, the next
-such save replaces it).
+such save replaces it). A file penumbra wrote itself in this session is never copied, so its
+copy cannot replace a `project.ron.bak` that holds a left-out wire or your broken text. When
+the copy cannot be made (`project.ron.bak` is read-only or locked), nothing is written: move the
+old copy away or make it writable.

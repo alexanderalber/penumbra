@@ -800,11 +800,23 @@ impl PenumbraApp {
                         .flatten()
                         .collect::<Vec<_>>()
                         .join(" and ");
-                    let r = ui.colored_label(
-                        theme::ERROR,
-                        format!("not loaded from the project file: {what} that would make a loop"),
-                    );
-                    r.on_hover_text(status.left_out.join("\n"));
+                    let (label, where_now) = match &status.left_out_backup {
+                        None => (
+                            format!("not loaded from the project file: {what} that would make a loop"),
+                            "project.ron keeps them until the next save, which copies the file to \
+                             project.ron.bak first."
+                                .to_string(),
+                        ),
+                        Some(copy) => (
+                            format!("left out as a loop, now only in project.ron.bak: {what}"),
+                            format!(
+                                "project.ron no longer holds them. The file as it was is in {copy}. This \
+                                 note stays until the project is opened again."
+                            ),
+                        ),
+                    };
+                    let r = ui.colored_label(theme::ERROR, label);
+                    r.on_hover_text(format!("{}\n\n{where_now}", status.left_out.join("\n")));
                 }
             });
         });

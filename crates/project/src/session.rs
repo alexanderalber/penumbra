@@ -21,10 +21,14 @@
 //!   purpose, after copying it to [`BACKUP_NAME`]. A file that cannot be read pauses autosave
 //!   the same way, until the next read succeeds.
 //!
-//! - **A binding or a connection that would make a loop** is left out of the document, so the
-//!   rest of the file still opens or merges; it is listed in [`SessionStatus::left_out`] with the
-//!   reason and logged as a warning. The file keeps it until the next write, which first copies
-//!   the file to [`BACKUP_NAME`] (autosave included), so what was left out stays on disk.
+//! - **A binding or a connection that would make a loop** in the file a project opens with is
+//!   left out of the document, so the rest of the file still opens; it is listed in
+//!   [`SessionStatus::left_out`] with the reason and logged as a warning. The file keeps it until
+//!   the next write, which first copies the file to [`BACKUP_NAME`] (autosave included), so what
+//!   was left out stays on disk; [`SessionStatus::left_out_backup`] then names the copy. The
+//!   merge base is the file without the left-out parts, so an edit of a file that still holds
+//!   one tries it again. An edit of the file while the project is open that would close a loop
+//!   is refused as a whole like any other file that does not merge: the file stays as typed.
 //!
 //! - **Renamed kinds:** a node whose kind the file names by an old name
 //!   ([`NodeTypes::renamed_kind`]) loads as the new kind; the nodes are listed in
@@ -65,9 +69,13 @@ use crate::content::{Content, diff};
 use crate::file::{BrokenNode, FILE_NAME, MAX_FILE_BYTES, RenamedNode, broken_nodes, load_renaming, print};
 use crate::gate::{Gate, GateStatus};
 
-/// The copy of the project file that `project.save` makes before it writes over a file that did
-/// not load or merge, or that holds nodes that did not load. One only; the next such save
-/// replaces it.
+/// The copy of the project file made before writing over a file that did not load or merge,
+/// that holds nodes that did not load (`project.save` only), or that holds parts the project
+/// opened without (any write). One only; the next such copy replaces it.
+///
+/// Invariant: only a file this session did not write is copied. A file the session wrote holds
+/// the document as it was then, so copying it adds nothing, and it would replace a copy that
+/// holds what the session's file no longer has (a wire left out at open, someone's broken text).
 pub const BACKUP_NAME: &str = "project.ron.bak";
 
 /// Why an edit is refused while the session is locked for a show.
@@ -114,10 +122,14 @@ pub struct SessionStatus {
     /// Nodes the file names by an old kind, loaded as the new kind, as the project opened or
     /// the file last merged. The next save writes the new names.
     pub renamed: Vec<RenamedNode>,
-    /// What the file holds that the document left out, with the reason, as the project opened
-    /// or the file last merged: bindings and connections that would make a loop. The next save
-    /// writes the file without them, after copying it to [`BACKUP_NAME`].
+    /// What the file held as the project opened that the document left out, with the reason:
+    /// bindings and connections that would make a loop. The next save writes the file without
+    /// them, after copying it to [`BACKUP_NAME`]. Listed until the project is opened again, or
+    /// until an edit of the file takes them out before that save.
     pub left_out: Vec<String>,
+    /// The copy that holds the parts in `left_out` once the file was written without them;
+    /// `None` while the file still holds them.
+    pub left_out_backup: Option<String>,
     pub can_undo: bool,
     pub can_redo: bool,
     pub edit: GateStatus,
@@ -149,12 +161,23 @@ struct State {
     renamed: Vec<RenamedNode>,
     /// [`SessionStatus::left_out`].
     left_out: Vec<String>,
-    /// The file holds what the document left out: the next write copies it to [`BACKUP_NAME`]
-    /// first.
-    backup_due: bool,
+    /// [`SessionStatus::left_out_backup`]. While `left_out` is not empty and this is `None`,
+    /// the file holds what the document left out, and the next write copies it to
+    /// [`BACKUP_NAME`] first.
+    left_out_backup: Option<String>,
+    /// `file_text` is the text this session wrote, as far as the last look at the file tells
+    /// ([`BACKUP_NAME`]).
+    ours: bool,
     /// The file names old kinds: it is written again even though the document is the one it
     /// holds.
     rewrite: bool,
+}
+
+impl State {
+    /// The file holds what the document left out, and no copy of it was made yet.
+    fn backup_due(&self) -> bool {
+        !self.left_out.is_empty() && self.left_out_backup.is_none()
+    }
 }
 
 /// What [`Session::status`] derives from the document and the written snapshot, kept while
@@ -186,9 +209,12 @@ pub struct Session {
 /// their default ([`penumbra_core::ParamSpec::opens_at_default`], a recording's `record`) are
 /// reset, so opening never starts what they start. The content (the merge base) keeps the
 /// file's values, so an edit of the file that sets one again still counts as a change.
-/// Also returns what was left out ([`SessionStatus::left_out`]).
-fn build(content: &Content, types: &NodeTypes) -> Result<(Network, Vec<String>), Error> {
-    let applied = Network::new().apply_with(types, &diff(&Content::default(), content), Params::Keep)?;
+/// Also returns what was left out ([`SessionStatus::left_out`]) and `content` without it, the
+/// base of the next merge: a file that still holds a left-out part tries it again.
+fn build(content: &Content, types: &NodeTypes) -> Result<(Network, Vec<String>, Content), Error> {
+    let ops = diff(&Content::default(), content);
+    let applied = Network::new().apply_with(types, &ops, Params::Keep)?;
+    let base = without(content, applied.skipped.iter().filter_map(|i| ops.get(*i)));
     let (net, left_out) = (applied.network, applied.left_out);
     for why in &left_out {
         log::warn!(
@@ -214,17 +240,38 @@ fn build(content: &Content, types: &NodeTypes) -> Result<(Network, Vec<String>),
         })
         .collect();
     if resets.is_empty() {
-        return Ok((net, left_out));
+        return Ok((net, left_out, base));
     }
     match net.apply(types, &resets) {
-        Ok(applied) => Ok((applied.network, left_out)),
+        Ok(applied) => Ok((applied.network, left_out, base)),
         Err(e) => {
             // Opening matters more; the operators' own guards still keep a recording from
             // starting by itself.
             log::warn!("params that open at their default stay as stored: {e}");
-            Ok((net, left_out))
+            Ok((net, left_out, base))
         }
     }
+}
+
+/// `content` without the connections and bindings `ops` make.
+fn without<'a>(content: &Content, ops: impl Iterator<Item = &'a Op>) -> Content {
+    let mut out = content.clone();
+    for op in ops {
+        match op {
+            Op::Connect { to, input, .. } => {
+                if let Some(slot) = out.nodes.get_mut(to).and_then(|n| n.inputs.get_mut(*input as usize)) {
+                    *slot = None;
+                }
+            }
+            Op::Bind { param, component, .. } => {
+                if let Some(n) = out.nodes.get_mut(param.node()) {
+                    n.binds.remove(&penumbra_core::ParamPart::new(param.param().clone(), *component));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The file's modification time and length, `None` when either is unknown.
@@ -298,23 +345,25 @@ impl Session {
             None => Ok(None),
             Some(text) => {
                 let (content, renamed) = load_renaming(&text, &types)?;
-                let (net, left_out) = build(&content, &types)?;
-                Ok(Some((text, content, net, renamed, left_out)))
+                let (net, left_out, base) = build(&content, &types)?;
+                Ok(Some((text, base, net, renamed, left_out)))
             }
         });
         let mut renamed = Vec::new();
         let mut left_out = Vec::new();
+        let mut ours = false;
         let (net, base, file_text, file_error) = match loaded {
-            Ok(Some((text, content, net, r, l))) => {
+            Ok(Some((text, base, net, r, l))) => {
                 renamed = r;
                 left_out = l;
-                (net, content, Some(text), None)
+                (net, base, Some(text), None)
             }
             Ok(None) => {
-                let (net, _) = build(template, &types).map_err(|e| e.context("the project template"))?;
+                let (net, _, _) = build(template, &types).map_err(|e| e.context("the project template"))?;
                 let content = Content::from_network(&net)?;
                 let text = print(&content, &types)?;
                 write_atomic(&file, &text)?;
+                ours = true;
                 (net, content, Some(text), None)
             }
             Err(e) => {
@@ -370,8 +419,9 @@ impl Session {
                 dirty_since: None,
                 rewrite: !renamed.is_empty(),
                 renamed,
-                backup_due: !left_out.is_empty(),
                 left_out,
+                left_out_backup: None,
+                ours,
             }),
         })
     }
@@ -550,6 +600,7 @@ impl Session {
             broken,
             renamed: state.renamed.clone(),
             left_out: state.left_out.clone(),
+            left_out_backup: state.left_out_backup.clone(),
             can_undo,
             can_redo,
             edit: state.gate.status(now),
@@ -592,7 +643,9 @@ impl Session {
 
     /// Like [`Session::poll`], but writes unsaved changes at once instead of after the delay.
     /// For closing the app. An edit of the file that has not merged yet (waiting for the gate,
-    /// or failed) is left alone, as autosave would. With autosave off it writes nothing.
+    /// or failed) is left alone, as autosave would. Without unsaved changes nothing is written,
+    /// so a file that holds parts the project opened without keeps them. With autosave off it
+    /// writes nothing.
     pub fn flush(&self, now: Instant) {
         let _io = lock(&self.io);
         if self.locked() {
@@ -600,11 +653,12 @@ impl Session {
         }
         self.look_at_file();
         self.merge_waiting(now);
-        let paused = {
+        let due = {
             let state = lock(&self.state);
-            state.waiting.is_some() || state.file_error.is_some() || state.read_error.is_some()
+            let paused = state.waiting.is_some() || state.file_error.is_some() || state.read_error.is_some();
+            !paused && self.unsaved(&state)
         };
-        if !paused
+        if due
             && self.autosave_on()
             && let Err(e) = self.write(false)
         {
@@ -612,18 +666,26 @@ impl Session {
         }
     }
 
+    /// The document differs from the file, or the file must be written again for its old kind
+    /// names.
+    fn unsaved(&self, state: &State) -> bool {
+        state.file_text.is_none() || state.rewrite || !Network::same(&self.doc.snapshot(), &state.written)
+    }
+
     /// Writes the document now, also over a file that failed to merge or an edit still waiting
     /// for the gate (those are discarded). Over a file that failed, or while nodes are kept as
-    /// placeholders, the file is first copied to [`BACKUP_NAME`]. Returns whether the file
-    /// changed.
+    /// placeholders, the file is first copied to [`BACKUP_NAME`], unless this session wrote it.
+    /// Returns whether the file changed.
     pub fn save(&self) -> Result<bool, Error> {
         let _io = lock(&self.io);
         self.refuse_if_locked()?;
-        let failed = {
+        let (failed, ours) = {
             let state = lock(&self.state);
-            state.file_error.is_some() || state.read_error.is_some()
+            (state.file_error.is_some() || state.read_error.is_some(), state.ours)
         };
-        if failed || !broken_nodes(&self.doc.snapshot()).is_empty() {
+        // Looked at again: the file may have changed since the last poll.
+        let ours = ours && read_text(&self.file).ok().flatten() == lock(&self.state).file_text;
+        if !ours && (failed || !broken_nodes(&self.doc.snapshot()).is_empty()) {
             self.backup()?;
         }
         {
@@ -635,17 +697,22 @@ impl Session {
         self.write(true)
     }
 
-    /// Copies the project file to [`BACKUP_NAME`] beside it, if there is one.
-    fn backup(&self) -> Result<(), Error> {
+    /// Copies the project file to [`BACKUP_NAME`] beside it, if there is one; whether there was.
+    fn backup(&self) -> Result<bool, Error> {
         if !self.file.is_file() {
-            return Ok(());
+            return Ok(false);
         }
         let to = self.dir.join(BACKUP_NAME);
         std::fs::copy(&self.file, &to).map_err(|e| {
-            Error::new(format!("cannot copy {} to {}: {e}", self.file.display(), to.display()))
+            Error::new(format!(
+                "cannot copy {} to {}: {e}. {FILE_NAME} is not written until the copy is made: move the old \
+                 {BACKUP_NAME} away or make it writable",
+                self.file.display(),
+                to.display()
+            ))
         })?;
         log::info!("copied {} to {} before writing over it", self.file.display(), to.display());
-        Ok(())
+        Ok(true)
     }
 
     fn look_at_file(&self) {
@@ -670,6 +737,7 @@ impl Session {
                 if text == state.file_text {
                     return;
                 }
+                state.ours = false;
                 match text {
                     None => {
                         log::warn!("{} disappeared; writing it again", self.file.display());
@@ -712,27 +780,32 @@ impl Session {
         }
         let merged = loaded.and_then(|(theirs, renamed)| {
             let ops = diff(&state.base, &theirs);
-            let mut left_out = Vec::new();
             if !ops.is_empty() {
-                left_out = self
-                    .doc
-                    .edit(&ops, Source::ProjectFile, self.doc.new_group(), &format!("edit of {FILE_NAME}"))?
-                    .left_out;
+                // An edit that would close a loop is refused whole, as before the project file
+                // could leave a part out: merged without it, autosave would rewrite the
+                // user's file without it a second later. The file stays as typed.
+                let trial = self.doc.snapshot().apply_with(types, &ops, Params::Keep)?;
+                if !trial.left_out.is_empty() {
+                    return Err(Error::new(trial.left_out.join("; ")));
+                }
+                self.doc.edit(
+                    &ops,
+                    Source::ProjectFile,
+                    self.doc.new_group(),
+                    &format!("edit of {FILE_NAME}"),
+                )?;
             }
-            Ok((theirs, renamed, left_out))
+            Ok((theirs, renamed))
         });
         match merged {
-            Ok((theirs, renamed, left_out)) => {
-                for why in &left_out {
-                    log::warn!(
-                        "{FILE_NAME} merged without this part: {why}. The file keeps it until the next save, which \
-             copies the file to {BACKUP_NAME} first"
-                    );
-                }
+            Ok((theirs, renamed)) => {
                 state.rewrite = !renamed.is_empty();
                 state.renamed = renamed;
-                state.backup_due |= !left_out.is_empty();
-                state.left_out = left_out;
+                // The file merged whole, so it holds nothing the document left out. Parts
+                // already written away stay listed with their copy.
+                if state.left_out_backup.is_none() {
+                    state.left_out.clear();
+                }
                 if state.file_error.take().is_some() {
                     log::info!("{} loads again", self.file.display());
                 }
@@ -754,10 +827,7 @@ impl Session {
             if state.waiting.is_some() || state.file_error.is_some() || state.read_error.is_some() {
                 return;
             }
-            let dirty = state.file_text.is_none()
-                || state.rewrite
-                || !Network::same(&self.doc.snapshot(), &state.written);
-            if !dirty {
+            if !self.unsaved(&state) {
                 state.dirty_since = None;
                 return;
             }
@@ -793,14 +863,25 @@ impl Session {
         }
         let changed = state.file_text.as_ref() != Some(&text);
         if changed {
-            let backup = std::mem::take(&mut state.backup_due);
+            // Only a file this session did not write holds left-out parts ([`BACKUP_NAME`]).
+            let backup = state.backup_due() && !state.ours;
             drop(state);
-            if backup && let Err(e) = self.backup() {
-                lock(&self.state).backup_due = true;
-                return Err(e);
-            }
+            let copied = backup && self.backup()?;
             write_atomic(&self.file, &text)?;
             state = lock(&self.state);
+            if copied {
+                let copy = self.dir.join(BACKUP_NAME);
+                log::info!(
+                    "{FILE_NAME} is written without the parts the project opened without; {} keeps them",
+                    copy.display()
+                );
+                state.left_out_backup = Some(copy.display().to_string());
+            } else if backup {
+                // The file that held them is gone; nothing holds them any more.
+                log::warn!("{FILE_NAME} disappeared with the parts the project opened without");
+                state.left_out.clear();
+            }
+            state.ours = true;
             state.file_text = Some(text);
             // The next poll reads the file in full and takes the new stamp from there.
             state.stamp = None;
@@ -1085,25 +1166,44 @@ mod tests {
         assert!(net.node(id("/a")).unwrap().binds.is_empty());
         assert!(net.node(id("/sum")).unwrap().inputs.first().is_some_and(Option::is_some));
 
-        // An edit of the file merges the same way: the rest arrives, the loop stays out.
+        // An edit of the file while it still holds the loop does not merge: the loop is tried
+        // again and refused, and the file stays as typed.
         let t0 = Instant::now();
+        let value_of_c = |s: &Session| {
+            let net = s.doc().snapshot();
+            net.node(net.resolve(&"/c".parse::<NodePath>().unwrap()).unwrap())
+                .unwrap()
+                .params
+                .get("value")
+                .cloned()
+        };
         std::fs::write(s.file(), text.replace("3.0", "4.0")).unwrap();
         s.poll(t0);
-        let status = s.status(t0);
+        let err = s.status(t0).file_error.unwrap_or_default();
+        assert!(err.contains("binding /a.value to /sum would make a loop"), "{err}");
+        assert_eq!(value_of_c(&s), Some(Value::Float(3.0)));
+        // Without the loop it merges.
+        let fixed = text.replace(r#", binds: {"value": "sum"}"#, "").replace("3.0", "4.0");
+        std::fs::write(s.file(), &fixed).unwrap();
+        s.poll(t0 + S);
+        let status = s.status(t0 + S);
         assert_eq!(status.file_error, None);
-        let net = s.doc().snapshot();
-        let c = net.node(net.resolve(&"/c".parse::<NodePath>().unwrap()).unwrap()).unwrap().clone();
-        assert_eq!(c.params.get("value"), Some(&Value::Float(4.0)));
-        // A binding added by the edit that would close a loop is reported as left out.
-        let looped = text.replace(r#"inputs: {"a": "a"}"#, r#"inputs: {"a": "a", "b": "c"}"#).replace(
-            r#""/c": (kind: "test.const", params: {"value": 3.0})"#,
-            r#""/c": (kind: "test.const", params: {"value": 4.0}, binds: {"value": "sum"})"#,
+        assert!(status.left_out.is_empty(), "{:?}", status.left_out);
+        assert_eq!(value_of_c(&s), Some(Value::Float(4.0)));
+        // A binding added by the edit that would close a loop is refused the same way.
+        let looped = fixed.replace(r#"inputs: {"a": "a"}"#, r#"inputs: {"a": "a", "b": "c"}"#).replace(
+            r#""/c": (kind: "test.const", params: {"value": 4.0})"#,
+            r#""/c": (kind: "test.const", params: {"value": 5.0}, binds: {"value": "sum"})"#,
         );
         std::fs::write(s.file(), &looped).unwrap();
         s.poll(t0 + 3 * S);
         let status = s.status(t0 + 3 * S);
-        assert_eq!(status.file_error, None);
-        assert!(status.left_out.iter().any(|w| w.contains("/c.value to /sum")), "{:?}", status.left_out);
+        let err = status.file_error.unwrap_or_default();
+        assert!(err.contains("binding /c.value to /sum would make a loop"), "{err}");
+        assert!(status.left_out.is_empty(), "{:?}", status.left_out);
+        assert_eq!(value_of_c(&s), Some(Value::Float(4.0)));
+        s.poll(t0 + 6 * S);
+        assert_eq!(file(&s), looped);
     }
 
     /// Every connection of `net` as `(reader, input, source)` paths, sorted.
@@ -1193,6 +1293,198 @@ mod tests {
             "/sink": (kind: "test.add", inputs: {"a": "c/out"}),
         })"#;
         opens_without_one_wire("test-wire-loop-comp", text, 8, "/c/fb", "/c/tail", &["/c/fb (`initial`)"]);
+    }
+
+    /// A project whose wire from /fb into /tail closes a loop through /seed; the wire is left
+    /// out at open ([`a_connection_that_would_make_a_loop_costs_only_itself`]).
+    const LOOPED: &str = r#"(version: 2, nodes: {
+            "/k": (kind: "test.const", params: {"value": 1.0}),
+            "/fb": (kind: "test.feedback", inputs: {"initial": "seed", "previous": "tail"}),
+            "/tail": (kind: "test.add", inputs: {"a": "fb", "b": "k"}),
+            "/seed": (kind: "test.add", inputs: {"a": "tail", "b": "k"}),
+        })"#;
+
+    /// The wire left out of [`LOOPED`] and the one a hand edit can remove instead to break
+    /// the loop.
+    const LEFT_OUT: (&str, usize, &str) = ("/tail", 0, "/fb");
+    const OTHER: (&str, usize, &str) = ("/seed", 0, "/tail");
+
+    fn has_wire(s: &Session, (to, input, from): (&str, usize, &str)) -> bool {
+        wires(&s.doc().snapshot()).contains(&(to.to_string(), input, from.to_string()))
+    }
+
+    fn open_looped(name: &str, text: &str) -> (ScratchDir, Session) {
+        let dir = ScratchDir::unborn(name);
+        std::fs::create_dir_all(dir.path()).unwrap();
+        std::fs::write(dir.path().join(FILE_NAME), text).unwrap();
+        let s = open(&dir);
+        assert_eq!(s.status(Instant::now()).left_out.len(), 1);
+        assert!(!has_wire(&s, LEFT_OUT));
+        (dir, s)
+    }
+
+    #[test]
+    fn a_left_out_wire_comes_back_when_a_file_edit_breaks_the_loop_elsewhere() {
+        let (dir, s) = open_looped("test-loop-retry", LOOPED);
+        let bak = dir.path().join(BACKUP_NAME);
+        let t0 = Instant::now();
+        // Without an edit nothing merges and nothing is written, however long it waits.
+        for i in 0..5 {
+            s.poll(t0 + i * S);
+        }
+        assert_eq!(file(&s), LOOPED);
+        assert!(!s.status(t0).can_undo, "no history entry");
+        assert!(!bak.exists());
+        // The user breaks the loop in the file by taking out another wire.
+        let edited = LOOPED.replace(r#"inputs: {"a": "tail", "b": "k"}"#, r#"inputs: {"b": "k"}"#);
+        assert_ne!(edited, LOOPED);
+        std::fs::write(s.file(), &edited).unwrap();
+        s.poll(t0 + 6 * S);
+        let status = s.status(t0 + 6 * S);
+        assert_eq!(status.file_error, None);
+        assert!(status.left_out.is_empty(), "{:?}", status.left_out);
+        assert!(has_wire(&s, LEFT_OUT), "the wire the file still holds arrives now");
+        assert!(!has_wire(&s, OTHER));
+        // Written again in canonical form, with the wire, and no copy is needed.
+        s.poll(t0 + 7 * S);
+        s.poll(t0 + 8 * S);
+        assert!(
+            file(&s).contains(r#""/tail": (kind: "test.add", inputs: {"a": "fb", "b": "k"})"#),
+            "{}",
+            file(&s)
+        );
+        assert!(!bak.exists(), "the file held nothing that was left out");
+    }
+
+    #[test]
+    fn a_file_the_session_wrote_never_replaces_the_backup() {
+        // A loop and a node this build does not know: every save would copy the file.
+        let text = LOOPED.replace(
+            r#""/k": (kind: "test.const", params: {"value": 1.0}),"#,
+            r#""/k": (kind: "test.const", params: {"value": 1.0}), "/x": (kind: "gone.kind"),"#,
+        );
+        let (dir, s) = open_looped("test-loop-bak", &text);
+        let bak = dir.path().join(BACKUP_NAME);
+        assert_eq!(s.status(Instant::now()).broken.len(), 1);
+        assert!(s.save().unwrap());
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), text, "the original, with the wire");
+        // Still listed, now with the copy that holds it.
+        let status = s.status(Instant::now());
+        assert_eq!(status.left_out.len(), 1);
+        assert_eq!(status.left_out_backup, Some(bak.display().to_string()));
+        let t0 = Instant::now();
+        s.edit(
+            Actor::User,
+            &[Op::Set { param: "/k.value".parse().unwrap(), value: Value::Float(2.0) }],
+            None,
+            "",
+            t0,
+        )
+        .unwrap();
+        assert!(s.save().unwrap());
+        s.edit(
+            Actor::User,
+            &[Op::Set { param: "/k.value".parse().unwrap(), value: Value::Float(3.0) }],
+            None,
+            "",
+            t0,
+        )
+        .unwrap();
+        s.poll(t0 + 2 * S);
+        s.poll(t0 + 3 * S);
+        assert!(file(&s).contains("3.0"), "{}", file(&s));
+        assert_eq!(s.save(), Ok(false));
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), text, "still the original");
+        // A file someone else wrote is copied again on a save that needs a copy.
+        let foreign = file(&s).replace("3.0", "4.0");
+        std::fs::write(s.file(), &foreign).unwrap();
+        s.poll(t0 + 5 * S);
+        std::fs::write(s.file(), "garbage").unwrap();
+        s.poll(t0 + 6 * S);
+        assert!(s.status(t0 + 6 * S).file_error.is_some());
+        assert!(s.save().unwrap());
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), "garbage");
+    }
+
+    #[test]
+    fn a_file_edit_that_closes_a_loop_is_refused_and_the_file_kept() {
+        let dir = ScratchDir::unborn("test-loop-merge");
+        std::fs::create_dir_all(dir.path()).unwrap();
+        let open_text = LOOPED.replace(r#"inputs: {"a": "fb", "b": "k"}"#, r#"inputs: {"b": "k"}"#);
+        std::fs::write(dir.path().join(FILE_NAME), &open_text).unwrap();
+        let s = open(&dir);
+        let t0 = Instant::now();
+        assert!(s.status(t0).left_out.is_empty());
+        // The user adds the wire that closes the loop, and changes a value beside it.
+        let typed = LOOPED.replace("1.0", "2.0");
+        std::fs::write(s.file(), &typed).unwrap();
+        s.poll(t0);
+        let status = s.status(t0);
+        let err = status.file_error.clone().unwrap_or_default();
+        assert!(
+            err.contains(
+                "the connection from /fb to /tail (input `a`) would close a loop: /tail -> /seed (`a`)"
+            ),
+            "{err}"
+        );
+        assert!(status.left_out.is_empty(), "{:?}", status.left_out);
+        assert!(!has_wire(&s, LEFT_OUT));
+        let k = |s: &Session| {
+            let net = s.doc().snapshot();
+            net.node(net.resolve(&"/k".parse::<NodePath>().unwrap()).unwrap())
+                .unwrap()
+                .params
+                .get("value")
+                .cloned()
+        };
+        assert_eq!(k(&s), Some(Value::Float(1.0)), "nothing of the edit merged");
+        // Autosave pauses: the file stays as typed, also after an edit in the editor.
+        s.edit(Actor::User, &[set_k(5.0)], None, "", t0).unwrap();
+        s.poll(t0 + 5 * S);
+        s.flush(t0 + 6 * S);
+        assert_eq!(file(&s), typed);
+        assert!(!dir.path().join(BACKUP_NAME).exists());
+        // Fixed in the file, it merges.
+        let fixed = typed.replace(r#"inputs: {"a": "tail", "b": "k"}"#, r#"inputs: {"b": "k"}"#);
+        std::fs::write(s.file(), &fixed).unwrap();
+        s.poll(t0 + 9 * S);
+        assert_eq!(s.status(t0 + 9 * S).file_error, None);
+        assert!(has_wire(&s, LEFT_OUT));
+    }
+
+    fn set_k(v: f64) -> Op {
+        Op::Set { param: "/k.value".parse().unwrap(), value: Value::Float(v) }
+    }
+
+    #[test]
+    fn closing_without_an_edit_leaves_a_file_with_a_loop_alone() {
+        let (dir, s) = open_looped("test-loop-flush", LOOPED);
+        s.flush(Instant::now());
+        assert_eq!(file(&s), LOOPED);
+        assert!(!dir.path().join(BACKUP_NAME).exists());
+        assert_eq!(s.status(Instant::now()).left_out_backup, None, "the file still holds it");
+        // After an edit, closing writes, with the copy first.
+        s.edit(Actor::User, &[set_k(2.0)], None, "", Instant::now()).unwrap();
+        s.flush(Instant::now());
+        assert!(file(&s).contains("2.0"), "{}", file(&s));
+        assert_eq!(std::fs::read_to_string(dir.path().join(BACKUP_NAME)).unwrap(), LOOPED);
+        let status = s.status(Instant::now());
+        assert_eq!((status.left_out.len(), status.left_out_backup.is_some()), (1, true));
+    }
+
+    #[test]
+    fn a_loop_taken_out_of_the_file_needs_no_copy() {
+        let (dir, s) = open_looped("test-loop-removed", LOOPED);
+        let t0 = Instant::now();
+        let edited = LOOPED.replace(r#"inputs: {"a": "fb", "b": "k"}"#, r#"inputs: {"b": "k"}"#);
+        std::fs::write(s.file(), &edited).unwrap();
+        s.poll(t0);
+        assert!(s.status(t0).left_out.is_empty());
+        s.edit(Actor::User, &[set_k(2.0)], None, "", t0).unwrap();
+        s.poll(t0 + 2 * S);
+        s.poll(t0 + 3 * S);
+        assert!(file(&s).contains("2.0"), "{}", file(&s));
+        assert!(!dir.path().join(BACKUP_NAME).exists(), "the file held nothing left out any more");
     }
 
     #[test]
@@ -1340,9 +1632,15 @@ mod tests {
             file(&s)
         );
         assert!(file(&s).contains(r#""/y": (kind: "gone.kind""#), "{}", file(&s));
-        // A save on request keeps a copy while a node did not load.
+        // A save on request keeps a copy while a node did not load, but not of a file this
+        // session wrote: that holds the document as it was.
         assert_eq!(s.save(), Ok(false));
-        assert!(dir.path().join(BACKUP_NAME).exists());
+        assert!(!dir.path().join(BACKUP_NAME).exists());
+        let foreign =
+            file(&s).replace(r#"(kind: "test.const", params: {"value": 2.0})"#, r#"(kind: "test.const")"#);
+        std::fs::write(s.file(), &foreign).unwrap();
+        s.save().unwrap();
+        assert_eq!(std::fs::read_to_string(dir.path().join(BACKUP_NAME)).unwrap(), foreign);
         s.edit(Actor::User, &[Op::Delete { path: "/y".parse().unwrap() }], None, "", t0).unwrap();
         assert!(s.status(t0).broken.is_empty());
         s.poll(t0 + 5 * S);
