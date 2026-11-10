@@ -205,6 +205,18 @@ the size from `textureDimensions(in0)` in each pass.
 of the loop's `tex.feedback`. With `repeat` 4, every node on the loop through that feedback
 cooks 4 times per frame, and each run reads the run before through the feedback.
 
+Which nodes are on the loop:
+
+- Every node on a path from the feedback to the node wired into its `previous`. A path follows
+  wires, bindings and the node a `tex.select` names. It does not pass through another `previous`
+  input.
+- Another feedback joins the loop when its `previous` is wired straight from a node of the loop
+  and its output feeds the loop. physarum's `agents_loop` joins this way. The nodes between that
+  feedback and the loop join with it.
+- A feedback that reads the loop through other nodes stays outside, for example an echo of the
+  finished picture fed back into the simulation. It cooks once per frame, and every run sees
+  what it held of the loop at the end of the frame before. To run such a feedback with the
+  loop, set its `repeat` too.
 - Nodes outside the loop cook once per frame: the inputs it reads and the nodes that read its
   result. Those see the last run.
 - Loops that share a node run together, as often as the largest `repeat` among their
@@ -216,7 +228,10 @@ cooks 4 times per frame, and each run reads the run before through the feedback.
 - A shader that adds a time step per cook adds it in every run. Divide by `pn.iterations`, or
   keep the time in the state.
 - A `chan.from_tex` on the loop reads back in every run. Put measurements after the loop.
-- A paused clock or a locked feedback stops the runs: the loop stands as without `repeat`.
+- A paused clock stops the runs: the loop stands as without `repeat`. A locked feedback holds
+  its own picture. The other feedbacks of the loop still run `repeat` times; with every
+  feedback of the loop locked, the loop stands.
+- A component `reset` runs the loop once in that frame, so a held key keeps it at its start.
 - Cost: the loop's nodes `repeat` times. `repeat` is held between 1 and 64 and can be bound,
   for example to a component's `steps`.
 

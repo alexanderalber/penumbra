@@ -149,6 +149,24 @@ pub fn test_types() -> NodeTypes {
     });
     simple(
         &mut t,
+        NodeDesc::new("test.select", "The first output of the node it names, as tex.select")
+            .param(ParamSpec::node("node"))
+            .output("out", DataKind::Chan),
+        |cx| match cx.referenced("node")?.and_then(|outs| outs.first()) {
+            Some(d) => Ok(Cooked::Outputs(vec![d.clone()])),
+            None => Err(CookError::Pending),
+        },
+    );
+    simple(
+        &mut t,
+        NodeDesc::new("test.scale", "Its input times `value`")
+            .param(value())
+            .input("in", DataKind::Chan)
+            .output("out", DataKind::Chan),
+        |cx| chan(input(cx, 0) * cx.float("value")?),
+    );
+    simple(
+        &mut t,
         NodeDesc::new("test.comp", "A component")
             .param(ParamSpec::text(crate::PARAMS, "").multiline())
             .param(ParamSpec::bool(crate::RESET, false))
@@ -278,13 +296,19 @@ pub fn test_types() -> NodeTypes {
         )
         .stateful()
         .param(ParamSpec::int(crate::REPEAT, 1).clamp(1.0, crate::MAX_REPEAT as f64))
+        .param(ParamSpec::bool("boom", false))
         .input("initial", DataKind::Chan)
         .input_previous("previous", DataKind::Chan)
         .output("out", DataKind::Chan)
         .time_dependent(),
-        |cx| match (cx.input(1), cx.input(0)) {
-            (Some(d), _) | (None, Some(d)) => Ok(Cooked::Outputs(vec![d.clone()])),
-            (None, None) => Err(CookError::Pending),
+        |cx| {
+            if cx.bool("boom")? {
+                panic!("boom");
+            }
+            match (cx.input(1), cx.input(0)) {
+                (Some(d), _) | (None, Some(d)) => Ok(Cooked::Outputs(vec![d.clone()])),
+                (None, None) => Err(CookError::Pending),
+            }
         },
     );
     simple(

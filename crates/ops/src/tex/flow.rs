@@ -85,7 +85,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .clamp(1.0, penumbra_graph::MAX_REPEAT as f64)
                 .range(1.0, 8.0)
                 .doc(
-                    "How often the loop runs per frame. Every node between this one and the end wired into `previous` cooks this many times, each run reading the run before; nodes outside the loop cook once. For a simulation whose step is several nodes. Costs the loop's time this many times. Shaders in the loop read their run as pn.iteration",
+                    "How often the loop runs per frame. Every node between this one and the end wired into `previous` cooks this many times, each run reading the run before; nodes outside the loop cook once. A feedback whose `previous` is wired straight from the loop and which feeds it runs along. For a simulation whose step is several nodes. Costs the loop's time this many times. Shaders in the loop read their run as pn.iteration",
                 ),
         )
         .param(

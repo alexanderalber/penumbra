@@ -335,7 +335,7 @@ Outputs: `out` (tex).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `reset` | bool | `false` |  | Pass `initial` instead, while on |
-| `repeat` | int | `1` | 1 to 8 (soft, held within 1 to 64) | How often the loop runs per frame. Every node between this one and the end wired into `previous` cooks this many times, each run reading the run before; nodes outside the loop cook once. For a simulation whose step is several nodes. Costs the loop's time this many times. Shaders in the loop read their run as pn.iteration |
+| `repeat` | int | `1` | 1 to 8 (soft, held within 1 to 64) | How often the loop runs per frame. Every node between this one and the end wired into `previous` cooks this many times, each run reading the run before; nodes outside the loop cook once. A feedback whose `previous` is wired straight from the loop and which feeds it runs along. For a simulation whose step is several nodes. Costs the loop's time this many times. Shaders in the loop read their run as pn.iteration |
 | `persist` *(more)* | bool | `true` |  | Keep the loop's last frame in the state snapshots, so a restart carries on from it |
 
 ### tex.fit

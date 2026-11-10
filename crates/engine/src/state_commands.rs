@@ -206,7 +206,7 @@ fn cook_stats(e: &Engine, p: &Json) -> Result<Json> {
     let reset = a.reset.unwrap_or(false);
     let (stats, nodes, pass) = e.on_cook(move |st| {
         let stats = if reset { st.stats.take() } else { st.stats.clone() };
-        (stats, st.last.cooked.len(), st.last.pass)
+        (stats, st.last.nodes_cooked(), st.last.pass)
     })?;
     let mut out = serde_json::to_value(&stats).map_err(|e| e.to_string())?;
     if let Some(o) = out.as_object_mut() {

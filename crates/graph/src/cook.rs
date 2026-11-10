@@ -34,14 +34,18 @@
 //! ([`crate::NodeDef::locked`]), which holds its outputs, not just its picture.
 //!
 //! Loops that run several times per frame: a node with a previous-result input and a [`REPEAT`]
-//! param set above 1 (a `tex.feedback`) makes every node on a loop through it run that many times
-//! per pass. Before the first of those nodes is evaluated in a pass, the runs but the last are
-//! cooked: each evaluates what the loop's previous-result inputs read, then the loop's nodes count
-//! as not evaluated again and its feedback nodes cook once more. The last run is the ordinary
-//! pull of the pass, so what reads the loop from outside sees the last run's results. Nodes
-//! outside the loop cook once per pass, the clock does not move between runs, and a run in which
-//! no feedback node of the loop cooked (a paused clock, a locked node) ends the runs. Without a
-//! `repeat` set, nothing of this runs.
+//! param set above 1 (a `tex.feedback`) makes every node on its loop run that many times per
+//! pass. The loop is every node on a path of wires, bindings and node references from it to what
+//! its previous-result input reads, not through another previous-result input; another feedback
+//! node joins when its previous-result input reads a node of the loop and its result feeds the
+//! loop (`Cooker::find_repeats`). Before the first of those nodes is evaluated in a pass, the runs
+//! but the last are cooked: each evaluates what the loop's previous-result inputs read, then the
+//! loop's nodes count as not evaluated again and its feedback nodes cook once more. The last run
+//! is the ordinary pull of the pass, so what reads the loop from outside sees the last run's
+//! results. Nodes outside the loop cook once per pass, the clock does not move between runs, and
+//! a run in which no feedback node of the loop cooked (a paused clock, every feedback locked)
+//! ends the runs. A loop that its component started over runs once. Without a `repeat` set,
+//! nothing of this runs.
 
 use std::any::{Any, TypeId};
 use std::cell::{Cell, RefCell};
@@ -591,6 +595,13 @@ pub struct CookReport {
     pub elapsed: Duration,
 }
 
+impl CookReport {
+    /// How many nodes cooked: a node on a loop that ran several times counts once.
+    pub fn nodes_cooked(&self) -> usize {
+        self.cooked.iter().collect::<BTreeSet<_>>().len()
+    }
+}
+
 /// What a state snapshot keeps of one node ([`Cooker::kept`], [`Cooker::restore`]).
 #[derive(Clone, Debug)]
 pub enum Kept {
@@ -681,10 +692,13 @@ struct Runtime {
     again: bool,
     /// Which run of its loop the next cook is, and of how many ([`CookContext::run`]).
     run: (u32, u32),
+    /// A node of a loop with several runs that its component started over since the loop last
+    /// ran: the loop's next runs are one ([`Cooker::run_loop`]).
+    restarted: bool,
 }
 
 /// A loop that runs several times per pass: the nodes on the loops through the nodes whose
-/// [`REPEAT`] is set or bound. Loops that share a node are one.
+/// [`REPEAT`] is set or bound ([`Cooker::find_repeats`]). Loops that share a node are one.
 #[derive(Clone, Debug, Default)]
 struct Repeat {
     /// The nodes whose `repeat` is set or bound; the loop runs as often as the largest says.
@@ -801,6 +815,7 @@ impl Runtime {
             preset_edges: BTreeMap::new(),
             again: false,
             run: (0, 1),
+            restarted: false,
         }
     }
 
@@ -1088,6 +1103,7 @@ impl Cooker {
         self.for_thumbnails = true;
         self.cook_thumbnails(thumbnails, time, start, &mut report);
         self.for_thumbnails = false;
+        self.end_runs();
         let thumbs = Instant::now();
         if self.pass.is_multiple_of(TRIM_CHECK_EVERY) {
             self.trim_idle();
@@ -1309,9 +1325,17 @@ impl Cooker {
         out
     }
 
-    /// The loops that run several times per pass ([`Repeat`]): per node whose `repeat` is set
-    /// or bound, the nodes both upstream and downstream of it, through every input and binding,
-    /// previous-result inputs included. Loops that share a node merge.
+    /// The loops that run several times per pass ([`Repeat`]). A step is an input that is no
+    /// previous-result input, a binding or a node reference. The loop of a node whose `repeat`
+    /// is set or bound is every node on a path of steps from it to a source of its own
+    /// previous-result inputs. Another node with a previous-result input joins a loop when that
+    /// input reads a node of the loop and steps lead from it to the loop, together with the
+    /// nodes on those steps. Loops that share a node merge. A feedback that reads the loop
+    /// through other nodes stays outside: it cooks once per pass and feeds every run the same
+    /// result.
+    ///
+    /// Resolved against `net`, the network being synced, node references included: they
+    /// cannot be bound, so only an edit changes where they point, and every edit syncs.
     fn find_repeats(&mut self, net: &Network) {
         for id in self.repeats.iter().flat_map(|r| r.members.iter()) {
             if let Some(rt) = self.runtimes.get_mut(id) {
@@ -1334,40 +1358,91 @@ impl Cooker {
         if counters.is_empty() {
             return;
         }
+        // Per node, the sources of its steps, and the readers of each node through steps.
+        let mut sources: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
         let mut readers: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
         for def in net.nodes() {
-            for src in def.sources() {
-                readers.entry(src).or_default().push(def.id);
+            let refs = self.types.desc(&def.kind).into_iter().flat_map(|desc| {
+                desc.params.iter().filter(|spec| spec.node_ref).filter_map(|spec| {
+                    let text = def.param(desc, &spec.name).and_then(Value::as_str).unwrap_or("").trim();
+                    if text.is_empty() { None } else { net.resolve_from(def.id, text).ok() }
+                })
+            });
+            let from: Vec<NodeId> = def.upstream().chain(refs).collect();
+            for src in &from {
+                readers.entry(*src).or_default().push(def.id);
             }
+            sources.insert(def.id, from);
         }
-        let reach = |start: NodeId, next: &dyn Fn(NodeId) -> Vec<NodeId>| {
+        let previous = |id: NodeId| -> Vec<NodeId> {
+            net.node(id)
+                .map(|def| {
+                    def.inputs
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| def.is_previous(*i))
+                        .filter_map(|(_, p)| p.map(|p| p.node))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let reach = |start: Vec<NodeId>, next: &BTreeMap<NodeId, Vec<NodeId>>| {
             let mut seen = BTreeSet::new();
-            let mut todo = vec![start];
+            let mut todo = start;
             while let Some(id) = todo.pop() {
                 if seen.insert(id) {
-                    todo.extend(next(id));
+                    todo.extend(next.get(&id).into_iter().flatten().copied());
                 }
             }
             seen
         };
         let mut loops: Vec<(Vec<NodeId>, BTreeSet<NodeId>)> = Vec::new();
         for counter in counters {
-            let up = reach(counter, &|id| net.node(id).map(|d| d.sources().collect()).unwrap_or_default());
-            let down = reach(counter, &|id| readers.get(&id).cloned().unwrap_or_default());
-            let mut members: BTreeSet<NodeId> = up.intersection(&down).copied().collect();
-            let mut with = vec![counter];
-            // Merge every loop sharing a node with this one.
-            let mut i = 0;
-            while i < loops.len() {
-                if loops.get(i).is_some_and(|(_, m)| !m.is_disjoint(&members)) {
-                    let (c, m) = loops.swap_remove(i);
-                    with.extend(c);
-                    members.extend(m);
-                } else {
-                    i += 1;
+            let down = reach(vec![counter], &readers);
+            let mut ends = previous(counter);
+            ends.push(counter);
+            let up = reach(ends, &sources);
+            loops.push((vec![counter], up.intersection(&down).copied().collect()));
+        }
+        // The other feedback nodes, each with the sources of its previous-result inputs.
+        let others: Vec<(NodeId, Vec<NodeId>)> =
+            self.feedback.iter().map(|id| (*id, previous(*id))).collect();
+        // Each round merges the loops that share a node, then lets the feedback nodes join;
+        // a round that adds nothing is the last. Every other round adds a node.
+        for _ in 0..=net.nodes().count() {
+            let mut merged: Vec<(Vec<NodeId>, BTreeSet<NodeId>)> = Vec::new();
+            for (mut with, mut members) in loops.drain(..) {
+                let mut i = 0;
+                while i < merged.len() {
+                    if merged.get(i).is_some_and(|(_, m)| !m.is_disjoint(&members)) {
+                        let (c, m) = merged.swap_remove(i);
+                        with.extend(c);
+                        members.extend(m);
+                    } else {
+                        i += 1;
+                    }
+                }
+                merged.push((with, members));
+            }
+            loops = merged;
+            let mut grew = false;
+            for (_, members) in &mut loops {
+                let feeds = reach(members.iter().copied().collect(), &sources);
+                for (id, ends) in &others {
+                    if members.contains(id)
+                        || !feeds.contains(id)
+                        || !ends.iter().any(|e| members.contains(e))
+                    {
+                        continue;
+                    }
+                    let between = reach(vec![*id], &readers);
+                    members.extend(between.intersection(&feeds).copied());
+                    grew = true;
                 }
             }
-            loops.push((with, members));
+            if !grew {
+                break;
+            }
         }
         for (counters, members) in loops {
             let mut feedback = Vec::new();
@@ -1435,7 +1510,16 @@ impl Cooker {
                 }
             }
         }
-        let runs = repeat.counters.iter().map(|c| self.runs_of(*c)).max().unwrap_or(1);
+        // A loop its component started over since its last runs shows its start: one run, so a
+        // held `reset` holds it there as it does without runs.
+        let mut restarted = false;
+        for id in &repeat.members {
+            if let Some(rt) = self.runtimes.get_mut(id) {
+                restarted |= std::mem::take(&mut rt.restarted);
+            }
+        }
+        let runs =
+            if restarted { 1 } else { repeat.counters.iter().map(|c| self.runs_of(*c)).max().unwrap_or(1) };
         let runs = u32::try_from(runs).unwrap_or(1);
         let mark = |cooker: &mut Self, run: u32| {
             for id in &repeat.members {
@@ -1450,7 +1534,7 @@ impl Cooker {
                 self.evaluate(tail, time, report);
             }
             // A feedback node cooked in the run just done: it cooked in this pass, and the call
-            // to cook again that the run before left it was used up.
+            // to cook again that the run before left it was used up (only a cook uses it up).
             let moved = repeat
                 .feedback
                 .iter()
@@ -1472,6 +1556,28 @@ impl Cooker {
                 }
             }
             mark(self, run);
+        }
+        // A restart during these runs took effect in the runs after it.
+        for id in &repeat.members {
+            if let Some(rt) = self.runtimes.get_mut(id) {
+                rt.restarted = false;
+            }
+        }
+    }
+
+    /// At the end of a pass: a feedback node that the last run of its loop did not cook (a
+    /// switch skipped it, a lock held it) drops its call to cook again, so a later pass at the
+    /// same time does not take it up and move the loop.
+    fn end_runs(&mut self) {
+        for repeat in &self.repeats {
+            if repeat.done != self.pass {
+                continue;
+            }
+            for id in &repeat.feedback {
+                if let Some(rt) = self.runtimes.get_mut(id) {
+                    rt.again = false;
+                }
+            }
         }
     }
 
@@ -1503,10 +1609,12 @@ impl Cooker {
         }
         let inside = self.restarters.get(at).map(|r| r.inside.clone()).unwrap_or_default();
         for node in inside {
+            let in_loop = self.repeat_of.contains_key(&node);
             if let Some(rt) = self.runtimes.get_mut(&node)
                 && !rt.def.locked
             {
                 rt.start_over();
+                rt.restarted |= in_loop;
             }
         }
     }
@@ -1863,7 +1971,9 @@ impl Cooker {
 
         let Some(rt) = self.runtimes.get_mut(&id) else { return };
         rt.evaluated_pass = self.pass;
-        let again = std::mem::take(&mut rt.again);
+        // Used up only by a cook below: a node that does not cook in this run (locked, waiting
+        // after a panic) has not moved its loop.
+        let again = rt.again;
         rt.seen_bound = bound;
         if rt.bind_warning != bind_warning {
             rt.bind_warning = bind_warning;
@@ -1969,6 +2079,7 @@ impl Cooker {
             warning: RefCell::new(None),
         };
         rt.cooked_pass = self.pass;
+        rt.again = false;
         rt.trimmed = false;
         let started = Instant::now();
         let result = catch_unwind(AssertUnwindSafe(|| op.cook(&cx)));
@@ -4069,26 +4180,27 @@ mod tests {
         // A new count counts in the same pass.
         f.set("/c.steps", Value::Int(5));
         assert_eq!(frame(&mut f), 11.0);
-        // A reset starts the loop over from its seed, and the runs go on from there.
+        // A reset starts the loop over from its seed and runs it once, its start, as without
+        // runs; held, it stays there. On release the runs go on from there.
         f.set("/key.value", Value::Float(1.0));
-        assert_eq!(frame(&mut f), 5.0);
-        assert_eq!(frame(&mut f), 5.0, "held at the start while reset is on");
+        assert_eq!(frame(&mut f), 1.0);
+        assert_eq!(frame(&mut f), 1.0, "held at the start while reset is on");
         f.set("/key.value", Value::Float(0.0));
-        assert_eq!(frame(&mut f), 10.0);
+        assert_eq!(frame(&mut f), 6.0);
         f.cook(&["/c/add"]);
-        assert_eq!(f.value("/c/add"), Some(15.0));
+        assert_eq!(f.value("/c/add"), Some(11.0));
         // A clock that stands: no run moves the loop, however often the pass cooks.
         for _ in 0..3 {
             let cooked = f.cook(&["/c/add"]);
             assert!(cooked.is_empty(), "{cooked:?}");
-            assert_eq!(f.value("/c/add"), Some(15.0));
+            assert_eq!(f.value("/c/add"), Some(11.0));
         }
         // A locked feedback holds the loop as well.
         f.edit(&[Op::Lock { path: pp("/c/loop"), locked: true }]);
         f.clock.advance(1);
-        assert_eq!(frame(&mut f), 15.0);
+        assert_eq!(frame(&mut f), 11.0);
         f.edit(&[Op::Lock { path: pp("/c/loop"), locked: false }]);
-        assert_eq!(frame(&mut f), 20.0);
+        assert_eq!(frame(&mut f), 16.0);
     }
 
     /// Two loops that share a node run together, as often as the larger count says, and a
@@ -4130,6 +4242,422 @@ mod tests {
         // Run 0: sum 0, up 4. Run 1: a 4, b 0, sum 4, up 8. Run 2: a 8, b 4, sum 12, up 16.
         assert_eq!(f.value("/src"), Some(4.0));
         assert_eq!(f.value("/up"), Some(16.0));
+    }
+
+    /// How often each node in `paths` cooked in `cooked`.
+    fn times(cooked: &[String], paths: &[&str]) -> Vec<usize> {
+        paths.iter().map(|p| cooked.iter().filter(|c| c == p).count()).collect()
+    }
+
+    /// For `n` of 1, 2, 3 and 5: the network `build` makes with `/c.repeat` at `n`, cooked
+    /// through `roots` (as outputs, or as thumbnails with `thumbs`), shows at `probes` after each
+    /// frame what the same network without `repeat` shows after `n` times as many frames. The
+    /// nodes `inside` cook `n` times per frame, those `outside` at most once.
+    fn runs_equal_frames(
+        build: fn(Option<i64>) -> Fixture,
+        roots: &[&str],
+        thumbs: bool,
+        probes: &[&str],
+        inside: &[&str],
+        outside: &[&str],
+    ) {
+        const FRAMES: usize = 4;
+        let pull = |f: &mut Fixture| if thumbs { f.cook_with(&[], roots).0 } else { f.cook(roots) };
+        for n in [1_usize, 2, 3, 5] {
+            let mut plain = build(None);
+            let mut by_frame = Vec::new();
+            for _ in 0..n * FRAMES {
+                pull(&mut plain);
+                by_frame.push(probes.iter().map(|p| plain.value(p)).collect::<Vec<_>>());
+                plain.clock.advance(1);
+            }
+            let mut f = build(Some(n as i64));
+            for frame in 0..FRAMES {
+                let cooked = pull(&mut f);
+                let got: Vec<_> = probes.iter().map(|p| f.value(p)).collect();
+                assert_eq!(
+                    Some(&got),
+                    by_frame.get(n * (frame + 1) - 1),
+                    "{n} runs, frame {frame}: {cooked:?}"
+                );
+                assert_eq!(
+                    times(&cooked, inside),
+                    vec![n; inside.len()],
+                    "{n} runs, frame {frame}: {cooked:?}"
+                );
+                assert!(
+                    times(&cooked, outside).iter().all(|t| *t <= 1),
+                    "{n} runs, frame {frame}: {cooked:?}"
+                );
+                f.clock.advance(1);
+            }
+        }
+    }
+
+    /// `/c` -> `/a` (+1) -> `/t` -> `/c`'s previous, where `/t` also reads `/a` through `/x`, a
+    /// node reference, and `/b`.
+    fn select_inside(repeat: Option<i64>) -> Fixture {
+        let mut f = Fixture::new(&[
+            create("/seed", "test.const"),
+            create("/one", "test.const"),
+            create("/zero", "test.const"),
+            create("/c", "test.loop"),
+            create("/a", "test.add"),
+            create("/x", "test.select"),
+            create("/b", "test.add"),
+            create("/t", "test.add"),
+            connect("/seed", "/c", 0),
+            connect("/t", "/c", 1),
+            connect("/c", "/a", 0),
+            connect("/one", "/a", 1),
+            connect("/x", "/b", 0),
+            connect("/zero", "/b", 1),
+            connect("/a", "/t", 0),
+            connect("/b", "/t", 1),
+        ]);
+        f.set("/one.value", Value::Float(1.0));
+        f.set("/x.node", Value::Text("a".into()));
+        if let Some(n) = repeat {
+            f.set("/c.repeat", Value::Int(n));
+        }
+        f
+    }
+
+    /// `/c` -> `/t` (+1), closed by `/s`, which names `/t`, into `/c`'s previous.
+    fn select_closing(repeat: Option<i64>) -> Fixture {
+        let mut f = Fixture::new(&[
+            create("/seed", "test.const"),
+            create("/one", "test.const"),
+            create("/c", "test.loop"),
+            create("/t", "test.add"),
+            create("/s", "test.select"),
+            connect("/seed", "/c", 0),
+            connect("/s", "/c", 1),
+            connect("/c", "/t", 0),
+            connect("/one", "/t", 1),
+        ]);
+        f.set("/one.value", Value::Float(1.0));
+        f.set("/s.node", Value::Text("/t".into()));
+        if let Some(n) = repeat {
+            f.set("/c.repeat", Value::Int(n));
+        }
+        f
+    }
+
+    #[test]
+    fn a_node_reference_on_the_loop_runs_with_it() {
+        runs_equal_frames(select_inside, &["/t"], false, &["/t"], &["/c", "/a", "/x", "/b", "/t"], &["/one"]);
+        runs_equal_frames(select_closing, &["/t"], false, &["/t", "/s"], &["/c", "/t", "/s"], &["/one"]);
+    }
+
+    /// The loop of `/c` runs through `/comp`: in at its input node, out at its output node.
+    fn through_a_component(repeat: Option<i64>) -> Fixture {
+        let mut f = Fixture::new(&[
+            create("/seed", "test.const"),
+            create("/zero", "test.const"),
+            create("/c", "test.loop"),
+            create("/comp", "test.comp"),
+            create("/comp/in", "test.in"),
+            create("/comp/one", "test.const"),
+            create("/comp/add", "test.add"),
+            create("/comp/out", "test.out"),
+            create("/t", "test.add"),
+            connect("/seed", "/c", 0),
+            connect("/t", "/c", 1),
+            connect("/c", "/comp/in", 0),
+            connect("/comp/in", "/comp/add", 0),
+            connect("/comp/one", "/comp/add", 1),
+            connect("/comp/add", "/comp/out", 0),
+            connect("/comp/out", "/t", 0),
+            connect("/zero", "/t", 1),
+        ]);
+        f.set("/comp/one.value", Value::Float(1.0));
+        if let Some(n) = repeat {
+            f.set("/c.repeat", Value::Int(n));
+        }
+        f
+    }
+
+    /// A root on the loop other than its end, a loop through a component, and a loop only
+    /// thumbnails pull: each runs `repeat` times per frame and equals as many frames.
+    #[test]
+    fn any_pull_of_the_loop_runs_it_in_full() {
+        runs_equal_frames(
+            ring,
+            &["/loop"],
+            false,
+            &["/loop", "/add"],
+            &["/loop", "/add"],
+            &["/one", "/seed"],
+        );
+        runs_equal_frames(ring, &["/show"], true, &["/show"], &["/loop", "/add"], &["/show", "/one"]);
+        let inside = ["/c", "/comp/in", "/comp/add", "/comp/out", "/t"];
+        runs_equal_frames(through_a_component, &["/t"], false, &["/t"], &inside, &["/comp/one"]);
+    }
+
+    /// The shape of a simulation with two feedbacks: `/f` (no `repeat`) holds the previous `/a`,
+    /// which it feeds; `/c` closes the loop `/c` -> `/a` -> `/t` -> `/c`.
+    fn two_feedbacks(repeat: Option<i64>) -> Fixture {
+        let mut f = Fixture::new(&[
+            create("/seed", "test.const"),
+            create("/one", "test.const"),
+            create("/c", "test.loop"),
+            create("/f", "test.previous"),
+            create("/a", "test.add"),
+            create("/t", "test.add"),
+            connect("/seed", "/c", 0),
+            connect("/t", "/c", 1),
+            connect("/a", "/f", 0),
+            connect("/c", "/a", 0),
+            connect("/f", "/a", 1),
+            connect("/a", "/t", 0),
+            connect("/one", "/t", 1),
+        ]);
+        f.set("/one.value", Value::Float(1.0));
+        if let Some(n) = repeat {
+            f.set("/c.repeat", Value::Int(n));
+        }
+        f
+    }
+
+    /// A feedback whose previous reads a node of the loop straight and whose result feeds the
+    /// loop runs with it.
+    #[test]
+    fn a_feedback_reading_the_loop_straight_and_feeding_it_runs_with_it() {
+        runs_equal_frames(two_feedbacks, &["/t"], false, &["/t", "/f"], &["/c", "/f", "/a", "/t"], &["/one"]);
+    }
+
+    /// `/echo` reads the loop of `/c` through `/show` and feeds it back into `/t`: it is a
+    /// feedback of its own, outside the loop.
+    fn echo(repeat: Option<i64>) -> Fixture {
+        let mut f = Fixture::new(&[
+            create("/seed", "test.const"),
+            create("/one", "test.const"),
+            create("/c", "test.loop"),
+            create("/t", "test.add"),
+            create("/show", "test.add"),
+            create("/echo", "test.loop"),
+            connect("/seed", "/c", 0),
+            connect("/t", "/c", 1),
+            connect("/c", "/t", 0),
+            connect("/echo", "/t", 1),
+            connect("/t", "/show", 0),
+            connect("/one", "/show", 1),
+            connect("/one", "/echo", 0),
+            connect("/show", "/echo", 1),
+        ]);
+        f.set("/one.value", Value::Float(1.0));
+        if let Some(n) = repeat {
+            f.set("/c.repeat", Value::Int(n));
+        }
+        f
+    }
+
+    /// `/guard` reads the loop of `/c` through `/x` and drives `/m`'s gain on the loop by a
+    /// binding, as a readback that steers a simulation does.
+    fn guard(repeat: Option<i64>) -> Fixture {
+        let mut f = Fixture::new(&[
+            create("/seed", "test.const"),
+            create("/one", "test.const"),
+            create("/zero", "test.const"),
+            create("/c", "test.loop"),
+            create("/m", "test.scale"),
+            create("/t", "test.add"),
+            create("/x", "test.add"),
+            create("/guard", "test.loop"),
+            connect("/seed", "/c", 0),
+            connect("/t", "/c", 1),
+            connect("/c", "/m", 0),
+            connect("/m", "/t", 0),
+            connect("/one", "/t", 1),
+            connect("/t", "/x", 0),
+            connect("/zero", "/x", 1),
+            connect("/one", "/guard", 0),
+            connect("/x", "/guard", 1),
+        ]);
+        f.set("/one.value", Value::Float(1.0));
+        f.edit(&[bind_to("/m.value", "/guard", None)]);
+        if let Some(n) = repeat {
+            f.set("/c.repeat", Value::Int(n));
+        }
+        f
+    }
+
+    /// A feedback that reads the repeated loop through other nodes and feeds it, by a wire or a
+    /// binding, cooks once per frame. Every run of the loop sees the same value from it: what
+    /// it held of the loop at the end of the frame before (its `initial` in the first frame),
+    /// as it did before loops could run several times. Its readers outside cook once.
+    #[test]
+    fn a_feedback_reading_the_loop_through_other_nodes_stays_outside() {
+        const FRAMES: usize = 4;
+        for n in [1_usize, 3] {
+            let mut f = echo(Some(n as i64));
+            let mut g = guard(Some(n as i64));
+            let (mut show, mut t) = (None::<f64>, None::<f64>);
+            let (mut x, mut tg) = (None::<f64>, None::<f64>);
+            for frame in 0..FRAMES {
+                let e = show.unwrap_or(1.0);
+                let gain = x.unwrap_or(1.0);
+                for _ in 0..n {
+                    t = Some(t.unwrap_or(0.0) + e);
+                    tg = Some(tg.unwrap_or(0.0) * gain + 1.0);
+                }
+                show = t.map(|t| t + 1.0);
+                x = tg;
+                let cooked = f.cook(&["/show"]);
+                assert_eq!(
+                    times(&cooked, &["/c", "/t", "/echo", "/show"]),
+                    [n, n, 1, 1],
+                    "{n}, {frame}: {cooked:?}"
+                );
+                assert_eq!((f.value("/t"), f.value("/show"), f.value("/echo")), (t, show, Some(e)));
+                let cooked = g.cook(&["/x"]);
+                assert_eq!(
+                    times(&cooked, &["/c", "/m", "/t", "/guard", "/x"]),
+                    [n, n, n, 1, 1],
+                    "{cooked:?}"
+                );
+                assert_eq!((g.value("/t"), g.value("/guard")), (tg, Some(gain)), "{n}, {frame}");
+                f.clock.advance(1);
+                g.clock.advance(1);
+            }
+        }
+    }
+
+    /// One locked feedback of a loop with two holds its own result; the other carries the loop
+    /// through all runs. With both locked, the loop stands.
+    #[test]
+    fn a_loop_runs_on_while_one_of_its_feedbacks_cooks() {
+        let mut f = two_feedbacks(Some(3));
+        f.cook(&["/t"]);
+        f.clock.advance(1);
+        f.edit(&[Op::Lock { path: pp("/c"), locked: true }]);
+        let held = f.value("/c");
+        let cooked = f.cook(&["/t"]);
+        assert_eq!(times(&cooked, &["/c", "/f", "/a", "/t"]), [0, 3, 3, 3], "{cooked:?}");
+        assert_eq!(f.value("/c"), held);
+        f.clock.advance(1);
+        f.edit(&[Op::Lock { path: pp("/f"), locked: true }]);
+        let cooked = f.cook(&["/t"]);
+        assert!(cooked.is_empty(), "{cooked:?}");
+    }
+
+    /// `/f2`, a feedback on the loop, sits behind a switch that skips it. A run that cooks
+    /// while it is skipped must not leave it a call to cook that a later pass at the same time
+    /// takes up: with the clock standing, choosing it again shows its result and moves nothing.
+    #[test]
+    fn a_skipped_feedback_takes_no_extra_cook_into_a_later_pass() {
+        let mut f = Fixture::new(&[
+            create("/seed", "test.const"),
+            create("/one", "test.const"),
+            create("/c", "test.loop"),
+            create("/a", "test.add"),
+            create("/f2", "test.loop"),
+            create("/p", "test.pick"),
+            create("/t", "test.add"),
+            connect("/seed", "/c", 0),
+            connect("/t", "/c", 1),
+            connect("/c", "/a", 0),
+            connect("/one", "/a", 1),
+            connect("/seed", "/f2", 0),
+            connect("/a", "/f2", 1),
+            connect("/f2", "/p", 0),
+            connect("/a", "/p", 1),
+            connect("/p", "/t", 0),
+            connect("/a", "/t", 1),
+        ]);
+        f.set("/one.value", Value::Float(1.0));
+        f.set("/p.skip", Value::Bool(true));
+        f.set("/c.repeat", Value::Int(2));
+        f.cook(&["/t"]);
+        // The clock stands from here on. The switch shows `/a`; then the loop runs (its count
+        // changed) while `/f2` is skipped.
+        f.set("/p.index", Value::Float(1.0));
+        f.cook(&["/t"]);
+        f.set("/c.repeat", Value::Int(3));
+        let cooked = f.cook(&["/t"]);
+        assert_eq!(times(&cooked, &["/c", "/f2"]), [3, 0], "{cooked:?}");
+        let c = f.value("/c");
+        // Back to `/f2`: it has nothing new, so nothing on the loop moves.
+        f.set("/p.index", Value::Float(0.0));
+        let cooked = f.cook(&["/t"]);
+        assert_eq!(times(&cooked, &["/c", "/f2"]), [0, 0], "{cooked:?}");
+        assert_eq!(f.value("/c"), c);
+    }
+
+    #[test]
+    fn the_report_counts_a_node_of_a_repeated_loop_once() {
+        let mut f = ring(Some(3));
+        let (cooked, report) = f.cook_with(&["/show"], &[]);
+        assert_eq!(cooked.len(), 10, "{cooked:?}");
+        assert_eq!(report.nodes_cooked(), 6);
+    }
+
+    /// A component whose `reset` follows its own loop: `/c/half` turns it on once `/c/loop`
+    /// reaches 5. With `through`, the component also drives `/c/s` on the loop, so it is on the
+    /// loop itself and restarts in the middle of the runs. Either way the loop restarts, never
+    /// runs more than its count, and repeats the same values.
+    #[test]
+    fn a_reset_driven_by_its_own_loop_restarts_it_without_running_away() {
+        for through in [false, true] {
+            let mut f = Fixture::new(&[
+                create("/c", "test.comp"),
+                create("/c/seed", "test.const"),
+                create("/c/one", "test.const"),
+                create("/c/loop", "test.loop"),
+                create("/c/half", "test.scale"),
+                create("/c/s", "test.scale"),
+                create("/c/add", "test.add"),
+                connect("/c/seed", "/c/loop", 0),
+                connect("/c/add", "/c/loop", 1),
+                connect("/c/loop", "/c/half", 0),
+                connect("/c/loop", "/c/s", 0),
+                connect("/c/s", "/c/add", 0),
+                connect("/c/one", "/c/add", 1),
+            ]);
+            f.set("/c/one.value", Value::Float(1.0));
+            f.set("/c/half.value", Value::Float(0.1));
+            f.set("/c/s.value", Value::Float(1.0));
+            f.set("/c/loop.repeat", Value::Int(3));
+            f.set("/c.params", Value::Text("@param gain float = 1".into()));
+            f.edit(&[bind_to("/c.reset", "/c/half", None)]);
+            if through {
+                f.edit(&[bind_to("/c/s.value", "/c", Some("gain"))]);
+            }
+            let mut seen = Vec::new();
+            for _ in 0..12 {
+                let cooked = f.cook(&["/c/add"]);
+                assert!(times(&cooked, &["/c/loop", "/c/add"]).iter().all(|t| *t <= 3), "{cooked:?}");
+                seen.push(f.value("/c/add").unwrap());
+                f.clock.advance(1);
+            }
+            // Off the loop, the component cooks after the runs: the restart shows in the next
+            // frame, one run from the start. On the loop, it restarts in run 0 and the two
+            // runs after it go on from the start.
+            let want: &[f64] =
+                if through { &[3.0, 6.0, 2.0, 5.0, 2.0, 5.0] } else { &[3.0, 6.0, 1.0, 4.0, 7.0, 1.0] };
+            assert_eq!(seen.get(..6), Some(want), "{through}: {seen:?}");
+            assert_eq!(seen.get(6..12), seen.get(if through { 2..8 } else { 3..9 }), "{through}: {seen:?}");
+        }
+    }
+
+    /// A feedback that panics stops the runs of its pass: the runs after it would only look at
+    /// a loop in which nothing cooks.
+    #[test]
+    fn a_panicking_feedback_ends_the_runs() {
+        let mut f = ring(Some(5));
+        f.cook(&["/show"]);
+        f.clock.advance(1);
+        f.set("/loop.boom", Value::Bool(true));
+        f.cooker.take_profile(true);
+        f.cook(&["/show"]);
+        let visits = |f: &mut Fixture, path: &str| {
+            let id = f.id(path);
+            f.cooker.take_profile(true).nodes.iter().find(|(n, _)| *n == id).map_or(0, |(_, s)| s.visits)
+        };
+        // Run 0 cooks it (and it panics), run 1 finds it not cooking: the runs end there.
+        assert_eq!(visits(&mut f, "/add"), 2);
+        assert!(f.status("/loop").error.is_some_and(|e| e.contains("boom")));
     }
 
     #[test]

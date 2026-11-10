@@ -1205,7 +1205,7 @@ fn cook_status(e: &Engine, p: &Json) -> Result<Json> {
         "stepping": stepping,
         "pass": last.pass,
         "last_pass_ms": last.elapsed.as_secs_f64() * 1000.0,
-        "cooked_last_pass": last.cooked.len(),
+        "cooked_last_pass": last.nodes_cooked(),
         "watched": watched,
         // The project's setting, which the next pass takes (the cooker may be a pass behind).
         "thumbnails": {

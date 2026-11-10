@@ -2277,7 +2277,14 @@ fn pn_band(p: PnPalette, t: f32) -&gt; vec4f     // 0..1 in equal bands, one per
 <p><strong>Size.</strong> Every pass renders at the output's size. With <code>resolution</code> <code>custom</code> only the first pass reads the wired <code>in0</code>, at its own size; later passes read an <code>in0</code> of the output's size. Take the size from <code>textureDimensions(in0)</code> in each pass.</p>
 <h3 id="shaders-a-step-of-several-nodes">A step of several nodes</h3>
 <p><code>iterations</code> repeats one shader. A step that needs several nodes (agents that move, a <a class="ref" href="#tex.scatter"><code>tex.scatter</code></a> that draws them, a shader that spreads the trail) repeats with the <code>repeat</code> param of the loop's <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a>. With <code>repeat</code> 4, every node on the loop through that feedback cooks 4 times per frame, and each run reads the run before through the feedback.</p>
+<p>Which nodes are on the loop:</p>
 <ul>
+<li>Every node on a path from the feedback to the node wired into its <code>previous</code>. A path follows wires, bindings and the node a <a class="ref" href="#tex.select"><code>tex.select</code></a> names. It does not pass through another <code>previous</code> input.
+</li>
+<li>Another feedback joins the loop when its <code>previous</code> is wired straight from a node of the loop and its output feeds the loop. physarum's <code>agents_loop</code> joins this way. The nodes between that feedback and the loop join with it.
+</li>
+<li>A feedback that reads the loop through other nodes stays outside, for example an echo of the finished picture fed back into the simulation. It cooks once per frame, and every run sees what it held of the loop at the end of the frame before. To run such a feedback with the loop, set its <code>repeat</code> too.
+</li>
 <li>Nodes outside the loop cook once per frame: the inputs it reads and the nodes that read its result. Those see the last run.
 </li>
 <li>Loops that share a node run together, as often as the largest <code>repeat</code> among their feedbacks says. A loop the step only reads from keeps its own count.
@@ -2288,7 +2295,9 @@ fn pn_band(p: PnPalette, t: f32) -&gt; vec4f     // 0..1 in equal bands, one per
 </li>
 <li>A <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> on the loop reads back in every run. Put measurements after the loop.
 </li>
-<li>A paused clock or a locked feedback stops the runs: the loop stands as without <code>repeat</code>.
+<li>A paused clock stops the runs: the loop stands as without <code>repeat</code>. A locked feedback holds its own picture. The other feedbacks of the loop still run <code>repeat</code> times; with every feedback of the loop locked, the loop stands.
+</li>
+<li>A component <code>reset</code> runs the loop once in that frame, so a held key keeps it at its start.
 </li>
 <li>Cost: the loop's nodes <code>repeat</code> times. <code>repeat</code> is held between 1 and 64 and can be bound, for example to a component's <code>steps</code>.
 </li>
@@ -3017,7 +3026,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
 <tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>Pass <code>initial</code> instead, while on</td></tr>
-<tr><td><code>repeat</code></td><td>int</td><td><code>1</code></td><td>1 to 8 (soft, held within 1 to 64)</td><td>How often the loop runs per frame. Every node between this one and the end wired into <code>previous</code> cooks this many times, each run reading the run before; nodes outside the loop cook once. For a simulation whose step is several nodes. Costs the loop's time this many times. Shaders in the loop read their run as pn.iteration</td></tr>
+<tr><td><code>repeat</code></td><td>int</td><td><code>1</code></td><td>1 to 8 (soft, held within 1 to 64)</td><td>How often the loop runs per frame. Every node between this one and the end wired into <code>previous</code> cooks this many times, each run reading the run before; nodes outside the loop cook once. A feedback whose <code>previous</code> is wired straight from the loop and which feeds it runs along. For a simulation whose step is several nodes. Costs the loop's time this many times. Shaders in the loop read their run as pn.iteration</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>persist</code></td><td>bool</td><td><code>true</code></td><td></td><td>Keep the loop's last frame in the state snapshots, so a restart carries on from it</td></tr>
 </tbody>
@@ -3039,7 +3048,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>Every step repeats every frame, so small values matter: a <a class="ref" href="#tex.level"><code>tex.level</code></a> with <code>brightness</code> 0.96 lets a trail die out within a few seconds, at 1 nothing ever fades and the picture fills up. A <a class="ref" href="#tex.transform"><code>tex.transform</code></a> with <code>scale</code> 1.01 zooms the trails slowly outwards. Mix new content in near the end of the chain (a <a class="ref" href="#tex.composite"><code>tex.composite</code></a> with the content as <code>in1</code>), or the loop has nothing to work on but <code>initial</code>.</p>
 <p>With <code>persist</code> on (the default), the loop's last frame goes into the state snapshots, so a restart carries on from where it stopped.</p>
 <h5 id="tex.feedback-several-runs-per-frame">Several runs per frame</h5>
-<p><code>repeat</code> runs the loop several times per frame. With <code>repeat</code> 3, every node between the feedback and the end wired into <code>previous</code> cooks three times, each run starting from the run before. A trail then grows three times as fast and looks as it does at 1. Nodes outside the loop cook once: what feeds the loop from outside, and what reads its result. The clock stands still between runs. The loop costs its time three times. Details for simulations and shaders: <a href="#shaders-a-step-of-several-nodes">A step of several nodes</a>.</p>
+<p><code>repeat</code> runs the loop several times per frame. With <code>repeat</code> 3, every node between the feedback and the end wired into <code>previous</code> cooks three times, each run starting from the run before. A trail then grows three times as fast and looks as it does at 1. Nodes outside the loop cook once: what feeds the loop from outside, and what reads its result. Another feedback whose <code>previous</code> is wired straight from a node of the loop, and which feeds the loop, runs with it. A feedback that reads the loop through other nodes stays outside and cooks once. The clock stands still between runs. The loop costs its time three times. Details for simulations and shaders: <a href="#shaders-a-step-of-several-nodes">A step of several nodes</a>.</p>
 <h5 id="tex.feedback-example">Example</h5>
 <p>The <code>feedback</code> example project: text drawn over a loop that zooms, turns, dims and shifts the hue of the last frame a little, so the text leaves trails that drift outwards and change colour.</p>
 </div>
@@ -3908,7 +3917,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p><code>output</code> picks which output of that node, counted from 0, for nodes with more than one: <a class="ref" href="#tex.render"><code>tex.render</code></a>'s <code>data</code> is 1.</p>
 <p>A select that points at a <a class="ref" href="#tex.null"><code>tex.null</code></a> at the end of a chain stays valid however that chain changes.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#concepts-wires-bindings-and-node-references">Concepts › Wires, bindings and node references</a>, <a href="#concepts-paths">Concepts › Paths</a>, <a href="#concepts-components">Concepts › Components</a>, <a href="#glossary">Glossary</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-wires-bindings-and-node-references">Concepts › Wires, bindings and node references</a>, <a href="#concepts-paths">Concepts › Paths</a>, <a href="#concepts-components">Concepts › Components</a>, <a href="#glossary">Glossary</a>, <a href="#shaders-a-step-of-several-nodes">Shaders › A step of several nodes</a></p>
 </div></details>
 <details class="entry node" id="tex.sequence"><summary><code class="name">tex.sequence</code><span class="sum">The picture of a timed show: plays the pieces a chan.sequence lists, with cuts and fades. Only the piece on screen runs</span></summary>
 <div class="body">

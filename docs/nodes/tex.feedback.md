@@ -33,8 +33,10 @@ restart carries on from where it stopped.
 `repeat` runs the loop several times per frame. With `repeat` 3, every node between the feedback
 and the end wired into `previous` cooks three times, each run starting from the run before. A
 trail then grows three times as fast and looks as it does at 1. Nodes outside the loop cook
-once: what feeds the loop from outside, and what reads its result. The clock stands still
-between runs. The loop costs its time three times. Details for simulations and shaders:
+once: what feeds the loop from outside, and what reads its result. Another feedback whose
+`previous` is wired straight from a node of the loop, and which feeds the loop, runs with it. A
+feedback that reads the loop through other nodes stays outside and cooks once. The clock stands
+still between runs. The loop costs its time three times. Details for simulations and shaders:
 [A step of several nodes](../shaders.md#a-step-of-several-nodes).
 
 ## Example
