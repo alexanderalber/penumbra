@@ -1,0 +1,82 @@
+# Build, lint and test on every push to main and every pull request, on Windows, Linux and macOS.
+#
+# Windows is the platform penumbra is developed and shown on, so its job must pass.
+# Linux and macOS are new: their jobs report what breaks there but do not fail the run yet.
+# Remove `continue-on-error` from a platform once its job passes.
+#
+# The runners have no GPU. The tests use a software adapter instead: WARP on Windows,
+# lavapipe (Mesa) on Linux. Where none exists, the GPU tests skip themselves.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            experimental: false
+          - os: ubuntu-latest
+            experimental: true
+          - os: macos-latest
+            experimental: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # pyo3 (crates/script, crates/pyhost) builds against the stable Python ABI from 3.12 on.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ALSA for audio input (cpal), udev for HID devices, lavapipe as the software adapter.
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev \
+            mesa-vulkan-drivers
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: clippy
+        run: cargo xtask clippy
+
+      - name: test
+        run: cargo xtask test
+
+      - name: layers
+        if: runner.os == 'Windows'
+        run: cargo xtask layers
