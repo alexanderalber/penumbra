@@ -149,7 +149,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("chan.from_tex", &["top to", "analyze"]),
     ("chan.http_in", &["web server", "websocket"]),
     ("chan.integrator", &["speed"]),
-    ("chan.math", &["function", "limit"]),
+    ("chan.math", &["function", "limit", "quantize", "round", "ceil", "floor"]),
     ("chan.spacemouse_in", &["joystick"]),
     ("audio.file", &["audio file in"]),
     ("table.file", &["file in"]),

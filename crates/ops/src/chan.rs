@@ -139,7 +139,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "Calculates with channels: adds, multiplies or compares two inputs, or one input and a number",
         )
         .param(
-            ParamSpec::choice("op", &[MATH_BINARY, MATH_UNARY, MATH_COMPARE].concat())
+            ParamSpec::choice("op", &[MATH_BINARY, MATH_UNARY, MATH_COMPARE, MATH_ROUNDING].concat())
             .doc("What is done with a and b, sample by sample. Angles are in radians: multiply degrees by 0.0174533 (pi / 180) first")
             .choice_doc("add", "a + b")
             .choice_doc("subtract", "a - b")
@@ -149,7 +149,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .choice_doc("max", "the larger of a and b: b is a floor")
             .choice_doc("power", "a to the power b")
             .choice_doc("modulo", "a wrapped into 0 to b (b = 0 leaves a)")
-            .choice_doc("floor", "a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a)")
+            .choice_doc("floor", "a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a; a millionth short of a multiple counts as on it)")
             .choice_doc(
                 "equal",
                 "1 where a equals b (to within a millionth), else 0: whether the piece channel is 3",
@@ -160,13 +160,15 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .choice_doc("tan", "the tangent of a; near a quarter turn it grows without bound (b is not used)")
             .choice_doc("abs", "a without its sign: -3 becomes 3 (b is not used)")
             .choice_doc("above", "1 where a is greater than b, else 0: whether a level has passed a mark")
-            .choice_doc("below", "1 where a is less than b, else 0: whether a count has dropped under a mark"),
+            .choice_doc("below", "1 where a is less than b, else 0: whether a count has dropped under a mark")
+            .choice_doc("ceil", "a up to a multiple of b (b = 1: whole numbers; b = 0 leaves a; a millionth past a multiple counts as on it): 2.1 steps need 3 passes")
+            .choice_doc("round", "a to the nearest multiple of b (b = 1: whole numbers; b = 0 leaves a): 2.5 becomes 3, -2.5 becomes -3"),
         )
         .param(
             ParamSpec::float("b", 0.0)
                 .range(-1.0, 1.0)
                 .doc("The b side as a number, used while input b is unconnected")
-                .applies_when("op", &[MATH_BINARY, MATH_COMPARE].concat()),
+                .applies_when("op", &[MATH_BINARY, MATH_COMPARE, MATH_ROUNDING].concat()),
         )
         .input("a", DataKind::Chan)
         .input("b", DataKind::Chan)
@@ -800,6 +802,14 @@ const MATH_UNARY: &[&str] = &["sin", "cos", "tan", "abs"];
 /// list, so a channel bound to `op` by number keeps its meaning.
 const MATH_COMPARE: &[&str] = &["above", "below"];
 
+/// `chan.math`'s ops that round a to a multiple of b, besides `floor`. Last in the list for the
+/// same reason as [`MATH_COMPARE`].
+const MATH_ROUNDING: &[&str] = &["ceil", "round"];
+
+/// How far a quotient may sit past a whole number and still count as it, for `floor` and `ceil`:
+/// a millionth, as for `equal`, so 10 x 0.3 (3.0000000000000004) rounds up to 3, not 4.
+const WHOLE: f64 = 1e-6;
+
 struct Math;
 
 impl Operator for Math {
@@ -816,7 +826,9 @@ impl Operator for Math {
             "max" => f64::max,
             "power" => f64::powf,
             "modulo" => |a, b| if b == 0.0 { a } else { a.rem_euclid(b) },
-            "floor" => |a, b| if b == 0.0 { a } else { (a / b).floor() * b },
+            "floor" => |a, b| if b == 0.0 { a } else { ((a / b) + WHOLE).floor() * b },
+            "ceil" => |a, b| if b == 0.0 { a } else { ((a / b) - WHOLE).ceil() * b },
+            "round" => |a, b| if b == 0.0 { a } else { (a / b).round() * b },
             "equal" => |a, b| if equal(a, b) { 1.0 } else { 0.0 },
             "atan2" => f64::atan2,
             "sin" => |a, _| a.sin(),
@@ -1551,6 +1563,34 @@ mod tests {
         ]);
         assert!((f.value("/mod") - 2.5).abs() < 1e-12);
         assert_eq!(f.value("/floor"), -4.0);
+    }
+
+    #[test]
+    fn ceil_round_and_floor_to_a_multiple() {
+        let value = |op: &str, a: f64, b: f64| {
+            let mut f = F::new(&[
+                create("/c", "chan.constant"),
+                set("/c.value0", a),
+                create("/m", "chan.math"),
+                set("/m.op", op),
+                set("/m.b", b),
+                connect("/c", "/m", 0),
+            ]);
+            f.value("/m")
+        };
+        assert_eq!(value("ceil", 2.1, 1.0), 3.0);
+        assert_eq!(value("ceil", -2.5, 1.0), -2.0);
+        assert_eq!(value("ceil", 5.0, 4.0), 8.0);
+        assert_eq!(value("ceil", 2.1, 0.0), 2.1);
+        // A product that misses a whole number by a rounding error counts as it.
+        assert_eq!(value("ceil", 10.0 * 0.3, 1.0), 3.0);
+        assert_eq!(value("floor", 3.0 * 0.1 * 10.0 - 1e-12, 1.0), 3.0);
+        assert_eq!(value("ceil", 3.001, 1.0), 4.0);
+        assert_eq!(value("round", 2.5, 1.0), 3.0);
+        assert_eq!(value("round", 2.49, 1.0), 2.0);
+        assert_eq!(value("round", -2.5, 1.0), -3.0);
+        assert_eq!(value("round", 7.0, 5.0), 5.0);
+        assert_eq!(value("round", 2.49, 0.0), 2.49);
     }
 
     impl F {

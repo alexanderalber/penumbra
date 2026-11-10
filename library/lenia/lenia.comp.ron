@@ -20,7 +20,7 @@
         "/lenia/mask": (kind: "tex.in", pos: [-600.0, 100.0]),
         "/lenia/measure": (kind: "tex.shader", params: {"file": "library/lenia/measure.wgsl", "format": "32f", "height": 1, "keep_size": true, "resolution": "custom", "width": 1}, inputs: {"in0": "blocks"}, pos: [650.0, 300.0]),
         "/lenia/measure_loop": (kind: "tex.feedback", params: {"persist": false}, inputs: {"initial": "world", "previous": "measure"}, pos: [-200.0, -200.0]),
-        "/lenia/most": (kind: "chan.math", params: {"b": 0.499}, inputs: {"a": "passes"}, pos: [0.0, -560.0]),
+        "/lenia/most": (kind: "chan.math", params: {"b": 1.0, "op": "ceil"}, inputs: {"a": "passes"}, pos: [0.0, -560.0]),
         "/lenia/numbers": (kind: "chan.from_tex", params: {"components": "rgb"}, inputs: {"in": "measure"}, pos: [850.0, 300.0]),
         "/lenia/out": (kind: "tex.out", inputs: {"in": "show"}, pos: [850.0, 0.0]),
         "/lenia/pace": (kind: "chan.constant", params: {"name0": "steps"}, binds: {"value0": "parent.steps"}, pos: [-400.0, -560.0]),
