@@ -646,7 +646,9 @@ fn chans_of(read: &PendingRead, request: &Request, rate: f64) -> Result<(Chans, 
     };
     let names = request.components.names();
     // Each channel's own name and its samples, in order.
-    let mut raw: Vec<(String, Vec<f64>)> = Vec::with_capacity((rows * columns) as usize * names.len());
+    // One channel per texel and component, or one per row and component holding the row.
+    let per_row = if request.texels { columns as usize } else { 1 };
+    let mut raw: Vec<(String, Vec<f64>)> = Vec::with_capacity(rows as usize * per_row * names.len());
     if request.texels {
         for cy in 0..rows {
             for cx in 0..columns {

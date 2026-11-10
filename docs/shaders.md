@@ -190,7 +190,9 @@ skipping most of them in the shader.
 simulation's pause. While it is on, the output is `in0` as it is and no pass runs. In a loop
 through a `tex.feedback`, `in0` is the step's own last frame, so the state stands and costs
 nothing; when `bypass` goes off, the passes carry on from it. While `in0` is unwired, the shader
-runs as usual.
+runs as usual. A shader that does not compile still says so while bypassed. Without any version
+that compiled, the node is in error, and the component around it turns red. With an older version
+that compiled, the node passes `in0` on and shows the compiler's message as a warning.
 
 **Size.** Every pass renders at the output's size. With `resolution` `custom` only the first pass
 reads the wired `in0`, at its own size; later passes read an `in0` of the output's size. Take

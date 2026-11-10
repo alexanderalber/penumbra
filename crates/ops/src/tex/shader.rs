@@ -160,20 +160,27 @@ impl Operator for Shader {
             }));
         }
 
+        // A shader that never compiled fails, bypassed or not: a paused simulation with a broken
+        // step shows the error, and so does the component around it. This comes before `bypass`
+        // is read, so a shader that declares `bypass` itself gets the error naming the clash.
+        if self.current.is_none()
+            && let Some(e) = self.slot.error()
+        {
+            return Err(CookError::failed(e));
+        }
+
         // Bypassed: in0 goes out unchanged. The compile above still starts, so the shader is
         // ready when bypass goes off.
         if cx.bool("bypass")?
             && let Some(t) = cx.input_as::<Tex>(0)
         {
+            if let Some(e) = self.slot.error() {
+                cx.warn(format!("{e}\n(bypassed; the last version that compiled runs when bypass goes off)"));
+            }
             return Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, t.clone())]));
         }
 
-        let Some(current) = &self.current else {
-            return Err(match self.slot.error() {
-                Some(e) => CookError::failed(e),
-                None => CookError::Pending,
-            });
-        };
+        let Some(current) = &self.current else { return Err(CookError::Pending) };
         if let Some(e) = self.slot.error() {
             cx.warn(format!("{e}\n(showing the last version that compiled)"));
         }

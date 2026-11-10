@@ -268,6 +268,70 @@ fn bypass_holds_a_loop_and_runs_no_pass() {
     assert_eq!(px.get(0, 0).map(|p| p[0]), Some(3.0));
 }
 
+/// Cooks `/n` until its status satisfies `done`, with the clock moving; the last status.
+fn cook_until(
+    rig: &mut Rig,
+    done: impl Fn(&penumbra_graph::NodeStatus) -> bool,
+) -> penumbra_graph::NodeStatus {
+    let id = rig.id("/n");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        rig.clock.advance(1);
+        rig.cook("/n");
+        let s = rig.cooker.status(id).unwrap();
+        if done(&s) || std::time::Instant::now() > deadline {
+            return s;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// A bypassed shader that does not compile says so: an error while no version ever compiled,
+/// so the component around it is marked; a warning while the last good version is kept.
+#[test]
+fn a_bypassed_shader_that_does_not_compile_says_so() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("iter_bypass_broken");
+    let broken = "@fragment fn main(v: PnVertex) -> @location(0) vec4f { return oops; }";
+    std::fs::write(dir.join("nudge.wgsl"), broken).unwrap();
+    let [one, n, wire] = nudge("16f");
+    let mut rig =
+        Rig::new(gpu.clone(), Some(&dir), &[one, n, wire, super::set("/n.bypass", Value::Bool(true))]);
+    let s = cook_until(&mut rig, |s| s.error.is_some());
+    assert!(s.error.as_deref().is_some_and(|e| e.contains("oops")), "{s:?}");
+
+    // Compiled once, then broken: the picture still comes through, with a warning.
+    std::fs::write(dir.join("nudge.wgsl"), NUDGE).unwrap();
+    let s = cook_until(&mut rig, |s| s.error.is_none() && s.has_output);
+    assert_eq!((s.error.clone(), s.warning.clone()), (None, None), "{s:?}");
+    rig.edit(&[super::set("/n.bypass", Value::Bool(false))]);
+    cook_until(&mut rig, |s| s.params.is_some());
+    rig.edit(&[super::set("/n.bypass", Value::Bool(true))]);
+    std::fs::write(dir.join("nudge.wgsl"), broken).unwrap();
+    let s = cook_until(&mut rig, |s| s.warning.is_some());
+    assert!(s.warning.as_deref().is_some_and(|w| w.contains("oops")), "{s:?}");
+    assert!(rig.tex("/n").unwrap().same(&rig.tex("/one").unwrap()), "in0 is handed on");
+}
+
+/// A shader that declares `bypass` itself gets the error that names the clash, whatever the
+/// node's own `bypass` holds.
+#[test]
+fn a_shader_param_named_bypass_is_refused_whatever_bypass_holds() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("iter_bypass_reserved");
+    let clash = "// @param bypass float = 0.5
+@fragment fn main(v: PnVertex) -> @location(0) vec4f { return vec4f(params.bypass); }";
+    std::fs::write(dir.join("nudge.wgsl"), clash).unwrap();
+    for held in [Value::Bool(true), Value::Bool(false)] {
+        let [one, n, wire] = nudge("16f");
+        let mut rig =
+            Rig::new(gpu.clone(), Some(&dir), &[one, n, wire, super::set("/n.bypass", held.clone())]);
+        let s = cook_until(&mut rig, |s| s.error.is_some());
+        let e = s.error.unwrap_or_default();
+        assert!(e.contains("`bypass` is a param of the node itself"), "{held:?}: {e}");
+    }
+}
+
 /// A loop through a `tex.feedback` with `repeat` 3 runs its shader three times per frame: the
 /// same bits as three frames of the loop without it. The passes count on over the runs, and
 /// `bypass` holds the loop in every run.

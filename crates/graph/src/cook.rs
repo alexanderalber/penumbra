@@ -934,6 +934,10 @@ pub struct Cooker {
     /// Operators that panicked when asked something where they could not be dropped at once
     /// (a status, a density): node, what was asked, the message. Dropped at the next pass.
     asked_panics: Mutex<Vec<(NodeId, &'static str, String)>>,
+    /// Nodes whose error the rate limit held back from the log ([`Cooker::log_error`]); looked
+    /// at again after each pass, so the error is written once the time is over, also when the
+    /// node does not cook again.
+    unlogged: BTreeSet<NodeId>,
 }
 
 impl Cooker {
@@ -958,6 +962,7 @@ impl Cooker {
             eager: Vec::new(),
             feedback: Vec::new(),
             restarters: Vec::new(),
+            unlogged: BTreeSet::new(),
             choosers: Vec::new(),
             repeats: Vec::new(),
             repeat_of: BTreeMap::new(),
@@ -1086,6 +1091,9 @@ impl Cooker {
         let thumbs = Instant::now();
         if self.pass.is_multiple_of(TRIM_CHECK_EVERY) {
             self.trim_idle();
+        }
+        for id in std::mem::take(&mut self.unlogged) {
+            self.log_error(id);
         }
         let end = Instant::now();
         let spent = &mut self.spent;
@@ -1880,6 +1888,7 @@ impl Cooker {
         }
         let Some(ty) = rt.ty.clone() else {
             rt.error = Some(format!("unknown node kind `{}`", rt.def.kind));
+            self.log_error(id);
             return;
         };
         let desc = ty.desc();
@@ -1887,6 +1896,7 @@ impl Cooker {
             Ok(t) => t,
             Err(message) => {
                 rt.panicked_in("time_dependent", &message);
+                self.log_error(id);
                 return;
             }
         };
@@ -2044,20 +2054,34 @@ impl Cooker {
     /// Writes a node's error to the log when it is new: once per failure, so a script or a
     /// headless run sees a node fail that nothing looks at, such as a shader that does not
     /// compile behind the node it snapshots. A node whose message changes all the time writes
-    /// at most one line per [`ERROR_LOG_EVERY`].
+    /// at most one line per [`ERROR_LOG_EVERY`]: one held back is written when the time is
+    /// over, if the node still has it.
     fn log_error(&mut self, id: NodeId) {
-        let Some(rt) = self.runtimes.get_mut(&id) else { return };
+        self.log_error_at(id, Instant::now());
+    }
+
+    /// [`Self::log_error`] at `now`; the line written, if any.
+    fn log_error_at(&mut self, id: NodeId, now: Instant) -> Option<String> {
+        let rt = self.runtimes.get_mut(&id)?;
         if rt.error == rt.logged_error {
-            return;
+            return None;
         }
-        rt.logged_error = rt.error.clone();
-        let Some(error) = rt.error.clone() else { return };
-        if rt.logged_at.is_some_and(|at| at.elapsed() < ERROR_LOG_EVERY) {
-            return;
+        let Some(error) = rt.error.clone() else {
+            // Fixed: the next error is new, even when it is the one before.
+            rt.logged_error = None;
+            return None;
+        };
+        if rt.logged_at.is_some_and(|at| now.saturating_duration_since(at) < ERROR_LOG_EVERY) {
+            // Not recorded as written, so a later look writes it.
+            self.unlogged.insert(id);
+            return None;
         }
-        rt.logged_at = Some(Instant::now());
+        rt.logged_at = Some(now);
+        rt.logged_error = Some(error.clone());
         let kind = rt.def.kind.clone();
-        log::warn!("{} ({kind}): {error}", self.path(id));
+        let line = format!("{} ({kind}): {error}", self.path(id));
+        log::warn!("{line}");
+        Some(line)
     }
 
     /// Which of `ids` hold outputs that are up to date at `time` without cooking: nothing
@@ -4443,5 +4467,53 @@ mod tests {
         f.clock.advance(1);
         f.cook(&[]);
         assert!(f.cooker.current(&[f.id("/pick")], f.clock.now()).contains(&f.id("/pick")));
+    }
+
+    /// The error of `/a`, as a cook would leave it, then the line [`Cooker::log_error_at`]
+    /// writes at `secs` seconds after `t0`.
+    fn log_at(f: &mut Fixture, error: Option<&str>, t0: Instant, millis: u64) -> Option<String> {
+        let id = f.id("/a");
+        f.cooker.runtimes.get_mut(&id).unwrap().error = error.map(str::to_string);
+        f.cooker.log_error_at(id, t0 + Duration::from_millis(millis))
+    }
+
+    #[test]
+    fn an_error_held_back_by_the_rate_limit_is_written_once_the_time_is_over() {
+        let mut f = Fixture::new(&[create("/a", "test.const")]);
+        f.cook(&["/a"]);
+        let t0 = Instant::now();
+        assert!(log_at(&mut f, Some("error A"), t0, 0).unwrap().contains("/a (test.const): error A"));
+        assert_eq!(log_at(&mut f, Some("error A"), t0, 1000), None, "the same error once");
+        // Fixed, then compiling (no error), then a new error within ten seconds: held back.
+        assert_eq!(log_at(&mut f, None, t0, 2000), None);
+        assert_eq!(log_at(&mut f, Some("error B"), t0, 3000), None);
+        assert_eq!(log_at(&mut f, Some("error B"), t0, 9000), None);
+        // Written when the ten seconds are over, although it stayed the same.
+        assert!(log_at(&mut f, Some("error B"), t0, 10_000).unwrap().contains("error B"));
+        assert_eq!(log_at(&mut f, Some("error B"), t0, 30_000), None, "and then not again");
+    }
+
+    #[test]
+    fn an_error_that_changes_every_cook_is_written_at_most_every_ten_seconds() {
+        let mut f = Fixture::new(&[create("/a", "test.const")]);
+        f.cook(&["/a"]);
+        let t0 = Instant::now();
+        // 30 seconds of cooks at 60 fps, each with another message.
+        let lines: Vec<u64> = (0..1800_u64)
+            .filter(|i| log_at(&mut f, Some(&format!("error in frame {i}")), t0, i * 1000 / 60).is_some())
+            .map(|i| i * 1000 / 60)
+            .collect();
+        assert_eq!(lines, [0, 10_000, 20_000], "{lines:?}");
+    }
+
+    #[test]
+    fn a_node_of_an_unknown_kind_logs_its_error() {
+        let mut f = Fixture::new(&[create("/a", "test.const")]);
+        // A cooker that knows no kinds at all.
+        f.cooker = Cooker::new(Arc::new(NodeTypes::new()), Arc::new(JobPool::new(1).unwrap()));
+        f.cook(&["/a"]);
+        let rt = f.cooker.runtimes.get(&f.id("/a")).unwrap();
+        assert_eq!(rt.error.as_deref(), Some("unknown node kind `test.const`"));
+        assert_eq!(rt.logged_error, rt.error, "written to the log");
     }
 }
