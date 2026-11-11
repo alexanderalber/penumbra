@@ -757,6 +757,9 @@ fn every_builtin_cooks_without_warnings() {
         if kind == SCREEN_IN {
             continue;
         }
+        if !penumbra_spout::SUPPORTED && (kind == "out.spout" || kind == crate::tex::SPOUT_IN) {
+            continue;
+        }
         rig.clock.advance(1);
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
