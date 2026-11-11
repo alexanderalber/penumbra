@@ -222,7 +222,10 @@ impl Operator for MouseIn {
         };
         if pointer.is_none() {
             cx.warn("the pointer cannot be read here");
-        } else if let Some(w) = warning {
+        }
+        // Independent of the pointer: a bad `display` name is worth reporting even where the
+        // pointer cannot be read (headless).
+        if let Some(w) = warning {
             cx.warn(w);
         }
         let held = self.out.map_or((0.0, 0.0), |o| (o[0], o[1]));

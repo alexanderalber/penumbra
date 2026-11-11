@@ -11,6 +11,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
+use std::time::Duration;
 
 use penumbra_nn::Tensor;
 use penumbra_nn::models::BeatThis;
@@ -324,6 +325,24 @@ impl<'a, 'scope, 'm: 'scope> Jobs<'a, 'scope, 'm> {
         Ok(())
     }
 
+    /// The next output, running the pool's pending work meanwhile. Blocking here on a pool
+    /// thread would hold back the chunks queued behind it: a pool of one thread never ran them.
+    fn wait(&self) -> Result<Done, BeatError> {
+        loop {
+            let wait = match rayon::yield_now() {
+                Some(rayon::Yield::Executed) => Duration::ZERO,
+                _ => Duration::from_millis(1),
+            };
+            match self.rx.recv_timeout(wait) {
+                Ok(d) => return Ok(d),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(BeatError::Network("the network's workers stopped".into()));
+                }
+            }
+        }
+    }
+
     /// The beats final so far, when the chunks done in a row from the start grew.
     fn grown(&mut self, plan: Option<&ChunkPlan>) -> Option<Partial> {
         self.prefix.grow(&self.done, plan).then(|| pick_final(&self.prefix.beat, &self.prefix.downbeat))
@@ -369,10 +388,8 @@ impl<'a, 'scope, 'm: 'scope> Jobs<'a, 'scope, 'm> {
             if self.running.is_empty() {
                 return Err(BeatError::Network("chunks are missing and none is running".into()));
             }
-            match self.rx.recv() {
-                Ok(d) => self.take(d)?,
-                Err(_) => return Err(BeatError::Network("the network's workers stopped".into())),
-            }
+            let d = self.wait()?;
+            self.take(d)?;
         }
         let mut stitcher = plan.stitcher();
         for (k, key) in keys.iter().enumerate() {
@@ -645,6 +662,24 @@ mod tests {
         let junk = dir.join("junk.mp3");
         std::fs::write(&junk, vec![0x55u8; 5000]).unwrap();
         assert!(matches!(analyze_file(&junk, &model, None, None, &mut |_| {}), Err(BeatError::Input(_))));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_pool_of_one_thread_runs_the_chunks() {
+        // chan.beat_grid runs the network in a pool of its own, one thread on a 4-core machine:
+        // waiting there for a chunk must not keep that chunk from running.
+        let dir = std::env::temp_dir().join(format!("penumbra-beat-one-thread-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sound = clicks(&dir);
+        let model = BeatModel::shipped().unwrap();
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(pool.install(|| analyze_file(&sound, &model, None, None, &mut |_| {})));
+        });
+        let got = rx.recv_timeout(Duration::from_secs(600)).expect("the analysis hung");
+        assert!((60..=68).contains(&got.unwrap().beats.len()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
