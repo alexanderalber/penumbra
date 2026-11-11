@@ -850,7 +850,7 @@ fn osc_learn(e: &Engine, p: &Json) -> CmdResult<Json> {
     struct A {
         param: Option<String>,
         timeout: Option<f64>,
-        /// Seconds to wait for the outcome (at most the timeout).
+        /// Seconds to wait for the outcome.
         wait: Option<f64>,
         #[serde(default)]
         cancel: bool,
@@ -865,7 +865,7 @@ fn osc_learn(e: &Engine, p: &Json) -> CmdResult<Json> {
     let timeout = Duration::from_secs_f64(secs(a.timeout, LEARN_TIMEOUT.as_secs_f64()).max(0.1));
     let before = osc.learned();
     osc.learn(&e.session(), &param, timeout)?;
-    let wait = Duration::from_secs_f64(secs(a.wait, 0.0)).min(timeout + Duration::from_millis(200));
+    let wait = Duration::from_secs_f64(secs(a.wait, 0.0));
     let deadline = Instant::now() + wait;
     while Instant::now() < deadline {
         if osc.learning().is_none() && osc.learned() != before {
