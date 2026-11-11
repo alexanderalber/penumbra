@@ -60,6 +60,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Python arrays
+        run: python -m pip install numpy
+
       # ALSA for audio input (cpal), udev for HID devices, lavapipe as the software adapter.
       - name: Linux packages
         if: runner.os == 'Linux'
