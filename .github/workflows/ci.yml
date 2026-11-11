@@ -82,7 +82,7 @@ jobs:
           DEBUGINFOD_URLS: https://debuginfod.ubuntu.com
         run: |
           sudo apt-get install -y --no-install-recommends gdb
-          cargo test -p penumbra-gpu --lib --no-run --message-format=json > target/gpu-test-artifacts.json
+          cargo test --workspace --exclude penumbra-ui --no-run --message-format=json > target/gpu-test-artifacts.json
           gpu_test=$(python3 -c 'import json; a=[json.loads(s) for s in open("target/gpu-test-artifacts.json")]; print(next(x["executable"] for x in a if x.get("executable") and x.get("target", {}).get("name") == "penumbra_gpu"))')
           parallel_status=0
           timeout --signal=INT --kill-after=30s 5m gdb --batch --return-child-result -ex 'set print thread-events off' -ex 'set debuginfod enabled on' -ex run -ex 'thread apply all bt' --args "$gpu_test" --nocapture || parallel_status=$?
