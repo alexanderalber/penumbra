@@ -7,7 +7,8 @@
 //! output windows are open ([`awake`]). Where the mouse pointer is ([`pointer`]).
 //!
 //! OS-specific code lives here and in the output crate only; the Windows calls are in one module
-//! and NVIDIA's library in another, the crate's only `unsafe`. No graphics API, no UI.
+//! and NVIDIA's library in another, with macOS process counters in [`process`]: the crate's
+//! only `unsafe`. No graphics API, no UI.
 
 pub mod appearance;
 pub mod arrangement;

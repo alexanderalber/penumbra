@@ -15,6 +15,9 @@ log.workspace = true
 # NVIDIA's management library (GPU power, temperature, clock), loaded at runtime when present.
 libloading.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Devices_Display",
