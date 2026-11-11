@@ -345,6 +345,8 @@ impl Operator for FilePlayer {
                     self.path = p.display().to_string();
                     self.gaps = 0;
                     self.missing = false;
+                    self.mapping = None;
+                    self.has_output = false;
                     reloaded = true;
                 }
             }
@@ -360,6 +362,10 @@ impl Operator for FilePlayer {
             self.status = Status::default();
         }
         self.scrubbing = scrubbing;
+        // Loading time must not consume a one-shot before its first sample is ready.
+        if self.file.is_some() && !self.status.ready && self.status.error.is_none() {
+            return Err(CookError::Pending);
+        }
         // A place kept before a crash restart: the file goes on from there.
         let resumed = match self.resume.take() {
             Some(p) if !scrubbing && !self.path.is_empty() && p.file == self.path => Some(p.seconds),
