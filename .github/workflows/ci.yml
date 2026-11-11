@@ -70,7 +70,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev \
-            mesa-vulkan-drivers
+            mesa-vulkan-drivers cmake libx11-dev libxrandr-dev libxcb1-dev
+
+      # Ubuntu's loader races across devices: KhronosGroup/Vulkan-Loader#1863, fixed in 1.4.350.
+      - name: Linux Vulkan loader
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        run: |
+          vulkan_source="$RUNNER_TEMP/vulkan-source"
+          vulkan_build="$RUNNER_TEMP/vulkan-build"
+          vulkan_prefix="$RUNNER_TEMP/vulkan-runtime"
+          git clone --depth 1 --branch vulkan-sdk-1.4.350.0 https://github.com/KhronosGroup/Vulkan-Loader.git "$vulkan_source"
+          cmake -S "$vulkan_source" -B "$vulkan_build" -DUPDATE_DEPS=ON -DBUILD_TESTS=OFF \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$vulkan_prefix" -DCMAKE_INSTALL_LIBDIR=lib
+          cmake --build "$vulkan_build" --parallel 2
+          cmake --install "$vulkan_build"
+          export LD_LIBRARY_PATH="$vulkan_prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+          python3 -c 'import ctypes; v=ctypes.c_uint32(); assert ctypes.CDLL("libvulkan.so.1").vkEnumerateInstanceVersion(ctypes.byref(v)) == 0; assert v.value >= ((1<<22)|(4<<12)|350); print("Vulkan loader:", v.value>>22, (v.value>>12)&1023, v.value&4095)'
 
       - uses: Swatinem/rust-cache@v2
 
@@ -93,6 +110,9 @@ jobs:
           exit "$parallel_status"
 
       - name: test
+        env:
+          RUST_BACKTRACE: "1"
+          RUST_TEST_NOCAPTURE: "1"
         run: cargo xtask test
 
       - name: layers
