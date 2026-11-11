@@ -470,6 +470,7 @@ fn run(hub: &Weak<Inner>, link: &Arc<Link>) {
 }
 
 fn run_link(hub: &Weak<Inner>, link: &Arc<Link>) {
+    penumbra_system::process::raise_thread_priority();
     let Some(cid) = hub.upgrade().map(|h| h.cid) else { return };
     let mut wire = match link.target {
         Target::OpenDmx { .. } => Wire::Serial(None),

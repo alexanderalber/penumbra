@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 penumbra-core.workspace = true
+penumbra-system.workspace = true
 log.workspace = true
 serde.workspace = true
 serialport.workspace = true
