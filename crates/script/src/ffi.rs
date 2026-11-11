@@ -2,7 +2,7 @@
 //! their functions and calling them.
 //!
 //! Order matters. Python's library is loaded first, by full path (on Windows `python3.dll`,
-//! which forwards to `python3XY.dll` in the same directory; elsewhere `libpython3.XY.so` with
+//! which forwards to `python3XY.dll` in the same directory; elsewhere `libpython3.XY.so` / `.dylib` with
 //! `RTLD_GLOBAL`, so pyhost's unresolved symbols bind to it). Its `Py_GetVersion` confirms the
 //! version before pyhost is loaded, because pyhost's imports only resolve against 3.12 or
 //! newer: loading it against an older Python would fail in the loader, on Windows possibly
@@ -32,7 +32,9 @@ const ABI: u32 = 2;
 /// pyhost's file name.
 #[cfg(windows)]
 const HOST_FILE: &str = "pyhost.dll";
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+const HOST_FILE: &str = "libpyhost.dylib";
+#[cfg(not(any(windows, target_os = "macos")))]
 const HOST_FILE: &str = "libpyhost.so";
 
 /// Python's library and pyhost, loaded, with pyhost's functions.
