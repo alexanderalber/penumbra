@@ -431,6 +431,7 @@ fn map_by_dragging_handles_zoom_and_open_the_window() {
         // dragged onto the middle of the left edge, then the mesh point nudged one projector
         // pixel right with the arrow key.
         json!({"method": "ui.click", "params": {"id": "viewer.mesh"}}),
+        json!({"wait_for": "viewer.mesh.1"}),
         json!({"method": "ui.click", "params": {"id": "viewer.mesh.1"}}),
         json!({"wait_for": "viewer.mesh.1.1"}),
         json!({"method": "ui.drag", "params": {"from": {"id": "viewer.mesh.1.1"}, "to": {"id": "viewer.corner.1"}, "steps": 4}}),
