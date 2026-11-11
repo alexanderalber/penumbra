@@ -290,7 +290,8 @@ fn a_tcp_peer_that_is_not_there_is_an_error_and_retried() {
     let (woken, wake) = wakes();
     let r = hub.reader("/in", Endpoint::TcpConnect(to), Decode::default(), wake).unwrap();
     eventually("the error", || r.status().error.is_some_and(|e| e.contains("cannot connect")));
-    assert!(woken.load(Ordering::Relaxed) >= 1);
+    // The status is published before the readers are called: the wake follows shortly.
+    eventually("the wake for the error", || woken.load(Ordering::Relaxed) >= 1);
     // It comes up later: the link finds it.
     let server = rebind(to);
     let (mut conn, _) = server.accept().unwrap();
@@ -299,6 +300,23 @@ fn a_tcp_peer_that_is_not_there_is_an_error_and_retried() {
     assert!(r.status().error.is_none());
     drop(r);
     hub.shutdown();
+}
+
+#[test]
+fn a_link_that_fails_at_once_still_wakes_its_first_reader() {
+    // A refused connect fails within microseconds; the reader must already be registered when
+    // the link's thread reports it, or the one wake for the error is lost. Fresh links, many
+    // times, to give the thread every chance to win.
+    for _ in 0..200 {
+        let to = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        let hub = Hub::new();
+        let (woken, wake) = wakes();
+        let r = hub.reader("/in", Endpoint::TcpConnect(to), Decode::default(), wake).unwrap();
+        eventually("the error", || r.status().error.is_some());
+        eventually("the wake for the error", || woken.load(Ordering::Relaxed) >= 1);
+        drop(r);
+        hub.shutdown();
+    }
 }
 
 #[test]

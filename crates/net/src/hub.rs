@@ -331,6 +331,8 @@ impl Hub {
             baud: AtomicU32::new(endpoint.baud()),
             reopen: AtomicBool::new(false),
         });
+        // The handle is in before the thread starts: a link that fails at once wakes its readers.
+        add(&link);
         let handle = if link.udp_out.is_some() {
             // A UDP sender holds no port others want; its old threads are none.
             lock(&link.status).open = true;
@@ -349,7 +351,6 @@ impl Hub {
                     .map_err(|e| format!("cannot start a thread for {key}: {e}"))?,
             )
         };
-        add(&link);
         links.insert(key, (link.clone(), handle));
         Ok(link)
     }
