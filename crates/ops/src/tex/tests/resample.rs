@@ -58,6 +58,44 @@ fn close(got: &[f32], want: &[f32], tolerance: f32) -> bool {
 }
 
 #[test]
+fn threshold_and_composite_keep_exact_pixels_at_the_same_resolution() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("exact_pixels");
+    std::fs::write(
+        dir.join("levels.wgsl"),
+        "@fragment fn main(v: PnVertex) -> @location(0) vec4f {
+            let x = u32(v.pos.x) % 3u;
+            let c = select(select(0.75, 0.5, x == 0u), 0.25, x == 1u);
+            return vec4f(vec3f(c), 1.0);
+        }",
+    )
+    .unwrap();
+    let ops = [
+        source("levels.wgsl", 96),
+        create("/cut", "tex.threshold", &[("output", "alpha".into())]),
+        create(
+            "/white",
+            "tex.constant",
+            &[("width", Value::Int(96)), ("height", Value::Int(4)), ("color", Value::Vec4([1.0; 4]))],
+        ),
+        create("/outside", "tex.composite", &[("op", "outside".into())]),
+        connect("/src", "/cut", 0),
+        connect("/cut", "/outside", 0),
+        connect("/white", "/outside", 1),
+    ];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let cut = rig.pixels("/cut");
+    let outside = rig.pixels("/outside");
+    assert_eq!((cut.width, cut.height), (96, 4));
+    assert_eq!((outside.width, outside.height), (96, 4));
+    for (i, (cut, outside)) in cut.data.iter().zip(&outside.data).enumerate() {
+        let mask = if i % 96 % 3 == 1 { 0.0 } else { 1.0 };
+        assert_eq!(cut[3], mask, "threshold pixel {i}: {cut:?}");
+        assert_eq!(*outside, [1.0 - mask; 4], "outside pixel {i}");
+    }
+}
+
+#[test]
 fn nearest_repeats_each_pixel() {
     let Some(row) = scaled("nearest", "index.wgsl", 4, 8, "nearest") else { return };
     assert_eq!(row, [0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0]);

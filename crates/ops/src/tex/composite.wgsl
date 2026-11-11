@@ -3,8 +3,8 @@
 
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
-    let lower = textureSampleLevel(in0, pn_clamp, v.uv, 0.0);
-    let upper = textureSampleLevel(in1, pn_clamp, v.uv, 0.0);
+    let lower = pn_pixel(in0, v);
+    let upper = pn_pixel(in1, v);
     let a = select(lower, upper, params.swap != 0u);
     let b = select(upper, lower, params.swap != 0u);
     switch params.op {
