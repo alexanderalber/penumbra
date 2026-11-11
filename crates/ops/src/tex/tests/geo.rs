@@ -163,7 +163,13 @@ fn a_scene_of_parts_renders_with_depth_and_a_data_pass() {
     let mut rig = rig(gpu, None, &ops);
     for name in ["parts", "textured", "lit"] {
         let px = rig.pixels(&format!("/{name}"));
-        golden(&format!("render_{name}"), &px);
+        // Anisotropic filtering is driver-defined; lavapipe and WARP have separate references.
+        let reference = if name == "textured" && cfg!(target_os = "linux") {
+            "render_textured_lavapipe".to_string()
+        } else {
+            format!("render_{name}")
+        };
+        golden(&reference, &px);
         look(&mut rig, &format!("/{name}"), &format!("render_{name}"), (super::W, super::H));
     }
     // The merge numbers the parts on: box 0, sphere 1, wall 2.
