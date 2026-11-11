@@ -2,12 +2,12 @@
 //! window sends its vsync, so the show clock runs as evenly without a projector as with one. The
 //! cook thread's own wait for the next frame is a channel timeout, which runs on the system's
 //! coarse timer and starts some frames late on Windows. The ticker sleeps (a high-resolution
-//! wait) until just before each tick and yields the rest of the way.
+//! wait) until just before each tick and waits the rest of the way without sleeping.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-/// How long before a tick the sleep ends and yielding takes over.
+/// How long before a tick the sleep ends.
 const SPIN: Duration = Duration::from_micros(1500);
 /// How often an idle ticker looks whether it should tick or stop.
 const IDLE: Duration = Duration::from_millis(20);
@@ -69,6 +69,9 @@ impl Ticker {
                 }
                 if left > SPIN {
                     std::thread::sleep(left - SPIN);
+                } else if cfg!(target_os = "macos") {
+                    // Darwin's scheduler yield depresses priority for a whole scheduling quantum.
+                    std::hint::spin_loop();
                 } else {
                     std::thread::yield_now();
                 }
