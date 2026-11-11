@@ -269,8 +269,8 @@ impl Inputs {
     ) -> Result<Input, String> {
         let id = self.inner.next.fetch_add(1, Ordering::Relaxed);
         let mut listeners = lock(&self.inner.listeners);
-        let listener = match listeners.get(&listen) {
-            Some((l, _)) => l.clone(),
+        let (listener, fresh) = match listeners.get(&listen) {
+            Some((l, _)) => (l.clone(), false),
             None => {
                 // A listener on the same port that is still ending holds it: wait for it (it
                 // looks at its stop flag at least every 100 ms).
@@ -283,19 +283,24 @@ impl Inputs {
                 for h in old {
                     h.join().ok();
                 }
-                let l = Arc::new(Listener::new(listen));
-                let run_l = l.clone();
-                let handle = std::thread::Builder::new()
-                    .name(format!("dmx in {}", describe(&listen)))
-                    .spawn(move || run(&run_l))
-                    .map_err(|e| format!("cannot start the DMX input thread: {e}"))?;
-                listeners.insert(listen, (l.clone(), Some(handle)));
-                l
+                (Arc::new(Listener::new(listen)), true)
             }
         };
-        lock(&listener.wants)
-            .insert(id, Want { label: label.to_string(), universes: BTreeSet::new(), wake, order: id });
-        listener.version.fetch_add(1, Ordering::Release);
+        // The reader is in before a new listener's thread starts, so its first error or
+        // opening already wakes it.
+        {
+            let mut wants = lock(&listener.wants);
+            wants.insert(id, Want { label: label.to_string(), universes: BTreeSet::new(), wake, order: id });
+            listener.version.fetch_add(1, Ordering::Release);
+        }
+        if fresh {
+            let run_l = listener.clone();
+            let handle = std::thread::Builder::new()
+                .name(format!("dmx in {}", describe(&listen)))
+                .spawn(move || run(&run_l))
+                .map_err(|e| format!("cannot start the DMX input thread: {e}"))?;
+            listeners.insert(listen, (listener.clone(), Some(handle)));
+        }
         Ok(Input { listener, id, hub: Arc::downgrade(&self.inner) })
     }
 
@@ -343,7 +348,6 @@ impl Input {
             return;
         }
         w.universes = universes.iter().copied().take(MAX_UNIVERSES).collect();
-        drop(wants);
         self.listener.version.fetch_add(1, Ordering::Release);
     }
 
@@ -377,9 +381,9 @@ impl Drop for Input {
         let empty = {
             let mut wants = lock(&self.listener.wants);
             wants.remove(&self.id);
+            self.listener.version.fetch_add(1, Ordering::Release);
             wants.is_empty()
         };
-        self.listener.version.fetch_add(1, Ordering::Release);
         if !empty {
             return;
         }
@@ -478,7 +482,6 @@ fn listen(l: &Arc<Listener>) {
     let mut socket: Option<UdpSocket> = None;
     let mut retry_at: Option<Instant> = None;
     let mut seen = u64::MAX;
-    let mut wanted: BTreeSet<u16> = BTreeSet::new();
     let mut joined: BTreeSet<u16> = BTreeSet::new();
     let mut buf = vec![0u8; 2048];
     while !l.stop.load(Ordering::Acquire) {
@@ -518,7 +521,8 @@ fn listen(l: &Arc<Listener>) {
         let version = l.version.load(Ordering::Acquire);
         if version != seen {
             seen = version;
-            wanted = lock(&l.wants).values().flat_map(|w| w.universes.iter().copied()).collect();
+            let wanted: BTreeSet<u16> =
+                lock(&l.wants).values().flat_map(|w| w.universes.iter().copied()).collect();
             // Forget universes nobody asks for any more.
             lock(&l.universes).retain(|u, _| wanted.contains(u));
             if l.listen.protocol == Protocol::Sacn {
@@ -529,7 +533,7 @@ fn listen(l: &Arc<Listener>) {
         match s.recv_from(&mut buf) {
             Ok((n, from)) => {
                 let packet = buf.get(..n).unwrap_or_default();
-                let changed = take(l, &wanted, packet, from);
+                let changed = take(l, packet, from);
                 if let Some(u) = changed {
                     l.wake(Some(&BTreeSet::from([u])));
                 }
@@ -652,15 +656,17 @@ fn late(last: u8, new: u8) -> bool {
     diff <= 0 && diff > -20
 }
 
-/// Takes one datagram in; the universe whose slots or liveness changed, if any.
-fn take(l: &Listener, wanted: &BTreeSet<u16>, packet: &[u8], from: SocketAddr) -> Option<u16> {
+/// Takes one datagram in; the universe whose slots or liveness changed, if any. The universes
+/// asked for are looked up now: the thread's own copy may be a receive older than a reader's
+/// last [`Input::want`].
+fn take(l: &Listener, packet: &[u8], from: SocketAddr) -> Option<u16> {
     let now = Instant::now();
     let dropped = || lock(&l.status).dropped += 1;
     let Some(p) = parse(l.listen.protocol, packet, from) else {
         dropped();
         return None;
     };
-    if !wanted.contains(&p.universe) {
+    if !lock(&l.wants).values().any(|w| w.universes.contains(&p.universe)) {
         dropped();
         return None;
     }
@@ -784,6 +790,17 @@ mod tests {
     }
 
     #[test]
+    fn a_packet_uses_the_current_universe_wants() {
+        let listener = Listener::new(listen(Protocol::ArtNet));
+        let (_, wake) = counter();
+        lock(&listener.wants)
+            .insert(1, Want { label: "/in".into(), universes: BTreeSet::from([2]), wake, order: 1 });
+        let from = SocketAddr::from((Ipv4Addr::LOCALHOST, 1234));
+        let packet = artnet::dmx_packet(2, 1, &[10, 20]);
+        assert_eq!(take(&listener, &packet, from), Some(2));
+    }
+
+    #[test]
     fn art_net_sources_merge_highest_and_wake_only_on_change() {
         let hub = Inputs::new();
         let at = listen(Protocol::ArtNet);
@@ -869,7 +886,8 @@ mod tests {
         let b = hub.input("/b", at, wake).unwrap();
         until("the error", || a.read().error.is_some());
         assert!(a.read().error.unwrap().contains("another program"), "{:?}", a.read());
-        assert!(woken.load(Ordering::Relaxed) >= 1);
+        // The status shows the error before the listener calls the wakers.
+        until("the wake", || woken.load(Ordering::Relaxed) >= 1);
         assert_eq!(hub.status().len(), 1);
         drop(taken);
         until("the socket", || b.read().open);
