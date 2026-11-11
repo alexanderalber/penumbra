@@ -4,7 +4,7 @@
 
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
-    let src = textureSampleLevel(in0, pn_clamp, v.uv, 0.0);
+    let src = pn_pixel(in0, v);
     let c = pn_unpremultiply(src);
     var x: f32;
     switch params.channel {

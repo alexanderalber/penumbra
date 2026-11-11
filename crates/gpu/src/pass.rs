@@ -12,6 +12,7 @@
 //! var<uniform> params: Params;       // one field per declared numeric parameter
 //! var in0, in1, ..., in7: texture_2d<f32>;      // inputs, transparent black when unconnected
 //! var pn_clamp, pn_repeat, pn_mirror: sampler;  // linear filtering, three edge modes
+//! fn pn_pixel(t: texture_2d<f32>, v: PnVertex) -> vec4f // exact pixel, or resampled if resized
 //! fn pn_noise(p: vec3f, seed: u32) -> f32       // gradient noise, about -1..1, integer hashes
 //! fn pn_value_noise(p: vec3f, seed: u32) -> f32
 //! fn pn_hash(p: vec3u) -> vec3u                 // PCG3D
@@ -80,6 +81,14 @@ fn pn_vs(@builtin(vertex_index) i: u32) -> PnVertex {
     v.pos = vec4f(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
     v.uv = vec2f(x, y);
     return v;
+}
+
+// Pointwise operations must not blend neighbours through rounded texture coordinates.
+fn pn_pixel(t: texture_2d<f32>, v: PnVertex) -> vec4f {
+    if all(textureDimensions(t) == vec2u(pn.resolution)) {
+        return textureLoad(t, vec2i(v.pos.xy), 0);
+    }
+    return textureSampleLevel(t, pn_clamp, v.uv, 0.0);
 }
 "#;
 
