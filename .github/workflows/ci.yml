@@ -94,21 +94,6 @@ jobs:
       - name: clippy
         run: cargo xtask clippy
 
-      - name: Linux GPU crash diagnostic
-        if: runner.os == 'Linux'
-        continue-on-error: true
-        timeout-minutes: 25
-        env:
-          DEBUGINFOD_URLS: https://debuginfod.ubuntu.com
-        run: |
-          sudo apt-get install -y --no-install-recommends gdb
-          cargo test --workspace --exclude penumbra-ui --no-run --message-format=json > target/gpu-test-artifacts.json
-          gpu_test=$(python3 -c 'import json; a=[json.loads(s) for s in open("target/gpu-test-artifacts.json")]; print(next(x["executable"] for x in a if x.get("executable") and x.get("target", {}).get("name") == "penumbra_gpu"))')
-          parallel_status=0
-          timeout --signal=INT --kill-after=30s 5m gdb --batch --return-child-result -ex 'set print thread-events off' -ex 'set debuginfod enabled on' -ex run -ex 'thread apply all bt' --args "$gpu_test" --nocapture || parallel_status=$?
-          timeout 5m "$gpu_test" --nocapture --test-threads=1
-          exit "$parallel_status"
-
       - name: test
         env:
           RUST_BACKTRACE: "1"
