@@ -74,6 +74,10 @@ fn controls_become_channels_learn_binds_them_and_the_clock_is_a_tempo() {
 
 #[test]
 fn a_missing_device_says_which_there_are() {
+    if let Some(e) = penumbra_midi::hub::list().error {
+        eprintln!("skipping missing MIDI device test: {e}");
+        return;
+    }
     let f = Fixture::new("midi_missing");
     f.call(
         "node.create",
