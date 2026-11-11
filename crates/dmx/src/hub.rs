@@ -242,8 +242,8 @@ impl Hub {
     ) -> Result<Output, String> {
         let id = self.inner.next.fetch_add(1, Ordering::Relaxed);
         let mut links = lock(&self.inner.links);
-        let link = match links.get(&target) {
-            Some((link, _)) => link.clone(),
+        let (link, fresh) = match links.get(&target) {
+            Some((link, _)) => (link.clone(), false),
             None => {
                 // A link to the same target that is still ending holds the port: wait for it
                 // (it looks at its stop flag at least every 50 ms, a frame takes 25).
@@ -256,20 +256,26 @@ impl Hub {
                 for h in old {
                     h.join().ok();
                 }
-                let link = Arc::new(Link::new(target.clone()));
-                let (inner, l) = (Arc::downgrade(&self.inner), link.clone());
-                let handle = std::thread::Builder::new()
-                    .name(format!("dmx {}", describe(&target)))
-                    .spawn(move || run(&inner, &l))
-                    .map_err(|e| format!("cannot start the DMX thread: {e}"))?;
-                links.insert(target.clone(), (link.clone(), Some(handle)));
-                link
+                (Arc::new(Link::new(target.clone())), true)
             }
         };
+        // The writer and its waker are in before a new link's thread starts, so its first
+        // frame and its first error already reach them.
         lock(&link.wakers).insert(id, wake);
-        let order = link.version.fetch_add(1, Ordering::AcqRel);
-        lock(&link.writers)
-            .insert(id, Slice { label: label.to_string(), start: 0, data: Vec::new(), rate: 0.0, order });
+        {
+            let mut writers = lock(&link.writers);
+            let order = link.version.fetch_add(1, Ordering::AcqRel);
+            writers
+                .insert(id, Slice { label: label.to_string(), start: 0, data: Vec::new(), rate: 0.0, order });
+        }
+        if fresh {
+            let (inner, l) = (Arc::downgrade(&self.inner), link.clone());
+            let handle = std::thread::Builder::new()
+                .name(format!("dmx {}", describe(&target)))
+                .spawn(move || run(&inner, &l))
+                .map_err(|e| format!("cannot start the DMX thread: {e}"))?;
+            links.insert(target.clone(), (link.clone(), Some(handle)));
+        }
         Ok(Output { link, id, hub: Arc::downgrade(&self.inner) })
     }
 
@@ -479,18 +485,8 @@ fn run_link(hub: &Weak<Inner>, link: &Arc<Link>) {
     let mut last_shown: (bool, Option<String>) = (false, None);
     while !link.stop.load(Ordering::Acquire) {
         let Some(config) = hub.upgrade().map(|h| *lock(&h.config)) else { return };
-        let version = link.version.load(Ordering::Acquire);
-        if version != seen {
-            seen = version;
-            frame = compose(&lock(&link.writers), link.target.layout());
-            let mut st = lock(&link.status);
-            st.rate = frame.rate;
-            st.writers = frame.writers.clone();
-            st.overlap = frame.overlap;
-            st.dropped = frame.dropped;
-            st.universes = frame.parts.keys().copied().collect();
-        }
-        let period = Duration::from_secs_f64(1.0 / frame.rate.clamp(0.5, 1000.0));
+        refresh(link, &mut seen, &mut frame);
+        let period = period_of(&frame);
         let mut outcome: Result<Option<(Duration, Duration)>, String> = Ok(None);
         let mut device = None;
         if !config.enabled {
@@ -599,12 +595,18 @@ fn run_link(hub: &Weak<Inner>, link: &Arc<Link>) {
         }
         // Steady pacing: the next frame a period after the last one was due, unless that fell
         // behind by a whole period (a slow write, a pause), then from now.
+        let due = next;
         next += period;
         let now = Instant::now();
         if next + period < now {
             next = now;
         }
         while !link.stop.load(Ordering::Acquire) {
+            // A writer that asks for a higher rate while the link waits out a slower period
+            // (an idle link waits 2 s) shortens the wait to its own period.
+            if refresh(link, &mut seen, &mut frame) {
+                next = next.min(due + period_of(&frame));
+            }
             let now = Instant::now();
             if now >= next {
                 break;
@@ -612,6 +614,31 @@ fn run_link(hub: &Weak<Inner>, link: &Arc<Link>) {
             std::thread::sleep((next - now).min(NAP));
         }
     }
+}
+
+/// Composes the frame again after the writers changed, and shows it in the status; whether
+/// they had.
+fn refresh(link: &Link, seen: &mut u64, frame: &mut Frame) -> bool {
+    let writers = lock(&link.writers);
+    let version = link.version.load(Ordering::Acquire);
+    if version == *seen {
+        return false;
+    }
+    *seen = version;
+    *frame = compose(&writers, link.target.layout());
+    drop(writers);
+    let mut st = lock(&link.status);
+    st.rate = frame.rate;
+    st.writers = frame.writers.clone();
+    st.overlap = frame.overlap;
+    st.dropped = frame.dropped;
+    st.universes = frame.parts.keys().copied().collect();
+    true
+}
+
+/// The time between frames at the frame's rate.
+fn period_of(frame: &Frame) -> Duration {
+    Duration::from_secs_f64(1.0 / frame.rate.clamp(0.5, 1000.0))
 }
 
 fn push<T>(q: &mut VecDeque<T>, v: T, cap: usize) {
@@ -766,6 +793,24 @@ mod tests {
     }
 
     #[test]
+    fn the_first_frame_does_not_wait_for_an_idle_links_zero_rate() {
+        let hub = Hub::new();
+        let (r, to) = receiver();
+        let out = hub.output("/x", Target::Ddp { to }, nothing()).unwrap();
+        let start = Instant::now();
+        while out.status().frames == 0 {
+            assert!(start.elapsed() < Duration::from_secs(2), "the link never opened");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        r.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+        out.set(0, &[200; 3], 60.0);
+        let mut buf = [0u8; 64];
+        r.recv(&mut buf).unwrap();
+        assert_eq!(buf[ddp::HEADER], 200);
+        hub.shutdown();
+    }
+
+    #[test]
     fn art_net_frames_keep_coming_and_stop_with_the_last_output() {
         let hub = Hub::new();
         let (r, to) = receiver();
@@ -867,7 +912,10 @@ mod tests {
             .unwrap();
         out.set(0, &[255; 512], 30.0);
         let start = Instant::now();
-        while out.status().error.is_none() && start.elapsed() < Duration::from_secs(2) {
+        // The status shows the error before the link calls the wakers.
+        while (out.status().error.is_none() || woken.load(Ordering::Relaxed) == 0)
+            && start.elapsed() < Duration::from_secs(2)
+        {
             std::thread::sleep(Duration::from_millis(10));
         }
         let st = out.status();
