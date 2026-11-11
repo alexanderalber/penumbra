@@ -74,6 +74,17 @@ jobs:
       - name: clippy
         run: cargo xtask clippy
 
+      - name: Linux GPU crash diagnostic
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y --no-install-recommends gdb
+          cargo test -p penumbra-gpu --lib --no-run --message-format=json > target/gpu-test-artifacts.json
+          gpu_test=$(python3 -c 'import json; a=[json.loads(s) for s in open("target/gpu-test-artifacts.json")]; print(next(x["executable"] for x in a if x.get("executable") and x.get("target", {}).get("name") == "penumbra_gpu"))')
+          parallel_status=0
+          gdb --batch --return-child-result -ex 'set print thread-events off' -ex run -ex 'thread apply all bt' --args "$gpu_test" --nocapture || parallel_status=$?
+          "$gpu_test" --nocapture --test-threads=1
+          exit "$parallel_status"
+
       - name: test
         run: cargo xtask test
 
