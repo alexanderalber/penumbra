@@ -17,6 +17,35 @@ use crate::Engine;
 pub(super) const W: usize = 64;
 pub(super) const H: usize = 32;
 
+#[test]
+fn a_projector_waits_for_its_first_published_frame() {
+    let f = Fixture::new("projector-first-frame");
+    f.engine.set_stepping(true).unwrap();
+    f.call("node.create", json!({"path": "/p", "kind": "out.projector"}));
+    let net = f.engine.session().doc().snapshot();
+    let id = net.resolve(&"/p".parse().unwrap()).unwrap();
+    let mut pass = f.engine.output().pass;
+    let error = crate::projector::wait_shown(
+        &f.engine,
+        &[(id, "/p".into())],
+        &mut pass,
+        Duration::from_millis(20),
+        |_| true,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("published no frame in time"), "{error}");
+    f.call("node.delete", json!({"path": "/p"}));
+    let error = crate::projector::wait_shown(
+        &f.engine,
+        &[(id, "/p".into())],
+        &mut pass,
+        Duration::from_millis(20),
+        |_| true,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("/p is gone"), "{error}");
+}
+
 struct Synth {
     p: Mat3,
     gamma: [f64; 3],

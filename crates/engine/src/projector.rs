@@ -381,6 +381,10 @@ pub(crate) fn wait_shown(
         let mut done = true;
         for (id, path) in projectors {
             match frame.projectors.iter().find(|p| p.node == *id) {
+                // A new projector may not be in the published frame yet.
+                None if e.session().doc().snapshot().node(*id).is_some_and(|n| n.kind == "out.projector") => {
+                    done = false;
+                }
                 None => return Err(format!("{path} is gone").into()),
                 Some(p) if !p.active => return Err(format!("{path} was switched off").into()),
                 Some(p) => done &= ready(p),
