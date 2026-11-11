@@ -62,7 +62,11 @@ fn channels_go_out_as_art_net_and_keep_going() {
         packet_where(&rx, |p| p[14..16] == [2, 0]);
         n += 1;
     }
-    assert!((12..=18).contains(&n), "{n} frames in 0.5 s at 30 Hz");
+    assert!(
+        (12..=18).contains(&n),
+        "{n} frames in 0.5 s at 30 Hz; before: {status}; after: {}",
+        f.call("dmx.status", json!({}))
+    );
 
     // Blackout from the command, then back.
     f.call("dmx.config", json!({"blackout": true}));
