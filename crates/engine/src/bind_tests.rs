@@ -111,7 +111,16 @@ def cook(cx):\n    n = int(cx.params['n'])\n    cx.out['v'] = n\n    cx.table.ap
     eventually("the script's cell as the name", || names(&f, "/c") == ["label1"]);
     eventually("the script's cell as the op", || bound(&f, "/m", "op") == "divide");
     f.call("node.set", json!({"path": "/s", "params": {"n": 0}}));
-    eventually("the new name", || names(&f, "/c") == ["label0"]);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        eventually("the new name", || names(&f, "/c") == ["label0"]);
+    }));
+    if let Err(panic) = result {
+        eprintln!("Python: {:?}", penumbra_script::host().status());
+        for path in ["/s", "/c", "/m"] {
+            eprintln!("{path}: {}", f.call("node.info", json!({"path": path})));
+        }
+        std::panic::resume_unwind(panic);
+    }
     eventually("the new op", || bound(&f, "/m", "op") == "add");
     // The script's channel picks the choice by place.
     f.call("node.bind", json!({"param": "/m.op", "from": "/s", "channel": "v"}));
