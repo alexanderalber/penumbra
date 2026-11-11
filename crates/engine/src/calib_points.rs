@@ -593,16 +593,23 @@ mod tests {
     }
 
     impl Fixture {
-        fn new(name: &str) -> Self {
+        fn new(name: &str) -> Option<Self> {
+            // Geometry is cooked, and cooking it needs a device.
+            let gpu = match penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software) {
+                Ok(gpu) => gpu,
+                Err(e) if cfg!(windows) => panic!("WARP must exist on Windows: {e}"),
+                Err(e) => {
+                    eprintln!("skipping calibration GPU tests: {e}");
+                    return None;
+                }
+            };
             let dir = ScratchDir::unborn(&format!("calib-points-{name}"));
             let types = Arc::new(penumbra_ops::builtin_types().unwrap());
             let session = Arc::new(Session::open(dir.path(), types, &Content::default()).unwrap());
             let engine = Engine::start(session).unwrap();
-            // Geometry is cooked, and cooking it needs a device.
-            let gpu = penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software).unwrap();
             engine.attach_gpu(gpu).unwrap();
             let registry = crate::engine_registry(&engine);
-            Self { registry, engine, dir }
+            Some(Self { registry, engine, dir })
         }
         fn call(&self, method: &str, params: Json) -> Json {
             let r = self.registry.dispatch(method, &params);
@@ -654,7 +661,7 @@ mod tests {
 
     #[test]
     fn a_model_moved_on_its_way_has_its_corners_where_it_was_moved() {
-        let f = Fixture::new("moved");
+        let Some(f) = Fixture::new("moved") else { return };
         f.call(
             "node.create",
             json!({"path": "/box", "kind": "geo.primitive", "params": {"size": [2, 2, 2]}}),
@@ -672,7 +679,7 @@ mod tests {
 
     #[test]
     fn from_clicks_to_a_camera_with_undo() {
-        let f = Fixture::new("flow");
+        let Some(f) = Fixture::new("flow") else { return };
         f.call("node.create", json!({"path": "/cam", "kind": "view.camera"}));
         let model = write_model(f.dir.path());
         f.call("node.create", json!({"path": "/model", "kind": "geo.file", "params": {"file": model}}));
@@ -761,7 +768,7 @@ mod tests {
 
     #[test]
     fn a_frozen_picture_gives_a_camera_for_the_view_node() {
-        let f = Fixture::new("picture");
+        let Some(f) = Fixture::new("picture") else { return };
         f.call("node.create", json!({"path": "/phone", "kind": "view.camera"}));
         let size = [1128, 1575];
         let r = f.call("calib.points.setup", json!({"path": "/phone", "size": size, "kind": "picture"}));
