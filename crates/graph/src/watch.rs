@@ -100,8 +100,8 @@ fn poll(shared: &Weak<Mutex<Shared>>, changed: &Sender<NodeId>) -> bool {
     for (key, now) in stamps {
         let Some(e) = s.entries.iter_mut().find(|e| e.key == key) else { continue };
         let report = match e.stamp {
-            // Modified since the watch began: the node may have read it before the edit.
-            None => now.is_some_and(|(modified, _)| modified >= e.since),
+            // File clocks can lag wall time: do not lose an edit just after the watch began.
+            None => now.is_some_and(|(modified, _)| modified >= e.since - Duration::from_millis(100)),
             Some(before) => before != now,
         };
         e.stamp = Some(now);
@@ -152,6 +152,29 @@ impl Drop for FileWatch {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    fn an_edit_before_the_first_poll_survives_a_coarse_file_clock() {
+        let dir = penumbra_core::scratch::ScratchDir::new("watch-coarse").unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "one").unwrap();
+        // Poll explicitly so the first look always happens after the edit.
+        let (stop, _) = mpsc::channel();
+        let watcher = Watcher { shared: Arc::default(), _stop: stop };
+        let handle = watcher.watch(&file, NodeId(7));
+        let since = lock(&watcher.shared).entries[0].since;
+        std::fs::write(&file, "two, longer").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(since - Duration::from_millis(5))
+            .unwrap();
+        let (tx, rx) = mpsc::channel();
+        assert!(poll(&Arc::downgrade(&watcher.shared), &tx));
+        assert_eq!(rx.try_recv().unwrap(), NodeId(7));
+        assert!(handle.take_changed());
+    }
 
     #[test]
     fn a_change_reports_the_node_until_the_handle_is_dropped() {
