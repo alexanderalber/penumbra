@@ -9,8 +9,10 @@
 //! (`Lib\encodings`, or the embeddable distribution's `python3XY.zip`): without it,
 //! `Py_Initialize` aborts the process instead of returning an error.
 //!
-//! Elsewhere (not tested on a real machine yet): `PENUMBRA_PYTHON` (a `libpython3.XY.so*` or
-//! a directory with one), else the newest `libpython3.XY.so.1.0` in the usual library
+//! Elsewhere: `PENUMBRA_PYTHON` (a `libpython3.XY.so*` or `libpython3.XY.dylib`, or a directory
+//! with one); on macOS then the first `python3` on `PATH` whose prefix (`bin/..`, after
+//! following the executable's symlinks: python.org's framework, Homebrew, setup-python) has
+//! `lib/libpython3.XY.dylib`; else the newest `libpython3.XY.so.1.0` in the usual library
 //! directories.
 
 use std::path::{Path, PathBuf};
@@ -23,7 +25,8 @@ const MAX_MINOR: u32 = 40;
 /// A Python found on disk.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Install {
-    /// The library to load by full path: `python3.dll` on Windows, `libpython3.XY.so*` elsewhere.
+    /// The library to load by full path: `python3.dll` on Windows, `libpython3.XY.so*` or
+    /// `libpython3.XY.dylib` elsewhere.
     pub library: PathBuf,
     /// The minor version from the file names (confirmed when loaded).
     pub minor: u32,
@@ -79,7 +82,9 @@ pub fn find(env: &Env) -> Result<Install, String> {
     // PYTHONHOME pointing at another Python makes Py_Initialize abort the process.
     if let Some(home) = &env.python_home {
         let dir = found.library.parent().unwrap_or(Path::new(""));
-        if !same_dir(home, dir) {
+        // macOS installs put the library in `<prefix>/lib`; PYTHONHOME names the prefix.
+        let prefix = dir.parent().filter(|_| cfg!(target_os = "macos") && dir.ends_with("lib"));
+        if !same_dir(home, dir) && !prefix.is_some_and(|p| same_dir(home, p)) {
             return Err(format!(
                 "PYTHONHOME is set to {}, but the Python found is in {}; unset PYTHONHOME or point \
                  PENUMBRA_PYTHON at the Python it belongs to",
@@ -111,6 +116,14 @@ fn find_install(env: &Env) -> Result<Install, String> {
     if cfg!(windows) {
         for dir in &env.path {
             if let Some(found) = check(dir, None, "PATH", &mut ignored) {
+                return Ok(found);
+            }
+        }
+    } else if cfg!(target_os = "macos") {
+        for dir in &env.path {
+            if let Some(lib) = python_lib_dir(&dir.join("python3"))
+                && let Some(found) = check(&lib, None, "PATH", &mut ignored)
+            {
                 return Ok(found);
             }
         }
@@ -202,13 +215,17 @@ fn check_unix(
                 None
             }
             None => {
-                ignored.push(format!("{} is not a libpython3.XY.so", file.display()));
+                ignored.push(format!("{} is not a libpython3.XY.so or .dylib", file.display()));
                 None
             }
         };
     }
     for minor in (MIN_MINOR..=MAX_MINOR).rev() {
-        for name in [format!("libpython3.{minor}.so.1.0"), format!("libpython3.{minor}.so")] {
+        for name in [
+            format!("libpython3.{minor}.so.1.0"),
+            format!("libpython3.{minor}.so"),
+            format!("libpython3.{minor}.dylib"),
+        ] {
             let p = dir.join(&name);
             if p.is_file() {
                 return Some(Install { library: p, minor, source });
@@ -221,11 +238,21 @@ fn check_unix(
     None
 }
 
-/// `libpython3.12.so.1.0` -> 12.
+/// The library directory beside a Python executable, following its symlinks.
+fn python_lib_dir(exe: &Path) -> Option<PathBuf> {
+    let exe = exe.canonicalize().ok()?;
+    if !exe.is_file() {
+        return None;
+    }
+    Some(exe.parent()?.parent()?.join("lib"))
+}
+
+/// `libpython3.12.so.1.0`, `libpython3.12.dylib` -> 12.
 fn unix_minor(name: &str) -> Option<u32> {
     let rest = name.strip_prefix("libpython3.")?;
     let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-    if !rest.get(digits.len()..)?.starts_with(".so") {
+    let suffix = rest.get(digits.len()..)?;
+    if !suffix.starts_with(".so") && suffix != ".dylib" {
         return None;
     }
     digits.parse().ok()
@@ -260,6 +287,8 @@ mod tests {
         assert_eq!(unix_minor("libpython3.12.so.1.0"), Some(12));
         assert_eq!(unix_minor("libpython3.9.so"), Some(9));
         assert_eq!(unix_minor("libpython3.12d.so"), None);
+        assert_eq!(unix_minor("libpython3.14.dylib"), Some(14));
+        assert_eq!(unix_minor("libpython3.14d.dylib"), None);
     }
 
     #[cfg(windows)]
@@ -324,6 +353,30 @@ mod tests {
         let found = find(&env).unwrap();
         assert_eq!((found.library, found.minor), (root.join("libpython3.12.so.1.0"), 12));
         let env = Env { explicit: Some(root.join("libpython3.11.so.1.0")), ..Env::default() };
+        assert!(find(&env).unwrap_err().contains("is Python 3.11"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_finds_libpython_beside_the_python_on_path() {
+        let root = scratch("macos");
+        touch(&root.join("bin/python3"));
+        touch(&root.join("lib/libpython3.11.dylib"));
+        touch(&root.join("lib/libpython3.12.dylib"));
+        let env = Env { path: vec![root.join("bin")], ..Env::default() };
+        let found = find(&env).unwrap();
+        assert_eq!(found.library, root.join("lib/libpython3.12.dylib").canonicalize().unwrap());
+        assert_eq!((found.minor, found.source), (12, "PATH"));
+        std::fs::create_dir(root.join("path")).unwrap();
+        std::os::unix::fs::symlink("../bin/python3", root.join("path/python3")).unwrap();
+        let env = Env { path: vec![root.join("path")], ..Env::default() };
+        assert_eq!(find(&env).unwrap().library, found.library);
+        let env =
+            Env { explicit: Some(found.library), python_home: Some(root.to_path_buf()), ..Env::default() };
+        assert_eq!(find(&env).unwrap().minor, 12);
+        let env = Env { python_home: Some(root.join("elsewhere")), ..env };
+        assert!(find(&env).unwrap_err().contains("PYTHONHOME"));
+        let env = Env { explicit: Some(root.join("lib/libpython3.11.dylib")), ..Env::default() };
         assert!(find(&env).unwrap_err().contains("is Python 3.11"));
     }
 }
