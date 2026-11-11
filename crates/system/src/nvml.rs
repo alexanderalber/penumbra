@@ -113,7 +113,7 @@ impl Nvml {
                         let mut buf = [0 as c_char; NAME_SIZE];
                         let text = match name {
                             Some(f) if f(h, buf.as_mut_ptr(), NAME_SIZE as u32) == SUCCESS => {
-                                let bytes: Vec<u8> = buf.iter().map(|&c| c as u8).collect();
+                                let bytes: Vec<u8> = buf.iter().flat_map(|c| c.to_ne_bytes()).collect();
                                 CStr::from_bytes_until_nul(&bytes)
                                     .map(|s| s.to_string_lossy().trim().to_string())
                                     .unwrap_or_default()
