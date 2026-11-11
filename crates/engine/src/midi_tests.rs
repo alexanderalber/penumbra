@@ -52,15 +52,16 @@ fn controls_become_channels_learn_binds_them_and_the_clock_is_a_tempo() {
     assert_eq!(learned["channels"], json!(["cc_1_21"]), "{learned}");
     assert_eq!(learned["from"], "/in", "{learned}");
 
-    // MIDI clock at 125 BPM, started.
+    // Driver timestamps keep a 125 BPM clock independent of the test thread's scheduling.
     inject(&f, &[0xFA]);
-    for _ in 0..60 {
-        inject(&f, &[0xF8]);
-        std::thread::sleep(Duration::from_millis(20));
+    for i in 0..60 {
+        f.engine.midi().inject("Test Pads", &[0xF8], Some(i * 20_000));
     }
+    eventually("the MIDI clock as channels", || {
+        value(&f, "/in", "bpm").is_some_and(|bpm| (bpm - 125.0).abs() < 0.5)
+    });
     let bpm = value(&f, "/in", "bpm").unwrap_or(0.0);
-    // Sleeps on Windows are coarse, so the tempo is only roughly 125.
-    assert!((40.0..250.0).contains(&bpm), "{bpm}");
+    assert!((bpm - 125.0).abs() < 0.5, "{bpm}");
     assert_eq!(value(&f, "/in", "playing"), Some(1.0));
     let status = f.call("midi.status", json!({}));
     let input = &status["inputs"][0];
