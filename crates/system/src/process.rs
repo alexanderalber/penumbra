@@ -50,33 +50,48 @@ pub fn cap_memory(bytes: u64) -> Result<(), Error> {
 }
 
 /// Raises the calling thread's scheduling priority above the normal threads' (Windows:
-/// `THREAD_PRIORITY_HIGHEST`), for a thread that mostly sleeps and must wake on time even while
-/// every core is busy. Returns whether it worked; false outside Windows, where raising a
-/// thread's priority needs privileges a show machine should not grant.
+/// `THREAD_PRIORITY_HIGHEST`; macOS: user-interactive QoS), for a thread that mostly sleeps
+/// and must wake on time even while every core is busy. Returns whether it worked; false on
+/// other systems, where raising priority needs privileges a show machine should not grant.
 pub fn raise_thread_priority() -> bool {
     #[cfg(windows)]
     {
         crate::windows::raise_thread_priority()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos_priority(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         false
     }
 }
 
 /// Lowers the calling thread's scheduling priority below the normal threads' (Windows:
-/// `THREAD_PRIORITY_LOWEST`), for long background work that must not take time from sound,
-/// pictures or input while every core is busy. Returns whether it worked; false outside
-/// Windows.
+/// `THREAD_PRIORITY_LOWEST`; macOS: utility QoS), for long background work that must not take
+/// time from sound, pictures or input while every core is busy. Returns whether it worked;
+/// false on other systems.
 pub fn lower_thread_priority() -> bool {
     #[cfg(windows)]
     {
         crate::windows::lower_thread_priority()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos_priority(libc::qos_class_t::QOS_CLASS_UTILITY)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         false
     }
+}
+
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+fn macos_priority(class: libc::qos_class_t) -> bool {
+    // SAFETY: this changes only the calling thread, with a valid class and relative priority.
+    unsafe { libc::pthread_set_qos_class_self_np(class, 0) == 0 }
 }
 
 /// Waits until the process `pid` has ended, at most `timeout`. Returns whether it ended (or was
@@ -182,6 +197,29 @@ mod tests {
         let s = super::stats().unwrap();
         assert!(s.working_set > 1 << 20, "{s:?}");
         assert!(s.private_bytes > 0 && s.handles > 0 && s.threads >= 1, "{s:?}");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[allow(unsafe_code)]
+    fn macos_threads_can_raise_and_lower_their_priority() {
+        std::thread::spawn(|| {
+            let class = || {
+                let mut class = libc::qos_class_t::QOS_CLASS_UNSPECIFIED;
+                // SAFETY: a live thread and a valid output record; relative priority is optional.
+                let status = unsafe {
+                    libc::pthread_get_qos_class_np(libc::pthread_self(), &raw mut class, std::ptr::null_mut())
+                };
+                assert_eq!(status, 0);
+                class as u32
+            };
+            assert!(super::raise_thread_priority());
+            assert_eq!(class(), libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE as u32);
+            assert!(super::lower_thread_priority());
+            assert_eq!(class(), libc::qos_class_t::QOS_CLASS_UTILITY as u32);
+        })
+        .join()
+        .unwrap();
     }
 
     #[cfg(windows)]
