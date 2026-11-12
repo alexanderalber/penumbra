@@ -21,7 +21,7 @@ accepted = [
     "Ubuntu-font-1.0",
     "Bitstream-Vera",
 ]
-targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
 # penumbra's own crates (`publish = false`) are covered by its own licence, not listed as third party.
