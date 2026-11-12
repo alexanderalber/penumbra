@@ -516,10 +516,11 @@ fn a_shader_that_fails_two_levels_down_marks_both_components_until_it_is_fixed()
         "node.create",
         json!({"path": "/outer/inner/step", "kind": "tex.shader", "params": {"file": "step.wgsl", "resolution": "custom", "width": 4, "height": 4}}),
     );
-    // An unwired port fails too, but the component shows that as an empty socket.
+    // An unwired port fails too, but the component shows that as an empty socket. It is watched
+    // first, so the frame that cooks the shader has cooked it as well.
     f.call("node.create", json!({"path": "/outer/inner/src", "kind": "tex.in"}));
-    f.call("node.watch", json!({"path": "/outer/inner/step"}));
     f.call("node.watch", json!({"path": "/outer/inner/src"}));
+    f.call("node.watch", json!({"path": "/outer/inner/step"}));
     let top_level = |f: &Fixture| f.call("node.list", json!({"recursive": false, "problems": true}));
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
