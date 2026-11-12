@@ -1,7 +1,7 @@
 # Build, lint and test on every push to main and every pull request, on Windows, Linux and macOS.
 #
-# Windows is the platform penumbra is developed and shown on, so its job must pass.
-# Linux and macOS are new: their jobs report what breaks there but do not fail the run yet.
+# Windows is the platform penumbra is developed and shown on, so its job must pass, and so must
+# the macOS job. Linux is new: its job reports what breaks there but does not fail the run yet.
 # Remove `continue-on-error` from a platform once its job passes.
 #
 # The runners have no GPU. The tests use a software adapter instead: WARP on Windows,
@@ -47,7 +47,7 @@ jobs:
           - os: ubuntu-latest
             experimental: true
           - os: macos-latest
-            experimental: true
+            experimental: false
     steps:
       - uses: actions/checkout@v4
 
