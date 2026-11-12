@@ -36,7 +36,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        # An older Ubuntu than the newest: the build runs on every system with its C library
+        # or a newer one, so the older the system it is made on, the more it runs on.
+        os: [windows-latest, ubuntu-24.04, macos-latest]
     steps:
       - uses: actions/checkout@v4
 

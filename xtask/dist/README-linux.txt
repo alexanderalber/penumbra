@@ -31,9 +31,10 @@ What you need
   (libasound2), udev (libudev1) and xkbcommon (libxkbcommon0).
 - Optional: Python 3.12 or later with its shared library, only for script nodes.
   Everything else works without it. penumbra takes the newest libpython3.XY.so.1.0 in the
-  system's library folders (on Ubuntu: sudo apt install libpython3.12), or the one named by
-  the environment variable PENUMBRA_PYTHON (the library, or the folder holding it). Pictures
-  and meshes in scripts also need NumPy in that Python (sudo apt install python3-numpy).
+  system's library folders (on Ubuntu 24.04: sudo apt install libpython3.12), or the one
+  named by the environment variable PENUMBRA_PYTHON (the library, or the folder holding it).
+  Pictures and meshes in scripts also need NumPy in that Python (sudo apt install
+  python3-numpy).
 
 Not in this build yet, because they work on Windows only so far: cameras (tex.video_in,
 and with it scanning and tracking from a live camera), screen capture (tex.screen_in),
