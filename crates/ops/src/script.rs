@@ -864,7 +864,9 @@ mod tests {
         fn cook(&mut self) -> Result<(Chans, Table), String> {
             let id = self.net.resolve(&"/s".parse().unwrap()).unwrap();
             let deadline = Instant::now() + Duration::from_secs(20);
+            let mut owed = false;
             loop {
+                let before = self.cooker.status(id).map_or(0, |s| s.version);
                 let ran = self.cooker.cook(&self.net, self.clock.now(), &[id], &[]).cooked.contains(&id);
                 let status = self.cooker.status(id).unwrap();
                 if let Some(e) = status.error {
@@ -873,9 +875,15 @@ mod tests {
                 let loading = matches!(status.job, Some(JobStatus::Queued | JobStatus::Running { .. }));
                 // The result counts once a pass leaves the node alone. A pass that ran it may have
                 // met a load that finished meanwhile and is not taken yet, or Python busy with
-                // another test's script: both bring the node back for another pass.
+                // another test's script: both bring the node back for another pass. A run that
+                // made no result put it off, and the node is left alone until its waker runs:
+                // the result is owed until a run makes one.
+                if ran {
+                    owed = status.version == before;
+                }
                 if !loading
                     && !ran
+                    && !owed
                     && let (Some(c), Some(t)) = (
                         self.cooker.output(Port { node: id, output: 0 }).and_then(|d| d.get::<Chans>()),
                         self.cooker.output(Port { node: id, output: 1 }).and_then(|d| d.get::<Table>()),
