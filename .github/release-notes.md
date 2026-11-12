@@ -2,7 +2,7 @@
 
 Builds for Windows x64, macOS on Apple silicon and Linux x64. Unpack one and run `penumbra.exe` on Windows or `./penumbra` on macOS and Linux. Each package contains the docs, the example projects and the content library, and a README that says what the system needs.
 
-The macOS and Linux builds are new and less tested than the Windows one. The macOS build is not signed: its README says how to allow it.
+The macOS and Linux builds are new, a preview, and less tested than the Windows one. They have no cameras yet (`tex.video_in`, and with it scanning and tracking from a live camera), no screen capture, no Spout and no SpaceMouse: those work on Windows only so far. The macOS build is not signed: its README says how to allow it. There is no build for Intel Macs.
 
 New since 0.9.0:
 
