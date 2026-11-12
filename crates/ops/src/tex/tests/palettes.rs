@@ -96,7 +96,9 @@ fn shaders_take_the_projects_palettes_and_channels_pick_them() {
     until_colour(&mut rig, "/s", [1.0, 0.0, 0.0]);
     let warning = rig.cooker.status(rig.id("/s")).unwrap().warning.unwrap_or_default();
     assert!(warning.contains("palettes.txt: line 3"), "{warning}");
-    // An edit of the file shows without touching the node.
+    // An edit of the file shows without touching the node. File times follow a coarse clock;
+    // an edit a moment after the watch began is newer.
+    std::thread::sleep(Duration::from_millis(50));
     std::fs::write(dir.join(palette::FILE), "mine: 0000ff\n").unwrap();
     until_colour(&mut rig, "/s", [0.0, 0.0, 1.0]);
     // A channel picks by place: the built-in set first (0 is sea), then the project's.
