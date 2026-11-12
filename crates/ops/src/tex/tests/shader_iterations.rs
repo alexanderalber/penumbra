@@ -62,6 +62,11 @@ fn run(name: &str, ops: &[Op], path: &str) -> Option<Pixels> {
     std::fs::write(dir.join("step.wgsl"), STEP).unwrap();
     std::fs::write(dir.join("count.wgsl"), COUNT).unwrap();
     let mut rig = Rig::new(gpu, Some(&dir), ops);
+    // A shader of a custom size draws with an empty in0 while the seed still compiles, and
+    // the first picture is the one read: the seed first.
+    if rig.net.resolve(&"/seed".parse().unwrap()).is_some() {
+        rig.pixels("/seed");
+    }
     Some(rig.pixels(path))
 }
 
