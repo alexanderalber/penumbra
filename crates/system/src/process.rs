@@ -50,9 +50,10 @@ pub fn cap_memory(bytes: u64) -> Result<(), Error> {
 }
 
 /// Raises the calling thread's scheduling priority above the normal threads' (Windows:
-/// `THREAD_PRIORITY_HIGHEST`; macOS: user-interactive QoS), for a thread that mostly sleeps
-/// and must wake on time even while every core is busy. Returns whether it worked; false on
-/// other systems, where raising priority needs privileges a show machine should not grant.
+/// `THREAD_PRIORITY_HIGHEST`; macOS: the time-constraint policy sound threads run under), for a
+/// thread that mostly sleeps and must wake on time even while every core is busy. Returns
+/// whether it worked; false on other systems, where raising priority needs privileges a show
+/// machine should not grant.
 pub fn raise_thread_priority() -> bool {
     #[cfg(windows)]
     {
@@ -60,7 +61,7 @@ pub fn raise_thread_priority() -> bool {
     }
     #[cfg(target_os = "macos")]
     {
-        macos_priority(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE)
+        macos_time_constraint()
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     {
@@ -84,6 +85,46 @@ pub fn lower_thread_priority() -> bool {
     #[cfg(not(any(windows, target_os = "macos")))]
     {
         false
+    }
+}
+
+/// How long a thread of raised priority computes each time it wakes, and by when after waking
+/// it must have finished: the ticker waits its last millisecond and a half without sleeping.
+#[cfg(target_os = "macos")]
+const MACOS_COMPUTATION: std::time::Duration = std::time::Duration::from_millis(2);
+#[cfg(target_os = "macos")]
+const MACOS_CONSTRAINT: std::time::Duration = std::time::Duration::from_millis(4);
+
+/// A QoS class is not enough to wake on time: macOS still fires the timers of such a thread
+/// late to save wake-ups, by a quarter of the sleep in an app and several times the sleep in a
+/// process the system counts as a background job. Only time-constraint threads are exempt.
+/// (`libc` marks its Mach time base as deprecated in favour of a crate for Mach alone.)
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code, deprecated)]
+fn macos_time_constraint() -> bool {
+    let mut base = libc::mach_timebase_info { numer: 0, denom: 0 };
+    // SAFETY: a valid output record.
+    if unsafe { libc::mach_timebase_info(&raw mut base) } != 0 || base.numer == 0 {
+        return false;
+    }
+    let ticks = |d: std::time::Duration| {
+        let ticks = d.as_nanos() * u128::from(base.denom) / u128::from(base.numer);
+        u32::try_from(ticks).unwrap_or(u32::MAX)
+    };
+    let mut policy = libc::thread_time_constraint_policy_data_t {
+        period: 0,
+        computation: ticks(MACOS_COMPUTATION),
+        constraint: ticks(MACOS_CONSTRAINT),
+        preemptible: 1,
+    };
+    // SAFETY: this changes only the calling thread, with a record of the size the policy has.
+    unsafe {
+        libc::thread_policy_set(
+            libc::pthread_mach_thread_np(libc::pthread_self()),
+            libc::THREAD_TIME_CONSTRAINT_POLICY as libc::thread_policy_flavor_t,
+            (&raw mut policy).cast(),
+            libc::THREAD_TIME_CONSTRAINT_POLICY_COUNT,
+        ) == 0
     }
 }
 
@@ -204,19 +245,39 @@ mod tests {
     #[allow(unsafe_code)]
     fn macos_threads_can_raise_and_lower_their_priority() {
         std::thread::spawn(|| {
-            let class = || {
-                let mut class = libc::qos_class_t::QOS_CLASS_UNSPECIFIED;
-                // SAFETY: a live thread and a valid output record; relative priority is optional.
+            // Whether the thread runs under the time-constraint policy, and the time it has.
+            let constraint = || {
+                // SAFETY: integers only, for which zero is valid.
+                let mut policy: libc::thread_time_constraint_policy_data_t = unsafe { std::mem::zeroed() };
+                let (mut count, mut default) = (libc::THREAD_TIME_CONSTRAINT_POLICY_COUNT, 0);
+                // SAFETY: the calling thread, a record of the policy's size and its count.
                 let status = unsafe {
-                    libc::pthread_get_qos_class_np(libc::pthread_self(), &raw mut class, std::ptr::null_mut())
+                    libc::thread_policy_get(
+                        libc::pthread_mach_thread_np(libc::pthread_self()),
+                        libc::THREAD_TIME_CONSTRAINT_POLICY as libc::thread_policy_flavor_t,
+                        (&raw mut policy).cast(),
+                        &raw mut count,
+                        &raw mut default,
+                    )
                 };
                 assert_eq!(status, 0);
-                class as u32
+                (default == 0).then_some(policy.constraint)
             };
+            assert_eq!(constraint(), None);
             assert!(super::raise_thread_priority());
-            assert_eq!(class(), libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE as u32);
+            assert!(constraint().is_some_and(|c| c > 0));
+        })
+        .join()
+        .unwrap();
+        std::thread::spawn(|| {
+            let mut class = libc::qos_class_t::QOS_CLASS_UNSPECIFIED;
             assert!(super::lower_thread_priority());
-            assert_eq!(class(), libc::qos_class_t::QOS_CLASS_UTILITY as u32);
+            // SAFETY: a live thread and a valid output record; relative priority is optional.
+            let status = unsafe {
+                libc::pthread_get_qos_class_np(libc::pthread_self(), &raw mut class, std::ptr::null_mut())
+            };
+            assert_eq!(status, 0);
+            assert_eq!(class as u32, libc::qos_class_t::QOS_CLASS_UTILITY as u32);
         })
         .join()
         .unwrap();
