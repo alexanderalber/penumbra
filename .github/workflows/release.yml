@@ -1,0 +1,99 @@
+# Builds the downloads of a release and publishes them.
+#
+# A tag `vX.Y.Z` pushed to the repository builds penumbra on Windows, Linux and macOS with
+# `cargo xtask dist` and publishes a release named after the tag with the three packages. Its
+# text is `.github/release-notes.md` as of the tagged commit. The tag must name the workspace's
+# version.
+#
+# A pull request that changes the packaging builds the three packages too and keeps them with
+# the run, without publishing anything.
+
+name: release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/release-notes.md
+      - xtask/**
+      - about.toml
+      - about.hbs
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  package:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # pyo3 (crates/pyhost) builds against the stable Python ABI from 3.12 on.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ALSA for audio input (cpal), udev for HID devices.
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Writes the third-party notices that ship in every package.
+      - name: cargo-about
+        run: cargo install cargo-about --locked --features cli
+
+      - name: package
+        run: cargo xtask dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: penumbra-${{ matrix.os }}
+          path: |
+            target/dist/penumbra-*.zip
+            target/dist/penumbra-*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          grep -q "^version = \"$version\"$" Cargo.toml || {
+            echo "the tag $GITHUB_REF_NAME does not name the workspace's version"; exit 1; }
+          ls -l packages
+          test "$(ls packages | wc -l)" -eq 3
+          gh release create "$GITHUB_REF_NAME" packages/* \
+            --title "penumbra $version" --notes-file .github/release-notes.md --verify-tag
