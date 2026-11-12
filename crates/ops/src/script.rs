@@ -866,6 +866,10 @@ mod tests {
             let deadline = Instant::now() + Duration::from_secs(20);
             let mut owed = false;
             loop {
+                // The engine polls once per frame; a readback's waker runs only then.
+                if let Some(gpu) = self.cooker.resource::<penumbra_gpu::Gpu>() {
+                    gpu.poll();
+                }
                 let before = self.cooker.status(id).map_or(0, |s| s.version);
                 let ran = self.cooker.cook(&self.net, self.clock.now(), &[id], &[]).cooked.contains(&id);
                 let status = self.cooker.status(id).unwrap();
@@ -1097,6 +1101,7 @@ def cook(cx):
                 break (t.clone(), g.clone());
             }
             assert!(Instant::now() < deadline, "no picture: {:?}", f.cooker.status(id).unwrap().error);
+            gpu.poll();
             std::thread::sleep(Duration::from_millis(5));
         };
         let chans = f.cooker.output(Port { node: id, output: 0 }).unwrap().get::<Chans>().unwrap().clone();
@@ -1143,6 +1148,7 @@ def cook(cx):
                 break;
             }
             assert!(Instant::now() < deadline, "no grey: {:?}", f.cooker.status(id).unwrap().error);
+            gpu.poll();
             std::thread::sleep(Duration::from_millis(5));
         }
         // The mesh output holds the last mesh: this script sets none.
@@ -1162,6 +1168,7 @@ def cook(cx):
                 break;
             }
             assert!(Instant::now() < deadline, "no error");
+            gpu.poll();
             std::thread::sleep(Duration::from_millis(5));
         }
     }
