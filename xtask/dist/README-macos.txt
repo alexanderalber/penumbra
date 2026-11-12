@@ -4,8 +4,8 @@ penumbra {version} for macOS (Apple silicon)
 A node-based tool for projection mapping, camera blob tracking and audio- or DMX-driven
 installations. Work in progress: things change between versions, including the project format.
 
-penumbra is developed and shown on Windows. The macOS build is new and less tested: expect
-rough edges, and please report what you find.
+penumbra is developed and shown on Windows. The macOS build is new and a preview: less
+tested, and without the parts listed under What you need. Please report what you find.
 
 Starting
 --------
@@ -28,8 +28,8 @@ Starting
    left end of the status bar: Open project, then the example's folder. examples/README.md
    lists them.
 
-macOS asks for permission the first time penumbra uses the camera, the microphone or the
-screen. For a program started from Terminal the permission belongs to Terminal.
+macOS asks for permission the first time penumbra listens to a microphone. For a program
+started from Terminal the permission belongs to Terminal.
 
 What you need
 -------------
@@ -41,8 +41,10 @@ What you need
   PENUMBRA_PYTHON (a libpython3.XY.dylib, or the folder holding one). Pictures and meshes
   in scripts also need NumPy in that Python.
 
-Not on macOS: the Spout nodes (out.spout, tex.spout_in) share pictures between programs
-on Windows only.
+Not in this build yet, because they work on Windows only so far: cameras (tex.video_in,
+and with it scanning and tracking from a live camera), screen capture (tex.screen_in),
+Spout (out.spout, tex.spout_in), the SpaceMouse, arranging the displays and the
+show-machine checks, and keeping the displays awake during a show.
 
 Files
 -----
