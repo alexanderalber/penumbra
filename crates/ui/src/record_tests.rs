@@ -45,6 +45,7 @@ fn a_recording_steps_the_clock_by_one_frame_per_picture() {
             json!({"method": "cook.status", "params": {}}),
             json!({"record": {"dir": frames.display().to_string(), "fps": 30}}),
             json!({"wait": 0.2}),
+            json!({"method": "cook.status", "params": {}}),
             json!({"method": "ui.hover", "params": {"x": 100, "y": 100}}),
             json!({"method": "ui.hover", "params": {"x": 300, "y": 200}}),
             json!({"method": "cook.status", "params": {}}),
@@ -56,22 +57,30 @@ fn a_recording_steps_the_clock_by_one_frame_per_picture() {
     let n = done["frames"].as_u64().unwrap();
     // 6 for the wait; the first hover jumps (nowhere to glide from), the second glides 6 frames;
     // each request takes at least one frame and three more to show its result.
-    assert!(n >= 6 + 4 + 6 + 3 + 4, "{n} frames");
+    assert!(n >= 6 + 4 + 4 + 6 + 3 + 4, "{n} frames");
     let pngs = std::fs::read_dir(&frames)
         .unwrap()
         .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().starts_with("frame_"))
         .count();
     assert_eq!(pngs as u64, n);
-    // 60 fps show, 30 fps recording: two show frames per picture, none in between.
-    let (before, during) = (ok(&replies, "cook.status", 0), ok(&replies, "cook.status", 1));
-    assert_eq!(during["stepping"], true);
-    let moved = during["frame"].as_i64().unwrap() - before["frame"].as_i64().unwrap();
-    // The status request itself is answered before its own frame is drawn.
-    assert!((2 * n as i64 - 8..=2 * n as i64).contains(&moved), "{moved} show frames for {n} pictures");
-    assert_eq!(ok(&replies, "cook.status", 2)["stepping"], false, "back on the timer");
     let marks = std::fs::read_to_string(frames.join("marks.jsonl")).unwrap();
     let marks: Vec<Json> = marks.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    // 60 fps show, 30 fps recording: two show frames per picture, none in between. Both
+    // readings are taken while recording: before it, the clock runs on the timer.
+    assert_eq!(ok(&replies, "cook.status", 0)["stepping"], false);
+    let (early, late) = (ok(&replies, "cook.status", 1), ok(&replies, "cook.status", 2));
+    assert_eq!((&early["stepping"], &late["stepping"]), (&json!(true), &json!(true)));
+    let moved = late["frame"].as_i64().unwrap() - early["frame"].as_i64().unwrap();
+    // A status request is answered somewhere among the pictures its line takes.
+    let pictures = |line: u64| {
+        let m = marks.iter().find(|m| m["line"] == line).unwrap();
+        (m["first"].as_i64().unwrap(), m["last"].as_i64().unwrap())
+    };
+    let ((early_first, early_last), (late_first, late_last)) = (pictures(5), pictures(8));
+    let range = 2 * (late_first - early_last - 1)..=2 * (late_last + 1 - early_first);
+    assert!(range.contains(&moved), "{moved} show frames, {range:?} for the pictures between");
+    assert_eq!(ok(&replies, "cook.status", 3)["stepping"], false, "back on the timer");
     assert_eq!(
         marks.first().map(|m| (m["what"].clone(), m["line"].clone(), m["first"].clone())),
         Some((json!("wait"), json!(4), json!(0)))
