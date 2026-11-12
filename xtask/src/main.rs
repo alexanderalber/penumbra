@@ -20,9 +20,11 @@
 //! - `notices`: the third-party notices a build must ship with, written to
 //!   `target/THIRD-PARTY-NOTICES.html` by cargo-about (`about.toml`, `about.hbs`). Fails when a
 //!   dependency's licence is not accepted in `about.toml` or cannot be determined.
-//! - `dist`: a release build for Windows, zipped with everything it needs beside the exe, the
-//!   documentation, the examples, the content library and the beat network (`assets/models`):
-//!   `target/dist/penumbra-VERSION-windows-x64.zip`. Not part of `ci`.
+//! - `dist`: a release build for the machine it runs on, packed with everything it needs beside
+//!   the executable, the documentation, the examples, the content library and the beat network
+//!   (`assets/models`): `target/dist/penumbra-VERSION-windows-x64.zip` on Windows,
+//!   `penumbra-VERSION-macos-arm64.tar.gz` and `penumbra-VERSION-linux-x64.tar.gz` elsewhere
+//!   (named after the processor built on). Not part of `ci`.
 //! - `mcp`: a release build of `penumbra-cli` copied to `target/mcp/`, the place an MCP client
 //!   configuration should point at. A running MCP server locks its exe, and every Claude Code
 //!   session runs one, so a server started from `target/release/` blocks every later release
@@ -354,8 +356,39 @@ fn inputs_key(version_args: &[&str], files: &[std::path::PathBuf], extra: &str) 
 /// only, not to build scripts and proc macros.
 const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
 
-/// What ships beside the exe, from the target directory.
+/// What ships beside the executable, from the target directory.
+#[cfg(windows)]
 const DIST_BINARIES: &[&str] = &["penumbra.exe", "penumbra-cli.exe", "pyhost.dll"];
+#[cfg(target_os = "macos")]
+const DIST_BINARIES: &[&str] = &["penumbra", "penumbra-cli", "libpyhost.dylib"];
+#[cfg(not(any(windows, target_os = "macos")))]
+const DIST_BINARIES: &[&str] = &["penumbra", "penumbra-cli", "libpyhost.so"];
+
+/// The README and the notes for Claude Code that ship in the folder, per system.
+#[cfg(windows)]
+const DIST_TEXTS: (&str, &str) = (include_str!("../dist/README.txt"), include_str!("../dist/CLAUDE.md"));
+#[cfg(target_os = "macos")]
+const DIST_TEXTS: (&str, &str) =
+    (include_str!("../dist/README-macos.txt"), include_str!("../dist/CLAUDE-unix.md"));
+#[cfg(not(any(windows, target_os = "macos")))]
+const DIST_TEXTS: (&str, &str) =
+    (include_str!("../dist/README-linux.txt"), include_str!("../dist/CLAUDE-unix.md"));
+
+/// The package's name after the version: the system and the processor it is built for.
+fn dist_platform() -> Result<String, String> {
+    let os = match std::env::consts::OS {
+        "windows" => return Ok("windows-x64".into()),
+        "macos" => "macos",
+        "linux" => "linux",
+        other => return Err(format!("dist does not build for {other}")),
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        other => return Err(format!("dist does not build for {other}")),
+    };
+    Ok(format!("{os}-{arch}"))
+}
 
 /// Scripts beside the exe that add and remove the folder entry in Explorer's right-click menu.
 /// They read the exe's place when they run, since a zip can be unpacked anywhere.
@@ -365,15 +398,17 @@ const EXPLORER_MENU_SCRIPTS: &[(&str, &str)] = &[
 ];
 
 fn dist() -> Result<(), String> {
-    if !cfg!(windows) {
-        return Err("dist builds for Windows only so far".into());
-    }
+    let platform = dist_platform()?;
     let root = root()?;
     notices()?;
 
-    // A static C runtime, so the exe does not need the Visual C++ redistributable, which a fresh
-    // Windows may lack. pyhost is built explicitly: the app's build makes only its rlib.
-    let args = ["build", "--release", "--locked", "--target", WINDOWS_TARGET];
+    // On Windows a static C runtime, so the exe does not need the Visual C++ redistributable,
+    // which a fresh Windows may lack. pyhost is built explicitly: the app's build makes only its
+    // rlib.
+    let mut args = vec!["build", "--release", "--locked"];
+    if cfg!(windows) {
+        args.extend(["--target", WINDOWS_TARGET]);
+    }
     let packages = ["-p", "penumbra", "-p", "penumbra-cli", "-p", "penumbra-pyhost"];
     eprintln!("xtask: cargo {} {}", args.join(" "), packages.join(" "));
     let status = cargo_command()
@@ -388,7 +423,7 @@ fn dist() -> Result<(), String> {
     }
 
     let version = env!("CARGO_PKG_VERSION");
-    let name = format!("penumbra-{version}-windows-x64");
+    let name = format!("penumbra-{version}-{platform}");
     let dist = root.join("target").join("dist");
     let stage = dist.join(&name);
     if stage.exists() {
@@ -396,7 +431,11 @@ fn dist() -> Result<(), String> {
     }
     std::fs::create_dir_all(&stage).map_err(|e| format!("cannot create {}: {e}", stage.display()))?;
 
-    let release = root.join("target").join(WINDOWS_TARGET).join("release");
+    let release = if cfg!(windows) {
+        root.join("target").join(WINDOWS_TARGET).join("release")
+    } else {
+        root.join("target").join("release")
+    };
     let mut files: Vec<(std::path::PathBuf, &str)> =
         DIST_BINARIES.iter().map(|f| (release.join(f), *f)).collect();
     files.push((root.join("target").join("THIRD-PARTY-NOTICES.html"), "THIRD-PARTY-NOTICES.html"));
@@ -405,21 +444,23 @@ fn dist() -> Result<(), String> {
     for (from, to) in &files {
         std::fs::copy(from, stage.join(to)).map_err(|e| format!("cannot copy {}: {e}", from.display()))?;
     }
-    // Windows line endings, whatever the checkout has: the README is for people opening it in
-    // whatever editor a double-click picks.
-    let readme = include_str!("../dist/README.txt")
-        .replace("{version}", version)
-        .replace("\r\n", "\n")
-        .replace('\n', "\r\n");
+    // On Windows its line endings, whatever the checkout has: the README is for people opening
+    // it in whatever editor a double-click picks.
+    let (readme, claude) = DIST_TEXTS;
+    let mut readme = readme.replace("{version}", version).replace("\r\n", "\n");
+    if cfg!(windows) {
+        readme = readme.replace('\n', "\r\n");
+    }
     std::fs::write(stage.join("README.txt"), readme).map_err(|e| format!("cannot write README.txt: {e}"))?;
-    // Windows line endings: cmd.exe misreads labels and blocks in a batch file with bare LF.
-    for (name, text) in EXPLORER_MENU_SCRIPTS {
-        let text = text.replace("\r\n", "\n").replace('\n', "\r\n");
-        std::fs::write(stage.join(name), text).map_err(|e| format!("cannot write {name}: {e}"))?;
+    if cfg!(windows) {
+        // Windows line endings: cmd.exe misreads labels and blocks in a batch file with bare LF.
+        for (name, text) in EXPLORER_MENU_SCRIPTS {
+            let text = text.replace("\r\n", "\n").replace('\n', "\r\n");
+            std::fs::write(stage.join(name), text).map_err(|e| format!("cannot write {name}: {e}"))?;
+        }
     }
     // For a Claude Code session started in the unpacked folder, which reads CLAUDE.md on its own.
-    std::fs::write(stage.join("CLAUDE.md"), include_str!("../dist/CLAUDE.md"))
-        .map_err(|e| format!("cannot write CLAUDE.md: {e}"))?;
+    std::fs::write(stage.join("CLAUDE.md"), claude).map_err(|e| format!("cannot write CLAUDE.md: {e}"))?;
 
     // The documentation of exactly this version, readable offline. Getting started shows the
     // screenshot by a path relative to docs/, so it keeps that place.
@@ -437,23 +478,26 @@ fn dist() -> Result<(), String> {
 
     // Windows' own tar (bsdtar) writes zip archives, `-a` picks the format from the extension.
     // Named by full path: the GNU tar of Git for Windows may come first on PATH and cannot.
-    let tar = Path::new(&std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()))
-        .join("System32")
-        .join("tar.exe");
-    let zip = dist.join(format!("{name}.zip"));
+    // Elsewhere a gzipped tar, which keeps the executables' permission to run.
+    let (tar, flags, extension) = if cfg!(windows) {
+        let system = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        (Path::new(&system).join("System32").join("tar.exe"), ["-a", "-cf"].as_slice(), "zip")
+    } else {
+        (PathBuf::from("tar"), ["-czf"].as_slice(), "tar.gz")
+    };
+    let zip = dist.join(format!("{name}.{extension}"));
     if zip.exists() {
         std::fs::remove_file(&zip).map_err(|e| format!("cannot remove {}: {e}", zip.display()))?;
     }
     let status = Command::new(&tar)
-        .arg("-a")
-        .arg("-cf")
+        .args(flags)
         .arg(&zip)
         .arg(&name)
         .current_dir(&dist)
         .status()
         .map_err(|e| format!("cannot run tar: {e}"))?;
     if !status.success() {
-        return Err(format!("zipping failed ({status})"));
+        return Err(format!("packing failed ({status})"));
     }
     eprintln!("xtask: {} written", zip.display());
     Ok(())

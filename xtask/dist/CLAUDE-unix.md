@@ -1,0 +1,57 @@
+# penumbra (release build)
+
+This folder is an unpacked release of penumbra, a node-based tool for projection mapping, blob
+tracking and audio- or DMX-driven installations. There is no source code here: you drive the
+running app over its control channel. The documentation of exactly this version is in `docs/`.
+
+## Read first
+
+1. `docs/control.md`: the control channel, `penumbra-cli ctl`, the MCP server, taking turns
+   with the user, looking at results, headless runs.
+2. `docs/concepts.md`: data kinds, node families, params and bindings, components.
+3. As needed: `docs/reference/commands.md` (every command) and `docs/reference/nodes.md`
+   (every node type), plus the topic pages listed in `docs/README.md`.
+
+`library/README.md` catalogues the content library: effects for scanned objects (edges, water,
+relight, tiles, a carved face, ...) as components with a preview each, added with
+`comp.load {"file": "<name>"}`.
+
+`examples/` holds small finished projects (`examples/README.md` lists them); their
+`project.ron` files are good models of networks, bindings and feedback loops. Open one with
+`project.open dir=<absolute path to the example>`.
+
+## Talking to the app
+
+The user starts `./penumbra` from a terminal in this folder (it opens a demo project). It
+listens on `127.0.0.1:9880`, JSON lines over TCP. From this folder:
+
+```
+./penumbra-cli ctl ping
+./penumbra-cli ctl commands                     # every command with a one-line summary
+./penumbra-cli ctl node.kinds kind=tex.noise    # a node type's params, inputs and outputs
+./penumbra-cli ctl node.list
+./penumbra-cli ctl node.create path=/noise2 kind=tex.noise
+./penumbra-cli ctl node.snapshot path=/noise2 file=/tmp/noise2.png
+```
+
+`commands` and `node.kinds` describe the running app itself, so they are always right for this
+version.
+
+The same commands are also offered as MCP tools, with pictures returned inline and no shell
+quoting: `claude mcp add penumbra -- "<absolute path to this folder>/penumbra-cli" mcp`
+(tools `command_list`, `command_run`, `command_batch`, `doc_inspect`, `render_preview`,
+`ui_screenshot`, ...; see `docs/control.md#mcp-server`). Ask the user before adding it, since
+it changes their Claude Code configuration.
+
+## Pitfalls
+
+- The documentation in `docs/` is written for Windows where it names keys, paths and
+  `penumbra.exe`; here the programs are `./penumbra` and `./penumbra-cli`.
+- Edits wait until the user has not edited for 3 seconds. For several edits in a row, claim the
+  turn with `edit.begin` and end it with `edit.end`; the user sees the UI turn blue meanwhile.
+- Look at what you built: `node.snapshot` writes a PNG of a node, `ui.screenshot` one of the
+  whole window. Read the PNG before calling a visual change done.
+- To try something without touching the user's window or project, run
+  `./penumbra --headless script.jsonl` (one request per line, `{"wait": seconds}` to let it
+  run). It works on a temporary copy of the demo and prints every reply; see
+  `docs/control.md#headless-runs`.
