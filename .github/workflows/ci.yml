@@ -90,6 +90,13 @@ jobs:
           echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
           python3 -c 'import ctypes; v=ctypes.c_uint32(); assert ctypes.CDLL("libvulkan.so.1").vkEnumerateInstanceVersion(ctypes.byref(v)) == 0; assert v.value >= ((1<<22)|(4<<12)|350); print("Vulkan loader:", v.value>>22, (v.value>>12)&1023, v.value&4095)'
 
+      # The hosted Mac runs the job as background work, whose timers macOS fires late to save
+      # wake-ups: a sleep of 2 ms takes 10, one of 8 ms up to 40. Tests that sleep, time out or
+      # count requests per second need them on time, as an app in the foreground has them.
+      - name: macOS timers
+        if: runner.os == 'macOS'
+        run: sudo sysctl -w kern.timer.coalescing_enabled=0
+
       - uses: Swatinem/rust-cache@v2
 
       - name: clippy
