@@ -923,8 +923,12 @@ mod tests {
             let gpu = gpu.clone();
             std::thread::spawn(move || {
                 let _ = began.recv();
+                // The time is taken once the hold lets the submission pass. The submission itself
+                // also waits for those of the other tests' software devices, which is not the hold.
+                drop(gpu.shared());
+                let passed = Instant::now();
                 gpu.submit([]);
-                Instant::now()
+                passed
             })
         };
         let mut ended = Instant::now();
@@ -933,20 +937,26 @@ mod tests {
             std::thread::sleep(work);
             ended = Instant::now();
         });
-        let submitted = submitter.join().unwrap();
+        let passed = submitter.join().unwrap();
         // Held while the window work ran, and let go soon after it, not a fixed hold later.
-        assert!(submitted >= ended, "the submission did not wait");
-        let late = submitted.duration_since(ended);
+        assert!(passed >= ended, "the submission did not wait");
+        let late = passed.duration_since(ended);
         assert!(late < Duration::from_millis(60), "{late:?}");
         // Nothing of the hold is left once the call has returned.
         let t = Instant::now();
-        gpu.submit([]);
+        drop(gpu.shared());
         assert!(t.elapsed() < Duration::from_millis(60), "{:?}", t.elapsed());
+        gpu.submit([]);
         assert!(gpu.hold_left(Instant::now()).is_none());
         // What the window work submits itself goes on at once.
         let t = Instant::now();
-        gpu.quiet(|| gpu.submit([]));
-        assert!(t.elapsed() < Duration::from_millis(60), "{:?}", t.elapsed());
+        let own = gpu.quiet(|| {
+            drop(gpu.shared());
+            let own = t.elapsed();
+            gpu.submit([]);
+            own
+        });
+        assert!(own < Duration::from_millis(60), "{own:?}");
     }
 
     #[test]
