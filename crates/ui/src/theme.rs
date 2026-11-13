@@ -150,6 +150,9 @@ pub fn family_color(family: &str) -> Color32 {
         "view" => kind_color(DataKind::View),
         "audio" => kind_color(DataKind::Audio),
         "vol" => kind_color(DataKind::Vol),
+        // The solver hands out tables, but it is looked for as physics: brick red, away from
+        // geo's orange and mat's pink.
+        "physics" => Color32::from_rgb(210, 100, 75),
         // Scripts output channels and tables: neither family's colour, Python's yellow.
         "script" => Color32::from_rgb(225, 205, 80),
         // Components hold nodes of every family: a colour of their own, turquoise, away from
