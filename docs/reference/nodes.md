@@ -2077,6 +2077,8 @@ Outputs: `out` (audio).
 
 [table.file](#tablefile), [table.null](#tablenull), [table.rigid_bodies](#tablerigid_bodies), [table.text](#tabletext)
 
+*in the add dialog's `simulations` tab:* [table.rigid_bodies](#tablerigid_bodies)
+
 ### table.file
 
 A table from a text, TSV or CSV file; updates when the file changes
