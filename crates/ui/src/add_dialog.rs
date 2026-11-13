@@ -75,7 +75,8 @@ const GROUPS: [&[&str]; 7] = [
 /// tools that mapping also uses (`tex.remap`, `tex.transform`, `tex.primitive`, `view.camera`,
 /// `mat.occluder`) stay in their family too, where TouchDesigner users look for them.
 /// `simulations` holds the types that simulate something over time. `vol` holds only the smoke's
-/// volumes, so it goes whole. So does `physics`, the bodies that fall and collide.
+/// volumes, so it goes whole. So does `physics`, the bodies that fall and collide, with the
+/// ports and the null of its groups of bodies.
 /// Building blocks that are general tools (`tex.feedback`,
 /// `chan.feedback`, `tex.scatter`, `tex.optical_flow`) stay in their family.
 pub const TOPICS: [(&str, &[&str]); 2] = [
@@ -1596,7 +1597,11 @@ mod tests {
                 "vol.smoke",
                 "vol.in",
                 "vol.out",
-                "physics.rigid_bodies"
+                "physics.bodies",
+                "physics.null",
+                "physics.rigid_bodies",
+                "physics.in",
+                "physics.out"
             ]
         );
         assert!(!tabs.iter().any(|t| t.key() == "physics"), "a family a topic takes whole has no tab");
@@ -1658,6 +1663,7 @@ mod tests {
         assert_eq!(at("vol.smoke"), "simulations");
         assert_eq!(at("vol"), "simulations", "a family a topic takes whole");
         assert_eq!(at("physics.rigid_bodies"), "simulations");
+        assert_eq!(at("physics.bodies"), "simulations");
         assert_eq!(at("light"), "geo");
         assert_eq!(at("mapping"), "mapping");
         assert_eq!(at("nothing"), "tex");

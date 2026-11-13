@@ -93,11 +93,12 @@ kind, and the wire takes that kind's colour:
 | `chan` | green | named channels of numbers; the last sample is the value now | `chan`, `script` |
 | `audio` | cyan | sound: a gapless stream of sample blocks at a sample rate | `audio`, `tex` (`ndi_in`) |
 | `table` | blue | rows of text cells | `table`, `script`, `physics` |
-| `geo` | orange | meshes with parts, materials and transforms | `geo` |
+| `geo` | orange | meshes with parts, materials and transforms | `geo`, `physics` |
 | `mat` | pink | a material | `mat` |
 | `light` | yellow | one or more lights | `light` |
 | `view` | silver | one camera | `view` |
 | `vol` | grey-blue | a volume: a grid of cells filling a box in space, on the GPU | `vol` |
+| `bodies` | brick red | one group of rigid bodies: their starts, their model, what they collide as and what they are made of | `physics` |
 
 Some nodes take any number of inputs of one kind: `tex.composite`, `tex.switch`,
 `tex.sequence`, `chan.merge`, `geo.merge` and `light.merge`. Their inputs are numbered from 0
@@ -147,12 +148,15 @@ The families:
   smoke is dense: a `thickness` well below 1 lets the eye see into it. `vol.smoke` keeps its
   smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean
   the same; how strongly a number acts was matched by eye to one Flow scene.
-- **`physics`**: bodies that fall and collide. `physics.rigid_bodies` takes a table with one row
-  per body and a model, and lets copies of the model fall under `gravity`, hit each other, a floor
-  and the geometry on its `obstacles` input, and come to rest. Its output is a table of where the
-  bodies are now, in the columns `geo.instance` reads: wire the same model and that table into a
-  `geo.instance` to see them. The bodies start over when the table or the model changes
-  (see [its page](nodes/physics.rigid_bodies.md)).
+- **`physics`**: bodies that fall and collide. A `physics.bodies` is one group of bodies: a table
+  with one row per body places them, a model shows them, and its params say what they collide as
+  (`hull`, `box`, `sphere`) and what they are made of (`friction`, `bounce`, `density`).
+  `physics.rigid_bodies` takes one group on each of its `bodies` inputs. The bodies of all groups
+  fall under `gravity`, hit each other, a floor and the geometry on its `obstacles` input, and
+  come to rest. Its `out` is geometry: every body where it is now, drawn as the model of its
+  group, for `tex.render`. Its `table` lists where the bodies are, in the columns `geo.instance`
+  reads, with the number of their group. A group starts over when its table or its shape changes;
+  the other groups go on (see [the solver's page](nodes/physics.rigid_bodies.md)).
 - **`geo`**, **`mat`**, **`light`**, **`view`**: a 3D scene. Geometry from files or
   primitives, transformed and merged; materials put on it with `geo.assign_material`; lights and a
   `view.camera` wired into a `tex.render`, which makes a picture of it all (a render needs its

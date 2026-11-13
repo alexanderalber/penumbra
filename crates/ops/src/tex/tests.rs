@@ -608,6 +608,8 @@ fn every_builtin_cooks_without_warnings() {
         create("/view_feed", "view.camera", &[]),
         create("/vol_feed", "vol.smoke", &[("resolution", Value::Int(16))]),
         create("/audio_feed", "audio.device_in", &[("device", "test".into())]),
+        create("/bodies_feed", crate::rigid::group::KIND, &[]),
+        connect("/table_feed", "/bodies_feed", 0),
     ];
     let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
     std::fs::write(dir.join("box.obj"), penumbra_mesh::write::to_obj(&cube, None)).unwrap();
@@ -716,6 +718,7 @@ fn every_builtin_cooks_without_warnings() {
                 penumbra_graph::DataKind::Light => Some("/light_feed"),
                 penumbra_graph::DataKind::View => Some("/view_feed"),
                 penumbra_graph::DataKind::Vol => Some("/vol_feed"),
+                penumbra_graph::DataKind::Bodies => Some("/bodies_feed"),
                 // Component ports and nulls pass on what they get and complain about nothing wired.
                 penumbra_graph::DataKind::Audio => Some("/audio_feed"),
                 penumbra_graph::DataKind::Chan
@@ -730,7 +733,7 @@ fn every_builtin_cooks_without_warnings() {
                     if desc.port.is_some()
                         || passes_on(kind)
                         || kind == "geo.instance"
-                        || kind == crate::rigid::KIND
+                        || kind == crate::rigid::group::KIND
                         || kind == crate::table::FROM_TABLE =>
                 {
                     Some("/table_feed")
@@ -819,6 +822,7 @@ fn every_family_has_a_null_that_passes_its_input_itself() {
         "light" => "light.ambient",
         "view" => "view.camera",
         "vol" => "vol.smoke",
+        "physics" => crate::rigid::group::KIND,
         other => panic!("no source for the family {other}"),
     };
     let mut ops = Vec::new();
@@ -831,6 +835,11 @@ fn every_family_has_a_null_that_passes_its_input_itself() {
         assert!(desc.params.is_empty(), "{null}");
         let params: &[(&str, Value)] = if *family == "tex" { &size() } else { &[] };
         ops.push(create(&format!("/{family}_src"), source(family), params));
+        // A group of bodies needs the table that places them.
+        if *family == "physics" {
+            ops.push(create("/physics_table", "table.text", &[]));
+            ops.push(connect("/physics_table", "/physics_src", 0));
+        }
         ops.push(create(&format!("/{family}_null"), &null, &[]));
         ops.push(connect(&format!("/{family}_src"), &format!("/{family}_null"), 0));
     }
@@ -2863,6 +2872,7 @@ fn resolution_analysis_walks_back_from_the_projectors() {
 }
 
 mod audio_spectrum;
+mod bodies;
 mod fluid;
 mod geo;
 mod layers;

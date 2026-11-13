@@ -2640,39 +2640,68 @@ Outputs:
 
 ## physics
 
-[physics.rigid_bodies](#physicsrigid_bodies)
+[physics.bodies](#physicsbodies), [physics.null](#physicsnull), [physics.rigid_bodies](#physicsrigid_bodies)
 
-*in the add dialog's `simulations` tab:* [physics.rigid_bodies](#physicsrigid_bodies)
+*in the add dialog's `simulations` tab:* [physics.bodies](#physicsbodies), [physics.null](#physicsnull), [physics.rigid_bodies](#physicsrigid_bodies)
+
+### physics.bodies
+
+One group of rigid bodies for physics.rigid_bodies: a table places them, a model shows them, the params say what they collide as and what they are made of
+
+Inputs:
+
+- `table` (table): One row per body. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). A change puts the bodies of this group back to their start
+- `model` (geo): What each body looks like, with its material, and what `shape` is taken from. A change to its form puts the bodies of this group back to their start
+
+Outputs:
+
+- `out` (bodies): The group, for a `bodies` input of physics.rigid_bodies
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `shape` | hull \| box \| sphere | `"hull"` |  | What each body collides as, taken from the `model` input. Without a model: a box of 1 m; hull: the model with its dents filled in, as if wrapped in foil; box: the box around the model; faster, and stacks well; sphere: a ball as wide as the model's longest side; the fastest, and it rolls |
+| `friction` | float | `0.5` | 0 to 2 (soft, held within 0 to 10) | How much these bodies grip: 0 slides like ice, 1 holds like rubber. Where two things touch, the mean of their two values counts |
+| `bounce` | float | `0` | 0 to 1 | How much of its speed a body keeps when it hits something: 0 lands dead, 1 bounces for ever. Where two things touch, the larger of their two values counts |
+| `density` | float | `1` | 0.1 to 10 (soft, held within 0.001 to 10000) | How heavy these bodies are for their size, compared with other groups. A body of density 10 pushes one of density 1 aside and is hardly slowed by it. Alone, a group falls the same at any density |
+
+### physics.null
+
+Passes its group of bodies on unchanged: a fixed point to look at, or to wire on from while the chain before it changes
+
+Inputs:
+
+- `in` (bodies)
+
+Outputs: `out` (bodies).
 
 ### physics.rigid_bodies
 
-Rigid bodies that fall, collide and come to rest: a table places them at the start, the output says where they are now, for geo.instance
+Rigid bodies that fall, collide and come to rest: every group of bodies on its inputs lives in one world, and the output shows where they are now
 
 Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
-- `bodies` (table): One row per body, at most 4000. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). A change puts every body back to its start
-- `shape` (geo): The model the bodies collide as; wire the same model into geo.instance. A change puts every body back to its start
+- `bodies0 .. bodies63` (bodies): A group of bodies from physics.bodies. The groups of all these inputs collide with each other, 4000 bodies in all at most. A group whose table or shape changes starts over; the others go on. Any number, up to 64: each one wired adds a free slot below it
 - `obstacles` (geo): Geometry that stands still and that the bodies land on and bounce off, hollows and all. It may change while the bodies move; a moving obstacle does not push them along
 
 Outputs:
 
-- `out` (table): One row per body, in the order of `bodies`: tx ty tz rx ry rz sx sy sz, the columns geo.instance reads
+- `out` (geo): Every body where it is now, drawn as the model of its group. A group without a model shows boxes of 1 m
+- `table` (table): One row per body, group after group in the order of the inputs: tx ty tz rx ry rz sx sy sz, the columns geo.instance reads, and `group`, the number of the `bodies` input (0 for `bodies0`)
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `shape` | hull \| box \| sphere | `"hull"` |  | What each body collides as, taken from the `shape` input. Without that input: a box of 1 m; hull: the model with its dents filled in, as if wrapped in foil; box: the box around the model; faster, and stacks well; sphere: a ball as wide as the model's longest side; the fastest, and it rolls |
 | `gravity` | vec3 | `[0, 0, -9.81]` | -20 to 20 (soft) | The pull on every body, in metres per second squared; z is up, so -9.81 in z is the earth's |
 | `floor` | bool | `true` |  | A level floor without end that the bodies land on |
 | `floor_height` | float | `0` | -5 to 5 m (soft, held within -10000 to 10000 m) | How high the floor lies, along z |
-| `friction` | float | `0.5` | 0 to 2 (soft, held within 0 to 10) | How much surfaces grip: 0 slides like ice, 1 holds like rubber |
-| `bounce` | float | `0` | 0 to 1 | How much of its speed a body keeps when it hits something: 0 lands dead, 1 bounces for ever |
+| `friction` | float | `0.5` | 0 to 2 (soft, held within 0 to 10) | How much the floor and the obstacles grip: 0 slides like ice, 1 holds like rubber. A body on them slides by the mean of this and its group's `friction` |
+| `bounce` | float | `0` | 0 to 1 | How much of its speed a body keeps when it hits the floor or an obstacle: 0 lands dead, 1 bounces for ever. The larger of this and the group's `bounce` counts |
 | `damping` *(more)* | float | `0` | 0 to 5 (soft, held within 0 to 1000) | Slows every body down as thick air would: the share of its speed it loses per second |
 | `spin_damping` *(more)* | float | `0` | 0 to 5 (soft, held within 0 to 1000) | Slows every body's turning down: the share of its spin it loses per second |
 | `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion |
 | `substeps` *(more)* | int | `1` | 1 to 8 | Solver steps per frame: raise it when fast bodies pass through thin things or a tall stack wobbles. Each step costs the same again |
-| `reset` | bool | `false` |  | Puts every body back where the table places it, every frame while on |
+| `reset` | bool | `false` |  | Puts every body of every group back to its start, every frame while on |
 
 ## script
 
@@ -3033,7 +3062,7 @@ Outputs: none.
 
 The input and output sockets of a component, one pair per data kind. They sit inside a `comp.base`. Whatever is wired to the component's socket outside comes out of its `in` node inside. Whatever is wired into an `out` node inside comes out of the component's socket. Grouping nodes into a component adds the ports where wires cross its edge.
 
-[tex.in](#texin), [tex.out](#texout), [chan.in](#chanin), [chan.out](#chanout), [audio.in](#audioin), [audio.out](#audioout), [table.in](#tablein), [table.out](#tableout), [geo.in](#geoin), [geo.out](#geoout), [mat.in](#matin), [mat.out](#matout), [light.in](#lightin), [light.out](#lightout), [view.in](#viewin), [view.out](#viewout), [vol.in](#volin), [vol.out](#volout)
+[tex.in](#texin), [tex.out](#texout), [chan.in](#chanin), [chan.out](#chanout), [audio.in](#audioin), [audio.out](#audioout), [table.in](#tablein), [table.out](#tableout), [geo.in](#geoin), [geo.out](#geoout), [mat.in](#matin), [mat.out](#matout), [light.in](#lightin), [light.out](#lightout), [view.in](#viewin), [view.out](#viewout), [vol.in](#volin), [vol.out](#volout), [physics.in](#physicsin), [physics.out](#physicsout)
 
 ### tex.in
 
@@ -3250,4 +3279,28 @@ Inputs:
 - `in` (vol)
 
 Outputs: `out` (vol).
+
+### physics.in
+
+Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes
+
+Inside a component: one of its inputs.
+
+Inputs:
+
+- `in` (bodies)
+
+Outputs: `out` (bodies).
+
+### physics.out
+
+Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the `out` nodes
+
+Inside a component: one of its outputs.
+
+Inputs:
+
+- `in` (bodies)
+
+Outputs: `out` (bodies).
 

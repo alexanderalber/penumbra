@@ -318,11 +318,12 @@ details.target { outline: 2px solid var(--accent); }
 <tr><td><code>chan</code></td><td>green</td><td>named channels of numbers; the last sample is the value now</td><td><code>chan</code>, <code>script</code></td></tr>
 <tr><td><code>audio</code></td><td>cyan</td><td>sound: a gapless stream of sample blocks at a sample rate</td><td><code>audio</code>, <code>tex</code> (<code>ndi_in</code>)</td></tr>
 <tr><td><code>table</code></td><td>blue</td><td>rows of text cells</td><td><code>table</code>, <code>script</code>, <code>physics</code></td></tr>
-<tr><td><code>geo</code></td><td>orange</td><td>meshes with parts, materials and transforms</td><td><code>geo</code></td></tr>
+<tr><td><code>geo</code></td><td>orange</td><td>meshes with parts, materials and transforms</td><td><code>geo</code>, <code>physics</code></td></tr>
 <tr><td><code>mat</code></td><td>pink</td><td>a material</td><td><code>mat</code></td></tr>
 <tr><td><code>light</code></td><td>yellow</td><td>one or more lights</td><td><code>light</code></td></tr>
 <tr><td><code>view</code></td><td>silver</td><td>one camera</td><td><code>view</code></td></tr>
 <tr><td><code>vol</code></td><td>grey-blue</td><td>a volume: a grid of cells filling a box in space, on the GPU</td><td><code>vol</code></td></tr>
+<tr><td><code>bodies</code></td><td>brick red</td><td>one group of rigid bodies: their starts, their model, what they collide as and what they are made of</td><td><code>physics</code></td></tr>
 </tbody>
 </table>
 <p>Some nodes take any number of inputs of one kind: <a class="ref" href="#tex.composite"><code>tex.composite</code></a>, <a class="ref" href="#tex.switch"><code>tex.switch</code></a>, <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a>, <a class="ref" href="#chan.merge"><code>chan.merge</code></a>, <a class="ref" href="#geo.merge"><code>geo.merge</code></a> and <a class="ref" href="#light.merge"><code>light.merge</code></a>. Their inputs are numbered from 0 (<code>in0</code>, <code>in1</code>, ...). The node shows the wired ones and one free input below the last; wire into the free one and the next appears. An input left empty in between stays, because the order counts: the composite's layers, the switch's index. <a class="ref" href="#node.connect"><code>node.connect</code></a> without <code>input</code> takes the next free one. Up to 64 fit.</p>
@@ -338,7 +339,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong><code>vol</code></strong>: volumes, such as smoke. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> simulates smoke in a box: emitters blow hot smoke in, the smoke rises against <code>gravity</code>, swirls and fades. <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a> is one emitter; wire several into the <code>emitter</code> inputs of <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a>, 64 at most, later ones acting on what earlier ones left. Any table with columns x and y (see <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a>'s output) gives one emitter per row, so a computed table can move or multiply them. With no emitter the box stays empty. Fuel in the smoke burns once it is hot enough: it heats, makes more smoke and swells, so a jet of it widens like a flame. A <a class="ref" href="#vol.obstacle"><code>vol.obstacle</code></a> on the <code>obstacle</code> inputs is a still sphere or box the smoke flows around. <a class="ref" href="#tex.render_volume"><code>tex.render_volume</code></a> draws a volume as a picture, seen from the front through the whole box. Hot smoke glows with <code>glow</code>, in the colours of a palette picture on its <code>palette</code> input. Its <code>density</code> output shows how much smoke covers each pixel, as grey, for <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a>. Burning smoke is dense: a <code>thickness</code> well below 1 lets the eye see into it. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> keeps its smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean the same; how strongly a number acts was matched by eye to one Flow scene.
 </li>
-<li><strong><code>physics</code></strong>: bodies that fall and collide. <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a> takes a table with one row per body and a model, and lets copies of the model fall under <code>gravity</code>, hit each other, a floor and the geometry on its <code>obstacles</code> input, and come to rest. Its output is a table of where the bodies are now, in the columns <a class="ref" href="#geo.instance"><code>geo.instance</code></a> reads: wire the same model and that table into a <a class="ref" href="#geo.instance"><code>geo.instance</code></a> to see them. The bodies start over when the table or the model changes (see <a href="nodes/physics.rigid_bodies.md">its page</a>).
+<li><strong><code>physics</code></strong>: bodies that fall and collide. A <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> is one group of bodies: a table with one row per body places them, a model shows them, and its params say what they collide as (<code>hull</code>, <code>box</code>, <code>sphere</code>) and what they are made of (<code>friction</code>, <code>bounce</code>, <code>density</code>). <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a> takes one group on each of its <code>bodies</code> inputs. The bodies of all groups fall under <code>gravity</code>, hit each other, a floor and the geometry on its <code>obstacles</code> input, and come to rest. Its <code>out</code> is geometry: every body where it is now, drawn as the model of its group, for <a class="ref" href="#tex.render"><code>tex.render</code></a>. Its <code>table</code> lists where the bodies are, in the columns <a class="ref" href="#geo.instance"><code>geo.instance</code></a> reads, with the number of their group. A group starts over when its table or its shape changes; the other groups go on (see <a href="nodes/physics.rigid_bodies.md">the solver's page</a>).
 </li>
 <li><strong><code>geo</code></strong>, <strong><code>mat</code></strong>, <strong><code>light</code></strong>, <strong><code>view</code></strong>: a 3D scene. Geometry from files or primitives, transformed and merged; materials put on it with <a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a>; lights and a <a class="ref" href="#view.camera"><code>view.camera</code></a> wired into a <a class="ref" href="#tex.render"><code>tex.render</code></a>, which makes a picture of it all (a render needs its camera; the camera is perspective, orthographic or calibrated). <a class="ref" href="#light.projector"><code>light.projector</code></a> throws a picture through a camera onto the geometry: a virtual projector, for trying a mapping on a model of the room. Coordinates are metres, z up. <a class="ref" href="#geo.file"><code>geo.file</code></a> reads OBJ, STL, glTF and FBX. FBX works from file version 7.0 on, binary or ASCII. Binary is the default of Blender, Maya, 3ds Max and Unity. An FBX 6 file gives an error: export it again as FBX 2011 or later. Each FBX model becomes a part with its name, placed as in the file, in metres and z up. Materials bring their diffuse colour and texture, embedded or from a file beside the FBX. Animated models play: each part moves as its model does in the file. A skinned character bends with its bones: each vertex follows the bones that weigh on it, blended by the weights (linear blend skinning). <code>take</code> picks the animation (the <code>takes</code> output lists them), <code>play</code>, <code>speed</code> and <code>loop</code> work as for a video, and with <code>play</code> off a channel bound to <code>time</code> drives it. Posing runs on the CPU and costs about 20 ns per vertex and frame. A file whose skin asks for dual quaternion blending is blended linearly, with a warning; twisting joints then thin out a little. Blend shapes, cameras and lights are not read. <a class="ref" href="#out.mesh"><code>out.mesh</code></a> writes geometry to an OBJ, STL or glb file, every model where it stands in the scene. Each part stays a part: an OBJ object or a glTF node. Only glb keeps material colours; textures are not written. File, <code>overwrite</code> and the modes <code>changes</code> and <code>manual</code> work as for <a class="ref" href="#out.table"><code>out.table</code></a>; the command is <a class="ref" href="#mesh_out.write"><code>mesh_out.write</code></a>. Copies from <a class="ref" href="#geo.tex_instance"><code>geo.tex_instance</code></a> are read back from the GPU and written one by one (<code>instances</code> on <code>expand</code>). For copies that move every frame, use mode <code>manual</code>: in mode <code>changes</code> such an input is written every frame. With <code>instances</code> on <code>skip</code> each model is written once, without its copies. A file holds at most 4 Mi triangles and 256 MiB; over that the node shows an error and writes nothing.
 </li>
@@ -6290,33 +6291,68 @@ def cook(cx):
 </div>
 <div class="group" id="family-physics">
 <h3>physics</h3>
-<p class="kinds"><a href="#physics.rigid_bodies">physics.rigid_bodies</a></p>
-<details class="entry node" id="physics.rigid_bodies"><summary><code class="name">physics.rigid_bodies</code><span class="sum">Rigid bodies that fall, collide and come to rest: a table places them at the start, the output says where they are now, for geo.instance</span></summary>
+<p class="kinds"><a href="#physics.bodies">physics.bodies</a> <a href="#physics.null">physics.null</a> <a href="#physics.rigid_bodies">physics.rigid_bodies</a></p>
+<details class="entry node" id="physics.bodies"><summary><code class="name">physics.bodies</code><span class="sum">One group of rigid bodies for physics.rigid_bodies: a table places them, a model shows them, the params say what they collide as and what they are made of</span></summary>
 <div class="body">
-<p>Rigid bodies that fall, collide and come to rest: a table places them at the start, the output says where they are now, for geo.instance</p>
-<p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
+<p>One group of rigid bodies for physics.rigid_bodies: a table places them, a model shows them, the params say what they collide as and what they are made of</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>bodies</code> <span class="kind">table</span>: One row per body, at most 4000. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). A change puts every body back to its start</li>
-<li><code>shape</code> <span class="kind">geo</span>: The model the bodies collide as; wire the same model into geo.instance. A change puts every body back to its start</li>
-<li><code>obstacles</code> <span class="kind">geo</span>: Geometry that stands still and that the bodies land on and bounce off, hollows and all. It may change while the bodies move; a moving obstacle does not push them along</li>
+<li><code>table</code> <span class="kind">table</span>: One row per body. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). A change puts the bodies of this group back to their start</li>
+<li><code>model</code> <span class="kind">geo</span>: What each body looks like, with its material, and what <code>shape</code> is taken from. A change to its form puts the bodies of this group back to their start</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">table</span>: One row per body, in the order of <code>bodies</code>: tx ty tz rx ry rz sx sy sz, the columns geo.instance reads</li>
+<li><code>out</code> <span class="kind">bodies</span>: The group, for a <code>bodies</code> input of physics.rigid_bodies</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>shape</code></td><td>hull | box | sphere</td><td><code>&quot;hull&quot;</code></td><td></td><td>What each body collides as, taken from the <code>shape</code> input. Without that input: a box of 1 m<ul><li><code>hull</code>: the model with its dents filled in, as if wrapped in foil</li><li><code>box</code>: the box around the model; faster, and stacks well</li><li><code>sphere</code>: a ball as wide as the model's longest side; the fastest, and it rolls</li></ul></td></tr>
+<tr><td><code>shape</code></td><td>hull | box | sphere</td><td><code>&quot;hull&quot;</code></td><td></td><td>What each body collides as, taken from the <code>model</code> input. Without a model: a box of 1 m<ul><li><code>hull</code>: the model with its dents filled in, as if wrapped in foil</li><li><code>box</code>: the box around the model; faster, and stacks well</li><li><code>sphere</code>: a ball as wide as the model's longest side; the fastest, and it rolls</li></ul></td></tr>
+<tr><td><code>friction</code></td><td>float</td><td><code>0.5</code></td><td>0 to 2 (soft, held within 0 to 10)</td><td>How much these bodies grip: 0 slides like ice, 1 holds like rubber. Where two things touch, the mean of their two values counts</td></tr>
+<tr><td><code>bounce</code></td><td>float</td><td><code>0</code></td><td>0 to 1</td><td>How much of its speed a body keeps when it hits something: 0 lands dead, 1 bounces for ever. Where two things touch, the larger of their two values counts</td></tr>
+<tr><td><code>density</code></td><td>float</td><td><code>1</code></td><td>0.1 to 10 (soft, held within 0.001 to 10000)</td><td>How heavy these bodies are for their size, compared with other groups. A body of density 10 pushes one of density 1 aside and is hardly slowed by it. Alone, a group falls the same at any density</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
+<details class="entry node" id="physics.null"><summary><code class="name">physics.null</code><span class="sum">Passes its group of bodies on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
+<div class="body">
+<p>Passes its group of bodies on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">bodies</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">bodies</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="physics.rigid_bodies"><summary><code class="name">physics.rigid_bodies</code><span class="sum">Rigid bodies that fall, collide and come to rest: every group of bodies on its inputs lives in one world, and the output shows where they are now</span></summary>
+<div class="body">
+<p>Rigid bodies that fall, collide and come to rest: every group of bodies on its inputs lives in one world, and the output shows where they are now</p>
+<p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>bodies0 .. bodies63</code> <span class="kind">bodies</span>: A group of bodies from physics.bodies. The groups of all these inputs collide with each other, 4000 bodies in all at most. A group whose table or shape changes starts over; the others go on Any number, up to 64: each one wired adds a free slot below it.</li>
+<li><code>obstacles</code> <span class="kind">geo</span>: Geometry that stands still and that the bodies land on and bounce off, hollows and all. It may change while the bodies move; a moving obstacle does not push them along</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">geo</span>: Every body where it is now, drawn as the model of its group. A group without a model shows boxes of 1 m</li>
+<li><code>table</code> <span class="kind">table</span>: One row per body, group after group in the order of the inputs: tx ty tz rx ry rz sx sy sz, the columns geo.instance reads, and <code>group</code>, the number of the <code>bodies</code> input (0 for <code>bodies0</code>)</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
 <tr><td><code>gravity</code></td><td>vec3</td><td><code>[0, 0, -9.81]</code></td><td>-20 to 20 (soft)</td><td>The pull on every body, in metres per second squared; z is up, so -9.81 in z is the earth's</td></tr>
 <tr><td><code>floor</code></td><td>bool</td><td><code>true</code></td><td></td><td>A level floor without end that the bodies land on</td></tr>
 <tr><td><code>floor_height</code></td><td>float</td><td><code>0</code></td><td>-5 to 5 m (soft, held within -10000 to 10000 m)</td><td>How high the floor lies, along z</td></tr>
-<tr><td><code>friction</code></td><td>float</td><td><code>0.5</code></td><td>0 to 2 (soft, held within 0 to 10)</td><td>How much surfaces grip: 0 slides like ice, 1 holds like rubber</td></tr>
-<tr><td><code>bounce</code></td><td>float</td><td><code>0</code></td><td>0 to 1</td><td>How much of its speed a body keeps when it hits something: 0 lands dead, 1 bounces for ever</td></tr>
+<tr><td><code>friction</code></td><td>float</td><td><code>0.5</code></td><td>0 to 2 (soft, held within 0 to 10)</td><td>How much the floor and the obstacles grip: 0 slides like ice, 1 holds like rubber. A body on them slides by the mean of this and its group's <code>friction</code></td></tr>
+<tr><td><code>bounce</code></td><td>float</td><td><code>0</code></td><td>0 to 1</td><td>How much of its speed a body keeps when it hits the floor or an obstacle: 0 lands dead, 1 bounces for ever. The larger of this and the group's <code>bounce</code> counts</td></tr>
 <tr><td><code>speed</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft, held within 0 to 16)</td><td>How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion</td></tr>
-<tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>Puts every body back where the table places it, every frame while on</td></tr>
+<tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>Puts every body of every group back to its start, every frame while on</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>damping</code></td><td>float</td><td><code>0</code></td><td>0 to 5 (soft, held within 0 to 1000)</td><td>Slows every body down as thick air would: the share of its speed it loses per second</td></tr>
 <tr><td><code>spin_damping</code></td><td>float</td><td><code>0</code></td><td>0 to 5 (soft, held within 0 to 1000)</td><td>Slows every body's turning down: the share of its spin it loses per second</td></tr>
@@ -6328,17 +6364,22 @@ def cook(cx):
 <ol>
 <li><a class="ref" href="#table.text"><code>table.text</code></a> with <code>format</code> set to <code>csv</code>: the first row names the columns, each further row is one body. <code>tx,ty,tz</code> and three rows <code>0,0,2</code>, <code>0.2,0,3.5</code>, <code>-0.1,0.1,5</code> drop three bodies from 2 m, 3.5 m and 5 m.
 </li>
-<li><a class="ref" href="#geo.primitive"><code>geo.primitive</code></a>, shape <code>box</code>: the model of a body.
+<li><a class="ref" href="#geo.primitive"><code>geo.primitive</code></a>, shape <code>box</code>: what a body looks like.
 </li>
-<li><a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a>: the table into <code>bodies</code>, the model into <code>shape</code>.
+<li><a class="ref" href="#physics.bodies"><code>physics.bodies</code></a>: the table into <code>table</code>, the model into <code>model</code>. This is one group of bodies.
 </li>
-<li><a class="ref" href="#geo.instance"><code>geo.instance</code></a>: the model into <code>in</code>, the solver's <code>out</code> into <code>table</code>.
+<li><a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a>: the group into <code>bodies0</code>.
 </li>
-<li><a class="ref" href="#tex.render"><code>tex.render</code></a>: the instance into <code>geo</code>.
+<li><a class="ref" href="#tex.render"><code>tex.render</code></a>: the solver's <code>out</code> into <code>geo</code>.
 </li>
 </ol>
 <p>The bodies fall onto the floor at z = 0 and come to rest. The floor is part of the solver and is not drawn. Put a flat <a class="ref" href="#geo.primitive"><code>geo.primitive</code></a> there if it should show.</p>
-<h5 id="physics.rigid_bodies-the-table-of-bodies">The table of bodies</h5>
+<p>Step 2 can be left out. A group without a model is drawn as boxes of 1 m.</p>
+<h5 id="physics.rigid_bodies-several-groups-in-one-world">Several groups in one world</h5>
+<p>Every group needs its own <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a>. Wire each into the next free <code>bodies</code> input of the solver: a new input appears when the last one is taken. Bodies of all groups collide with each other, so balls roll off boxes and boxes pile up on balls.</p>
+<p>A group has one model, one collision shape and one material. Balls and boxes are two groups. So are wooden boxes and rubber boxes.</p>
+<p>The solver's <code>out</code> draws every body as the model of its group, with the material that model carries (<a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a> before <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a>). One wire into <a class="ref" href="#tex.render"><code>tex.render</code></a> shows all groups.</p>
+<h5 id="physics.rigid_bodies-the-table-of-a-group">The table of a group</h5>
 <p>Any table can place the bodies. Every column is optional, but the first row must name at least one:</p>
 <table>
 <thead><tr><th>column</th><th>meaning</th><th>when the column is missing</th></tr></thead>
@@ -6350,11 +6391,14 @@ def cook(cx):
 <tr><td><code>wx</code>, <code>wy</code>, <code>wz</code></td><td>its spin at the start, in degrees per second about x, y and z</td><td>0</td></tr>
 </tbody>
 </table>
-<p>A row with a cell that is not a finite number is left out. The node takes 4000 bodies at most.</p>
-<p>The output has one row per body in the same order, with the columns <code>tx ty tz rx ry rz sx sy sz</code>. A change to the table puts every body back to its start. So does a change to the model in <code>shape</code>, <code>reset</code>, and the reset button of the node.</p>
+<p>A row with a cell that is not a finite number is left out, and <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> says so in a warning. The solver takes 4000 bodies at most, counted over all groups. Bodies beyond that are left out, and the solver names the group they belong to.</p>
 <p>Bodies that overlap at the start are pushed apart in the first frames, and fast. Leave a gap between them.</p>
+<h5 id="physics.rigid_bodies-what-starts-a-group-over">What starts a group over</h5>
+<p>A change to a group's table puts the bodies of that group back to their start. So does a change to the form of its model, and to <code>shape</code>. The other groups go on from where they are. A group that starts over can land inside bodies that have moved into its place. The solver pushes them apart.</p>
+<p><code>friction</code>, <code>bounce</code> and <code>density</code> of a group change while its bodies move. So does the material of its model.</p>
+<p><code>reset</code> on the solver and the reset button of the solver put every group back to its start.</p>
 <h5 id="physics.rigid_bodies-what-a-body-collides-as">What a body collides as</h5>
-<p><code>shape</code> (the param) decides what the solver makes of the model in the <code>shape</code> input:</p>
+<p><code>shape</code> on <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> decides what the solver makes of the group's model:</p>
 <ul>
 <li><code>hull</code>: the model with its dents filled in. A cup collides as a solid lump, and nothing falls into it.
 </li>
@@ -6363,8 +6407,25 @@ def cook(cx):
 <li><code>sphere</code>: a ball as wide as the model's longest side. With a scale that differs per axis it stays a ball, as wide as the largest of the three.
 </li>
 </ul>
-<p>A flat model, such as a plane, has no hull. It collides as the box around it, and the node says so in a warning.</p>
-<p>Every body has the same shape and the same density. A body twice as large weighs eight times as much.</p>
+<p>A flat model, such as a plane, has no hull. It collides as the box around it, and <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> says so in a warning.</p>
+<h5 id="physics.rigid_bodies-what-a-body-is-made-of">What a body is made of</h5>
+<p>Each group has its own <code>friction</code>, <code>bounce</code> and <code>density</code>. The solver has <code>friction</code> and <code>bounce</code> for the floor and the obstacles.</p>
+<ul>
+<li><strong><code>friction</code>:</strong> where two things touch, the mean of their two values counts. Ice (0) on a floor of 0.5 slides with 0.25.
+</li>
+<li><strong><code>bounce</code>:</strong> the larger of the two values counts. A ball with <code>bounce</code> 0.8 bounces off a floor with <code>bounce</code> 0, and off every other body.
+</li>
+<li><strong><code>density</code>:</strong> how heavy a body is for its size. Only the ratio between groups shows. A body of density 10 pushes a body of density 1 aside. A body twice as large weighs eight times as much.
+</li>
+</ul>
+<h5 id="physics.rigid_bodies-the-outputs">The outputs</h5>
+<ul>
+<li><strong><code>out</code></strong> is geometry: every body where it is now. Wire it into <a class="ref" href="#tex.render"><code>tex.render</code></a>, or into <a class="ref" href="#geo.merge"><code>geo.merge</code></a> together with the scenery.
+</li>
+<li><strong><code>table</code></strong> has one row per body: <code>tx ty tz rx ry rz sx sy sz</code>, then <code>group</code>. <code>group</code> is the number of the input the body came in by, 0 for <code>bodies0</code>. The rows follow the inputs in order, and inside a group the rows of its table.
+</li>
+</ul>
+<p>With one group, <code>table</code> goes straight into <a class="ref" href="#geo.instance"><code>geo.instance</code></a>. With several groups <a class="ref" href="#geo.instance"><code>geo.instance</code></a> would draw one model for all of them: use <code>out</code> instead.</p>
 <h5 id="physics.rigid_bodies-obstacles">Obstacles</h5>
 <p>Wire any geometry into <code>obstacles</code>: a model from <a class="ref" href="#geo.file"><code>geo.file</code></a>, primitives placed by <a class="ref" href="#geo.transform"><code>geo.transform</code></a>, several joined by <a class="ref" href="#geo.merge"><code>geo.merge</code></a>. Bodies collide with its triangles, so they fall into a bowl and roll down a ramp. An obstacle is a thin shell with nothing inside. A fast or small body can pass through it: raise <code>substeps</code>, or make the bodies larger or slower.</p>
 <p>Obstacles may change while the bodies move, and bodies that rested on one fall on when it goes. A moving obstacle jumps from place to place and does not push bodies along. It can leave them stuck inside itself.</p>
@@ -6921,7 +6982,7 @@ node.bind {param: &quot;/sim.reset&quot;, from: &quot;/keys&quot;, channel: &quo
 <div class="group" id="family-component-ports">
 <h3>Component ports</h3>
 <p>The input and output sockets of a component, one pair per data kind. They sit inside a <a class="ref" href="#comp.base"><code>comp.base</code></a>. Whatever is wired to the component's socket outside comes out of its <code>in</code> node inside. Whatever is wired into an <code>out</code> node inside comes out of the component's socket. Grouping nodes into a component adds the ports where wires cross its edge.</p>
-<p class="kinds"><a href="#tex.in">tex.in</a> <a href="#tex.out">tex.out</a> <a href="#chan.in">chan.in</a> <a href="#chan.out">chan.out</a> <a href="#audio.in">audio.in</a> <a href="#audio.out">audio.out</a> <a href="#table.in">table.in</a> <a href="#table.out">table.out</a> <a href="#geo.in">geo.in</a> <a href="#geo.out">geo.out</a> <a href="#mat.in">mat.in</a> <a href="#mat.out">mat.out</a> <a href="#light.in">light.in</a> <a href="#light.out">light.out</a> <a href="#view.in">view.in</a> <a href="#view.out">view.out</a> <a href="#vol.in">vol.in</a> <a href="#vol.out">vol.out</a></p>
+<p class="kinds"><a href="#tex.in">tex.in</a> <a href="#tex.out">tex.out</a> <a href="#chan.in">chan.in</a> <a href="#chan.out">chan.out</a> <a href="#audio.in">audio.in</a> <a href="#audio.out">audio.out</a> <a href="#table.in">table.in</a> <a href="#table.out">table.out</a> <a href="#geo.in">geo.in</a> <a href="#geo.out">geo.out</a> <a href="#mat.in">mat.in</a> <a href="#mat.out">mat.out</a> <a href="#light.in">light.in</a> <a href="#light.out">light.out</a> <a href="#view.in">view.in</a> <a href="#view.out">view.out</a> <a href="#vol.in">vol.in</a> <a href="#vol.out">vol.out</a> <a href="#physics.in">physics.in</a> <a href="#physics.out">physics.out</a></p>
 <details class="entry node" id="tex.in"><summary><code class="name">tex.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
 <div class="body">
 <p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
@@ -7158,6 +7219,32 @@ node.bind {param: &quot;/sim.reset&quot;, from: &quot;/keys&quot;, channel: &quo
 <h4>Outputs</h4>
 <ul>
 <li><code>out</code> <span class="kind">vol</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="physics.in"><summary><code class="name">physics.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
+<div class="body">
+<p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
+<p class="note">Inside a component: one of its inputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">bodies</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">bodies</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="physics.out"><summary><code class="name">physics.out</code><span class="sum">Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</span></summary>
+<div class="body">
+<p>Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</p>
+<p class="note">Inside a component: one of its outputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">bodies</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">bodies</span></li>
 </ul>
 </div></details>
 </div>

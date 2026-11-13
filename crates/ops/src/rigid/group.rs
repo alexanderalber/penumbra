@@ -1,0 +1,240 @@
+//! `physics.bodies`: one group of rigid bodies for `physics.rigid_bodies`. A table places the
+//! bodies, a model says what they look like, and the node's params say what they collide as and
+//! what they are made of. The group travels as one [`Bodies`] on a wire of its own kind.
+
+use penumbra_core::{Error, ParamSpec, Table};
+use penumbra_gpu::Geo;
+use penumbra_gpu::geo::{Item, Mat4};
+use penumbra_graph::{
+    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
+};
+use penumbra_mesh::Mesh;
+use penumbra_physics::{MAX_BODIES, Material, Shape, Start};
+
+pub const KIND: &str = "physics.bodies";
+
+/// Choices of `shape`.
+pub const SHAPES: [&str; 3] = ["hull", "box", "sphere"];
+
+/// The columns of the `table` input, by header name: where a body starts (as `geo.instance`
+/// reads them), how fast it moves (metres per second) and spins (degrees per second).
+pub const START_COLUMNS: [&str; 15] =
+    ["tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz", "vx", "vy", "vz", "wx", "wy", "wz"];
+
+/// The payload of `bodies` data: one group of bodies as a solver takes it.
+#[derive(Clone)]
+pub struct Bodies {
+    /// Where each body starts, in the order of the table's rows.
+    pub starts: Vec<Start>,
+    /// What every body is drawn as. Empty: a box of 1 m.
+    pub model: Vec<Item>,
+    /// What every body collides as, at scale 1.
+    pub shape: Shape,
+    pub material: Material,
+}
+
+impl Bodies {
+    /// The name of the group's collision shape, as the `shape` param calls it.
+    pub fn shape_name(&self) -> &'static str {
+        match self.shape {
+            Shape::Hull { .. } => "hull",
+            Shape::Box { .. } => "box",
+            Shape::Sphere { .. } => "sphere",
+        }
+    }
+}
+
+pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
+    types.register(FnNodeType::new(
+        NodeDesc::new(
+            KIND,
+            "One group of rigid bodies for physics.rigid_bodies: a table places them, a model shows them, the params say what they collide as and what they are made of",
+        )
+        .param(
+            ParamSpec::choice("shape", &SHAPES)
+                .doc("What each body collides as, taken from the `model` input. Without a model: a box of 1 m")
+                .choice_doc("hull", "the model with its dents filled in, as if wrapped in foil")
+                .choice_doc("box", "the box around the model; faster, and stacks well")
+                .choice_doc("sphere", "a ball as wide as the model's longest side; the fastest, and it rolls"),
+        )
+        .param(
+            ParamSpec::float("friction", 0.5)
+                .clamp(0.0, 10.0)
+                .range(0.0, 2.0)
+                .doc("How much these bodies grip: 0 slides like ice, 1 holds like rubber. Where two things touch, the mean of their two values counts"),
+        )
+        .param(
+            ParamSpec::float("bounce", 0.0)
+                .clamp(0.0, 1.0)
+                .doc("How much of its speed a body keeps when it hits something: 0 lands dead, 1 bounces for ever. Where two things touch, the larger of their two values counts"),
+        )
+        .param(
+            ParamSpec::float("density", 1.0)
+                // What the solver takes (`penumbra_physics::DENSITY_RANGE`).
+                .clamp(0.001, 10_000.0)
+                .range(0.1, 10.0)
+                .doc("How heavy these bodies are for their size, compared with other groups. A body of density 10 pushes one of density 1 aside and is hardly slowed by it. Alone, a group falls the same at any density"),
+        )
+        .input("table", DataKind::Table)
+        .input("model", DataKind::Geo)
+        .describe_input(
+            "table",
+            "One row per body. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). A change puts the bodies of this group back to their start",
+        )
+        .describe_input(
+            "model",
+            "What each body looks like, with its material, and what `shape` is taken from. A change to its form puts the bodies of this group back to their start",
+        )
+        .output("out", DataKind::Bodies)
+        .describe_output("out", "The group, for a `bodies` input of physics.rigid_bodies"),
+        || Box::new(Group::default()) as Box<dyn Operator>,
+    ))?;
+    Ok(())
+}
+
+/// A model and where it stands: what tells one cook's geometry from the next.
+pub(crate) type GeoKey = Vec<(u64, Mat4)>;
+
+pub(crate) fn key(geo: Option<&Geo>) -> GeoKey {
+    geo.map(|g| g.items.iter().map(|i| (i.model.id, i.world)).collect()).unwrap_or_default()
+}
+
+/// Keeps the shape it made last: a hull is costly, and the table may change every frame.
+#[derive(Default)]
+struct Group {
+    shape: Option<((String, GeoKey), Shape, Option<String>)>,
+}
+
+impl Operator for Group {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        let wired = |k: usize| cx.def().inputs.get(k).is_some_and(Option::is_some);
+        let Some(table) = cx.input_as::<Table>(0) else {
+            return Err(if wired(0) {
+                CookError::Pending
+            } else {
+                CookError::failed("connect a table with one row per body")
+            });
+        };
+        let geo = match cx.input_as::<Geo>(1) {
+            Some(g) => Some(g),
+            None if wired(1) => return Err(CookError::Pending),
+            None => None,
+        };
+        let shape_key = (cx.text("shape")?.to_string(), key(geo));
+        let (shape, shape_note) = match &self.shape {
+            Some((k, shape, note)) if *k == shape_key => (shape.clone(), note.clone()),
+            _ => {
+                let (shape, note) = shape_of(&shape_key.0, placed(geo));
+                self.shape = Some((shape_key, shape.clone(), note.clone()));
+                (shape, note)
+            }
+        };
+        let (starts, table_note) = starts(table);
+        let notes: Vec<String> = table_note.into_iter().chain(shape_note).collect();
+        if !notes.is_empty() {
+            cx.warn(notes.join("; "));
+        }
+        let material = Material {
+            friction: cx.float("friction")? as f32,
+            bounce: cx.float("bounce")? as f32,
+            density: cx.float("density")? as f32,
+        };
+        let model = geo.map(|g| g.items.clone()).unwrap_or_default();
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Bodies, Bodies { starts, model, shape, material })]))
+    }
+}
+
+/// The meshes of `geo` with where they stand. Copies drawn by textures are left out: where they
+/// are is known on the GPU only.
+pub(crate) fn placed(geo: Option<&Geo>) -> impl Iterator<Item = (&Mesh, &Mat4)> {
+    let items = geo.map(|g| g.items.as_slice()).unwrap_or_default();
+    items.iter().filter(|i| i.instances.is_none()).map(|i| (&i.model.mesh, &i.world))
+}
+
+/// `p` moved by `m` (model to world).
+pub(crate) fn moved_by(m: &Mat4, p: [f32; 3]) -> [f32; 3] {
+    let [x, y, z] = p.map(f64::from);
+    m.first_chunk::<3>().map_or(p, |rows| rows.map(|r| (r[0] * x + r[1] * y + r[2] * z + r[3]) as f32))
+}
+
+/// What the bodies collide as: `choice` of the meshes, or of a box of 1 m when there are none.
+/// Also a note when the choice could not be had.
+pub fn shape_of<'a>(
+    choice: &str,
+    meshes: impl Iterator<Item = (&'a Mesh, &'a Mat4)>,
+) -> (Shape, Option<String>) {
+    let unit = Shape::Box { center: [0.0; 3], half: [0.5; 3] };
+    let mut points: Vec<[f32; 3]> = Vec::new();
+    for (mesh, world) in meshes {
+        points.extend(mesh.vertices.iter().map(|v| moved_by(world, v.position)));
+    }
+    points.retain(|p| p.iter().all(|v| v.is_finite()));
+    let Some(first) = points.first().copied() else {
+        return match choice {
+            "sphere" => (Shape::Sphere { center: [0.0; 3], radius: 0.5 }, None),
+            _ => (unit, None),
+        };
+    };
+    let ([mut x0, mut y0, mut z0], [mut x1, mut y1, mut z1]) = (first, first);
+    for [x, y, z] in &points {
+        (x0, y0, z0) = (x0.min(*x), y0.min(*y), z0.min(*z));
+        (x1, y1, z1) = (x1.max(*x), y1.max(*y), z1.max(*z));
+    }
+    let center = [0.5 * (x0 + x1), 0.5 * (y0 + y1), 0.5 * (z0 + z1)];
+    let half = [0.5 * (x1 - x0), 0.5 * (y1 - y0), 0.5 * (z1 - z0)];
+    let widest = half.iter().copied().fold(0.0, f32::max);
+    let boxed = Shape::Box { center, half };
+    match choice {
+        "box" => (boxed, None),
+        "sphere" => (Shape::Sphere { center, radius: widest }, None),
+        // A flat model has no hull. Its box does.
+        _ => match penumbra_physics::check(Shape::Hull { points }) {
+            Ok(hull) => (hull, None),
+            Err(e) => (boxed, Some(format!("{e}: the bodies collide as the box around the model"))),
+        },
+    }
+}
+
+/// Where the bodies start: the first row of `table` names the columns (any of
+/// [`START_COLUMNS`], in any order, others ignored), every further row is one body. A missing
+/// column or an empty cell is 0 (1 for scale). Returns the starts and a note, if any.
+pub fn starts(table: &Table) -> (Vec<Start>, Option<String>) {
+    let Some(header) = table.rows().first() else { return (Vec::new(), None) };
+    let index: Vec<Option<usize>> =
+        START_COLUMNS.iter().map(|name| header.iter().position(|h| h.trim() == *name)).collect();
+    if index.iter().all(Option::is_none) {
+        return (Vec::new(), Some(format!("the first row names the columns: {}", START_COLUMNS.join(", "))));
+    }
+    let mut note = None;
+    let mut out = Vec::new();
+    for (r, row) in table.rows().iter().enumerate().skip(1) {
+        if out.len() >= MAX_BODIES {
+            note = Some(format!("more than {MAX_BODIES} rows: the rest are left out"));
+            break;
+        }
+        let mut v = [0.0f32; 15];
+        v[6..9].fill(1.0);
+        let mut bad = false;
+        for (slot, col) in v.iter_mut().zip(&index) {
+            let Some(cell) = col.and_then(|c| row.get(c)).map(|c| c.trim()).filter(|c| !c.is_empty()) else {
+                continue;
+            };
+            match cell.parse::<f32>() {
+                Ok(x) if x.is_finite() => *slot = x,
+                _ => bad = true,
+            }
+        }
+        if bad {
+            note.get_or_insert_with(|| format!("row {r} holds a cell that is not a number: left out"));
+            continue;
+        }
+        out.push(Start {
+            translate: [v[0], v[1], v[2]],
+            rotate_degrees: [v[3], v[4], v[5]],
+            scale: [v[6], v[7], v[8]],
+            velocity: [v[9], v[10], v[11]],
+            spin: [v[12], v[13], v[14]],
+        });
+    }
+    (out, note)
+}

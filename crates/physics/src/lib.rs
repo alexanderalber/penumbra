@@ -1,14 +1,19 @@
-//! Rigid bodies: a [`World`] of copies of one shape that fall, collide and come to rest, on a
-//! floor and on static triangle meshes. Space is penumbra's: metres, z up. Rotations cross as
-//! degrees about x, then y, then z, the order `geo.transform` and `geo.instance` apply them in.
+//! Rigid bodies: a [`World`] of groups of bodies that fall, collide and come to rest, on a floor
+//! and on static triangle meshes. A group is copies of one [`Shape`] with one [`Material`];
+//! bodies of every group collide with each other. Space is penumbra's: metres, z up. Rotations
+//! cross as degrees about x, then y, then z, the order `geo.transform` and `geo.instance` apply
+//! them in.
 //!
 //! The solver is rapier3d. Everything that reaches it is checked here first: numbers must be
 //! finite, triangles must name vertices that exist, counts stay under the limits below.
 
 use rapier3d::prelude::*;
 
-/// Most bodies a world holds.
+/// Most bodies a world holds, over all its groups.
 pub const MAX_BODIES: usize = 4000;
+
+/// Most groups a world holds; a group is named by a number below this.
+pub const MAX_GROUPS: usize = 64;
 
 /// Most triangles of all obstacles together.
 pub const MAX_TRIANGLES: usize = 1_000_000;
@@ -29,9 +34,11 @@ pub struct Settings {
     pub gravity: [f32; 3],
     /// The height of a horizontal floor without end, or none.
     pub floor: Option<f32>,
-    /// 0 slides like ice, 1 grips like rubber.
+    /// Of the floor and the obstacles: 0 slides like ice, 1 grips like rubber. Where a body
+    /// touches them, the mean of this and the body's own friction counts.
     pub friction: f32,
-    /// How much of its speed a body keeps when it bounces: 0 none, 1 all.
+    /// Of the floor and the obstacles: how much of its speed a body keeps when it bounces off
+    /// them, 0 none, 1 all. The larger of this and the body's own bounce counts.
     pub bounce: f32,
     /// How fast bodies lose speed on their own, per second.
     pub damping: f32,
@@ -67,7 +74,42 @@ impl Settings {
     }
 }
 
-/// The shape every body of a world collides as, at scale 1, in the body's own space.
+/// What the bodies of a group are made of.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Material {
+    /// 0 slides like ice, 1 grips like rubber. Where two surfaces touch, the mean of both counts.
+    pub friction: f32,
+    /// How much of its speed a body keeps when it bounces: 0 none, 1 all. Where two surfaces
+    /// touch, the larger of both counts.
+    pub bounce: f32,
+    /// Weight per volume. Only the ratio between groups shows: the heavier body pushes the
+    /// lighter one aside.
+    pub density: f32,
+}
+
+impl Default for Material {
+    fn default() -> Self {
+        Self { friction: 0.5, bounce: 0.0, density: 1.0 }
+    }
+}
+
+/// The lightest and the heaviest a material may be.
+pub const DENSITY_RANGE: [f32; 2] = [1e-3, 1e4];
+
+impl Material {
+    /// The same material with every number finite and inside what the solver takes.
+    fn checked(self) -> Self {
+        let n = |v: f32, lo: f32, hi: f32, or: f32| if v.is_finite() { v.clamp(lo, hi) } else { or };
+        let [light, heavy] = DENSITY_RANGE;
+        Self {
+            friction: n(self.friction, 0.0, 10.0, 0.0),
+            bounce: n(self.bounce, 0.0, 1.0, 0.0),
+            density: n(self.density, light, heavy, 1.0),
+        }
+    }
+}
+
+/// The shape every body of a group collides as, at scale 1, in the body's own space.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Shape {
     Box {
@@ -123,73 +165,145 @@ pub struct Obstacle {
     pub triangles: Vec<[u32; 3]>,
 }
 
-pub struct World {
-    world: PhysicsWorld,
+/// One body of a group.
+struct Body {
+    body: RigidBodyHandle,
+    collider: ColliderHandle,
+    scale: [f32; 3],
+}
+
+/// Copies of one shape with one material.
+struct Group {
     shape: Shape,
-    settings: Settings,
-    bodies: Vec<(RigidBodyHandle, ColliderHandle, [f32; 3])>,
-    floor: Option<ColliderHandle>,
-    obstacles: Vec<ColliderHandle>,
+    material: Material,
+    bodies: Vec<Body>,
     /// The hull per scale, since a body's scale is part of its collision shape.
     hulls: Vec<([f32; 3], SharedShape)>,
 }
 
+pub struct World {
+    world: PhysicsWorld,
+    settings: Settings,
+    /// By the group's number; a number without a group holds none.
+    groups: Vec<Option<Group>>,
+    /// Bodies of all groups together.
+    count: usize,
+    floor: Option<ColliderHandle>,
+    obstacles: Vec<ColliderHandle>,
+}
+
 impl World {
-    /// An empty world whose bodies will collide as `shape`.
-    pub fn new(shape: Shape, settings: Settings) -> Result<Self, String> {
-        let shape = checked_shape(shape)?;
+    /// A world without bodies.
+    pub fn new(settings: Settings) -> Self {
         let settings = settings.checked();
         let mut world = PhysicsWorld::new();
         world.gravity = vector(settings.gravity);
-        let mut out = Self {
-            world,
-            shape,
-            settings,
-            bodies: Vec::new(),
-            floor: None,
-            obstacles: Vec::new(),
-            hulls: Vec::new(),
-        };
+        let mut out =
+            Self { world, settings, groups: Vec::new(), count: 0, floor: None, obstacles: Vec::new() };
         out.put_floor();
-        Ok(out)
+        out
     }
 
     pub fn settings(&self) -> Settings {
         self.settings
     }
 
-    pub fn shape(&self) -> &Shape {
-        &self.shape
-    }
-
+    /// Bodies of all groups together.
     pub fn len(&self) -> usize {
-        self.bodies.len()
+        self.count
     }
 
     pub fn is_empty(&self) -> bool {
-        self.bodies.is_empty()
+        self.count == 0
     }
 
-    /// Adds a body. An error leaves the world as it was.
-    pub fn add(&mut self, start: &Start) -> Result<(), String> {
-        if self.bodies.len() >= MAX_BODIES {
+    pub fn has_group(&self, group: usize) -> bool {
+        self.group(group).is_some()
+    }
+
+    /// Bodies of one group; 0 for a group that does not exist.
+    pub fn group_len(&self, group: usize) -> usize {
+        self.group(group).map_or(0, |g| g.bodies.len())
+    }
+
+    /// Makes `group` an empty group of bodies that collide as `shape` and are made of
+    /// `material`. Bodies the group held leave the world. An error leaves the world as it was.
+    pub fn set_group(&mut self, group: usize, shape: Shape, material: Material) -> Result<(), String> {
+        if group >= MAX_GROUPS {
+            return Err(format!("a world holds {MAX_GROUPS} groups at most"));
+        }
+        let shape = check(shape)?;
+        self.remove_group(group);
+        if self.groups.len() <= group {
+            self.groups.resize_with(group + 1, || None);
+        }
+        if let Some(slot) = self.groups.get_mut(group) {
+            *slot =
+                Some(Group { shape, material: material.checked(), bodies: Vec::new(), hulls: Vec::new() });
+        }
+        Ok(())
+    }
+
+    /// Takes `group` and its bodies out of the world. Bodies that rested on them fall on.
+    pub fn remove_group(&mut self, group: usize) {
+        let Some(old) = self.groups.get_mut(group).and_then(Option::take) else { return };
+        self.count = self.count.saturating_sub(old.bodies.len());
+        for body in &old.bodies {
+            self.world.remove_body(body.body);
+        }
+        if !old.bodies.is_empty() {
+            self.world.wake_up_all(true);
+        }
+    }
+
+    /// Takes over `material` for the bodies of `group` that exist and those to come.
+    pub fn set_material(&mut self, group: usize, material: Material) {
+        let material = material.checked();
+        let Some(g) = self.groups.get_mut(group).and_then(Option::as_mut) else { return };
+        if g.material == material {
+            return;
+        }
+        g.material = material;
+        for body in &g.bodies {
+            if let Some(collider) = self.world.colliders.get_mut(body.collider) {
+                collider.set_friction(material.friction);
+                collider.set_restitution(material.bounce);
+                collider.set_density(material.density);
+                refresh(collider);
+            }
+        }
+        // A body at rest on a slope must slide when it loses its grip.
+        self.world.wake_up_all(true);
+    }
+
+    /// Adds a body to `group`. An error leaves the world as it was.
+    pub fn add(&mut self, group: usize, start: &Start) -> Result<(), String> {
+        if self.count >= MAX_BODIES {
             return Err(format!("more than {MAX_BODIES} bodies"));
         }
         let all = [start.translate, start.rotate_degrees, start.scale, start.velocity, start.spin];
         if all.iter().flatten().any(|v| !v.is_finite()) {
             return Err("a body's numbers must be finite".into());
         }
+        let Some(g) = self.groups.get_mut(group).and_then(Option::as_mut) else {
+            return Err(format!("there is no group {group}"));
+        };
         let scale = start.scale.map(|s| s.abs().max(MIN_SCALE));
-        let collider =
-            self.collider(scale)?.friction(self.settings.friction).restitution(self.settings.bounce);
+        let collider = g
+            .collider(scale)?
+            .friction(g.material.friction)
+            .restitution(g.material.bounce)
+            .restitution_combine_rule(CoefficientCombineRule::Max)
+            .density(g.material.density);
         let body = RigidBodyBuilder::dynamic()
             .pose(Pose::from_parts(vector(start.translate), rotation(start.rotate_degrees)))
             .linvel(vector(start.velocity))
             .angvel(vector(start.spin.map(f32::to_radians)))
             .linear_damping(self.settings.damping)
             .angular_damping(self.settings.spin_damping);
-        let (b, c) = self.world.insert(body, collider);
-        self.bodies.push((b, c, scale));
+        let (body, collider) = self.world.insert(body, collider);
+        g.bodies.push(Body { body, collider, scale });
+        self.count += 1;
         Ok(())
     }
 
@@ -227,7 +341,7 @@ impl World {
                 Err(_) => ColliderBuilder::trimesh(vertices, o.triangles)
                     .map_err(|e| format!("an obstacle cannot be collided with: {e}"))?,
             };
-            let collider = collider.friction(self.settings.friction).restitution(self.settings.bounce);
+            let collider = self.ground(collider);
             self.obstacles.push(self.world.insert_collider(collider, None));
         }
         Ok(())
@@ -244,15 +358,16 @@ impl World {
         if old.floor != settings.floor {
             self.put_floor();
         }
-        let surface = old.friction != settings.friction || old.bounce != settings.bounce;
-        let slowing = old.damping != settings.damping || old.spin_damping != settings.spin_damping;
-        if surface {
-            for (_, collider) in self.world.all_colliders_mut() {
-                collider.set_friction(settings.friction);
-                collider.set_restitution(settings.bounce);
+        if old.friction != settings.friction || old.bounce != settings.bounce {
+            for handle in self.floor.iter().chain(&self.obstacles) {
+                if let Some(collider) = self.world.colliders.get_mut(*handle) {
+                    collider.set_friction(settings.friction);
+                    collider.set_restitution(settings.bounce);
+                    refresh(collider);
+                }
             }
         }
-        if slowing {
+        if old.damping != settings.damping || old.spin_damping != settings.spin_damping {
             for (_, body) in self.world.rigid_bodies_mut() {
                 body.set_linear_damping(settings.damping);
                 body.set_angular_damping(settings.spin_damping);
@@ -275,19 +390,20 @@ impl World {
         }
     }
 
-    /// Where every body is, in the order they were added.
-    pub fn placements(&self) -> Vec<Placement> {
-        self.bodies
+    /// Where every body of `group` is, in the order they were added.
+    pub fn placements(&self, group: usize) -> Vec<Placement> {
+        let Some(g) = self.group(group) else { return Vec::new() };
+        g.bodies
             .iter()
-            .map(|(handle, _, scale)| {
-                let found = self.world.bodies.get(*handle).map(|b| (b.translation(), *b.rotation()));
+            .map(|b| {
+                let found = self.world.bodies.get(b.body).map(|r| (r.translation(), *r.rotation()));
                 let (t, r) = found.unwrap_or((Vector::ZERO, Rotation::IDENTITY));
                 let q = [r.x, r.y, r.z, r.w].map(f64::from);
                 let finite = |v: f32| if v.is_finite() { f64::from(v) } else { 0.0 };
                 Placement {
                     translate: [finite(t.x), finite(t.y), finite(t.z)],
                     rotate_degrees: degrees_of(q),
-                    scale: *scale,
+                    scale: b.scale,
                 }
             })
             .collect()
@@ -295,8 +411,20 @@ impl World {
 
     /// How many bodies do not move at the moment (the solver lets resting bodies sleep).
     pub fn asleep(&self) -> usize {
-        let sleeping = |h: &RigidBodyHandle| self.world.bodies.get(*h).is_some_and(RigidBody::is_sleeping);
-        self.bodies.iter().filter(|(h, _, _)| sleeping(h)).count()
+        let sleeping = |b: &&Body| self.world.bodies.get(b.body).is_some_and(RigidBody::is_sleeping);
+        self.groups.iter().flatten().flat_map(|g| &g.bodies).filter(sleeping).count()
+    }
+
+    fn group(&self, group: usize) -> Option<&Group> {
+        self.groups.get(group).and_then(Option::as_ref)
+    }
+
+    /// `collider` with the surface of the floor and the obstacles.
+    fn ground(&self, collider: ColliderBuilder) -> ColliderBuilder {
+        collider
+            .friction(self.settings.friction)
+            .restitution(self.settings.bounce)
+            .restitution_combine_rule(CoefficientCombineRule::Max)
     }
 
     fn put_floor(&mut self) {
@@ -304,14 +432,15 @@ impl World {
             self.world.remove_collider(handle);
         }
         if let Some(z) = self.settings.floor {
-            let collider = ColliderBuilder::new(SharedShape::halfspace(Vector::Z))
-                .translation(Vector::new(0.0, 0.0, z))
-                .friction(self.settings.friction)
-                .restitution(self.settings.bounce);
+            let collider = self
+                .ground(ColliderBuilder::new(SharedShape::halfspace(Vector::Z)))
+                .translation(Vector::new(0.0, 0.0, z));
             self.floor = Some(self.world.insert_collider(collider, None));
         }
     }
+}
 
+impl Group {
     /// The collision shape at `scale`.
     fn collider(&mut self, scale: [f32; 3]) -> Result<ColliderBuilder, String> {
         let [sx, sy, sz] = scale;
@@ -335,6 +464,14 @@ impl World {
             }
         }
     }
+}
+
+/// Makes the solver work out the contacts of `collider` anew. While two bodies barely move
+/// against each other it keeps their contact as it was, friction and bounce included, so a new
+/// surface would not reach a body at rest.
+fn refresh(collider: &mut Collider) {
+    let shape = collider.shared_shape().clone();
+    collider.set_shape(shape);
 }
 
 fn vector(v: [f32; 3]) -> Vector {
@@ -393,7 +530,9 @@ fn hull(points: &[Vector]) -> Result<SharedShape, String> {
     }
 }
 
-fn checked_shape(shape: Shape) -> Result<Shape, String> {
+/// `shape` as a world takes it: sizes away from zero, a hull thinned to [`MAX_HULL_POINTS`].
+/// An error for numbers that are not finite and for a hull that encloses no room.
+pub fn check(shape: Shape) -> Result<Shape, String> {
     let finite = |v: &[f32]| v.iter().all(|x| x.is_finite());
     match shape {
         Shape::Box { center, half } => {
@@ -445,26 +584,183 @@ mod tests {
         }
     }
 
+    fn ball() -> Shape {
+        Shape::Sphere { center: [0.0; 3], radius: 0.5 }
+    }
+
+    /// A world whose group 0 collides as `shape`, of the default material.
+    fn world_of(shape: Shape, settings: Settings) -> World {
+        let mut world = World::new(settings);
+        world.set_group(0, shape, Material::default()).unwrap();
+        world
+    }
+
+    #[test]
+    fn a_ball_and_a_box_of_two_groups_collide() {
+        let mut world = World::new(Settings::default());
+        world.set_group(0, unit_box(), Material::default()).unwrap();
+        world.set_group(3, ball(), Material::default()).unwrap();
+        assert!(world.has_group(0) && world.has_group(3) && !world.has_group(1));
+        world.add(0, &at(0.5)).unwrap();
+        world.add(3, &at(4.0)).unwrap();
+        // The ball lands on the box, a little off its middle, and may roll off: it never
+        // passes through. On the box its centre is at 1.5, on the floor beside it at 0.5.
+        let mut lowest = f64::MAX;
+        for _ in 0..360 {
+            world.step(DT, 1);
+            let (b, s) = (world.placements(0)[0].translate, world.placements(3)[0].translate);
+            let apart = (0..3).map(|k| (b[k] - s[k]).powi(2)).sum::<f64>().sqrt();
+            lowest = lowest.min(apart);
+        }
+        assert!(lowest > 0.95, "the ball came as near as {lowest} to the middle of the box");
+        assert!((world.placements(3)[0].translate[2] - 1.5).abs() < 0.03, "it rests on the box");
+        assert_eq!((world.len(), world.group_len(0), world.group_len(3), world.group_len(9)), (2, 1, 1, 0));
+        // A group that leaves takes its bodies along: the ball falls on to the floor.
+        world.remove_group(0);
+        assert_eq!((world.len(), world.placements(0).len()), (1, 0));
+        run(&mut world, 3.0);
+        assert!((world.placements(3)[0].translate[2] - 0.5).abs() < 0.03);
+        // A group set again starts empty.
+        world.add(3, &at(9.0)).unwrap();
+        world.set_group(3, unit_box(), Material::default()).unwrap();
+        assert!(world.is_empty());
+    }
+
+    /// How far a box slides in two seconds down a slab tilted by 30 degrees.
+    fn slide(material: Material, change: Option<Material>) -> f64 {
+        let mut world = World::new(Settings { floor: None, ..Settings::default() });
+        let (s, c) = 30f32.to_radians().sin_cos();
+        // A slab through the origin, falling towards +x.
+        let corner = |x: f32, y: f32| [x * c, y, -x * s];
+        world
+            .set_obstacles(vec![Obstacle {
+                vertices: vec![corner(-5.0, -5.0), corner(40.0, -5.0), corner(40.0, 5.0), corner(-5.0, 5.0)],
+                triangles: vec![[0, 1, 2], [0, 2, 3]],
+            }])
+            .unwrap();
+        world.set_group(0, unit_box(), material).unwrap();
+        let start = Start {
+            translate: [0.5 * s, 0.0, 0.5 * c + 0.01],
+            rotate_degrees: [0.0, 30.0, 0.0],
+            ..Start::default()
+        };
+        world.add(0, &start).unwrap();
+        run(&mut world, 1.0);
+        if let Some(m) = change {
+            world.set_material(0, m);
+        }
+        run(&mut world, 1.0);
+        world.placements(0)[0].translate[0] - f64::from(start.translate[0])
+    }
+
+    #[test]
+    fn each_group_has_its_own_grip() {
+        // The slab has friction 0.5; with the body's own the mean is 0.25 for ice and 1.25 for
+        // rubber. tan(30 degrees) is 0.58: ice slides, rubber holds.
+        let ice = Material { friction: 0.0, ..Material::default() };
+        let rubber = Material { friction: 2.0, ..Material::default() };
+        let (slid, held) = (slide(ice, None), slide(rubber, None));
+        assert!(slid > 2.0, "ice slid {slid} m");
+        assert!(held.abs() < 0.05, "rubber slid {held} m");
+        // A material set while the body rests reaches it.
+        let late = slide(rubber, Some(ice));
+        assert!(late > 0.5 && late < slid, "rubber turned ice slid {late} m");
+    }
+
+    #[test]
+    fn a_new_surface_of_the_ground_reaches_a_body_that_rests() {
+        let mut world = world_of(unit_box(), Settings { gravity: [3.0, 0.0, -9.81], ..Settings::default() });
+        world.add(0, &at(0.5)).unwrap();
+        // Pulled sideways by 3 against a grip of 0.5 times 9.81: it holds.
+        run(&mut world, 2.0);
+        assert!(world.placements(0)[0].translate[0].abs() < 0.02);
+        // The mean of the body's 0.5 and an icy floor is 0.25: now it slides.
+        world.apply(Settings { gravity: [3.0, 0.0, -9.81], friction: 0.0, ..Settings::default() });
+        run(&mut world, 2.0);
+        assert!(world.placements(0)[0].translate[0] > 0.5, "{:?}", world.placements(0)[0].translate);
+    }
+
+    #[test]
+    fn the_bouncier_of_two_surfaces_decides() {
+        let top = |ball_bounce: f32, floor_bounce: f32| {
+            let mut world = World::new(Settings { bounce: floor_bounce, ..Settings::default() });
+            world.set_group(0, ball(), Material { bounce: ball_bounce, ..Material::default() }).unwrap();
+            world.add(0, &at(3.0)).unwrap();
+            let (mut landed, mut top) = (false, 0.0f64);
+            for _ in 0..240 {
+                world.step(DT, 1);
+                let z = world.placements(0)[0].translate[2];
+                if z < 0.6 {
+                    landed = true;
+                } else if landed {
+                    top = top.max(z);
+                }
+            }
+            top
+        };
+        assert!(top(0.8, 0.0) > 1.5, "a rubber ball bounces on a dead floor");
+        assert!(top(0.0, 0.8) > 1.5, "a dead ball bounces on a rubber floor");
+        assert_eq!(top(0.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn the_heavier_body_pushes_the_lighter_one_aside() {
+        // Two balls meet head on at the same speed, without gravity. Where they are afterwards
+        // tells which one won.
+        let after = |left: f32, right: f32| {
+            let mut world = World::new(Settings { gravity: [0.0; 3], floor: None, ..Settings::default() });
+            world.set_group(0, ball(), Material { density: left, ..Material::default() }).unwrap();
+            world.set_group(1, ball(), Material { density: right, ..Material::default() }).unwrap();
+            let thrown = |x: f32, v: f32| Start {
+                translate: [x, 0.0, 0.0],
+                velocity: [v, 0.0, 0.0],
+                ..Start::default()
+            };
+            world.add(0, &thrown(-2.0, 2.0)).unwrap();
+            world.add(1, &thrown(2.0, -2.0)).unwrap();
+            run(&mut world, 2.0);
+            (world.placements(0)[0].translate[0], world.placements(1)[0].translate[0])
+        };
+        let (a, b) = after(1.0, 1.0);
+        assert!((a + b).abs() < 0.05, "equal balls end mirrored: {a} {b}");
+        let (a, b) = after(20.0, 1.0);
+        assert!(a > 0.0 && b > a, "the heavy ball went on to the right: {a} {b}");
+        // Density set while the bodies move changes what they weigh.
+        let mut world = World::new(Settings { gravity: [0.0; 3], floor: None, ..Settings::default() });
+        world.set_group(0, ball(), Material::default()).unwrap();
+        world.set_group(1, ball(), Material::default()).unwrap();
+        world
+            .add(0, &Start { translate: [-2.0, 0.0, 0.0], velocity: [2.0, 0.0, 0.0], ..Start::default() })
+            .unwrap();
+        world
+            .add(1, &Start { translate: [2.0, 0.0, 0.0], velocity: [-2.0, 0.0, 0.0], ..Start::default() })
+            .unwrap();
+        world.step(DT, 1);
+        world.set_material(0, Material { density: 20.0, ..Material::default() });
+        run(&mut world, 2.0);
+        assert!(world.placements(0)[0].translate[0] > 0.0, "{:?}", world.placements(0)[0].translate);
+    }
+
     #[test]
     fn a_box_falls_onto_the_floor_and_rests_on_it() {
-        let mut world = World::new(unit_box(), Settings::default()).unwrap();
-        world.add(&at(3.0)).unwrap();
+        let mut world = world_of(unit_box(), Settings::default());
+        world.add(0, &at(3.0)).unwrap();
         world.step(DT, 1);
-        let early = world.placements()[0].translate[2];
+        let early = world.placements(0)[0].translate[2];
         assert!(early < 3.0 && early > 2.9, "one step in: {early}");
         run(&mut world, 4.0);
-        let p = world.placements()[0];
+        let p = world.placements(0)[0];
         assert!((p.translate[2] - 0.5).abs() < 0.02, "rests at {}", p.translate[2]);
         assert_eq!(world.asleep(), 1);
     }
 
     #[test]
     fn without_a_floor_a_body_keeps_falling() {
-        let mut world = World::new(unit_box(), Settings { floor: None, ..Settings::default() }).unwrap();
-        world.add(&at(3.0)).unwrap();
+        let mut world = world_of(unit_box(), Settings { floor: None, ..Settings::default() });
+        world.add(0, &at(3.0)).unwrap();
         run(&mut world, 2.0);
         // 3 - 9.81 * 2^2 / 2 = -16.6
-        let z = world.placements()[0].translate[2];
+        let z = world.placements(0)[0].translate[2];
         assert!((z + 16.6).abs() < 0.5, "{z}");
     }
 
@@ -472,13 +768,13 @@ mod tests {
     fn a_ball_with_bounce_comes_back_up_and_one_without_stays_down() {
         let ball = Shape::Sphere { center: [0.0; 3], radius: 0.5 };
         let top_after_landing = |bounce: f32| {
-            let mut world = World::new(ball.clone(), Settings { bounce, ..Settings::default() }).unwrap();
-            world.add(&at(3.0)).unwrap();
+            let mut world = world_of(ball.clone(), Settings { bounce, ..Settings::default() });
+            world.add(0, &at(3.0)).unwrap();
             let mut landed = false;
             let mut top = 0.0f64;
             for _ in 0..240 {
                 world.step(DT, 1);
-                let z = world.placements()[0].translate[2];
+                let z = world.placements(0)[0].translate[2];
                 if z < 0.6 {
                     landed = true;
                 } else if landed {
@@ -494,19 +790,19 @@ mod tests {
 
     #[test]
     fn a_body_lands_on_a_mesh_and_falls_on_when_the_mesh_goes() {
-        let mut world = World::new(unit_box(), Settings { floor: None, ..Settings::default() }).unwrap();
+        let mut world = world_of(unit_box(), Settings { floor: None, ..Settings::default() });
         let table = || Obstacle {
             vertices: vec![[-2.0, -2.0, 1.0], [2.0, -2.0, 1.0], [2.0, 2.0, 1.0], [-2.0, 2.0, 1.0]],
             triangles: vec![[0, 1, 2], [0, 2, 3]],
         };
         world.set_obstacles(vec![table()]).unwrap();
-        world.add(&at(3.0)).unwrap();
+        world.add(0, &at(3.0)).unwrap();
         run(&mut world, 4.0);
-        let z = world.placements()[0].translate[2];
+        let z = world.placements(0)[0].translate[2];
         assert!((z - 1.5).abs() < 0.03, "rests at {z}");
         world.set_obstacles(Vec::new()).unwrap();
         run(&mut world, 1.0);
-        assert!(world.placements()[0].translate[2] < 0.0);
+        assert!(world.placements(0)[0].translate[2] < 0.0);
     }
 
     #[test]
@@ -514,71 +810,91 @@ mod tests {
         // A pyramid: base 2 x 2 at z = 0, tip at z = 1.
         let points =
             vec![[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        let mut world = World::new(Shape::Hull { points }, Settings::default()).unwrap();
-        world.add(&at(2.0)).unwrap();
+        let mut world = world_of(Shape::Hull { points }, Settings::default());
+        world.add(0, &at(2.0)).unwrap();
         world
-            .add(&Start {
-                translate: [10.0, 0.0, 2.0],
-                rotate_degrees: [180.0, 0.0, 0.0],
-                ..Start::default()
-            })
+            .add(
+                0,
+                &Start { translate: [10.0, 0.0, 2.0], rotate_degrees: [180.0, 0.0, 0.0], ..Start::default() },
+            )
             .unwrap();
         run(&mut world, 5.0);
-        let p = world.placements();
+        let p = world.placements(0);
         assert!(p[0].translate[2].abs() < 0.03, "the base is on the floor: {}", p[0].translate[2]);
         // Dropped tip first it cannot stay: it ends on a side or its base, origin above the floor
         // by less than the pyramid is wide.
         assert!(p[1].translate[2] > -0.03 && p[1].translate[2] < 1.5, "{}", p[1].translate[2]);
         let big = [2.0; 3];
-        let mut world = World::new(unit_box(), Settings::default()).unwrap();
-        world.add(&Start { translate: [0.0, 0.0, 4.0], scale: big, ..Start::default() }).unwrap();
+        let mut world = world_of(unit_box(), Settings::default());
+        world.add(0, &Start { translate: [0.0, 0.0, 4.0], scale: big, ..Start::default() }).unwrap();
         run(&mut world, 4.0);
-        let p = world.placements()[0];
+        let p = world.placements(0)[0];
         assert!((p.translate[2] - 1.0).abs() < 0.03, "{}", p.translate[2]);
         assert_eq!(p.scale, big);
     }
 
     #[test]
     fn settings_reach_bodies_that_rest() {
-        let mut world = World::new(unit_box(), Settings::default()).unwrap();
-        world.add(&at(1.0)).unwrap();
+        let mut world = world_of(unit_box(), Settings::default());
+        world.add(0, &at(1.0)).unwrap();
         run(&mut world, 3.0);
         assert_eq!(world.asleep(), 1);
         world.apply(Settings { gravity: [0.0, 0.0, 9.81], ..Settings::default() });
         run(&mut world, 1.0);
-        assert!(world.placements()[0].translate[2] > 2.0);
+        assert!(world.placements(0)[0].translate[2] > 2.0);
     }
 
     #[test]
     fn bad_input_is_an_error_and_never_reaches_the_solver() {
-        let mut world = World::new(unit_box(), Settings::default()).unwrap();
-        assert!(world.add(&at(f32::NAN)).is_err());
-        assert!(world.add(&Start { velocity: [f32::INFINITY, 0.0, 0.0], ..Start::default() }).is_err());
+        let mut world = world_of(unit_box(), Settings::default());
+        assert!(world.add(0, &at(f32::NAN)).is_err());
+        assert!(world.add(0, &Start { velocity: [f32::INFINITY, 0.0, 0.0], ..Start::default() }).is_err());
         assert!(world.is_empty());
         let bad_index = Obstacle { vertices: vec![[0.0; 3]; 3], triangles: vec![[0, 1, 7]] };
         assert!(world.set_obstacles(vec![bad_index]).is_err());
         let bad_vertex = Obstacle { vertices: vec![[f32::NAN; 3]; 3], triangles: vec![[0, 1, 2]] };
         assert!(world.set_obstacles(vec![bad_vertex]).is_err());
-        assert!(World::new(Shape::Hull { points: vec![[0.0; 3]; 8] }, Settings::default()).is_err());
-        assert!(World::new(Shape::Hull { points: vec![[1.0, 0.0, 0.0]] }, Settings::default()).is_err());
-        // Settings that are not numbers fall back instead of failing.
+        assert!(check(Shape::Hull { points: vec![[0.0; 3]; 8] }).is_err());
+        assert!(check(Shape::Hull { points: vec![[1.0, 0.0, 0.0]] }).is_err());
+        assert!(check(Shape::Sphere { center: [0.0; 3], radius: f32::NAN }).is_err());
+        // A shape that fails leaves the group as it was; so does a group beyond the last.
+        world.add(0, &at(1.0)).unwrap();
+        assert!(world.set_group(0, Shape::Hull { points: vec![[0.0; 3]; 8] }, Material::default()).is_err());
+        assert_eq!(world.group_len(0), 1);
+        assert!(world.set_group(MAX_GROUPS, unit_box(), Material::default()).is_err());
+        assert!(world.add(MAX_GROUPS, &at(1.0)).is_err());
+        assert!(world.add(7, &at(1.0)).is_err(), "no such group");
+        world.set_material(7, Material::default());
+        world.remove_group(usize::MAX);
+        assert_eq!((world.len(), world.placements(7).len()), (1, 0));
+        // Settings and materials that are not numbers fall back instead of failing.
         let odd = Settings { gravity: [f32::NAN; 3], friction: -3.0, bounce: 9.0, ..Settings::default() };
-        let mut world = World::new(unit_box(), odd).unwrap();
-        world.add(&at(1.0)).unwrap();
+        let mut world = World::new(odd);
+        let strange = Material { friction: f32::NAN, bounce: -1.0, density: 0.0 };
+        world.set_group(0, unit_box(), strange).unwrap();
+        world.add(0, &at(1.0)).unwrap();
+        world.set_material(0, Material { density: f32::INFINITY, ..strange });
         world.step(f32::NAN, 1);
         world.step(-1.0, 1);
         world.step(DT, 100);
-        assert!(world.placements()[0].translate.iter().all(|v| v.is_finite()));
+        assert!(world.placements(0)[0].translate.iter().all(|v| v.is_finite()));
     }
 
     #[test]
     fn a_world_is_full_at_the_limit() {
-        let mut world = World::new(unit_box(), Settings::default()).unwrap();
+        // The limit counts the bodies of every group together.
+        let mut world = world_of(unit_box(), Settings::default());
+        world.set_group(1, ball(), Material::default()).unwrap();
         for k in 0..MAX_BODIES {
-            world.add(&at(k as f32 * 2.0)).unwrap();
+            world.add(k % 2, &at(k as f32 * 2.0)).unwrap();
         }
-        assert!(world.add(&at(0.0)).is_err());
+        assert!(world.add(0, &at(0.0)).is_err());
+        assert!(world.add(1, &at(0.0)).is_err());
         assert_eq!(world.len(), MAX_BODIES);
+        // A group that leaves makes room again.
+        world.remove_group(1);
+        assert_eq!(world.len(), MAX_BODIES / 2);
+        world.add(0, &at(0.0)).unwrap();
     }
 
     /// The matrix of degrees about x, then y, then z.
@@ -620,11 +936,11 @@ mod tests {
 
     #[test]
     fn a_resting_body_keeps_its_place_to_the_digit() {
-        let mut world = World::new(unit_box(), Settings::default()).unwrap();
-        world.add(&at(0.6)).unwrap();
+        let mut world = world_of(unit_box(), Settings::default());
+        world.add(0, &at(0.6)).unwrap();
         run(&mut world, 3.0);
-        let a = world.placements();
+        let a = world.placements(0);
         run(&mut world, 1.0);
-        assert_eq!(a, world.placements());
+        assert_eq!(a, world.placements(0));
     }
 }

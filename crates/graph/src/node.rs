@@ -55,6 +55,10 @@ pub enum DataKind {
     /// A volume: a grid of cells filling a box in space, as a 3D simulation makes it
     /// (`vol.smoke`) and a ray-march draws it (`tex.render_volume`).
     Vol,
+    /// One group of rigid bodies: where each starts, the model they are drawn as, what they
+    /// collide as and what they are made of (`physics.bodies`), for a solver to move
+    /// (`physics.rigid_bodies`).
+    Bodies,
 }
 
 /// One cooked output. The payload type belongs to the crate that implements the family (a GPU

@@ -4,7 +4,7 @@
 
 use std::time::Instant;
 
-use penumbra_physics::{Settings, Shape, Start, World};
+use penumbra_physics::{Material, Settings, Shape, Start, World};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -24,10 +24,10 @@ fn main() {
         },
         _ => Shape::Box { center: [0.0; 3], half: [0.5; 3] },
     };
-    let mut world = match World::new(shape, Settings::default()) {
-        Ok(w) => w,
-        Err(e) => return eprintln!("{e}"),
-    };
+    let mut world = World::new(Settings::default());
+    if let Err(e) = world.set_group(0, shape, Material::default()) {
+        return eprintln!("{e}");
+    }
     // A column ten bodies wide and deep, so they end in one heap.
     for k in 0..count {
         let (x, y, z) = (k % 10, (k / 10) % 10, k / 100);
@@ -36,7 +36,7 @@ fn main() {
             rotate_degrees: [(k * 37 % 90) as f32, (k * 53 % 90) as f32, 0.0],
             ..Start::default()
         };
-        if let Err(e) = world.add(&start) {
+        if let Err(e) = world.add(0, &start) {
             return eprintln!("{e}");
         }
     }
