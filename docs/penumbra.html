@@ -6336,7 +6336,7 @@ def cook(cx):
 <h4>Inputs</h4>
 <ul>
 <li><code>bodies0 .. bodies63</code> <span class="kind">bodies</span>: A group of bodies from physics.bodies. The groups of all these inputs collide with each other, 4000 bodies in all at most. A dynamic group whose table or shape changes starts over; the others go on. A driven or fixed group follows its table Any number, up to 64: each one wired adds a free slot below it.</li>
-<li><code>obstacles</code> <span class="kind">geo</span>: Geometry that stands still and that the bodies land on and bounce off, hollows and all. It may change while the bodies move; a moving obstacle does not push them along</li>
+<li><code>obstacles</code> <span class="kind">geo</span>: Geometry that the bodies land on and bounce off, hollows and all. An obstacle that is moved or turned, by a geo.transform with a bound param for one, carries along the bodies on it and pushes those in its way. One that changes its size or its mesh jumps and pushes nothing</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -6358,7 +6358,7 @@ def cook(cx):
 <tr><td><code>damping</code></td><td>float</td><td><code>0</code></td><td>0 to 5 (soft, held within 0 to 1000)</td><td>Slows every body down as thick air would: the share of its speed it loses per second</td></tr>
 <tr><td><code>spin_damping</code></td><td>float</td><td><code>0</code></td><td>0 to 5 (soft, held within 0 to 1000)</td><td>Slows every body's turning down: the share of its spin it loses per second</td></tr>
 <tr><td><code>substeps</code></td><td>int</td><td><code>1</code></td><td>1 to 8</td><td>Solver steps per frame: raise it when fast bodies pass through thin things or a tall stack wobbles. Each step costs the same again</td></tr>
-<tr><td><code>jump</code></td><td>float</td><td><code>0.5</code></td><td>0 to 5 m (soft, held within 0 to 1000000 m)</td><td>How far a driven body may move in one frame and still push what is in its way. A body whose row moves farther is put there at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. 0: driven bodies never push</td></tr>
+<tr><td><code>jump</code></td><td>float</td><td><code>0.5</code></td><td>0 to 5 m (soft, held within 0 to 1000000 m)</td><td>How far a driven body or an obstacle may move in one frame and still push what is in its way. Moved farther, it is put at its new place at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. 0: driven bodies and obstacles never push</td></tr>
 </tbody>
 </table>
 <div class="more">
@@ -6474,7 +6474,10 @@ def cook(cx):
 <p>With one group, <code>table</code> goes straight into <a class="ref" href="#geo.instance"><code>geo.instance</code></a>. With several groups <a class="ref" href="#geo.instance"><code>geo.instance</code></a> would draw one model for all of them: use <code>out</code> instead.</p>
 <h5 id="physics.rigid_bodies-obstacles">Obstacles</h5>
 <p>Wire any geometry into <code>obstacles</code>: a model from <a class="ref" href="#geo.file"><code>geo.file</code></a>, primitives placed by <a class="ref" href="#geo.transform"><code>geo.transform</code></a>, several joined by <a class="ref" href="#geo.merge"><code>geo.merge</code></a>. Bodies collide with its triangles, so they fall into a bowl and roll down a ramp. An obstacle is a thin shell with nothing inside. A fast or small body can pass through it: raise <code>substeps</code>, or make the bodies larger or slower.</p>
-<p>Obstacles may change while the bodies move, and bodies that rested on one fall on when it goes. A moving obstacle jumps from place to place and does not push bodies along. It can leave them stuck inside itself.</p>
+<p>Obstacles may change while the bodies move, and bodies that rested on one fall on when it goes.</p>
+<p><strong>Obstacles that move.</strong> An obstacle that is moved or turned pushes the bodies in its way and carries along those that lie on it. Put a <a class="ref" href="#geo.transform"><code>geo.transform</code></a> before <code>obstacles</code> and bind its <code>translate</code> or <code>rotate</code> to a channel: a wall shoves a pile across the floor, a turning bar bats balls away, a platform lifts what stands on it.</p>
+<p><strong>What still jumps.</strong> An obstacle whose size changes (<code>scale</code>, <code>uniform</code>) or whose mesh changes is built anew where it is now. It pushes nothing, and it can leave bodies stuck inside itself. So does an obstacle that moves farther than <code>jump</code> in one frame, 0.5 m at first. <code>jump</code> measures the way of the obstacle's own origin: a long bar turning fast about its middle never jumps, and its ends can pass small bodies without touching them. Raise <code>substeps</code> then.</p>
+<p>For moving things with a simple form, a <code>driven</code> group is the cheaper way: a box or a ball costs less than a mesh.</p>
 <p>Copies made by <a class="ref" href="#geo.tex_instance"><code>geo.tex_instance</code></a> are no obstacles, since their places exist on the GPU only.</p>
 <h5 id="physics.rigid_bodies-time">Time</h5>
 <p>The bodies move one step per show frame, as long as something shows the node's result. <code>speed</code> slows time down or holds it at 0. A frame that takes longer than a twentieth of a second counts as a twentieth, so the bodies slow down instead of jumping.</p>
