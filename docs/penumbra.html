@@ -5504,7 +5504,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-table">
 <h3>table</h3>
-<p class="kinds"><a href="#table.file">table.file</a> <a href="#table.null">table.null</a> <a href="#table.text">table.text</a></p>
+<p class="kinds"><a href="#table.file">table.file</a> <a href="#table.null">table.null</a> <a href="#table.rigid_bodies">table.rigid_bodies</a> <a href="#table.text">table.text</a></p>
 <details class="entry node" id="table.file"><summary><code class="name">table.file</code><span class="sum">A table from a text, TSV or CSV file; updates when the file changes</span></summary>
 <div class="body">
 <p>A table from a text, TSV or CSV file; updates when the file changes</p>
@@ -5535,6 +5535,89 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <ul>
 <li><code>out</code> <span class="kind">table</span></li>
 </ul>
+</div></details>
+<details class="entry node" id="table.rigid_bodies"><summary><code class="name">table.rigid_bodies</code><span class="sum">Rigid bodies that fall, collide and come to rest: a table places them at the start, the output says where they are now, for geo.instance</span></summary>
+<div class="body">
+<p>Rigid bodies that fall, collide and come to rest: a table places them at the start, the output says where they are now, for geo.instance</p>
+<p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>bodies</code> <span class="kind">table</span>: One row per body, at most 4000. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). A change puts every body back to its start</li>
+<li><code>shape</code> <span class="kind">geo</span>: The model the bodies collide as; wire the same model into geo.instance. A change puts every body back to its start</li>
+<li><code>obstacles</code> <span class="kind">geo</span>: Geometry that stands still and that the bodies land on and bounce off, hollows and all. It may change while the bodies move; a moving obstacle does not push them along</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">table</span>: One row per body, in the order of <code>bodies</code>: tx ty tz rx ry rz sx sy sz, the columns geo.instance reads</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>shape</code></td><td>hull | box | sphere</td><td><code>&quot;hull&quot;</code></td><td></td><td>What each body collides as, taken from the <code>shape</code> input. Without that input: a box of 1 m<ul><li><code>hull</code>: the model with its dents filled in, as if wrapped in foil</li><li><code>box</code>: the box around the model; faster, and stacks well</li><li><code>sphere</code>: a ball as wide as the model's longest side; the fastest, and it rolls</li></ul></td></tr>
+<tr><td><code>gravity</code></td><td>vec3</td><td><code>[0, 0, -9.81]</code></td><td>-20 to 20 (soft)</td><td>The pull on every body, in metres per second squared; z is up, so -9.81 in z is the earth's</td></tr>
+<tr><td><code>floor</code></td><td>bool</td><td><code>true</code></td><td></td><td>A level floor without end that the bodies land on</td></tr>
+<tr><td><code>floor_height</code></td><td>float</td><td><code>0</code></td><td>-5 to 5 m (soft, held within -10000 to 10000 m)</td><td>How high the floor lies, along z</td></tr>
+<tr><td><code>friction</code></td><td>float</td><td><code>0.5</code></td><td>0 to 2 (soft, held within 0 to 10)</td><td>How much surfaces grip: 0 slides like ice, 1 holds like rubber</td></tr>
+<tr><td><code>bounce</code></td><td>float</td><td><code>0</code></td><td>0 to 1</td><td>How much of its speed a body keeps when it hits something: 0 lands dead, 1 bounces for ever</td></tr>
+<tr><td><code>speed</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft, held within 0 to 16)</td><td>How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion</td></tr>
+<tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>Puts every body back where the table places it, every frame while on</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>damping</code></td><td>float</td><td><code>0</code></td><td>0 to 5 (soft, held within 0 to 1000)</td><td>Slows every body down as thick air would: the share of its speed it loses per second</td></tr>
+<tr><td><code>spin_damping</code></td><td>float</td><td><code>0</code></td><td>0 to 5 (soft, held within 0 to 1000)</td><td>Slows every body's turning down: the share of its spin it loses per second</td></tr>
+<tr><td><code>substeps</code></td><td>int</td><td><code>1</code></td><td>1 to 8</td><td>Solver steps per frame: raise it when fast bodies pass through thin things or a tall stack wobbles. Each step costs the same again</td></tr>
+</tbody>
+</table>
+<div class="more">
+<h5 id="table.rigid_bodies-a-pile-of-boxes-in-five-nodes">A pile of boxes in five nodes</h5>
+<ol>
+<li><a class="ref" href="#table.text"><code>table.text</code></a> with <code>format</code> set to <code>csv</code>: the first row names the columns, each further row is one body. <code>tx,ty,tz</code> and three rows <code>0,0,2</code>, <code>0.2,0,3.5</code>, <code>-0.1,0.1,5</code> drop three bodies from 2 m, 3.5 m and 5 m.
+</li>
+<li><a class="ref" href="#geo.primitive"><code>geo.primitive</code></a>, shape <code>box</code>: the model of a body.
+</li>
+<li><a class="ref" href="#table.rigid_bodies"><code>table.rigid_bodies</code></a>: the table into <code>bodies</code>, the model into <code>shape</code>.
+</li>
+<li><a class="ref" href="#geo.instance"><code>geo.instance</code></a>: the model into <code>in</code>, the solver's <code>out</code> into <code>table</code>.
+</li>
+<li><a class="ref" href="#tex.render"><code>tex.render</code></a>: the instance into <code>geo</code>.
+</li>
+</ol>
+<p>The bodies fall onto the floor at z = 0 and come to rest. The floor is part of the solver and is not drawn. Put a flat <a class="ref" href="#geo.primitive"><code>geo.primitive</code></a> there if it should show.</p>
+<h5 id="table.rigid_bodies-the-table-of-bodies">The table of bodies</h5>
+<p>Any table can place the bodies. Every column is optional, but the first row must name at least one:</p>
+<table>
+<thead><tr><th>column</th><th>meaning</th><th>when the column is missing</th></tr></thead>
+<tbody>
+<tr><td><code>tx</code>, <code>ty</code>, <code>tz</code></td><td>where the body starts, in metres; z is up</td><td>0</td></tr>
+<tr><td><code>rx</code>, <code>ry</code>, <code>rz</code></td><td>how it is turned at the start, in degrees about x, then y, then z</td><td>0</td></tr>
+<tr><td><code>sx</code>, <code>sy</code>, <code>sz</code></td><td>its size, times the model's</td><td>1</td></tr>
+<tr><td><code>vx</code>, <code>vy</code>, <code>vz</code></td><td>its speed at the start, in metres per second</td><td>0</td></tr>
+<tr><td><code>wx</code>, <code>wy</code>, <code>wz</code></td><td>its spin at the start, in degrees per second about x, y and z</td><td>0</td></tr>
+</tbody>
+</table>
+<p>A row with a cell that is not a finite number is left out. The node takes 4000 bodies at most.</p>
+<p>The output has one row per body in the same order, with the columns <code>tx ty tz rx ry rz sx sy sz</code>. A change to the table puts every body back to its start. So does a change to the model in <code>shape</code>, <code>reset</code>, and the reset button of the node.</p>
+<p>Bodies that overlap at the start are pushed apart in the first frames, and fast. Leave a gap between them.</p>
+<h5 id="table.rigid_bodies-what-a-body-collides-as">What a body collides as</h5>
+<p><code>shape</code> (the param) decides what the solver makes of the model in the <code>shape</code> input:</p>
+<ul>
+<li><code>hull</code>: the model with its dents filled in. A cup collides as a solid lump, and nothing falls into it.
+</li>
+<li><code>box</code>: the box around the model. Boxes stack well and cost little.
+</li>
+<li><code>sphere</code>: a ball as wide as the model's longest side. With a scale that differs per axis it stays a ball, as wide as the largest of the three.
+</li>
+</ul>
+<p>A flat model, such as a plane, has no hull. It collides as the box around it, and the node says so in a warning.</p>
+<p>Every body has the same shape and the same density. A body twice as large weighs eight times as much.</p>
+<h5 id="table.rigid_bodies-obstacles">Obstacles</h5>
+<p>Wire any geometry into <code>obstacles</code>: a model from <a class="ref" href="#geo.file"><code>geo.file</code></a>, primitives placed by <a class="ref" href="#geo.transform"><code>geo.transform</code></a>, several joined by <a class="ref" href="#geo.merge"><code>geo.merge</code></a>. Bodies collide with its triangles, so they fall into a bowl and roll down a ramp. An obstacle is a thin shell with nothing inside. A fast or small body can pass through it: raise <code>substeps</code>, or make the bodies larger or slower.</p>
+<p>Obstacles may change while the bodies move, and bodies that rested on one fall on when it goes. A moving obstacle jumps from place to place and does not push bodies along. It can leave them stuck inside itself.</p>
+<p>Copies made by <a class="ref" href="#geo.tex_instance"><code>geo.tex_instance</code></a> are no obstacles, since their places exist on the GPU only.</p>
+<h5 id="table.rigid_bodies-time">Time</h5>
+<p>The bodies move one step per show frame, as long as something shows the node's result. <code>speed</code> slows time down or holds it at 0. A frame that takes longer than a twentieth of a second counts as a twentieth, so the bodies slow down instead of jumping.</p>
+<p>The solver runs on one core of the CPU. A few hundred boxes cost little. Hulls of detailed models and obstacles of many triangles cost more, and thousands of bodies in one pile can take longer than a frame.</p>
+</div>
 </div></details>
 <details class="entry node" id="table.text"><summary><code class="name">table.text</code><span class="sum">A table typed into the node: one row per line, cells split by tab or comma</span></summary>
 <div class="body">

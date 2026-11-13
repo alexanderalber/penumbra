@@ -730,6 +730,7 @@ fn every_builtin_cooks_without_warnings() {
                     if desc.port.is_some()
                         || passes_on(kind)
                         || kind == "geo.instance"
+                        || kind == crate::rigid::KIND
                         || kind == crate::table::FROM_TABLE =>
                 {
                     Some("/table_feed")

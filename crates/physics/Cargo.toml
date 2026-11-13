@@ -1,0 +1,14 @@
+[package]
+name = "penumbra-physics"
+description = "Rigid bodies on the CPU: a world of boxes, spheres and convex hulls that fall, collide and come to rest, with static meshes to collide with. Wraps rapier3d; no GPU, no UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rapier3d.workspace = true
+
+[lints]
+workspace = true

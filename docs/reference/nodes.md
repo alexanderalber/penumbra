@@ -2075,7 +2075,7 @@ Outputs: `out` (audio).
 
 ## table
 
-[table.file](#tablefile), [table.null](#tablenull), [table.text](#tabletext)
+[table.file](#tablefile), [table.null](#tablenull), [table.rigid_bodies](#tablerigid_bodies), [table.text](#tabletext)
 
 ### table.file
 
@@ -2099,6 +2099,36 @@ Inputs:
 - `in` (table)
 
 Outputs: `out` (table).
+
+### table.rigid_bodies
+
+Rigid bodies that fall, collide and come to rest: a table places them at the start, the output says where they are now, for geo.instance
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs:
+
+- `bodies` (table): One row per body, at most 4000. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). A change puts every body back to its start
+- `shape` (geo): The model the bodies collide as; wire the same model into geo.instance. A change puts every body back to its start
+- `obstacles` (geo): Geometry that stands still and that the bodies land on and bounce off, hollows and all. It may change while the bodies move; a moving obstacle does not push them along
+
+Outputs:
+
+- `out` (table): One row per body, in the order of `bodies`: tx ty tz rx ry rz sx sy sz, the columns geo.instance reads
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `shape` | hull \| box \| sphere | `"hull"` |  | What each body collides as, taken from the `shape` input. Without that input: a box of 1 m; hull: the model with its dents filled in, as if wrapped in foil; box: the box around the model; faster, and stacks well; sphere: a ball as wide as the model's longest side; the fastest, and it rolls |
+| `gravity` | vec3 | `[0, 0, -9.81]` | -20 to 20 (soft) | The pull on every body, in metres per second squared; z is up, so -9.81 in z is the earth's |
+| `floor` | bool | `true` |  | A level floor without end that the bodies land on |
+| `floor_height` | float | `0` | -5 to 5 m (soft, held within -10000 to 10000 m) | How high the floor lies, along z |
+| `friction` | float | `0.5` | 0 to 2 (soft, held within 0 to 10) | How much surfaces grip: 0 slides like ice, 1 holds like rubber |
+| `bounce` | float | `0` | 0 to 1 | How much of its speed a body keeps when it hits something: 0 lands dead, 1 bounces for ever |
+| `damping` *(more)* | float | `0` | 0 to 5 (soft, held within 0 to 1000) | Slows every body down as thick air would: the share of its speed it loses per second |
+| `spin_damping` *(more)* | float | `0` | 0 to 5 (soft, held within 0 to 1000) | Slows every body's turning down: the share of its spin it loses per second |
+| `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion |
+| `substeps` *(more)* | int | `1` | 1 to 8 | Solver steps per frame: raise it when fast bodies pass through thin things or a tall stack wobbles. Each step costs the same again |
+| `reset` | bool | `false` |  | Puts every body back where the table places it, every frame while on |
 
 ### table.text
 
