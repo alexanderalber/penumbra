@@ -1606,6 +1606,7 @@ mod tests {
         );
         assert!(!tabs.iter().any(|t| t.key() == "physics"), "a family a topic takes whole has no tab");
         assert!(of("table").iter().any(|k| k == "table.text"));
+        assert!(of("table").iter().any(|k| k == "table.from_chan"));
         let tex = of("tex");
         for gone in ["tex.mapper", "tex.scan", "tex.fluid", "tex.render_volume"] {
             assert!(!tex.iter().any(|k| k == gone), "{gone} left tex");

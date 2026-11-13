@@ -3,6 +3,8 @@
 //! `chan.from_table` turns a table of numbers into channels, so cells can drive params. Its
 //! `key` picks one row by the text in its first cell; bound to a choice, each entry of the
 //! choice reads its own row of numbers in the same frame, with no GPU and no readback.
+//! `table.from_chan` goes the other way: channels become cells, so numbers that change every
+//! frame can place things a table places.
 
 use std::collections::BTreeSet;
 
@@ -99,11 +101,199 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("out", DataKind::Chan),
         || Box::new(FromTable) as Box<dyn Operator>,
     ))?;
+    types.register(FnNodeType::new(
+        NodeDesc::new(
+            FROM_CHAN,
+            "Turns channels into a table of numbers, so channels can place what a table places: the bodies of a physics.bodies, the copies of a geo.instance",
+        )
+        .param(
+            ParamSpec::choice("layout", &["columns", "rows", "numbered"])
+                .doc("Which cells one channel fills")
+                .choice_doc("columns", "each channel is a column, its samples from top to bottom: channels with one value each give one row")
+                .choice_doc("rows", "each channel is a row, its samples from left to right")
+                .choice_doc("numbered", "the number at the end of a channel's name picks its row: x1, y1, x2, y2 give the columns x and y with a row for 1 and a row for 2. A channel without a number fills its column in every row. This is the layout for the slots of a tracker"),
+        )
+        .param(ParamSpec::bool("names", true).doc(
+            "On, the first cell of each column (or row) is the channel's name, as most nodes that read a table expect; off, every cell is a value",
+        ))
+        .param(
+            ParamSpec::text("keep", "")
+                .applies_when("layout", &["numbered"])
+                .doc("The name of a column. Rows with 0 in it are left out, and the rows after them move up: `id` leaves out the slots of a tex.blob_track that hold no blob. Empty: every row stays"),
+        )
+        .input("in", DataKind::Chan)
+        .output("out", DataKind::Table)
+        .describe_output("out", "The channels' values as cells, written so that they read back as the same numbers"),
+        || Box::new(FromChan) as Box<dyn Operator>,
+    ))?;
     Ok(())
 }
 
 /// The kind of the node that turns a table into channels.
 pub const FROM_TABLE: &str = "chan.from_table";
+
+/// The kind of the node that turns channels into a table.
+pub const FROM_CHAN: &str = "table.from_chan";
+
+/// Most rows and most columns `table.from_chan` writes.
+const MAX_SIDE: usize = 4096;
+
+/// Most cells `table.from_chan` writes: a table of more would cost its time on every frame.
+const MAX_FROM_CHAN_CELLS: usize = 1 << 18;
+
+/// `table.from_chan`: the reverse of [`FromTable`]. Numbers are written so that they read back
+/// exactly. A cell without a channel behind it is empty.
+struct FromChan;
+
+impl Operator for FromChan {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        let chans = cx.input_as::<Chans>(0).ok_or_else(|| waiting(cx))?;
+        let named = cx.bool("names")?;
+        let mut notes: Vec<String> = Vec::new();
+        let rows = match cx.text("layout")? {
+            "rows" => by_rows(chans, named, &mut notes),
+            "numbered" => numbered(chans, named, cx.text("keep")?.trim(), &mut notes),
+            _ => by_columns(chans, named, &mut notes),
+        };
+        if !notes.is_empty() {
+            cx.warn(notes.join("; "));
+        }
+        out(Table::new(rows)?)
+    }
+}
+
+/// A number as a cell.
+fn number(v: f64) -> String {
+    // No "-0".
+    if v == 0.0 { "0".to_string() } else { v.to_string() }
+}
+
+/// How many of `lines` lines of `cells` cells each fit into what `table.from_chan` writes, with
+/// a note when not all do.
+fn fitting(lines: usize, cells: usize, what: &str, notes: &mut Vec<String>) -> usize {
+    let room = (MAX_FROM_CHAN_CELLS / cells.max(1)).clamp(1, MAX_SIDE);
+    if lines > room {
+        notes.push(format!("{lines} {what}: the first {room} are kept"));
+    }
+    lines.min(room)
+}
+
+/// A column per channel, a row per sample.
+fn by_columns(chans: &Chans, named: bool, notes: &mut Vec<String>) -> Vec<Vec<String>> {
+    let channels = chans.channels();
+    let width = channels.len().min(MAX_SIDE);
+    if channels.len() > width {
+        notes.push(format!("{} channels: the first {width} are kept", channels.len()));
+    }
+    let Some(channels) = channels.get(..width).filter(|c| !c.is_empty()) else { return Vec::new() };
+    let len = fitting(chans.len(), width, "samples", notes);
+    let mut rows = Vec::with_capacity(len + 1);
+    if named {
+        rows.push(channels.iter().map(|c| c.name.as_str().to_string()).collect());
+    }
+    for k in 0..len {
+        rows.push(
+            channels.iter().map(|c| c.samples.get(k).copied().map(number).unwrap_or_default()).collect(),
+        );
+    }
+    rows
+}
+
+/// A row per channel, a column per sample.
+fn by_rows(chans: &Chans, named: bool, notes: &mut Vec<String>) -> Vec<Vec<String>> {
+    let len = chans.len().min(MAX_SIDE);
+    if chans.len() > len {
+        notes.push(format!("{} samples: the first {len} are kept", chans.len()));
+    }
+    let count = fitting(chans.channels().len(), len + usize::from(named), "channels", notes);
+    chans
+        .channels()
+        .iter()
+        .take(count)
+        .map(|c| {
+            let name = named.then(|| c.name.as_str().to_string());
+            name.into_iter().chain(c.samples.iter().take(len).copied().map(number)).collect()
+        })
+        .collect()
+}
+
+/// A channel's name without the number at its end, and that number. None for a name without
+/// one, for a name that is all number and for a number too long to count with.
+pub(crate) fn numbered_name(name: &str) -> Option<(&str, u64)> {
+    let stem = name.trim_end_matches(|c: char| c.is_ascii_digit());
+    let digits = name.get(stem.len()..)?;
+    if stem.is_empty() || digits.is_empty() {
+        return None;
+    }
+    digits.parse().ok().map(|n| (stem, n))
+}
+
+/// A row per number at the end of the channels' names, a column per name without its number.
+/// A channel without a number fills the cells of its column that no numbered channel filled.
+/// Rows whose cell in the column `keep` is 0 or empty are left out.
+fn numbered(chans: &Chans, named: bool, keep: &str, notes: &mut Vec<String>) -> Vec<Vec<String>> {
+    let channels = chans.channels();
+    let parts: Vec<(&str, Option<u64>)> = channels
+        .iter()
+        .map(|c| numbered_name(c.name.as_str()).map_or((c.name.as_str(), None), |(s, n)| (s, Some(n))))
+        .collect();
+    let mut columns: Vec<&str> = Vec::new();
+    for (stem, _) in &parts {
+        if !columns.contains(stem) {
+            columns.push(stem);
+        }
+    }
+    if columns.len() > MAX_SIDE {
+        notes.push(format!("{} columns: the first {MAX_SIDE} are kept", columns.len()));
+        columns.truncate(MAX_SIDE);
+    }
+    if columns.is_empty() {
+        return Vec::new();
+    }
+    let numbers = || parts.iter().filter_map(|(_, n)| *n);
+    // Without a single number: one row of every channel's value.
+    let first = numbers().min().unwrap_or(0);
+    let last = numbers().max().unwrap_or(0);
+    let span = usize::try_from(last - first).unwrap_or(usize::MAX).saturating_add(1);
+    let count = fitting(span, columns.len(), "rows between the lowest and the highest number", notes);
+    let mut cells: Vec<Vec<Option<f64>>> = vec![vec![None; columns.len()]; count];
+    let column_of = |stem: &str| columns.iter().position(|c| *c == stem);
+    for (channel, (stem, n)) in channels.iter().zip(&parts) {
+        let (Some(col), Some(n)) = (column_of(stem), n) else { continue };
+        let row = usize::try_from(n - first).ok().and_then(|r| cells.get_mut(r));
+        if let Some(cell) = row.and_then(|r| r.get_mut(col)) {
+            *cell = Some(channel.value());
+        }
+    }
+    for (channel, (stem, n)) in channels.iter().zip(&parts) {
+        let (Some(col), None) = (column_of(stem), n) else { continue };
+        for cell in cells.iter_mut().filter_map(|r| r.get_mut(col)) {
+            cell.get_or_insert(channel.value());
+        }
+    }
+    let kept = match (keep.is_empty(), column_of(keep)) {
+        (true, _) => None,
+        (false, Some(col)) => Some(col),
+        (false, None) => {
+            notes.push(format!(
+                "`keep` names the column `{}`, which no channel makes: every row stays",
+                short(keep)
+            ));
+            None
+        }
+    };
+    let mut rows = Vec::with_capacity(count + 1);
+    if named {
+        rows.push(columns.iter().map(ToString::to_string).collect());
+    }
+    for row in cells {
+        if kept.is_some_and(|col| row.get(col).copied().flatten().unwrap_or(0.0) == 0.0) {
+            continue;
+        }
+        rows.push(row.into_iter().map(|v| v.map(number).unwrap_or_default()).collect());
+    }
+    rows
+}
 
 fn format(name: &str) -> Result<Format, CookError> {
     Format::from_name(name).ok_or_else(|| CookError::failed(format!("unknown format `{name}`")))
@@ -539,6 +729,117 @@ mod tests {
         assert_eq!(c.get("cue").unwrap().samples, [3.0]);
         let (c, _) = from_table("a,1,2\nb,3,4", &[set("/c.layout", "rows"), set("/c.row", 0)]);
         assert_eq!(c.get("b").unwrap().samples, [3.0], "with layout rows: a column");
+    }
+
+    /// Cooks `/out` (a `table.from_chan`) and returns its table and warning. Its channels come
+    /// from the csv `text` through a `chan.from_table` at `/c`; `ops` come after.
+    fn from_chan(text: &str, ops: &[Op]) -> (Table, Option<String>) {
+        let types = Arc::new(builtin_types().unwrap());
+        let wire = |from: &str, to: &str, input: u32| Op::Connect {
+            from: from.parse().unwrap(),
+            output: 0,
+            to: to.parse().unwrap(),
+            input,
+        };
+        let mut all = vec![
+            create("/t", "table.text"),
+            set("/t.text", text),
+            set("/t.format", "csv"),
+            create("/c", "chan.from_table"),
+            wire("/t", "/c", 0),
+            create("/out", "table.from_chan"),
+            wire("/c", "/out", 0),
+        ];
+        all.extend_from_slice(ops);
+        let net = Arc::new(Network::new().apply(&types, &all).unwrap().network);
+        let mut cooker = Cooker::new(types, Arc::new(JobPool::new(1).unwrap()));
+        let id = net.resolve(&"/out".parse().unwrap()).unwrap();
+        let clock = ShowClock::new(Rate::FPS_60, Default::default());
+        cooker.cook(&net, clock.now(), &[id], &[]);
+        let status = cooker.status(id).unwrap();
+        assert!(status.error.is_none(), "{:?}", status.error);
+        let table = cooker.output(Port { node: id, output: 0 }).unwrap().get::<Table>().unwrap().clone();
+        (table, status.warning)
+    }
+
+    fn csv(table: &Table) -> String {
+        table.to_text(penumbra_core::table::Format::Csv).unwrap()
+    }
+
+    #[test]
+    fn channels_become_a_table_and_read_back_as_they_were() {
+        // A column per channel, a row per sample: what chan.from_table read comes out again.
+        let text = "tx,ty,tz\n1,-2.5,0.4\n3,0,1e-7\n";
+        let (t, warning) = from_chan(text, &[]);
+        assert_eq!((csv(&t).as_str(), warning), ("tx,ty,tz\n1,-2.5,0.4\n3,0,0.0000001\n", None));
+        // One value per channel: the names and one row, as a group of one body reads it.
+        let (t, _) = from_chan("tx,tz\n-4,0.4\n", &[]);
+        assert_eq!(t.rows(), [["tx", "tz"], ["-4", "0.4"]]);
+        let (t, _) = from_chan("tx,tz\n-4,0.4\n", &[set("/out.names", false)]);
+        assert_eq!(t.rows(), [["-4", "0.4"]]);
+        // A row per channel.
+        let (t, _) = from_chan(text, &[set("/out.layout", "rows")]);
+        assert_eq!(csv(&t), "tx,1,3\nty,-2.5,0\ntz,0.4,0.0000001\n");
+        let (t, _) = from_chan(text, &[set("/out.layout", "rows"), set("/out.names", false)]);
+        assert_eq!(t.rows()[1], ["-2.5", "0"]);
+        // No channels: no rows, and nothing to warn about.
+        let (t, warning) = from_chan("", &[]);
+        assert_eq!((t.num_rows(), warning), (0, None));
+        let (t, warning) = from_chan("", &[set("/out.layout", "numbered"), set("/out.keep", "id")]);
+        assert_eq!((t.num_rows(), warning), (0, None));
+        // A column to keep by that no channel makes is said, and every row stays.
+        let (t, warning) = from_chan("x1\n5\n", &[set("/out.layout", "numbered"), set("/out.keep", "id")]);
+        assert_eq!(t.rows(), [["x"], ["5"]]);
+        assert!(warning.unwrap().contains("`keep` names the column `id`"));
+    }
+
+    #[test]
+    fn numbered_channels_become_a_row_per_number() {
+        // The slots of a tracker: slot 2 is empty. `tz` has no number and fills every row.
+        let slots = "id1,x1,y1,id2,x2,y2,id3,x3,y3,tz\n7,0.25,0.5,0,0,0,9,1,0,0.4\n";
+        let (t, warning) = from_chan(slots, &[set("/out.layout", "numbered")]);
+        assert_eq!(warning, None);
+        assert_eq!(csv(&t), "id,x,y,tz\n7,0.25,0.5,0.4\n0,0,0,0.4\n9,1,0,0.4\n");
+        // `keep` leaves out the rows of the empty slots.
+        let kept = [set("/out.layout", "numbered"), set("/out.keep", " id ")];
+        let (t, warning) = from_chan(slots, &kept);
+        assert_eq!((csv(&t).as_str(), warning), ("id,x,y,tz\n7,0.25,0.5,0.4\n9,1,0,0.4\n", None));
+        let (t, _) = from_chan("id1,id2\n0,0\n", &kept);
+        assert_eq!(t.rows(), [["id"]], "no blob: the names and no row");
+        // Numbers need not start at 1 nor be without gaps: a number nobody has is an empty
+        // cell, and a channel with a number wins over the one without in its own row.
+        let (t, _) = from_chan("a0,a2,b2,b\n1,2,3,4\n", &[set("/out.layout", "numbered")]);
+        assert_eq!(csv(&t), "a,b\n1,4\n,4\n2,3\n");
+        // No number anywhere: one row of every channel.
+        let (t, _) = from_chan("tx,tz\n1,2\n", &[set("/out.layout", "numbered")]);
+        assert_eq!(t.rows(), [["tx", "tz"], ["1", "2"]]);
+        // A number far off does not make a table of that many rows.
+        let far = [set("/out.layout", "numbered")];
+        let (t, warning) = from_chan("x1,x4000000000,x99999999999999999999999\n1,2,3\n", &far);
+        assert!(t.num_rows() <= 1 + super::MAX_SIDE && t.cell(1, 0) == "1", "{}", t.num_rows());
+        assert_eq!(t.rows()[0], ["x", "x99999999999999999999999"], "a number too long is a name");
+        assert!(warning.unwrap().contains("the first 4096 are kept"));
+        assert_eq!(super::numbered_name("x12"), Some(("x", 12)));
+        assert_eq!((super::numbered_name("x"), super::numbered_name("_7")), (None, Some(("_", 7))));
+    }
+
+    #[test]
+    fn math_scales_the_slots_of_a_tracker_axis_by_axis() {
+        // b has `x` and `y`: x1 and x2 meet x, y1 and y2 meet y. A name b has as it is wins.
+        let ops = [
+            create("/bt", "table.text"),
+            set("/bt.text", "x,y,y2\n4,-3,100\n"),
+            set("/bt.format", "csv"),
+            create("/b", "chan.from_table"),
+            create("/m", "chan.math"),
+            set("/m.op", "multiply"),
+            Op::Connect { from: "/bt".parse().unwrap(), output: 0, to: "/b".parse().unwrap(), input: 0 },
+            Op::Connect { from: "/c".parse().unwrap(), output: 0, to: "/m".parse().unwrap(), input: 0 },
+            Op::Connect { from: "/b".parse().unwrap(), output: 0, to: "/m".parse().unwrap(), input: 1 },
+            Op::Connect { from: "/m".parse().unwrap(), output: 0, to: "/out".parse().unwrap(), input: 0 },
+        ];
+        let (t, _) = from_chan("x1,y1,x2,y2,id1\n0.5,0.5,-1,2,3\n", &ops);
+        assert_eq!(csv(&t), "x1,y1,x2,y2,id1\n2,-1.5,-4,200,12\n");
     }
 
     #[test]

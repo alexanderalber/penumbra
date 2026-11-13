@@ -725,6 +725,7 @@ fn every_builtin_cooks_without_warnings() {
                     if desc.port.is_some()
                         || passes_on(kind)
                         || kind == "tex.from_chan"
+                        || kind == crate::table::FROM_CHAN
                         || kind == "tex.sequence" =>
                 {
                     Some("/chan_feed")

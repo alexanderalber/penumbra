@@ -12,9 +12,11 @@ number fits where it goes.
 - **Unconnected `b`:** the param `b` stands in, one number for every channel of `a`. This is the
   usual case: `multiply` with `b` 360 turns 0 to 1 into 0 to 360 degrees, `add` with `b` -0.5
   moves 0 to 1 to -0.5 to 0.5.
-- **Connected `b`:** each channel of `a` meets the channel of `b` with the same name, else `b`'s
-  first channel. So `x` and `y` of a tracker multiplied by `x` and `y` of a `chan.constant`
-  scale each axis on its own, and a single channel in `b` acts on all of `a`.
+- **Connected `b`:** each channel of `a` meets the channel of `b` with the same name. A channel
+  with a number at its end also meets the name without the number: `x1` and `x2` both meet `x`.
+  Every other channel meets `b`'s first channel. So `x1`, `y1`, `x2`, `y2` of a tracker
+  multiplied by `x` and `y` of a `chan.constant` scale each axis on its own, and a single
+  channel in `b` acts on all of `a`.
 
 The output has `a`'s channels, with their names. Every sample is computed on its own, so a
 channel with many samples (a spectrum, a trail) comes out with as many.

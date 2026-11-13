@@ -156,6 +156,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("chan.spacemouse_in", &["joystick"]),
     ("audio.file", &["audio file in"]),
     ("table.file", &["file in"]),
+    ("table.from_chan", &["chop to dat", "chop to", "chan to table", "channels to table"]),
     ("geo.assign_material", &["material"]),
     ("geo.file", &["file in"]),
     ("geo.instance", &["instancing", "copy"]),

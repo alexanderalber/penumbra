@@ -1687,7 +1687,7 @@ Calculates with channels: adds, multiplies or compares two inputs, or one input 
 Inputs:
 
 - `a` (chan)
-- `b` (chan): Each channel of a meets b's channel of the same name, else b's first channel. Unconnected: the param `b`. Not used by sin, cos, tan and abs
+- `b` (chan): Each channel of a meets b's channel of the same name. Without one, a channel with a number at its end meets b's channel of that name without the number: x1 and x2 both meet x. Else b's first channel. Unconnected: the param `b`. Not used by sin, cos, tan and abs
 
 Outputs: `out` (chan).
 
@@ -2075,7 +2075,7 @@ Outputs: `out` (audio).
 
 ## table
 
-[table.file](#tablefile), [table.null](#tablenull), [table.text](#tabletext)
+[table.file](#tablefile), [table.from_chan](#tablefrom_chan), [table.null](#tablenull), [table.text](#tabletext)
 
 ### table.file
 
@@ -2089,6 +2089,24 @@ Outputs: `out` (table).
 |---|---|---|---|---|
 | `file` | file (csv, tsv, tab, txt) |  |  | The text file, relative to the project directory; saving it again reloads the node |
 | `format` | auto \| lines \| tsv \| csv | `"auto"` |  | How a line of the file is split into cells; auto: by extension: csv, tsv (or tab), else lines; lines: not at all: one cell per row; tsv: at tabs; csv: at commas; "a, b" in quotes is one cell, "" a quote |
+
+### table.from_chan
+
+Turns channels into a table of numbers, so channels can place what a table places: the bodies of a physics.bodies, the copies of a geo.instance
+
+Inputs:
+
+- `in` (chan)
+
+Outputs:
+
+- `out` (table): The channels' values as cells, written so that they read back as the same numbers
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `layout` | columns \| rows \| numbered | `"columns"` |  | Which cells one channel fills; columns: each channel is a column, its samples from top to bottom: channels with one value each give one row; rows: each channel is a row, its samples from left to right; numbered: the number at the end of a channel's name picks its row: x1, y1, x2, y2 give the columns x and y with a row for 1 and a row for 2. A channel without a number fills its column in every row. This is the layout for the slots of a tracker |
+| `names` | bool | `true` |  | On, the first cell of each column (or row) is the channel's name, as most nodes that read a table expect; off, every cell is a value |
+| `keep` | text |  |  | The name of a column. Rows with 0 in it are left out, and the rows after them move up: `id` leaves out the slots of a tex.blob_track that hold no blob. Empty: every row stays. Does something only with layout numbered. |
 
 ### table.null
 

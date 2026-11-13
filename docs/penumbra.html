@@ -335,7 +335,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong><code>audio</code></strong>: sound. A device input, a test tone, a mix, ready-made instruments and drones. <a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> turns sound into channels (see <a href="#audio">Audio</a>).
 </li>
-<li><strong><code>table</code></strong>: text tables, typed in or read from a file, for scripts and OSC. <a class="ref" href="#table.file"><code>table.file</code></a> reads a CSV, TSV or text file and reloads it when the file changes. <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a> turns a table of numbers into channels, a channel per column (or row), named by its first cell. A param bound to a channel follows the last value in that column (or row). <a class="ref" href="#out.table"><code>out.table</code></a> writes a table to a CSV or TSV file. With <code>file</code> empty it writes <code>export/&lt;node name&gt;.csv</code> in the project folder. In mode <code>changes</code> it writes whenever the table differs from what the file holds; in mode <code>manual</code> it writes only on <a class="ref" href="#table_out.write"><code>table_out.write</code></a>. <code>overwrite</code> on replaces the file in place, for a program that keeps reading it; off, every write gets a new name with <code>_2</code>, <code>_3</code>, ...
+<li><strong><code>table</code></strong>: text tables, typed in or read from a file, for scripts and OSC. <a class="ref" href="#table.file"><code>table.file</code></a> reads a CSV, TSV or text file and reloads it when the file changes. <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a> turns a table of numbers into channels, a channel per column (or row), named by its first cell. A param bound to a channel follows the last value in that column (or row). <a class="ref" href="#table.from_chan"><code>table.from_chan</code></a> goes the other way: channels become the cells of a table, so an LFO or a tracker can place what a table places, such as the bodies of a <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a>. <a class="ref" href="#out.table"><code>out.table</code></a> writes a table to a CSV or TSV file. With <code>file</code> empty it writes <code>export/&lt;node name&gt;.csv</code> in the project folder. In mode <code>changes</code> it writes whenever the table differs from what the file holds; in mode <code>manual</code> it writes only on <a class="ref" href="#table_out.write"><code>table_out.write</code></a>. <code>overwrite</code> on replaces the file in place, for a program that keeps reading it; off, every write gets a new name with <code>_2</code>, <code>_3</code>, ...
 </li>
 <li><strong><code>vol</code></strong>: volumes, such as smoke. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> simulates smoke in a box: emitters blow hot smoke in, the smoke rises against <code>gravity</code>, swirls and fades. <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a> is one emitter; wire several into the <code>emitter</code> inputs of <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a>, 64 at most, later ones acting on what earlier ones left. Any table with columns x and y (see <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a>'s output) gives one emitter per row, so a computed table can move or multiply them. With no emitter the box stays empty. Fuel in the smoke burns once it is hot enough: it heats, makes more smoke and swells, so a jet of it widens like a flame. A <a class="ref" href="#vol.obstacle"><code>vol.obstacle</code></a> on the <code>obstacle</code> inputs is a still sphere or box the smoke flows around. <a class="ref" href="#tex.render_volume"><code>tex.render_volume</code></a> draws a volume as a picture, seen from the front through the whole box. Hot smoke glows with <code>glow</code>, in the colours of a palette picture on its <code>palette</code> input. Its <code>density</code> output shows how much smoke covers each pixel, as grey, for <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a>. Burning smoke is dense: a <code>thickness</code> well below 1 lets the eye see into it. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> keeps its smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean the same; how strongly a number acts was matched by eye to one Flow scene.
 </li>
@@ -4993,7 +4993,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h4>Inputs</h4>
 <ul>
 <li><code>a</code> <span class="kind">chan</span></li>
-<li><code>b</code> <span class="kind">chan</span>: Each channel of a meets b's channel of the same name, else b's first channel. Unconnected: the param <code>b</code>. Not used by sin, cos, tan and abs</li>
+<li><code>b</code> <span class="kind">chan</span>: Each channel of a meets b's channel of the same name. Without one, a channel with a number at its end meets b's channel of that name without the number: x1 and x2 both meet x. Else b's first channel. Unconnected: the param <code>b</code>. Not used by sin, cos, tan and abs</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -5015,7 +5015,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <ul>
 <li><strong>Unconnected <code>b</code>:</strong> the param <code>b</code> stands in, one number for every channel of <code>a</code>. This is the usual case: <code>multiply</code> with <code>b</code> 360 turns 0 to 1 into 0 to 360 degrees, <code>add</code> with <code>b</code> -0.5 moves 0 to 1 to -0.5 to 0.5.
 </li>
-<li><strong>Connected <code>b</code>:</strong> each channel of <code>a</code> meets the channel of <code>b</code> with the same name, else <code>b</code>'s first channel. So <code>x</code> and <code>y</code> of a tracker multiplied by <code>x</code> and <code>y</code> of a <a class="ref" href="#chan.constant"><code>chan.constant</code></a> scale each axis on its own, and a single channel in <code>b</code> acts on all of <code>a</code>.
+<li><strong>Connected <code>b</code>:</strong> each channel of <code>a</code> meets the channel of <code>b</code> with the same name. A channel with a number at its end also meets the name without the number: <code>x1</code> and <code>x2</code> both meet <code>x</code>. Every other channel meets <code>b</code>'s first channel. So <code>x1</code>, <code>y1</code>, <code>x2</code>, <code>y2</code> of a tracker multiplied by <code>x</code> and <code>y</code> of a <a class="ref" href="#chan.constant"><code>chan.constant</code></a> scale each axis on its own, and a single channel in <code>b</code> acts on all of <code>a</code>.
 </li>
 </ul>
 <p>The output has <code>a</code>'s channels, with their names. Every sample is computed on its own, so a channel with many samples (a spectrum, a trail) comes out with as many.</p>
@@ -5507,7 +5507,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-table">
 <h3>table</h3>
-<p class="kinds"><a href="#table.file">table.file</a> <a href="#table.null">table.null</a> <a href="#table.text">table.text</a></p>
+<p class="kinds"><a href="#table.file">table.file</a> <a href="#table.from_chan">table.from_chan</a> <a href="#table.null">table.null</a> <a href="#table.text">table.text</a></p>
 <details class="entry node" id="table.file"><summary><code class="name">table.file</code><span class="sum">A table from a text, TSV or CSV file; updates when the file changes</span></summary>
 <div class="body">
 <p>A table from a text, TSV or CSV file; updates when the file changes</p>
@@ -5525,6 +5525,59 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>format</code></td><td>auto | lines | tsv | csv</td><td><code>&quot;auto&quot;</code></td><td></td><td>How a line of the file is split into cells<ul><li><code>auto</code>: by extension: csv, tsv (or tab), else lines</li><li><code>lines</code>: not at all: one cell per row</li><li><code>tsv</code>: at tabs</li><li><code>csv</code>: at commas; &quot;a, b&quot; in quotes is one cell, &quot;&quot; a quote</li></ul></td></tr>
 </tbody>
 </table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
+<details class="entry node" id="table.from_chan"><summary><code class="name">table.from_chan</code><span class="sum">Turns channels into a table of numbers, so channels can place what a table places: the bodies of a physics.bodies, the copies of a geo.instance</span></summary>
+<div class="body">
+<p>Turns channels into a table of numbers, so channels can place what a table places: the bodies of a physics.bodies, the copies of a geo.instance</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">chan</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">table</span>: The channels' values as cells, written so that they read back as the same numbers</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>layout</code></td><td>columns | rows | numbered</td><td><code>&quot;columns&quot;</code></td><td></td><td>Which cells one channel fills<ul><li><code>columns</code>: each channel is a column, its samples from top to bottom: channels with one value each give one row</li><li><code>rows</code>: each channel is a row, its samples from left to right</li><li><code>numbered</code>: the number at the end of a channel's name picks its row: x1, y1, x2, y2 give the columns x and y with a row for 1 and a row for 2. A channel without a number fills its column in every row. This is the layout for the slots of a tracker</li></ul></td></tr>
+<tr><td><code>names</code></td><td>bool</td><td><code>true</code></td><td></td><td>On, the first cell of each column (or row) is the channel's name, as most nodes that read a table expect; off, every cell is a value</td></tr>
+<tr><td><code>keep</code></td><td>text</td><td></td><td></td><td>The name of a column. Rows with 0 in it are left out, and the rows after them move up: <code>id</code> leaves out the slots of a tex.blob_track that hold no blob. Empty: every row stays</td></tr>
+</tbody>
+</table>
+<div class="more">
+<h5 id="table.from_chan-what-it-is-for">What it is for</h5>
+<p>Some nodes take a table that says where things are: <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> places its bodies by one, <a class="ref" href="#geo.instance"><code>geo.instance</code></a> its copies. <a class="ref" href="#table.from_chan"><code>table.from_chan</code></a> makes such a table from channels. An LFO, a sound level or a tracker can then move what the table places, on every frame.</p>
+<p>The node does no maths. Scale and shift the channels before it with <a class="ref" href="#chan.math"><code>chan.math</code></a>, and give them the names the table needs with <a class="ref" href="#chan.rename"><code>chan.rename</code></a>: <code>tx</code>, <code>ty</code>, <code>tz</code> for a place in metres.</p>
+<h5 id="table.from_chan-the-three-layouts">The three layouts</h5>
+<ul>
+<li><strong><code>columns</code>:</strong> each channel is a column, named in the first row. Channels with one value each give one row. Channels with many samples give a row per sample.
+</li>
+<li><strong><code>rows</code>:</strong> each channel is a row, its name in the first cell.
+</li>
+<li><strong><code>numbered</code>:</strong> the number at the end of a channel's name picks the row. <code>x1</code>, <code>y1</code>, <code>x2</code>, <code>y2</code> give the columns <code>x</code> and <code>y</code> and two rows. A channel without a number fills its column in every row: one <code>tz</code> gives every row the same height.
+</li>
+</ul>
+<p>With <code>numbered</code>, the rows run from the lowest number to the highest. A number that no channel has gives a row of empty cells. <code>keep</code> names a column: rows with 0 there are left out. With the <code>chans</code> of a <a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a>, <code>keep</code> set to <code>id</code> leaves out the slots that hold no blob.</p>
+<p><code>names</code> off leaves out the names. Most nodes that read a table need them.</p>
+<h5 id="table.from_chan-example">Example</h5>
+<p>A box that an LFO moves from side to side, as the one body of a driven group:</p>
+<ol>
+<li><a class="ref" href="#chan.lfo"><code>chan.lfo</code></a> with <code>name</code> set to <code>tx</code>.
+</li>
+<li><a class="ref" href="#chan.constant"><code>chan.constant</code></a> with <code>name0</code> set to <code>tz</code> and <code>value0</code> 0.5.
+</li>
+<li><a class="ref" href="#chan.merge"><code>chan.merge</code></a> of the two.
+</li>
+<li><a class="ref" href="#table.from_chan"><code>table.from_chan</code></a>. Its table: <code>tx,tz</code> and one row such as <code>0.7071,0.5</code>.
+</li>
+<li><a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> with <code>mode</code> set to <code>driven</code>, into a <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a>.
+</li>
+</ol>
+<p>The page of <a href="#physics.rigid_bodies">physics.rigid_bodies</a> has the same for the blobs of a tracker.</p>
+</div>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 <details class="entry node" id="table.null"><summary><code class="name">table.null</code><span class="sum">Passes its input on unchanged: a fixed point to refer to while the chain before it changes</span></summary>
@@ -6416,32 +6469,48 @@ def cook(cx):
 <p><strong>Jumps.</strong> A row that moves a long way in one frame would throw everything in between. <code>jump</code> on the solver sets the limit, 0.5 m at first. A body whose row moves farther is put there at once and pushes nothing. Raise <code>jump</code> for a fast paddle. Lower it for a tracker that loses a blob and finds it elsewhere.</p>
 <p><strong>Fast and thin.</strong> The solver looks where the bodies are once per step. A driven body that moves farther than it is thick in one frame can pass a small body without touching it. Raise <code>substeps</code>, or make the driven body thicker.</p>
 <p><strong>Time.</strong> While <code>speed</code> is 0, a driven body still goes where its row is, and pushes nothing. With <code>speed</code> below 1 a driven body hits harder: it covers the same way in less of the bodies' time.</p>
-<h5 id="physics.rigid_bodies-a-trackers-table-as-a-driven-group">A tracker's table as a driven group</h5>
-<p><a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a> gives places in the picture, from 0 to 1. A group needs <code>tx ty tz</code> in metres. A <a class="ref" href="#script.python"><code>script.python</code></a> between the two turns one into the other:</p>
+<h5 id="physics.rigid_bodies-a-driven-group-from-channels">A driven group from channels</h5>
+<p><a class="ref" href="#table.from_chan"><code>table.from_chan</code></a> turns channels into the table of a group. Channels with one value each give one row: the channels <code>tx</code>, <code>ty</code> and <code>tz</code> place one body. A channel that is missing counts as 0.</p>
+<p>A paddle that an LFO swings through the pile:</p>
 <ol>
-<li><p><a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a>, with its <code>chans</code> output into <code>chan0</code> of a <a class="ref" href="#script.python"><code>script.python</code></a>. <code>chans</code> keeps each blob in its slot (<code>x1</code>, <code>y1</code>, <code>id1</code> for the first), so a body stays with its person.</p>
+<li><a class="ref" href="#chan.lfo"><code>chan.lfo</code></a> with <code>name</code> set to <code>tx</code>, <code>rate</code> 0.1 and <code>amplitude</code> 4: the paddle goes 4 m to each side, once in ten seconds.
 </li>
-<li><p>The script, as the node's <code>code</code>:</p>
-<pre><code class="lang-python">PARAMS = {&quot;width&quot;: 4.0, &quot;depth&quot;: 3.0, &quot;height&quot;: 0.4}
-
-def cook(cx):
-    blobs = cx.chans[0]
-    cx.table.append([&quot;tx&quot;, &quot;ty&quot;, &quot;tz&quot;])
-    for n in range(1, 5):
-        if blobs and blobs.value(f&quot;id{n}&quot;) &gt; 0:
-            x = (blobs.value(f&quot;x{n}&quot;) - 0.5) * cx.params[&quot;width&quot;]
-            y = (0.5 - blobs.value(f&quot;y{n}&quot;)) * cx.params[&quot;depth&quot;]
-            cx.table.append([x, y, cx.params[&quot;height&quot;]])
-        else:
-            cx.table.append([0, 0, -100])
-</code></pre>
+<li><a class="ref" href="#chan.constant"><code>chan.constant</code></a> with <code>name0</code> set to <code>tz</code> and <code>value0</code> 0.4: the height of the paddle's middle.
 </li>
-<li><p>The script's <code>table</code> output into a <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> with <code>mode</code> set to <code>driven</code>, and a model for the hand, such as a <a class="ref" href="#geo.primitive"><code>geo.primitive</code></a> sphere.</p>
+<li><a class="ref" href="#chan.merge"><code>chan.merge</code></a>: the LFO into <code>in0</code>, the constant into <code>in1</code>.
 </li>
-<li><p>That group into the next free <code>bodies</code> input of the solver.</p>
+<li><a class="ref" href="#table.from_chan"><code>table.from_chan</code></a>: the merge into <code>in</code>. Its table has the columns <code>tx</code> and <code>tz</code> and one row.
+</li>
+<li><a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> with <code>mode</code> set to <code>driven</code>: the table into <code>table</code>, a <a class="ref" href="#geo.primitive"><code>geo.primitive</code></a> box of 0.3 x 3 x 0.8 m into <code>model</code>.
+</li>
+<li>That group into the next free <code>bodies</code> input of the solver.
 </li>
 </ol>
-<p>The script writes four rows, one per slot of the tracker. A slot without a blob parks its body 100 m under the floor. A blob that appears is farther away than <code>jump</code>, so its body is put there without sweeping through the scene.</p>
+<h5 id="physics.rigid_bodies-a-trackers-blobs-as-a-driven-group">A tracker's blobs as a driven group</h5>
+<p><a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a> gives places in the picture, from 0 to 1. Its <code>chans</code> output keeps each blob in a slot: <code>id1</code>, <code>x1</code>, <code>y1</code> for the first slot, <code>id2</code>, <code>x2</code>, <code>y2</code> for the second. A group needs <code>tx ty tz</code> in metres and one row per blob. Channel nodes turn one into the other:</p>
+<ol>
+<li><a class="ref" href="#chan.select"><code>chan.select</code></a> with <code>channels</code> set to <code>x* y*</code>, fed by the tracker's <code>chans</code>.
+</li>
+<li><a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>op</code> <code>subtract</code> and <code>b</code> 0.5: the middle of the picture becomes 0.
+</li>
+<li><a class="ref" href="#chan.constant"><code>chan.constant</code></a> with <code>rows</code> 2: <code>name0</code> <code>x</code>, <code>value0</code> 4, <code>name1</code> <code>y</code>, <code>value1</code> -3. This is the room the picture covers, 4 m wide and 3 m deep. y is negative since it runs downwards in a picture.
+</li>
+<li><a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>op</code> <code>multiply</code>: step 2 into <code>a</code>, the constant into <code>b</code>. Every <code>x</code> channel meets <code>x</code>, every <code>y</code> channel meets <code>y</code>.
+</li>
+<li><a class="ref" href="#chan.rename"><code>chan.rename</code></a> with <code>names</code> set to <code>x*=tx* y*=ty*</code>.
+</li>
+<li><a class="ref" href="#chan.constant"><code>chan.constant</code></a> with <code>name0</code> <code>tz</code> and <code>value0</code> 0.4: the height of the hands.
+</li>
+<li><a class="ref" href="#chan.merge"><code>chan.merge</code></a>: step 5 into <code>in0</code>, the tracker's <code>chans</code> into <code>in1</code>, step 6 into <code>in2</code>.
+</li>
+<li><a class="ref" href="#table.from_chan"><code>table.from_chan</code></a> with <code>layout</code> set to <code>numbered</code> and <code>keep</code> set to <code>id</code>. The number at the end of a name picks the row, so each slot is one row. <code>tz</code> has no number and fills every row. <code>keep</code> leaves out the slots whose <code>id</code> is 0, the ones without a blob.
+</li>
+<li><a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> with <code>mode</code> set to <code>driven</code>: the table into <code>table</code>, a model for the hand into <code>model</code>, such as a <a class="ref" href="#geo.primitive"><code>geo.primitive</code></a> sphere.
+</li>
+<li>That group into the next free <code>bodies</code> input of the solver.
+</li>
+</ol>
+<p>A blob that appears adds a body. It is put there without sweeping through the scene. When a blob leaves, its row goes and the rows after it move up: each of their bodies takes the place of the next blob. Such a body jumps there without a push when the two blobs are farther apart than <code>jump</code>. Lower <code>jump</code> to 0.2 m if people come close to each other.</p>
 <h5 id="physics.rigid_bodies-what-a-body-collides-as">What a body collides as</h5>
 <p><code>shape</code> on <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> decides what the solver makes of the group's model:</p>
 <ul>

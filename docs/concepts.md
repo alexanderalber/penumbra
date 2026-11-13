@@ -129,7 +129,9 @@ The families:
 - **`table`**: text tables, typed in or read from a file, for scripts and OSC.
   `table.file` reads a CSV, TSV or text file and reloads it when the file changes.
   `chan.from_table` turns a table of numbers into channels, a channel per column (or row), named
-  by its first cell. A param bound to a channel follows the last value in that column (or row). `out.table`
+  by its first cell. A param bound to a channel follows the last value in that column (or row).
+  `table.from_chan` goes the other way: channels become the cells of a table, so an LFO or a
+  tracker can place what a table places, such as the bodies of a `physics.bodies`. `out.table`
   writes a table to a CSV or TSV file. With `file` empty it writes `export/<node name>.csv` in
   the project folder. In mode `changes` it writes whenever the table differs from what the file
   holds; in mode `manual` it writes only on `table_out.write`. `overwrite` on replaces the file
