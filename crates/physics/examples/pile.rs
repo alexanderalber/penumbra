@@ -4,7 +4,7 @@
 
 use std::time::Instant;
 
-use penumbra_physics::{Material, Settings, Shape, Start, World};
+use penumbra_physics::{Material, Mode, Settings, Shape, Start, World};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -25,7 +25,7 @@ fn main() {
         _ => Shape::Box { center: [0.0; 3], half: [0.5; 3] },
     };
     let mut world = World::new(Settings::default());
-    if let Err(e) = world.set_group(0, shape, Material::default()) {
+    if let Err(e) = world.set_group(0, shape, Material::default(), Mode::Dynamic) {
         return eprintln!("{e}");
     }
     // A column ten bodies wide and deep, so they end in one heap.
