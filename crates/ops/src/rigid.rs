@@ -8,6 +8,10 @@
 //! A dynamic group starts over when its starts or its collision shape change; the other groups
 //! go on. A driven or fixed group follows its table instead: the solver places its bodies anew
 //! whenever the table changes. Materials, obstacles and the params change while the bodies move.
+//!
+//! An obstacle that is moved or turned pushes the bodies it meets: the solver takes it from its
+//! old place to its new one within the frame. One whose size or mesh changes is built anew
+//! where it is now, and pushes nothing.
 
 use std::sync::Arc;
 
@@ -28,7 +32,7 @@ use crate::tex::fluid::step;
 
 pub mod group;
 
-use group::{Bodies, GeoKey, key, moved_by, placed};
+use group::Bodies;
 
 pub const KIND: &str = "physics.rigid_bodies";
 
@@ -109,7 +113,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(0.0, 5.0)
                 .unit(Unit::Metres)
                 .more()
-                .doc("How far a driven body may move in one frame and still push what is in its way. A body whose row moves farther is put there at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. 0: driven bodies never push"),
+                .doc("How far a driven body or an obstacle may move in one frame and still push what is in its way. Moved farther, it is put at its new place at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. 0: driven bodies and obstacles never push"),
         )
         .param(ParamSpec::bool("reset", false).doc("Puts every body of every group back to its start, every frame while on"))
         .input_run(
@@ -121,7 +125,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .input("obstacles", DataKind::Geo)
         .describe_input(
             "obstacles",
-            "Geometry that stands still and that the bodies land on and bounce off, hollows and all. It may change while the bodies move; a moving obstacle does not push them along",
+            "Geometry that the bodies land on and bounce off, hollows and all. An obstacle that is moved or turned, by a geo.transform with a bound param for one, carries along the bodies on it and pushes those in its way. One that changes its size or its mesh jumps and pushes nothing",
         )
         .output("out", DataKind::Geo)
         .describe_output("out", "Every body where it is now, drawn as the model of its group. A group without a model shows boxes of 1 m")
@@ -157,7 +161,8 @@ struct RigidBodies {
     /// By the number of the `bodies` input.
     slots: Vec<Option<Slot>>,
     /// What the obstacles were built from.
-    obstacles: Option<GeoKey>,
+    obstacles: Option<Vec<Form>>,
+    /// Why the obstacles are not in the world.
     obstacle_note: Option<String>,
     /// What making the `out` geometry found, said again on every cook while it holds.
     draw_note: Option<String>,
@@ -255,16 +260,20 @@ impl Operator for RigidBodies {
                 _ => restart.push((i, data, bodies)),
             }
         }
-        let obstacle_key = key(obstacle_geo);
-        if self.obstacles.as_ref() != Some(&obstacle_key) {
-            let (obstacles, note) = obstacles_of(obstacle_geo);
-            self.obstacle_note = note;
+        let (forms, places, instanced_note) = obstacle_parts(obstacle_geo);
+        if self.obstacles.as_ref().is_some_and(|old| same_forms(old, &forms)) {
+            // Only moved, if at all: before the step, so that they travel in it and push. An
+            // error means the obstacles failed when they were built, and the note says so.
+            let _ = world.move_obstacles(&places, jump);
+        } else {
+            let obstacles = obstacles_of(obstacle_geo, &forms, &places);
             // Kept even when they fail, so a mesh that cannot be collided with is not tried
             // again on every frame.
-            self.obstacles = Some(obstacle_key);
-            if let Err(e) = world.set_obstacles(obstacles) {
-                self.obstacle_note = Some(format!("{e}: the bodies fall through the obstacles"));
-            }
+            self.obstacles = Some(forms);
+            self.obstacle_note = world
+                .set_obstacles(obstacles)
+                .err()
+                .map(|e| format!("{e}: the bodies fall through the obstacles"));
             changed = true;
         }
 
@@ -314,6 +323,7 @@ impl Operator for RigidBodies {
             .flatten()
             .filter_map(|s| s.note.as_ref())
             .chain(&self.obstacle_note)
+            .chain(&instanced_note)
             .chain(&self.draw_note)
             .chain(&input_note)
             .map(String::as_str)
@@ -407,22 +417,95 @@ fn geo_of(groups: &[(usize, &Bodies, Vec<Placement>)], unit: Option<&Arc<Model>>
     (Geo { items, preview: None }, note)
 }
 
-/// The obstacles of `geo`, each mesh where it stands, and a note about what was left out.
-fn obstacles_of(geo: Option<&Geo>) -> (Vec<Obstacle>, Option<String>) {
-    let Some(geo) = geo else { return (Vec::new(), None) };
-    let left_out = geo.items.iter().filter(|i| i.instances.is_some()).count();
-    let note = (left_out > 0).then(|| {
-        "copies placed by textures (geo.tex_instance) are no obstacles: the bodies pass through".into()
-    });
-    (placed(Some(geo)).map(|(mesh, world)| obstacle_of(mesh, world)).collect(), note)
+/// The items of `geo` that can be obstacles: the copies placed by textures are left out, since
+/// where they are is known on the GPU only.
+fn solid(geo: Option<&Geo>) -> impl Iterator<Item = &Item> {
+    geo.map(|g| g.items.as_slice()).unwrap_or_default().iter().filter(|i| i.instances.is_none())
 }
 
+/// Per obstacle of `geo` what its mesh is built from and where it stands, and a note about
+/// what was left out.
+fn obstacle_parts(geo: Option<&Geo>) -> (Vec<Form>, Vec<Place>, Option<String>) {
+    let (forms, places) = solid(geo)
+        .map(|i| {
+            let (form, place) = split(&i.world);
+            ((i.model.id, form), place)
+        })
+        .unzip();
+    let left_out = geo.is_some_and(|g| g.items.iter().any(|i| i.instances.is_some()));
+    let note = left_out.then(|| {
+        "copies placed by textures (geo.tex_instance) are no obstacles: the bodies pass through".into()
+    });
+    (forms, places, note)
+}
+
+/// The obstacles of `geo`, built from `forms` and standing at `places` ([`obstacle_parts`]).
+fn obstacles_of(geo: Option<&Geo>, forms: &[Form], places: &[Place]) -> Vec<Obstacle> {
+    let parts = solid(geo).zip(forms).zip(places);
+    parts.map(|((item, (_, form)), place)| shaped(&item.model.mesh, form, *place)).collect()
+}
+
+/// `mesh` standing where `world` puts it, as an obstacle.
 pub fn obstacle_of(mesh: &Mesh, world: &Mat4) -> Obstacle {
+    let (form, place) = split(world);
+    shaped(mesh, &form, place)
+}
+
+/// `mesh` sized and sheared by `form`, as an obstacle at `place`.
+fn shaped(mesh: &Mesh, form: &[[f64; 3]; 3], place: Place) -> Obstacle {
+    let formed = |p: [f32; 3]| {
+        let [x, y, z] = p.map(f64::from);
+        form.map(|r| (r[0] * x + r[1] * y + r[2] * z) as f32)
+    };
     Obstacle {
-        vertices: mesh.vertices.iter().map(|v| moved_by(world, v.position)).collect(),
+        vertices: mesh.vertices.iter().map(|v| formed(v.position)).collect(),
         triangles: mesh.indices.as_chunks::<3>().0.to_vec(),
-        place: Place::default(),
+        place,
     }
+}
+
+/// Whether obstacles built from `old` still have the forms `new`: the same models in the same
+/// order, sized and sheared alike. The split of a matrix that only turns gives its form anew
+/// on every frame, off by rounding, so alike allows for a millionth.
+fn same_forms(old: &[Form], new: &[Form]) -> bool {
+    let alike = |a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]| {
+        let size = a.iter().flatten().fold(0.0f64, |m, v| m.max(v.abs()));
+        a.iter().flatten().zip(b.iter().flatten()).all(|(x, y)| (x - y).abs() <= 1e-6 * size)
+    };
+    old.len() == new.len() && old.iter().zip(new).all(|((ia, fa), (ib, fb))| ia == ib && alike(fa, fb))
+}
+
+/// What the mesh of an obstacle is built from: its model, and the part of its matrix that
+/// changes its form (size and shear). While both stay, the obstacle only moves.
+type Form = (u64, [[f64; 3]; 3]);
+
+/// Splits where an item stands into the part that changes its form and the part that only
+/// moves it: `world` is the move (a turn, then a shift) applied after the form. A matrix that
+/// flattens the item has no such split: all of it then counts as form, around the origin.
+pub fn split(world: &Mat4) -> ([[f64; 3]; 3], Place) {
+    let [[a, b, c, tx], [d, e, f, ty], [g, h, i, tz], _] = *world;
+    let whole = ([[a, b, c], [d, e, f], [g, h, i]], Place::default());
+    let dot = |p: [f64; 3], q: [f64; 3]| p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+    // The columns, made square to each other one after the other (Gram-Schmidt): the turn is
+    // what is left of them, the form is what was taken off.
+    let (c0, c1, c2) = ([a, d, g], [b, e, h], [c, f, i]);
+    let size = dot(c0, c0).max(dot(c1, c1)).max(dot(c2, c2)).sqrt();
+    let unit = |v: [f64; 3]| {
+        let len = dot(v, v).sqrt();
+        (len.is_finite() && len > 1e-9 * size && len > 0.0).then(|| (v.map(|x| x / len), len))
+    };
+    let less = |v: [f64; 3], q: [f64; 3], by: f64| [v[0] - by * q[0], v[1] - by * q[1], v[2] - by * q[2]];
+    let Some((q0, u00)) = unit(c0) else { return whole };
+    let u01 = dot(q0, c1);
+    let Some((q1, u11)) = unit(less(c1, q0, u01)) else { return whole };
+    let (u02, u12) = (dot(q0, c2), dot(q1, c2));
+    let Some((q2, u22)) = unit(less(less(c2, q0, u02), q1, u12)) else { return whole };
+    // A mirror is form: a turn never mirrors.
+    let cross = [q0[1] * q1[2] - q0[2] * q1[1], q0[2] * q1[0] - q0[0] * q1[2], q0[0] * q1[1] - q0[1] * q1[0]];
+    let (q2, u22) = if dot(cross, q2) < 0.0 { (q2.map(|x| -x), -u22) } else { (q2, u22) };
+    let turn = [[q0[0], q1[0], q2[0]], [q0[1], q1[1], q2[1]], [q0[2], q1[2], q2[2]]];
+    let place = Place { translate: [tx, ty, tz].map(|v| v as f32), turn: turn.map(|r| r.map(|v| v as f32)) };
+    ([[u00, u01, u02], [0.0, u11, u12], [0.0, 0.0, u22]], place)
 }
 
 /// The placements as a table: the column names, then one row per body, group after group.
@@ -844,6 +927,95 @@ mod tests {
         }
         let z = world.placements(0)[0].translate[2];
         assert!((z - 2.6).abs() < 0.03, "{z}");
+    }
+
+    /// The matrix `split` took apart, put together again: the turn times the form, then the shift.
+    fn joined(form: &[[f64; 3]; 3], place: &Place) -> [[f64; 4]; 3] {
+        std::array::from_fn(|r| {
+            std::array::from_fn(|c| match c {
+                3 => f64::from(place.translate[r]),
+                _ => (0..3).map(|k| f64::from(place.turn[r][k]) * form[k][c]).sum(),
+            })
+        })
+    }
+
+    #[test]
+    fn a_matrix_splits_into_a_form_and_a_move() {
+        let unit = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let near = |a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]| {
+            a.iter().flatten().zip(b.iter().flatten()).all(|(x, y)| (x - y).abs() < 1e-9)
+        };
+        // Moved and turned only: the form is that of the model, whatever the turn. Two turns
+        // of one model are therefore the same obstacle at another place.
+        let (form_a, place_a) = split(&trs([1.0, 2.0, 3.0], [20.0, -35.0, 70.0], [1.0; 3]));
+        let (form_b, place_b) = split(&trs([-4.0, 0.0, 0.5], [170.0, 80.0, -160.0], [1.0; 3]));
+        assert!(near(&form_a, &unit) && near(&form_b, &unit), "{form_a:?} {form_b:?}");
+        assert_eq!(place_a.translate, [1.0, 2.0, 3.0]);
+        assert_ne!(place_a.turn, place_b.turn);
+        assert!(same_forms(&[(7, form_a)], &[(7, form_b)]));
+        assert!(!same_forms(&[(7, form_a)], &[(8, form_b)]), "another model is another obstacle");
+        assert!(!same_forms(&[(7, form_a)], &[(7, form_b), (7, form_b)]));
+        // A size is form, and stays the same form while the obstacle turns.
+        let (wide, _) = split(&trs([0.0; 3], [0.0, 0.0, 30.0], [2.0, 1.0, 0.5]));
+        let (wide_turned, _) = split(&trs([5.0, 0.0, 0.0], [40.0, 10.0, -80.0], [2.0, 1.0, 0.5]));
+        assert!(near(&wide, &[[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.5]]), "{wide:?}");
+        assert!(same_forms(&[(7, wide)], &[(7, wide_turned)]));
+        assert!(!same_forms(&[(7, wide)], &[(7, form_a)]), "a new size is a new obstacle");
+        // Every split gives back its matrix, a mirror and a shear included, and its turn is
+        // a rotation: square columns, no mirror.
+        let mut sheared = trs([1.0, -2.0, 0.25], [15.0, 25.0, 35.0], [1.5, -0.7, 2.0]);
+        sheared[0][1] += 0.4;
+        sheared[2][0] -= 0.3;
+        for world in [trs([3.0, 1.0, 2.0], [10.0, 20.0, 30.0], [-1.0, 2.0, 3.0]), sheared, IDENTITY] {
+            let (form, place) = split(&world);
+            let back = joined(&form, &place);
+            for r in 0..3 {
+                for c in 0..4 {
+                    assert!((back[r][c] - world[r][c]).abs() < 1e-5, "{world:?} came back as {back:?}");
+                }
+            }
+            let t = place.turn.map(|r| r.map(f64::from));
+            for a in 0..3 {
+                for b in 0..3 {
+                    let dot: f64 = (0..3).map(|k| t[k][a] * t[k][b]).sum();
+                    assert!((dot - if a == b { 1.0 } else { 0.0 }).abs() < 1e-5);
+                }
+            }
+            let det = t[0][0] * (t[1][1] * t[2][2] - t[1][2] * t[2][1])
+                - t[0][1] * (t[1][0] * t[2][2] - t[1][2] * t[2][0])
+                + t[0][2] * (t[1][0] * t[2][1] - t[1][1] * t[2][0]);
+            assert!((det - 1.0).abs() < 1e-5, "the turn mirrors: {det}");
+        }
+        // A matrix that flattens has no turn to take out: all of it is form, and a matrix
+        // that is not a number does not panic.
+        let flat = trs([1.0, 2.0, 3.0], [0.0, 30.0, 0.0], [1.0, 1.0, 0.0]);
+        let (form, place) = split(&flat);
+        assert_eq!(place, Place::default());
+        assert!((form[0][0] - flat[0][0]).abs() < 1e-12);
+        let _ = split(&[[f64::NAN; 4]; 4]);
+        let _ = split(&[[0.0; 4]; 4]);
+    }
+
+    #[test]
+    fn a_turned_slab_holds_a_body_as_one_baked_into_the_world_did() {
+        // A slab 4 x 4 x 0.2, tilted by 90 degrees about x so that its 4 x 4 face stands
+        // upright in the plane y = 0, then lifted: its top edge is at z = 3.
+        let slab = prim::cuboid([4.0, 4.0, 0.2]).unwrap();
+        let obstacle = obstacle_of(&slab, &trs([0.0, 0.0, 1.0], [90.0, 0.0, 0.0], [1.0; 3]));
+        assert!(obstacle.vertices.iter().all(|v| v[2].abs() == 0.1), "the mesh stays in its own space");
+        let mut world = World::new(Settings::default());
+        world
+            .set_group(0, shape_of("box", std::iter::empty()).0, Material::default(), Mode::Dynamic)
+            .unwrap();
+        world.set_obstacles(vec![obstacle]).unwrap();
+        world.add(0, &Start { translate: [0.0, 0.0, 5.0], ..Start::default() }).unwrap();
+        for _ in 0..300 {
+            world.step(1.0 / 60.0, 1);
+        }
+        // The box of 1 m balances on the 0.2 m wide top edge, or has tipped off it to the floor.
+        let p = world.placements(0)[0].translate;
+        assert!((p[2] - 3.5).abs() < 0.03 || p[2] < 1.0, "{p:?}");
+        assert!(p[1].abs() > 0.55 || (p[2] - 3.5).abs() < 0.03, "it is not inside the slab: {p:?}");
     }
 
     #[test]

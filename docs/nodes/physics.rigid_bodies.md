@@ -172,9 +172,21 @@ several joined by `geo.merge`. Bodies collide with its triangles, so they fall i
 down a ramp. An obstacle is a thin shell with nothing inside. A fast or small body can pass through
 it: raise `substeps`, or make the bodies larger or slower.
 
-Obstacles may change while the bodies move, and bodies that rested on one fall on when it goes. A
-moving obstacle jumps from place to place and does not push bodies along. It can leave them stuck
-inside itself.
+Obstacles may change while the bodies move, and bodies that rested on one fall on when it goes.
+
+**Obstacles that move.** An obstacle that is moved or turned pushes the bodies in its way and
+carries along those that lie on it. Put a `geo.transform` before `obstacles` and bind its
+`translate` or `rotate` to a channel: a wall shoves a pile across the floor, a turning bar bats
+balls away, a platform lifts what stands on it.
+
+**What still jumps.** An obstacle whose size changes (`scale`, `uniform`) or whose mesh changes is
+built anew where it is now. It pushes nothing, and it can leave bodies stuck inside itself. So
+does an obstacle that moves farther than `jump` in one frame, 0.5 m at first. `jump` measures
+the way of the obstacle's own origin: a long bar turning fast about its middle never jumps, and
+its ends can pass small bodies without touching them. Raise `substeps` then.
+
+For moving things with a simple form, a `driven` group is the cheaper way: a box or a ball costs
+less than a mesh.
 
 Copies made by `geo.tex_instance` are no obstacles, since their places exist on the GPU only.
 

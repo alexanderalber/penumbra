@@ -2684,7 +2684,7 @@ Follows the show clock: cooks again whenever time moves. Keeps state from frame 
 Inputs:
 
 - `bodies0 .. bodies63` (bodies): A group of bodies from physics.bodies. The groups of all these inputs collide with each other, 4000 bodies in all at most. A dynamic group whose table or shape changes starts over; the others go on. A driven or fixed group follows its table. Any number, up to 64: each one wired adds a free slot below it
-- `obstacles` (geo): Geometry that stands still and that the bodies land on and bounce off, hollows and all. It may change while the bodies move; a moving obstacle does not push them along
+- `obstacles` (geo): Geometry that the bodies land on and bounce off, hollows and all. An obstacle that is moved or turned, by a geo.transform with a bound param for one, carries along the bodies on it and pushes those in its way. One that changes its size or its mesh jumps and pushes nothing
 
 Outputs:
 
@@ -2702,7 +2702,7 @@ Outputs:
 | `spin_damping` *(more)* | float | `0` | 0 to 5 (soft, held within 0 to 1000) | Slows every body's turning down: the share of its spin it loses per second |
 | `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion |
 | `substeps` *(more)* | int | `1` | 1 to 8 | Solver steps per frame: raise it when fast bodies pass through thin things or a tall stack wobbles. Each step costs the same again |
-| `jump` *(more)* | float | `0.5` | 0 to 5 m (soft, held within 0 to 1000000 m) | How far a driven body may move in one frame and still push what is in its way. A body whose row moves farther is put there at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. 0: driven bodies never push |
+| `jump` *(more)* | float | `0.5` | 0 to 5 m (soft, held within 0 to 1000000 m) | How far a driven body or an obstacle may move in one frame and still push what is in its way. Moved farther, it is put at its new place at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. 0: driven bodies and obstacles never push |
 | `reset` | bool | `false` |  | Puts every body of every group back to its start, every frame while on |
 
 ## script

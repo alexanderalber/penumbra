@@ -70,3 +70,68 @@ fn the_solver_draws_each_group_as_its_own_model() {
     let fallen = geo(&mut rig);
     assert!(fallen.items[0].world[2][3] < 3.0 && fallen.items[2].world[2][3] < 1.0);
 }
+
+#[test]
+fn an_obstacle_moved_by_a_transform_carries_the_body_on_it() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        // A slab 4 x 4 x 0.2 with its top at z = 1.1, and a box of 1 m resting on it.
+        create("/slab", "geo.primitive", &[("size", Value::Vec3([4.0, 4.0, 0.2]))]),
+        create("/slab_t", "geo.transform", &[("translate", Value::Vec3([0.0, 0.0, 1.0]))]),
+        connect("/slab", "/slab_t", 0),
+        create("/t0", "table.text", &[("text", "tz\n1.62".into()), ("format", "csv".into())]),
+        create("/b0", "physics.bodies", &[("shape", "box".into())]),
+        connect("/t0", "/b0", 0),
+        create("/r", "physics.rigid_bodies", &[]),
+        connect("/b0", "/r", 0),
+        connect("/slab_t", "/r", penumbra_graph::MAX_RUN as u32),
+        create("/show", "geo.null", &[]),
+        connect("/r", "/show", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let place = |rig: &mut Rig, frames: usize| -> [f64; 4] {
+        for _ in 0..frames {
+            rig.clock.advance(1);
+            rig.cook("/show");
+        }
+        let s = rig.cooker.status(rig.id("/r")).unwrap();
+        assert_eq!((s.error, s.warning), (None, None));
+        let out = rig.cooker.output(Port { node: rig.id("/show"), output: 0 }).unwrap();
+        let world = out.get::<Geo>().unwrap().items[0].world;
+        // Where the box is, and the sine of its turn about z.
+        [world[0][3], world[1][3], world[2][3], world[1][0]]
+    };
+    let slab_at = |x: f64, z: f64| set("/slab_t.translate", Value::Vec3([x, 0.0, z]));
+    let rest = place(&mut rig, 120);
+    assert!((rest[2] - 1.6).abs() < 0.02 && rest[0].abs() < 1e-3, "it rests on the slab: {rest:?}");
+    // The slab goes 1.5 m along x in 90 frames, then 1 m up in 60: the box goes along.
+    for k in 1..=90 {
+        rig.edit(&[slab_at(f64::from(k) / 60.0, 1.0)]);
+        place(&mut rig, 1);
+    }
+    let carried = place(&mut rig, 30);
+    assert!((carried[0] - 1.5).abs() < 0.15, "carried along: {carried:?}");
+    for k in 1..=60 {
+        rig.edit(&[slab_at(1.5, 1.0 + f64::from(k) / 60.0)]);
+        place(&mut rig, 1);
+    }
+    let lifted = place(&mut rig, 30);
+    assert!((lifted[2] - 2.6).abs() < 0.03, "lifted: {lifted:?}");
+    // Turned about its middle by half a degree a frame, the slab turns the box on its middle.
+    for k in 1..=60 {
+        rig.edit(&[set("/slab_t.rotate", Value::Vec3([0.0, 0.0, f64::from(k) * 0.5]))]);
+        place(&mut rig, 1);
+    }
+    let turned = place(&mut rig, 30);
+    assert!((turned[2] - 2.6).abs() < 0.03, "{turned:?}");
+    assert!((turned[3] - 0.5).abs() < 0.05, "it went round by the slab's 30 degrees: {turned:?}");
+    // A new size builds the slab anew where it is: the box stays on it.
+    rig.edit(&[set("/slab_t.scale", Value::Vec3([1.5, 1.5, 1.0]))]);
+    let scaled = place(&mut rig, 30);
+    assert!((scaled[2] - 2.6).abs() < 0.03, "{scaled:?}");
+    // Moved farther than `jump` in a frame, the slab is gone from under the box, which falls
+    // to the floor where it was.
+    rig.edit(&[slab_at(30.0, 2.0)]);
+    let fell = place(&mut rig, 120);
+    assert!((fell[2] - 0.5).abs() < 0.03 && (fell[0] - scaled[0]).abs() < 0.05, "{fell:?}");
+}
