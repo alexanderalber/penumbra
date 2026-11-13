@@ -2658,9 +2658,9 @@ Outputs:
 
 ## physics
 
-[physics.bodies](#physicsbodies), [physics.null](#physicsnull), [physics.rigid_bodies](#physicsrigid_bodies)
+[physics.bodies](#physicsbodies), [physics.force](#physicsforce), [physics.null](#physicsnull), [physics.rigid_bodies](#physicsrigid_bodies)
 
-*in the add dialog's `simulations` tab:* [physics.bodies](#physicsbodies), [physics.null](#physicsnull), [physics.rigid_bodies](#physicsrigid_bodies)
+*in the add dialog's `simulations` tab:* [physics.bodies](#physicsbodies), [physics.force](#physicsforce), [physics.null](#physicsnull), [physics.rigid_bodies](#physicsrigid_bodies)
 
 ### physics.bodies
 
@@ -2683,6 +2683,27 @@ Outputs:
 | `bounce` | float | `0` | 0 to 1 | How much of its speed a body keeps when it hits something: 0 lands dead, 1 bounces for ever. Where two things touch, the larger of their two values counts |
 | `density` | float | `1` | 0.1 to 10 (soft, held within 0.001 to 10000) | How heavy these bodies are for their size, compared with other groups. A body of density 10 pushes one of density 1 aside and is hardly slowed by it. Alone, a group falls the same at any density. Does something only with mode dynamic. |
 
+### physics.force
+
+A force field for physics.rigid_bodies: a pull to a point, a wind or a whirl that moves every dynamic body it reaches, and a kick on a trigger
+
+Inputs: none.
+
+Outputs:
+
+- `out` (table): One row under a row of column names: type, strength, tx, ty, tz, dx, dy, dz, radius, falloff, kick, trigger. Wire it into a `force` input of physics.rigid_bodies
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `type` | point \| wind \| vortex | `"point"` |  | What the field does to the bodies; point: pulls them towards `position`; a negative `strength` pushes them away from it; wind: blows them along `direction`; vortex: drives them round the axis that runs through `position` along `direction`, counterclockwise seen from where `direction` points to. Nothing pulls them inwards, so they drift outwards: add a point field to hold them |
+| `strength` | float | `10` | -30 to 30 (soft, held within -10000 to 10000) | How fast the field speeds a body up, in metres per second squared. Gravity is 9.81, so a wind of 10 straight up just lifts the bodies. A large body gains speed as fast as a small one, and a heavy one as fast as a light one. Negative turns the field round. 0: off |
+| `position` | vec3 | `[0, 0, 0]` | -1000000 to 1000000 m | The middle of the field: the point that pulls, a point on the axis of a vortex, the middle of a wind with a `radius`. A wind without a radius does not use it |
+| `direction` | vec3 | `[0, 0, 1]` | -1 to 1 (soft, held within -1000 to 1000) | Where a wind blows, and the axis of a vortex. Only the direction counts: 0 0 2 blows up as hard as 0 0 1. 0 0 0 blows nowhere. Does something only with type wind or vortex. |
+| `radius` | float | `0` (everywhere) | 0 to 10 m (soft, held within 0 to 1000000 m) | How far the field reaches from `position`, for a vortex from its axis. Bodies farther away feel nothing. 0: the field reaches everywhere; 0: everywhere |
+| `falloff` | none \| linear | `"none"` |  | How the field weakens between its middle and its `radius`. Without a radius it does nothing; none: full strength up to the radius, nothing beyond; linear: full strength at the middle, half of it half way out, nothing at the radius |
+| `kick` | float | `0` | -20 to 20 (soft, held within -1000 to 1000) | A change of speed, in metres per second, that the field gives every body it reaches at the moment `trigger` turns on: a blast away from a point (negative), a gust, a twirl. It acts once per trigger, besides `strength`. For a kick alone set `strength` to 0 |
+| `trigger` | float | `0` | 0 to 1 (soft) | Each time it rises past 0.5 the field gives its `kick`. Bind it to a key's gate, a beat or a chan.envelope |
+
 ### physics.null
 
 Passes its group of bodies on unchanged: a fixed point to look at, or to wire on from while the chain before it changes
@@ -2703,6 +2724,7 @@ Inputs:
 
 - `bodies0 .. bodies63` (bodies): A group of bodies from physics.bodies. The groups of all these inputs collide with each other, 4000 bodies in all at most. A dynamic group whose table or shape changes starts over; the others go on. A driven or fixed group follows its table. Any number, up to 64: each one wired adds a free slot below it
 - `obstacles` (geo): Geometry that the bodies land on and bounce off, hollows and all. An obstacle that is moved or turned, by a geo.transform with a bound param for one, carries along the bodies on it and pushes those in its way. One that changes its size or its mesh jumps and pushes nothing
+- `force0 .. force63` (table): A force field from physics.force: a pull to a point, a wind or a whirl that speeds up the dynamic bodies of every group, and a kick on a trigger. A table with the same columns works as well and may hold a field per row: type, strength, tx, ty, tz, dx, dy, dz, radius, falloff, kick, trigger. 64 fields in all at most. Any number, up to 64: each one wired adds a free slot below it
 
 Outputs:
 

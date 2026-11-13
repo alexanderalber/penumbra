@@ -171,6 +171,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("light.environment", &["environment light"]),
     ("light.projector", &["projection mapping", "projector light"]),
     ("physics.bodies", &["actor", "simulation", "collision shape", "physics material"]),
+    ("physics.force", &["force comp", "force", "wind", "attractor", "vortex", "impulse force", "simulation"]),
     (
         "physics.rigid_bodies",
         &["bullet solver", "multi body", "multibody", "simulation", "collision", "rapier", "dynamics"],
