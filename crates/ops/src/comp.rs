@@ -17,7 +17,7 @@ pub const SHELF: &str = "shelf";
 pub const ABOUT: &str = "about";
 
 /// The families with component ports, one per data kind.
-const PORT_FAMILIES: [(&str, DataKind); 9] = [
+const PORT_FAMILIES: [(&str, DataKind); 10] = [
     ("tex", DataKind::Tex),
     ("chan", DataKind::Chan),
     ("audio", DataKind::Audio),
@@ -27,6 +27,8 @@ const PORT_FAMILIES: [(&str, DataKind); 9] = [
     ("light", DataKind::Light),
     ("view", DataKind::View),
     ("vol", DataKind::Vol),
+    // Groups of bodies have no family of their own: their ports stand beside the solver.
+    ("physics", DataKind::Bodies),
 ];
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {

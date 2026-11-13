@@ -479,9 +479,9 @@ impl Viewer {
                     }
                 }
             }
-            DataKind::Vol => {
-                if let Some(m) = data.get::<penumbra_gpu::Medium>() {
-                    for (i, line) in vol_lines(m).into_iter().enumerate() {
+            DataKind::Vol | DataKind::Bodies => {
+                if let Some(lines) = summary_lines(data) {
+                    for (i, line) in lines.into_iter().enumerate() {
                         painter.text(
                             pos2(rect.min.x + 8.0, rect.min.y + 8.0 + i as f32 * 18.0),
                             egui::Align2::LEFT_TOP,
@@ -808,14 +808,34 @@ pub(crate) fn light_name(l: &penumbra_gpu::render::Light) -> &'static str {
     }
 }
 
-/// Where a camera is, its lens, its depth range.
-/// What a volume holds, as a viewer and a node body show it: its cells and its box.
-pub(crate) fn vol_lines(m: &penumbra_gpu::Medium) -> [String; 3] {
+/// Three lines on a result that has no picture, as a viewer and a node body show it: a volume
+/// or a group of bodies. `None` for anything else.
+pub(crate) fn summary_lines(data: &Data) -> Option<[String; 3]> {
+    if let Some(m) = data.get::<penumbra_gpu::Medium>() {
+        return Some(vol_lines(m));
+    }
+    data.get::<penumbra_ops::rigid::group::Bodies>().map(bodies_lines)
+}
+
+/// What a volume holds: its cells and its box.
+fn vol_lines(m: &penumbra_gpu::Medium) -> [String; 3] {
     let [x, y, z] = m.volume.size();
     let f = |v: [f32; 3]| v.map(|c| format_value(f64::from(c))).join(", ");
     [format!("{x} x {y} x {z} cells"), format!("box {} m", f(m.size)), format!("at {}", f(m.center))]
 }
 
+/// What a group of bodies holds: how many, what they collide as, what they are made of.
+fn bodies_lines(b: &penumbra_ops::rigid::group::Bodies) -> [String; 3] {
+    let f = |v: f32| format_value(f64::from(v));
+    let m = b.material;
+    [
+        format!("{} bodies, collide as {}", b.starts.len(), b.shape_name()),
+        format!("friction {}, bounce {}", f(m.friction), f(m.bounce)),
+        format!("density {}", f(m.density)),
+    ]
+}
+
+/// Where a camera is, its lens, its depth range.
 pub(crate) fn view_lines(v: &Viewpoint) -> [String; 3] {
     let p = v.position();
     let lens = match v.lens {

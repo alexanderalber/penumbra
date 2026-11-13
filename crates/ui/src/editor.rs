@@ -1806,11 +1806,10 @@ impl Editor {
                         light_body(painter, body_rect, lights, !g.inputs.is_empty(), zoom);
                     }
                 }
-                DataKind::Vol => {
-                    if let Some(m) = first.get::<penumbra_gpu::Medium>()
+                DataKind::Vol | DataKind::Bodies => {
+                    if let Some(lines) = crate::viewer::summary_lines(first)
                         && zoom > 0.4
                     {
-                        let lines = crate::viewer::vol_lines(m);
                         for (i, line) in lines.iter().take(lines_fit(body_rect, zoom)).enumerate() {
                             painter.text(
                                 pos2(

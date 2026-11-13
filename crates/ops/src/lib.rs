@@ -169,18 +169,10 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("light.ambient", &["ambient light"]),
     ("light.environment", &["environment light"]),
     ("light.projector", &["projection mapping", "projector light"]),
+    ("physics.bodies", &["actor", "simulation", "collision shape", "physics material"]),
     (
         "physics.rigid_bodies",
-        &[
-            "bullet solver",
-            "actor",
-            "multi body",
-            "multibody",
-            "simulation",
-            "collision",
-            "rapier",
-            "dynamics",
-        ],
+        &["bullet solver", "multi body", "multibody", "simulation", "collision", "rapier", "dynamics"],
     ),
     ("vol.emitter", &["nvidia flow emitter", "simulation"]),
     ("vol.obstacle", &["simulation", "collision"]),
@@ -276,7 +268,8 @@ pub fn warm_up(types: &NodeTypes, gpu: &Gpu) {
 }
 
 /// Passes its input on as it is, without a copy: the nulls of every family but `tex`
-/// (`chan.null`, `audio.null`, `table.null`, `geo.null`, `mat.null`, `light.null`, `view.null`, `vol.null`).
+/// (`chan.null`, `audio.null`, `table.null`, `geo.null`, `mat.null`, `light.null`, `view.null`, `vol.null`,
+/// `physics.null`).
 pub(crate) struct Null;
 
 impl Operator for Null {

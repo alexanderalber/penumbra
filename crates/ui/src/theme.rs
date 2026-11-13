@@ -93,6 +93,7 @@ pub fn kind_name(kind: DataKind) -> &'static str {
         DataKind::View => "view",
         DataKind::Audio => "audio",
         DataKind::Vol => "vol",
+        DataKind::Bodies => "bodies",
     }
 }
 
@@ -110,6 +111,8 @@ pub fn kind_color(kind: DataKind) -> Color32 {
         DataKind::Audio => Color32::from_rgb(70, 215, 240),
         // Smoke grey with a blue cast: apart from view's lighter grey and the other hues.
         DataKind::Vol => Color32::from_rgb(150, 165, 190),
+        // Brick red: away from geo's orange and mat's pink, the two kinds its nodes sit between.
+        DataKind::Bodies => Color32::from_rgb(210, 100, 75),
     }
 }
 
@@ -150,9 +153,7 @@ pub fn family_color(family: &str) -> Color32 {
         "view" => kind_color(DataKind::View),
         "audio" => kind_color(DataKind::Audio),
         "vol" => kind_color(DataKind::Vol),
-        // The solver hands out tables, but it is looked for as physics: brick red, away from
-        // geo's orange and mat's pink.
-        "physics" => Color32::from_rgb(210, 100, 75),
+        "physics" => kind_color(DataKind::Bodies),
         // Scripts output channels and tables: neither family's colour, Python's yellow.
         "script" => Color32::from_rgb(225, 205, 80),
         // Components hold nodes of every family: a colour of their own, turquoise, away from
