@@ -1,6 +1,7 @@
 //! `physics.bodies`: one group of rigid bodies for `physics.rigid_bodies`. A table places the
-//! bodies, a model says what they look like, and the node's params say what they collide as and
-//! what they are made of. The group travels as one [`Bodies`] on a wire of its own kind.
+//! bodies, a model says what they look like, and the node's params say who moves them, what
+//! they collide as and what they are made of. The group travels as one [`Bodies`] on a wire of
+//! its own kind.
 
 use penumbra_core::{Error, ParamSpec, Table};
 use penumbra_gpu::Geo;
@@ -9,12 +10,15 @@ use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
 use penumbra_mesh::Mesh;
-use penumbra_physics::{MAX_BODIES, Material, Shape, Start};
+use penumbra_physics::{MAX_BODIES, Material, Mode, Shape, Start};
 
 pub const KIND: &str = "physics.bodies";
 
 /// Choices of `shape`.
 pub const SHAPES: [&str; 3] = ["hull", "box", "sphere"];
+
+/// Choices of `mode`, in the order of [`mode_of`].
+pub const MODES: [&str; 3] = ["dynamic", "driven", "fixed"];
 
 /// The columns of the `table` input, by header name: where a body starts (as `geo.instance`
 /// reads them), how fast it moves (metres per second) and spins (degrees per second).
@@ -24,8 +28,11 @@ pub const START_COLUMNS: [&str; 15] =
 /// The payload of `bodies` data: one group of bodies as a solver takes it.
 #[derive(Clone)]
 pub struct Bodies {
-    /// Where each body starts, in the order of the table's rows.
+    /// One per row of the table, in its order: where a dynamic body starts, and where a driven
+    /// or fixed body is.
     pub starts: Vec<Start>,
+    /// Who moves the bodies.
+    pub mode: Mode,
     /// What every body is drawn as. Empty: a box of 1 m.
     pub model: Vec<Item>,
     /// What every body collides as, at scale 1.
@@ -48,7 +55,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             KIND,
-            "One group of rigid bodies for physics.rigid_bodies: a table places them, a model shows them, the params say what they collide as and what they are made of",
+            "One group of rigid bodies for physics.rigid_bodies: a table places them, a model shows them, the params say who moves them, what they collide as and what they are made of",
+        )
+        .param(
+            ParamSpec::choice("mode", &MODES)
+                .doc("Who moves these bodies. A switch puts them where the table has them")
+                .choice_doc("dynamic", "the solver: the table is their start, then they fall and collide")
+                .choice_doc("driven", "the table, frame by frame: each body goes where its row is now and pushes the others out of its way; nothing pushes it back")
+                .choice_doc("fixed", "nobody: they stand where the table puts them and the others land on them; a change to the table puts them elsewhere at once"),
         )
         .param(
             ParamSpec::choice("shape", &SHAPES)
@@ -73,13 +87,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 // What the solver takes (`penumbra_physics::DENSITY_RANGE`).
                 .clamp(0.001, 10_000.0)
                 .range(0.1, 10.0)
+                .applies_when("mode", &["dynamic"])
                 .doc("How heavy these bodies are for their size, compared with other groups. A body of density 10 pushes one of density 1 aside and is hardly slowed by it. Alone, a group falls the same at any density"),
         )
         .input("table", DataKind::Table)
         .input("model", DataKind::Geo)
         .describe_input(
             "table",
-            "One row per body. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). A change puts the bodies of this group back to their start",
+            "One row per body. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). With mode dynamic a change puts the bodies of this group back to their start. With driven and fixed the bodies follow the table, and the speed and spin columns do nothing",
         )
         .describe_input(
             "model",
@@ -140,7 +155,20 @@ impl Operator for Group {
             density: cx.float("density")? as f32,
         };
         let model = geo.map(|g| g.items.clone()).unwrap_or_default();
-        Ok(Cooked::Outputs(vec![Data::new(DataKind::Bodies, Bodies { starts, model, shape, material })]))
+        let mode = mode_of(cx.text("mode")?);
+        Ok(Cooked::Outputs(vec![Data::new(
+            DataKind::Bodies,
+            Bodies { starts, mode, model, shape, material },
+        )]))
+    }
+}
+
+/// The mode the `mode` param calls `name`.
+pub fn mode_of(name: &str) -> Mode {
+    match name {
+        "driven" => Mode::Driven,
+        "fixed" => Mode::Fixed,
+        _ => Mode::Dynamic,
     }
 }
 

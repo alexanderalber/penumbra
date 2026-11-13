@@ -2646,11 +2646,11 @@ Outputs:
 
 ### physics.bodies
 
-One group of rigid bodies for physics.rigid_bodies: a table places them, a model shows them, the params say what they collide as and what they are made of
+One group of rigid bodies for physics.rigid_bodies: a table places them, a model shows them, the params say who moves them, what they collide as and what they are made of
 
 Inputs:
 
-- `table` (table): One row per body. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). A change puts the bodies of this group back to their start
+- `table` (table): One row per body. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). With mode dynamic a change puts the bodies of this group back to their start. With driven and fixed the bodies follow the table, and the speed and spin columns do nothing
 - `model` (geo): What each body looks like, with its material, and what `shape` is taken from. A change to its form puts the bodies of this group back to their start
 
 Outputs:
@@ -2659,10 +2659,11 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
+| `mode` | dynamic \| driven \| fixed | `"dynamic"` |  | Who moves these bodies. A switch puts them where the table has them; dynamic: the solver: the table is their start, then they fall and collide; driven: the table, frame by frame: each body goes where its row is now and pushes the others out of its way; nothing pushes it back; fixed: nobody: they stand where the table puts them and the others land on them; a change to the table puts them elsewhere at once |
 | `shape` | hull \| box \| sphere | `"hull"` |  | What each body collides as, taken from the `model` input. Without a model: a box of 1 m; hull: the model with its dents filled in, as if wrapped in foil; box: the box around the model; faster, and stacks well; sphere: a ball as wide as the model's longest side; the fastest, and it rolls |
 | `friction` | float | `0.5` | 0 to 2 (soft, held within 0 to 10) | How much these bodies grip: 0 slides like ice, 1 holds like rubber. Where two things touch, the mean of their two values counts |
 | `bounce` | float | `0` | 0 to 1 | How much of its speed a body keeps when it hits something: 0 lands dead, 1 bounces for ever. Where two things touch, the larger of their two values counts |
-| `density` | float | `1` | 0.1 to 10 (soft, held within 0.001 to 10000) | How heavy these bodies are for their size, compared with other groups. A body of density 10 pushes one of density 1 aside and is hardly slowed by it. Alone, a group falls the same at any density |
+| `density` | float | `1` | 0.1 to 10 (soft, held within 0.001 to 10000) | How heavy these bodies are for their size, compared with other groups. A body of density 10 pushes one of density 1 aside and is hardly slowed by it. Alone, a group falls the same at any density. Does something only with mode dynamic. |
 
 ### physics.null
 
@@ -2682,7 +2683,7 @@ Follows the show clock: cooks again whenever time moves. Keeps state from frame 
 
 Inputs:
 
-- `bodies0 .. bodies63` (bodies): A group of bodies from physics.bodies. The groups of all these inputs collide with each other, 4000 bodies in all at most. A group whose table or shape changes starts over; the others go on. Any number, up to 64: each one wired adds a free slot below it
+- `bodies0 .. bodies63` (bodies): A group of bodies from physics.bodies. The groups of all these inputs collide with each other, 4000 bodies in all at most. A dynamic group whose table or shape changes starts over; the others go on. A driven or fixed group follows its table. Any number, up to 64: each one wired adds a free slot below it
 - `obstacles` (geo): Geometry that stands still and that the bodies land on and bounce off, hollows and all. It may change while the bodies move; a moving obstacle does not push them along
 
 Outputs:
@@ -2701,6 +2702,7 @@ Outputs:
 | `spin_damping` *(more)* | float | `0` | 0 to 5 (soft, held within 0 to 1000) | Slows every body's turning down: the share of its spin it loses per second |
 | `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion |
 | `substeps` *(more)* | int | `1` | 1 to 8 | Solver steps per frame: raise it when fast bodies pass through thin things or a tall stack wobbles. Each step costs the same again |
+| `jump` *(more)* | float | `0.5` | 0 to 5 m (soft, held within 0 to 1000000 m) | How far a driven body may move in one frame and still push what is in its way. A body whose row moves farther is put there at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. 0: driven bodies never push |
 | `reset` | bool | `false` |  | Puts every body of every group back to its start, every frame while on |
 
 ## script

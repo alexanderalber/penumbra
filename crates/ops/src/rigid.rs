@@ -5,8 +5,9 @@
 //! of where they are now, in the columns `geo.instance` reads. The solver runs on the CPU
 //! (`penumbra-physics`), one step per show frame, on the cook thread.
 //!
-//! A group starts over when its starts or its collision shape change; the other groups go on.
-//! Materials, obstacles and the params change while the bodies move.
+//! A dynamic group starts over when its starts or its collision shape change; the other groups
+//! go on. A driven or fixed group follows its table instead: the solver places its bodies anew
+//! whenever the table changes. Materials, obstacles and the params change while the bodies move.
 
 use std::sync::Arc;
 
@@ -18,7 +19,9 @@ use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, MAX_RUN, NodeDesc, NodeTypes, Operator,
 };
 use penumbra_mesh::Mesh;
-use penumbra_physics::{MAX_BODIES, MAX_GROUPS, MAX_SUBSTEPS, Obstacle, Placement, Settings, World};
+use penumbra_physics::{
+    MAX_BODIES, MAX_GROUPS, MAX_SUBSTEPS, Mode, Obstacle, Place, Placement, Settings, World,
+};
 
 use crate::geo::trs;
 use crate::tex::fluid::step;
@@ -100,12 +103,20 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .more()
                 .doc("Solver steps per frame: raise it when fast bodies pass through thin things or a tall stack wobbles. Each step costs the same again"),
         )
+        .param(
+            ParamSpec::float("jump", 0.5)
+                .clamp(0.0, 1e6)
+                .range(0.0, 5.0)
+                .unit(Unit::Metres)
+                .more()
+                .doc("How far a driven body may move in one frame and still push what is in its way. A body whose row moves farther is put there at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. 0: driven bodies never push"),
+        )
         .param(ParamSpec::bool("reset", false).doc("Puts every body of every group back to its start, every frame while on"))
         .input_run(
             "bodies",
             DataKind::Bodies,
             1,
-            "A group of bodies from physics.bodies. The groups of all these inputs collide with each other, 4000 bodies in all at most. A group whose table or shape changes starts over; the others go on",
+            "A group of bodies from physics.bodies. The groups of all these inputs collide with each other, 4000 bodies in all at most. A dynamic group whose table or shape changes starts over; the others go on. A driven or fixed group follows its table",
         )
         .input("obstacles", DataKind::Geo)
         .describe_input(
@@ -162,24 +173,47 @@ impl Operator for RigidBodies {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let wired = |k: usize| cx.def().inputs.get(k).is_some_and(Option::is_some);
         let mut groups: Vec<(usize, &Data, &Bodies)> = Vec::new();
+        // Wired inputs that deliver nothing: the first that may still come, and those that
+        // will not until something changes upstream.
+        let (mut awaited, mut failed) = (None, Vec::new());
         for i in 0..MAX_RUN {
             match cx.input(i) {
                 Some(data) => match data.get::<Bodies>() {
                     Some(bodies) => groups.push((i, data, bodies)),
-                    None => return Err(CookError::Pending),
+                    None => awaited = awaited.or(Some(i)),
                 },
-                None if wired(i) => return Err(CookError::Pending),
+                None if wired(i) && cx.input_stuck(i) => failed.push(i),
+                None if wired(i) => awaited = awaited.or(Some(i)),
                 None => {}
             }
         }
-        if groups.is_empty() {
-            return Err(CookError::failed("connect a physics.bodies: a group of bodies to move"));
+        if let Some(i) = awaited {
+            cx.warn(format!("waiting for the group on `bodies{i}`"));
+            return Err(CookError::Pending);
         }
+        let names = failed.iter().map(|i| format!("`bodies{i}`")).collect::<Vec<_>>().join(", ");
+        if groups.is_empty() {
+            return Err(CookError::failed(match failed.len() {
+                0 => "connect a physics.bodies: a group of bodies to move".to_string(),
+                _ => format!("the node on {names} failed, so there is no group of bodies to move"),
+            }));
+        }
+        let mut input_note = (!failed.is_empty())
+            .then(|| format!("the node on {names} failed: the solver runs without its bodies"));
         let obstacle_geo = match cx.input_as::<Geo>(OBSTACLES) {
             Some(g) => Some(g),
-            None if wired(OBSTACLES) => return Err(CookError::Pending),
+            None if wired(OBSTACLES) && cx.input_stuck(OBSTACLES) => {
+                let note = "the node on `obstacles` failed: the solver runs without obstacles";
+                input_note = Some(input_note.map_or(note.to_string(), |n| format!("{n}; {note}")));
+                None
+            }
+            None if wired(OBSTACLES) => {
+                cx.warn("waiting for the geometry on `obstacles`");
+                return Err(CookError::Pending);
+            }
             None => None,
         };
+        let jump = cx.float("jump")? as f32;
         let settings = settings(cx)?;
         let now = cx.time().tick;
         let period = 1.0 / cx.rate().as_f64().max(1.0);
@@ -209,8 +243,12 @@ impl Operator for RigidBodies {
         for &(i, data, bodies) in &groups {
             match slots.get_mut(i).and_then(Option::as_mut) {
                 Some(slot) if slot.data.same(data) => {}
-                Some(slot) if slot.data.get::<Bodies>().is_some_and(|old| same_start(old, bodies)) => {
+                Some(slot) if slot.data.get::<Bodies>().is_some_and(|old| goes_on(old, bodies)) => {
                     world.set_material(i, bodies.material);
+                    if bodies.mode != Mode::Dynamic {
+                        // Before the step, so that a driven body travels to its row in it.
+                        slot.note = world.place(i, &bodies.starts, jump).err().map(|e| left_out(i, &e));
+                    }
                     slot.data = data.clone();
                     changed = true;
                 }
@@ -277,6 +315,7 @@ impl Operator for RigidBodies {
             .filter_map(|s| s.note.as_ref())
             .chain(&self.obstacle_note)
             .chain(&self.draw_note)
+            .chain(&input_note)
             .map(String::as_str)
             .collect();
         if !notes.is_empty() {
@@ -286,16 +325,22 @@ impl Operator for RigidBodies {
     }
 }
 
-/// Whether the bodies of `new` may go on from where those of `old` are: the same starts and
-/// the same collision shape. The material and the look may differ.
-fn same_start(old: &Bodies, new: &Bodies) -> bool {
-    old.starts == new.starts && old.shape == new.shape
+/// Whether the bodies of `new` may go on from where those of `old` are: the same collision
+/// shape, moved by the same hand, and for bodies the solver moves the same starts. The material
+/// and the look may differ, and so may the rows of bodies that follow their table.
+fn goes_on(old: &Bodies, new: &Bodies) -> bool {
+    old.shape == new.shape && old.mode == new.mode && (new.mode != Mode::Dynamic || old.starts == new.starts)
+}
+
+/// The note for bodies of the group on input `index` that the world did not take.
+fn left_out(index: usize, why: &str) -> String {
+    format!("`bodies{index}`: {why} in all: the last bodies of this group are left out")
 }
 
 /// Makes group `index` of `world` anew from `bodies`, every body at its start. Returns what
 /// kept bodies out, if anything did.
 fn start_group(world: &mut World, index: usize, bodies: &Bodies) -> Option<String> {
-    if let Err(e) = world.set_group(index, bodies.shape.clone(), bodies.material) {
+    if let Err(e) = world.set_group(index, bodies.shape.clone(), bodies.material, bodies.mode) {
         world.remove_group(index);
         return Some(format!("`bodies{index}`: {e}: its bodies are left out"));
     }
@@ -376,6 +421,7 @@ pub fn obstacle_of(mesh: &Mesh, world: &Mat4) -> Obstacle {
     Obstacle {
         vertices: mesh.vertices.iter().map(|v| moved_by(world, v.position)).collect(),
         triangles: mesh.indices.as_chunks::<3>().0.to_vec(),
+        place: Place::default(),
     }
 }
 
@@ -578,6 +624,123 @@ mod tests {
     }
 
     #[test]
+    fn a_group_that_fails_is_named_and_the_others_go_on() {
+        // A physics.bodies without a table is in error. Alone on the solver it is the error.
+        let types = Arc::new(builtin_types().unwrap());
+        let ops = [create("/r", KIND), create("/b0", group::KIND), connect("/b0", "/r", 0)];
+        let net = Arc::new(Network::new().apply(&types, &ops).unwrap().network);
+        let mut cooker = Cooker::new(types, Arc::new(JobPool::new(1).unwrap()));
+        let id = net.resolve(&"/r".parse().unwrap()).unwrap();
+        let time = FrameTime { frame: 0, tick: Tick::from_seconds(0.0), rate: Rate::FPS_60 };
+        cooker.cook(&net, time, &[id], &[]);
+        let error = cooker.status(id).unwrap().error.unwrap();
+        assert!(error.contains("`bodies0`") && error.contains("failed"), "{error}");
+        // Beside a group that works it is a warning, and the working group's bodies fall.
+        let mut rig = Rig::new(&["tz\n3"]);
+        rig.apply(&[create("/broken", group::KIND), connect("/broken", "/r", 1)]);
+        let (out, warning) = rig.run(30);
+        let warning = warning.unwrap();
+        assert!(warning.contains("`bodies1`") && warning.contains("without its bodies"), "{warning}");
+        assert!(out.num_rows() == 2 && number(&out, 1, 2) < 2.9);
+        // Mended, it joins the world and the warning goes.
+        let mut ops = vec![create("/t1", "table.text"), set("/t1.text", "tz\n7"), set("/t1.format", "csv")];
+        ops.push(connect("/t1", "/broken", 0));
+        rig.apply(&ops);
+        let (out, warning) = rig.run(2);
+        assert_eq!((out.num_rows(), warning), (3, None));
+    }
+
+    /// The text of a table with one row at `x`, 0.5 m over the floor.
+    fn row_at(x: f64) -> String {
+        format!("tx,tz\n{x},0.5")
+    }
+
+    #[test]
+    fn a_driven_group_follows_its_table_and_pushes_what_is_in_its_way() {
+        // Group 0: a box at rest at the origin. Group 1: a box the table moves.
+        let mut rig = Rig::new(&["tz\n0.5", &row_at(-3.0)]);
+        rig.apply(&[set("/b1.mode", "driven")]);
+        let (out, warning) = rig.run(60);
+        assert_eq!((out.num_rows(), warning), (3, None));
+        assert_eq!((out.cell(2, 0), out.cell(2, 2)), ("-3", "0.5"), "gravity does not move a driven body");
+        // The table moves its row by 5 cm a frame (3 m/s), through the box at rest.
+        for k in 1..=120 {
+            rig.apply(&[set("/t1.text", row_at(-3.0 + 0.05 * f64::from(k)))]);
+            let (out, _) = rig.run(1);
+            let (pushed, driven) = (number(&out, 1, 0), number(&out, 2, 0));
+            // The frame a row changes in shows the body there: it does not lag a frame.
+            assert!((driven - (-3.0 + 0.05 * f64::from(k))).abs() < 1e-4, "frame {k}: {driven}");
+            assert!(pushed > driven + 0.95 || k < 30, "frame {k}: the driven box is inside the other");
+        }
+        // Let go of, the pushed box slides on a little and stops.
+        let (out, _) = rig.run(120);
+        let pushed = number(&out, 1, 0);
+        assert!(pushed > 3.95 && pushed < 8.0, "pushed ahead: {pushed}");
+        // A row that moves farther than `jump` in a frame puts the body there: to the far
+        // side of the box it pushed, which is not swept along.
+        rig.apply(&[set("/t1.text", row_at(12.0))]);
+        let (out, _) = rig.run(30);
+        assert_eq!(out.cell(2, 0), "12");
+        assert_eq!(number(&out, 1, 0), pushed);
+        // Rows come and go with their bodies, and row k stays body k.
+        rig.apply(&[set("/t1.text", "tx,tz,sx\n8,0.5,1\n8,3,2\n8,6,1")]);
+        let (out, _) = rig.run(1);
+        assert_eq!(out.num_rows(), 5);
+        assert_eq!((out.cell(3, 2), out.cell(3, 6), out.cell(4, 9)), ("3", "2", "1"));
+        rig.apply(&[set("/t1.text", "tx,tz,sx\n8,0.5,3")]);
+        let (out, warning) = rig.run(1);
+        assert_eq!((out.num_rows(), out.cell(2, 6), warning), (3, "3", None));
+    }
+
+    #[test]
+    fn time_that_stands_holds_no_driven_body_back() {
+        let mut rig = Rig::new(&["tz\n0.5", &row_at(-3.0)]);
+        rig.apply(&[set("/b1.mode", "driven")]);
+        rig.run(60);
+        rig.apply(&[set("/r.speed", 0.0)]);
+        for k in 1..=60 {
+            rig.apply(&[set("/t1.text", row_at(-3.0 + 0.1 * f64::from(k)))]);
+            rig.run(1);
+        }
+        let (out, _) = rig.run(1);
+        assert_eq!(out.cell(2, 0), "3", "the body is where its row is");
+        rig.apply(&[set("/r.speed", 1.0)]);
+        let (out, _) = rig.run(30);
+        assert!(number(&out, 1, 0).abs() < 1e-3, "nothing was pushed meanwhile: {}", out.cell(1, 0));
+    }
+
+    #[test]
+    fn a_fixed_group_holds_what_lands_on_it_and_a_switch_of_mode_starts_it_over() {
+        // Group 0: a box hung at 2 m, with a speed its mode ignores. Group 1: a box dropped
+        // on it.
+        let mut rig = Rig::new(&["tz,vx,wz\n2,3,90", "tz\n5"]);
+        rig.apply(&[set("/b0.mode", "fixed")]);
+        let (out, warning) = rig.run(240);
+        assert_eq!(warning, None);
+        assert_eq!(out.rows()[1][..6], ["0", "0", "2", "0", "0", "0"], "it hangs where its row puts it");
+        assert!((number(&out, 2, 2) - 3.0).abs() < 0.03, "the other rests on it: {}", out.cell(2, 2));
+        // A change to the table moves it at once, and does not start anything over: the box
+        // that rested on it falls on from where it is.
+        rig.apply(&[set("/t0.text", "tx,tz\n6,2")]);
+        let (out, _) = rig.run(1);
+        assert_eq!((out.cell(1, 0), out.cell(1, 2)), ("6", "2"));
+        assert!(number(&out, 2, 2) < 3.1 && number(&out, 2, 2) > 2.9);
+        let (out, _) = rig.run(120);
+        assert!((number(&out, 2, 2) - 0.5).abs() < 0.03, "{}", out.cell(2, 2));
+        // Released, the fixed box starts from its row and falls too.
+        rig.apply(&[set("/b0.mode", "dynamic")]);
+        let (out, _) = rig.run(1);
+        assert_eq!(out.cell(1, 2), "2");
+        let (out, _) = rig.run(120);
+        assert!((number(&out, 1, 2) - 0.5).abs() < 0.03, "{}", out.cell(1, 2));
+        // Density does nothing for a body nothing moves: the param says so.
+        let types = builtin_types().unwrap();
+        let desc = types.get(group::KIND).unwrap().desc();
+        let density = desc.params.iter().find(|p| p.name.as_str() == "density").unwrap();
+        assert!(density.applies_label().contains("dynamic"), "{}", density.applies_label());
+    }
+
+    #[test]
     fn a_speed_at_the_start_throws_the_body() {
         let mut rig = Rig::new(&["tz,vx,wz\n1,2,90"]);
         rig.apply(&[set("/r.gravity", Value::Vec3([0.0; 3])), set("/r.floor", false)]);
@@ -671,7 +834,9 @@ mod tests {
         let obstacle = obstacle_of(&slab, &world_of_slab);
         assert_eq!(obstacle.triangles.len(), 12);
         let mut world = World::new(Settings::default());
-        world.set_group(0, shape_of("box", std::iter::empty()).0, Material::default()).unwrap();
+        world
+            .set_group(0, shape_of("box", std::iter::empty()).0, Material::default(), Mode::Dynamic)
+            .unwrap();
         world.set_obstacles(vec![obstacle]).unwrap();
         world.add(0, &Start { translate: [0.0, 0.0, 4.0], ..Start::default() }).unwrap();
         for _ in 0..300 {

@@ -150,13 +150,15 @@ The families:
   the same; how strongly a number acts was matched by eye to one Flow scene.
 - **`physics`**: bodies that fall and collide. A `physics.bodies` is one group of bodies: a table
   with one row per body places them, a model shows them, and its params say what they collide as
-  (`hull`, `box`, `sphere`) and what they are made of (`friction`, `bounce`, `density`).
+  (`hull`, `box`, `sphere`) and what they are made of (`friction`, `bounce`, `density`). Its
+  `mode` says who moves them: the solver (`dynamic`), the table on every frame (`driven`, a hand
+  that pushes the others aside) or nobody (`fixed`).
   `physics.rigid_bodies` takes one group on each of its `bodies` inputs. The bodies of all groups
   fall under `gravity`, hit each other, a floor and the geometry on its `obstacles` input, and
   come to rest. Its `out` is geometry: every body where it is now, drawn as the model of its
   group, for `tex.render`. Its `table` lists where the bodies are, in the columns `geo.instance`
-  reads, with the number of their group. A group starts over when its table or its shape changes;
-  the other groups go on (see [the solver's page](nodes/physics.rigid_bodies.md)).
+  reads, with the number of their group. A dynamic group starts over when its table or its shape
+  changes; the other groups go on (see [the solver's page](nodes/physics.rigid_bodies.md)).
 - **`geo`**, **`mat`**, **`light`**, **`view`**: a 3D scene. Geometry from files or
   primitives, transformed and merged; materials put on it with `geo.assign_material`; lights and a
   `view.camera` wired into a `tex.render`, which makes a picture of it all (a render needs its
