@@ -75,7 +75,8 @@ const GROUPS: [&[&str]; 7] = [
 /// tools that mapping also uses (`tex.remap`, `tex.transform`, `tex.primitive`, `view.camera`,
 /// `mat.occluder`) stay in their family too, where TouchDesigner users look for them.
 /// `simulations` holds the types that simulate something over time. `vol` holds only the smoke's
-/// volumes, so it goes whole. Building blocks that are general tools (`tex.feedback`,
+/// volumes, so it goes whole. `table.rigid_bodies` is the solver for bodies that fall and collide.
+/// Building blocks that are general tools (`tex.feedback`,
 /// `chan.feedback`, `tex.scatter`, `tex.optical_flow`) stay in their family.
 pub const TOPICS: [(&str, &[&str]); 2] = [
     (
@@ -90,7 +91,7 @@ pub const TOPICS: [(&str, &[&str]); 2] = [
             "tex.shapes",
         ],
     ),
-    ("simulations", &["tex.fluid", "tex.render_volume", "vol"]),
+    ("simulations", &["tex.fluid", "tex.render_volume", "vol", "table.rigid_bodies"]),
 ];
 /// The tab of the component files on offer: penumbra's library, the user's and the project's
 /// `components/`. Not a family of node types; it takes the colour of `comp`.
@@ -1594,9 +1595,12 @@ mod tests {
                 "vol.obstacle",
                 "vol.smoke",
                 "vol.in",
-                "vol.out"
+                "vol.out",
+                "table.rigid_bodies"
             ]
         );
+        assert!(!of("table").iter().any(|k| k == "table.rigid_bodies"), "the solver left table");
+        assert!(of("table").iter().any(|k| k == "table.text"));
         let tex = of("tex");
         for gone in ["tex.mapper", "tex.scan", "tex.fluid", "tex.render_volume"] {
             assert!(!tex.iter().any(|k| k == gone), "{gone} left tex");
