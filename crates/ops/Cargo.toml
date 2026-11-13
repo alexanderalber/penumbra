@@ -21,6 +21,7 @@ penumbra-net.workspace = true
 penumbra-midi.workspace = true
 penumbra-ndi.workspace = true
 penumbra-osc.workspace = true
+penumbra-physics.workspace = true
 penumbra-record.workspace = true
 penumbra-script.workspace = true
 penumbra-spacenav.workspace = true

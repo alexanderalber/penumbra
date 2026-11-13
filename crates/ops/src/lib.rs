@@ -23,6 +23,7 @@ pub mod out;
 pub mod palette;
 pub mod readback;
 pub mod res;
+pub mod rigid;
 pub mod script;
 pub mod seek;
 pub mod sequence;
@@ -60,6 +61,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     mouse::register(types)?;
     note::register(types)?;
     osc::register(types)?;
+    rigid::register(types)?;
     out::register(types)?;
     script::register(types)?;
     sequence::register(types)?;
@@ -154,6 +156,10 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("chan.spacemouse_in", &["joystick"]),
     ("audio.file", &["audio file in"]),
     ("table.file", &["file in"]),
+    (
+        "table.rigid_bodies",
+        &["bullet solver", "actor", "physics", "simulation", "collision", "rapier", "dynamics"],
+    ),
     ("geo.assign_material", &["material"]),
     ("geo.file", &["file in"]),
     ("geo.instance", &["instancing", "copy"]),
