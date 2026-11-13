@@ -94,37 +94,49 @@ or make the driven body thicker.
 **Time.** While `speed` is 0, a driven body still goes where its row is, and pushes nothing. With
 `speed` below 1 a driven body hits harder: it covers the same way in less of the bodies' time.
 
-## A tracker's table as a driven group
+## A driven group from channels
 
-`tex.blob_track` gives places in the picture, from 0 to 1. A group needs `tx ty tz` in metres. A
-`script.python` between the two turns one into the other:
+`table.from_chan` turns channels into the table of a group. Channels with one value each give one
+row: the channels `tx`, `ty` and `tz` place one body. A channel that is missing counts as 0.
 
-1. `tex.blob_track`, with its `chans` output into `chan0` of a `script.python`. `chans` keeps
-   each blob in its slot (`x1`, `y1`, `id1` for the first), so a body stays with its person.
-2. The script, as the node's `code`:
+A paddle that an LFO swings through the pile:
 
-   ```python
-   PARAMS = {"width": 4.0, "depth": 3.0, "height": 0.4}
+1. `chan.lfo` with `name` set to `tx`, `rate` 0.1 and `amplitude` 4: the paddle goes 4 m to each
+   side, once in ten seconds.
+2. `chan.constant` with `name0` set to `tz` and `value0` 0.4: the height of the paddle's middle.
+3. `chan.merge`: the LFO into `in0`, the constant into `in1`.
+4. `table.from_chan`: the merge into `in`. Its table has the columns `tx` and `tz` and one row.
+5. `physics.bodies` with `mode` set to `driven`: the table into `table`, a `geo.primitive` box
+   of 0.3 x 3 x 0.8 m into `model`.
+6. That group into the next free `bodies` input of the solver.
 
-   def cook(cx):
-       blobs = cx.chans[0]
-       cx.table.append(["tx", "ty", "tz"])
-       for n in range(1, 5):
-           if blobs and blobs.value(f"id{n}") > 0:
-               x = (blobs.value(f"x{n}") - 0.5) * cx.params["width"]
-               y = (0.5 - blobs.value(f"y{n}")) * cx.params["depth"]
-               cx.table.append([x, y, cx.params["height"]])
-           else:
-               cx.table.append([0, 0, -100])
-   ```
+## A tracker's blobs as a driven group
 
-3. The script's `table` output into a `physics.bodies` with `mode` set to `driven`, and a model
-   for the hand, such as a `geo.primitive` sphere.
-4. That group into the next free `bodies` input of the solver.
+`tex.blob_track` gives places in the picture, from 0 to 1. Its `chans` output keeps each blob in
+a slot: `id1`, `x1`, `y1` for the first slot, `id2`, `x2`, `y2` for the second. A group needs
+`tx ty tz` in metres and one row per blob. Channel nodes turn one into the other:
 
-The script writes four rows, one per slot of the tracker. A slot without a blob parks its body
-100 m under the floor. A blob that appears is farther away than `jump`, so its body is put there
-without sweeping through the scene.
+1. `chan.select` with `channels` set to `x* y*`, fed by the tracker's `chans`.
+2. `chan.math` with `op` `subtract` and `b` 0.5: the middle of the picture becomes 0.
+3. `chan.constant` with `rows` 2: `name0` `x`, `value0` 4, `name1` `y`, `value1` -3. This is
+   the room the picture covers, 4 m wide and 3 m deep. y is negative since it runs downwards in
+   a picture.
+4. `chan.math` with `op` `multiply`: step 2 into `a`, the constant into `b`. Every `x` channel
+   meets `x`, every `y` channel meets `y`.
+5. `chan.rename` with `names` set to `x*=tx* y*=ty*`.
+6. `chan.constant` with `name0` `tz` and `value0` 0.4: the height of the hands.
+7. `chan.merge`: step 5 into `in0`, the tracker's `chans` into `in1`, step 6 into `in2`.
+8. `table.from_chan` with `layout` set to `numbered` and `keep` set to `id`. The number at the
+   end of a name picks the row, so each slot is one row. `tz` has no number and fills every row.
+   `keep` leaves out the slots whose `id` is 0, the ones without a blob.
+9. `physics.bodies` with `mode` set to `driven`: the table into `table`, a model for the hand
+   into `model`, such as a `geo.primitive` sphere.
+10. That group into the next free `bodies` input of the solver.
+
+A blob that appears adds a body. It is put there without sweeping through the scene. When a blob
+leaves, its row goes and the rows after it move up: each of their bodies takes the place of the
+next blob. Such a body jumps there without a push when the two blobs are farther apart than
+`jump`. Lower `jump` to 0.2 m if people come close to each other.
 
 ## What a body collides as
 

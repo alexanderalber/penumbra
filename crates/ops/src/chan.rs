@@ -172,7 +172,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .input("a", DataKind::Chan)
         .input("b", DataKind::Chan)
-        .describe_input("b", "Each channel of a meets b's channel of the same name, else b's first channel. Unconnected: the param `b`. Not used by sin, cos, tan and abs")
+        .describe_input("b", "Each channel of a meets b's channel of the same name. Without one, a channel with a number at its end meets b's channel of that name without the number: x1 and x2 both meet x. Else b's first channel. Unconnected: the param `b`. Not used by sin, cos, tan and abs")
         .output("out", DataKind::Chan),
         || Box::new(Math) as Box<dyn Operator>,
     ))?;
@@ -852,7 +852,12 @@ impl Operator for Math {
             .into_iter()
             .map(|(name, len)| {
                 let a_ch = a.and_then(|a| a.get(name.as_str()));
-                let b_ch = b.and_then(|b| b.get(name.as_str()).or_else(|| b.channels().first()));
+                // `x3` of a tracker's slots meets `x` when b has no `x3` of its own.
+                let stem = crate::table::numbered_name(name.as_str()).map(|(stem, _)| stem);
+                let b_ch = b.and_then(|b| {
+                    let named = b.get(name.as_str()).or_else(|| stem.and_then(|s| b.get(s)));
+                    named.or_else(|| b.channels().first())
+                });
                 let samples = (0..len)
                     .map(|i| {
                         let x = a_ch.map_or(0.0, |c| sample(c, i));
