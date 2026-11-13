@@ -202,6 +202,27 @@ less than a mesh.
 
 Copies made by `geo.tex_instance` are no obstacles, since their places exist on the GPU only.
 
+## Forces
+
+Gravity pulls every body the same way. A `physics.force` adds a field of its own: a pull to a
+point, a wind, a whirl, or a kick on a trigger. Wire it into a `force` input of the solver. Each
+further field takes the next `force` input, 64 fields in all at most.
+
+A field moves the dynamic bodies of every group. `strength` is the speed a body gains per second,
+so a large or heavy body moves as readily as a small or light one. Driven and fixed bodies and
+obstacles do not feel a field.
+
+A point that pulls the pile to where an LFO puts it:
+
+1. `physics.force` with `type` `point` and `strength` 12, into `force0` of the solver.
+2. `chan.lfo` with `rate` 0.1 and `amplitude` 3. Bind the x of the field's `position` to it.
+3. `damping` 0.5 on the solver, so the bodies settle around the point.
+
+Set `strength` to -12 and the point throws the bodies apart.
+
+The page of [physics.force](../reference/nodes.md#physicsforce) has the types, the kick and the
+table that takes the place of the node.
+
 ## Time
 
 The bodies move one step per show frame, as long as something shows the node's result. `speed`
