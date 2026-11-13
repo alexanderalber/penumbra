@@ -30,8 +30,7 @@ pub const MODEL_FILE: &str = "beat_this-final0-q6.safetensors";
 /// more chunks at once gain little: each one already keeps the pool busy.
 pub const IN_FLIGHT: usize = 3;
 /// How many directories above the executable's own the model is looked for: the release zip
-/// has `assets` beside the executable, a checkout three levels up (`target/debug/deps` for
-/// tests).
+/// has `assets` beside the executable, a checkout two levels above the app (`target/debug`).
 const MODEL_SEARCH_DEPTH: usize = 4;
 /// The largest network file read.
 const MAX_MODEL_BYTES: u64 = 512 << 20;
@@ -48,14 +47,21 @@ fn chunks_for(seconds: f64) -> usize {
     (frames / step).ceil().max(1.0) as usize
 }
 
-/// The shipped network file: `assets/models/` beside the executable or a few levels above it.
+/// The shipped network file: `assets/models/` beside the executable or a few levels above it,
+/// else the checkout's when this build runs from its own tree. Test programs need the checkout's
+/// path: how deep below `target/` cargo puts them differs between its versions.
 pub fn model_path() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    exe.ancestors()
-        .skip(1)
-        .take(MODEL_SEARCH_DEPTH + 1)
-        .map(|d| d.join("assets").join("models").join(MODEL_FILE))
-        .find(|p| p.is_file())
+    let above = std::env::current_exe().ok().and_then(|exe| {
+        exe.ancestors()
+            .skip(1)
+            .take(MODEL_SEARCH_DEPTH + 1)
+            .map(|d| d.join("assets").join("models").join(MODEL_FILE))
+            .find(|p| p.is_file())
+    });
+    above.or_else(|| {
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/models").join(MODEL_FILE);
+        checkout.is_file().then(|| std::path::absolute(&checkout).unwrap_or(checkout))
+    })
 }
 
 /// A loaded Beat This! network and an id for its weights, which the cache keys on.

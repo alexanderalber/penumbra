@@ -53,7 +53,7 @@ pub struct Library {
 
 impl Library {
     /// Loads `install`'s library, checks its version, then loads pyhost from next to the
-    /// executable (or its `deps` directory, where cargo puts it for tests and debug builds).
+    /// executable (or from where cargo puts it for tests and debug builds).
     pub fn load(install: &Install) -> Result<Library, String> {
         let python = open(&install.library, true)?;
         // SAFETY: Py_GetVersion has this signature in every CPython 3 and may be called before
@@ -178,12 +178,88 @@ fn open(path: &Path, global: bool) -> Result<libloading::Library, String> {
     }
 }
 
-/// pyhost next to the executable, else in its `deps` directory.
+/// The directory cargo builds pyhost in, below a profile directory's `build`: its package name.
+const HOST_PACKAGE: &str = "penumbra-pyhost";
+/// Most builds of pyhost looked at in a checkout.
+const MAX_HOST_BUILDS: usize = 256;
+
+/// pyhost next to the executable, as a package has it, else where cargo left it in a checkout.
 fn host_file() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot find the executable: {e}"))?;
     let dir = exe.parent().unwrap_or(Path::new("."));
-    let candidates = [dir.join(HOST_FILE), dir.join("deps").join(HOST_FILE)];
-    candidates.iter().find(|p| p.is_file()).cloned().ok_or_else(|| {
+    let beside = dir.join(HOST_FILE);
+    if beside.is_file() {
+        return Ok(beside);
+    }
+    built_host(dir).ok_or_else(|| {
         format!("{HOST_FILE} is missing (looked in {}); it is built with the app", dir.display())
     })
+}
+
+/// pyhost as cargo built it for a program in `dir`. Several files can be left from earlier
+/// builds; the newest one is taken.
+///
+/// Cargo up to 1.99 writes it to `deps` in the profile directory (`target/debug`), which holds
+/// the app. From 1.100 on cargo writes it to `build/penumbra-pyhost/<hash>/out` there, and a
+/// test program lies in `build/<package>/<hash>/out`, four directories below the profile
+/// directory.
+fn built_host(dir: &Path) -> Option<PathBuf> {
+    let above_test = match dir.ancestors().nth(3) {
+        Some(build) if build.file_name().is_some_and(|n| n == "build") => build.parent(),
+        _ => None,
+    };
+    let mut found = vec![dir.join("deps").join(HOST_FILE)];
+    for profile in [Some(dir), above_test].into_iter().flatten() {
+        let Ok(builds) = std::fs::read_dir(profile.join("build").join(HOST_PACKAGE)) else { continue };
+        found.extend(builds.flatten().take(MAX_HOST_BUILDS).map(|b| b.path().join("out").join(HOST_FILE)));
+    }
+    found
+        .into_iter()
+        .filter_map(|file| {
+            let meta = std::fs::metadata(&file).ok().filter(|m| m.is_file())?;
+            Some((meta.modified().ok()?, file))
+        })
+        .max_by_key(|(written, _)| *written)
+        .map(|(_, file)| file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    /// Writes an empty pyhost into `dir`, written `age` seconds ago.
+    fn host_in(dir: &Path, age: u64) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let file = dir.join(HOST_FILE);
+        let written = SystemTime::now() - Duration::from_secs(age);
+        std::fs::File::create(&file).unwrap().set_modified(written).unwrap();
+        file
+    }
+
+    #[test]
+    fn a_checkout_gives_the_newest_pyhost_cargo_built() {
+        let root = std::env::temp_dir().join(format!("penumbra-pyhost-places-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let profile = root.join("debug");
+        let test_dir = profile.join("build").join("penumbra-ops").join("0123").join("out");
+        std::fs::create_dir_all(&test_dir).unwrap();
+        assert_eq!(built_host(&profile), None);
+        assert_eq!(built_host(&test_dir), None);
+
+        // Cargo up to 1.99: in `deps`, found from the app's directory.
+        let old = host_in(&profile.join("deps"), 300);
+        assert_eq!(built_host(&profile), Some(old));
+        // Cargo from 1.100 on: a newer build wins over the file an older cargo left, both
+        // from the app's directory and from a test program's.
+        let builds = profile.join("build").join(HOST_PACKAGE);
+        host_in(&builds.join("aaaa").join("out"), 200);
+        let new = host_in(&builds.join("bbbb").join("out"), 100);
+        assert_eq!(built_host(&profile), Some(new.clone()));
+        assert_eq!(built_host(&test_dir), Some(new));
+        // A directory named like the file is no pyhost.
+        std::fs::create_dir_all(builds.join("cccc").join("out").join(HOST_FILE)).unwrap();
+        assert!(built_host(&test_dir).is_some_and(|f| f.is_file()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
