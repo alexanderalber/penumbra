@@ -1,16 +1,17 @@
 //! `physics.bodies`: one group of rigid bodies for `physics.rigid_bodies`. A table places the
 //! bodies, a model says what they look like, and the node's params say who moves them, what
-//! they collide as and what they are made of. The group travels as one [`Bodies`] on a wire of
-//! its own kind.
+//! they collide as and what they are made of. Two more tables steer dynamic bodies while they
+//! move, without starting them over: `forces` pushes each body, `targets` pulls each body to a
+//! place by a spring. The group travels as one [`Bodies`] on a wire of its own kind.
 
-use penumbra_core::{Error, ParamSpec, Table};
+use penumbra_core::{Curve, Error, ParamSpec, Table};
 use penumbra_gpu::Geo;
 use penumbra_gpu::geo::{Item, Mat4};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
 use penumbra_mesh::Mesh;
-use penumbra_physics::{MAX_BODIES, Material, Mode, Shape, Start};
+use penumbra_physics::{MAX_BODIES, MAX_PUSH, MAX_STIFFNESS, Material, Mode, Push, Shape, Spring, Start};
 
 pub const KIND: &str = "physics.bodies";
 
@@ -25,6 +26,19 @@ pub const MODES: [&str; 3] = ["dynamic", "driven", "fixed"];
 pub const START_COLUMNS: [&str; 15] =
     ["tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz", "vx", "vy", "vz", "wx", "wy", "wz"];
 
+/// The columns of the `forces` input, by header name: how fast a body gains speed along x, y
+/// and z (metres per second squared) and spin about them (degrees per second squared).
+pub const FORCE_COLUMNS: [&str; 6] = ["fx", "fy", "fz", "mx", "my", "mz"];
+
+/// The columns of the `targets` input, by header name: the place a body is pulled to.
+pub const TARGET_COLUMNS: [&str; 3] = ["tx", "ty", "tz"];
+
+/// The inputs, by index.
+const TABLE: usize = 0;
+const MODEL: usize = 1;
+const FORCES: usize = 2;
+const TARGETS: usize = 3;
+
 /// The payload of `bodies` data: one group of bodies as a solver takes it.
 #[derive(Clone)]
 pub struct Bodies {
@@ -38,6 +52,14 @@ pub struct Bodies {
     /// What every body collides as, at scale 1.
     pub shape: Shape,
     pub material: Material,
+    /// What pushes body k, by k, while the bodies are dynamic. May be shorter or longer than
+    /// `starts`.
+    pub pushes: Vec<Push>,
+    /// Where body k is pulled to, by k, while the bodies are dynamic; none for a body that is
+    /// not pulled. May be shorter or longer than `starts`.
+    pub targets: Vec<Option<[f32; 3]>>,
+    /// The spring that pulls the bodies to `targets`.
+    pub spring: Spring,
 }
 
 impl Bodies {
@@ -90,8 +112,39 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .applies_when("mode", &["dynamic"])
                 .doc("How heavy these bodies are for their size, compared with other groups. A body of density 10 pushes one of density 1 aside and is hardly slowed by it. Alone, a group falls the same at any density"),
         )
+        .param(
+            ParamSpec::float("pull", 1.0)
+                .clamp(0.0, 1.0)
+                .applies_when_wired("targets")
+                .doc("How much of the spring to the `targets` acts: 1 holds the bodies at their targets, 0 lets them go and they fall. A pulled body feels that much less of gravity, so at 1 the figure stands where the targets are and does not sag. Bind it to a channel to form the figure and drop it"),
+        )
+        .param(
+            ParamSpec::float("stiffness", f64::from(Spring::default().stiffness))
+                .clamp(0.0, f64::from(MAX_STIFFNESS))
+                .range(1.0, 400.0)
+                .curve(Curve::Log)
+                .applies_when_wired("targets")
+                .doc("How hard the spring pulls: the speed a body gains per second for every metre it is away from its target. 40 brings a body home in about a second, 400 in a quarter of one, 4 lets it drift there in three"),
+        )
+        .param(
+            ParamSpec::float("pull_damping", f64::from(Spring::default().damping))
+                .clamp(0.0, 100.0)
+                .range(0.0, 2.0)
+                .applies_when_wired("targets")
+                .doc("How much the spring brakes. At 1 a body arrives without swinging past its target. Below 1 it swings about the target before it rests, at 0 for ever. Above 1 it creeps. A pulled body loses its spin at the same rate"),
+        )
         .input("table", DataKind::Table)
         .input("model", DataKind::Geo)
+        .input("forces", DataKind::Table)
+        .input("targets", DataKind::Table)
+        .describe_input(
+            "forces",
+            "A push per body, read on every frame: row k pushes body k of the table. The first row names the columns: fx fy fz for the speed the body gains per second along x, y and z (metres per second squared), mx my mz for the spin it gains per second about them (degrees per second squared). A heavy body gains as much as a light one. A change here never puts the bodies back to their start. Bodies without a row are not pushed. Only with mode dynamic",
+        )
+        .describe_input(
+            "targets",
+            "A place per body that a spring pulls it to: row k pulls body k of the table. The first row names the columns tx ty tz, in metres. The bodies form the figure these places draw, and collide on their way. `pull` at 0 lets them go. A change here never puts the bodies back to their start. Bodies without a row are not pulled. Only with mode dynamic",
+        )
         .describe_input(
             "table",
             "One row per body. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). With mode dynamic a change puts the bodies of this group back to their start. With driven and fixed the bodies follow the table, and the speed and spin columns do nothing",
@@ -123,18 +176,30 @@ struct Group {
 impl Operator for Group {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let wired = |k: usize| cx.def().inputs.get(k).is_some_and(Option::is_some);
-        let Some(table) = cx.input_as::<Table>(0) else {
-            return Err(if wired(0) {
+        let Some(table) = cx.input_as::<Table>(TABLE) else {
+            return Err(if wired(TABLE) {
                 CookError::Pending
             } else {
                 CookError::failed("connect a table with one row per body")
             });
         };
-        let geo = match cx.input_as::<Geo>(1) {
+        let geo = match cx.input_as::<Geo>(MODEL) {
             Some(g) => Some(g),
-            None if wired(1) => return Err(CookError::Pending),
+            None if wired(MODEL) => return Err(CookError::Pending),
             None => None,
         };
+        // A table that steers: none while unwired, and the group waits for one on its way.
+        let steering = |input: usize| match cx.input_as::<Table>(input) {
+            Some(t) => Ok(Some(t)),
+            None if wired(input) && !cx.input_stuck(input) => Err(CookError::Pending),
+            None => Ok(None),
+        };
+        let (pushes, push_note) = steering(FORCES)?.map(pushes).unwrap_or_default();
+        let (targets, target_note) = steering(TARGETS)?.map(targets).unwrap_or_default();
+        let failed = [(FORCES, "forces"), (TARGETS, "targets")]
+            .into_iter()
+            .filter(|(input, _)| wired(*input) && cx.input_stuck(*input))
+            .map(|(_, name)| format!("the node on `{name}` failed: the bodies go without it"));
         let shape_key = (cx.text("shape")?.to_string(), key(geo));
         let (shape, shape_note) = match &self.shape {
             Some((k, shape, note)) if *k == shape_key => (shape.clone(), note.clone()),
@@ -145,7 +210,13 @@ impl Operator for Group {
             }
         };
         let (starts, table_note) = starts(table);
-        let notes: Vec<String> = table_note.into_iter().chain(shape_note).collect();
+        let notes: Vec<String> = table_note
+            .into_iter()
+            .chain(shape_note)
+            .chain(push_note)
+            .chain(target_note)
+            .chain(failed)
+            .collect();
         if !notes.is_empty() {
             cx.warn(notes.join("; "));
         }
@@ -154,11 +225,16 @@ impl Operator for Group {
             bounce: cx.float("bounce")? as f32,
             density: cx.float("density")? as f32,
         };
+        let spring = Spring {
+            pull: cx.float("pull")? as f32,
+            stiffness: cx.float("stiffness")? as f32,
+            damping: cx.float("pull_damping")? as f32,
+        };
         let model = geo.map(|g| g.items.clone()).unwrap_or_default();
         let mode = mode_of(cx.text("mode")?);
         Ok(Cooked::Outputs(vec![Data::new(
             DataKind::Bodies,
-            Bodies { starts, mode, model, shape, material },
+            Bodies { starts, mode, model, shape, material, pushes, targets, spring },
         )]))
     }
 }
@@ -265,4 +341,66 @@ pub fn starts(table: &Table) -> (Vec<Start>, Option<String>) {
         });
     }
     (out, note)
+}
+
+/// The numbers of the rows of `table` in the columns `names`, found by the header in its first
+/// row: a missing column and an empty cell are 0. None for a row with a cell that is not a
+/// finite number. Also a note about a header that names none of the columns and about the
+/// first such row; `input` and `effect` word it.
+fn rows_of<const N: usize>(
+    table: &Table,
+    names: &[&str; N],
+    input: &str,
+    effect: &str,
+) -> (Vec<Option<[f32; N]>>, Option<String>) {
+    let Some((header, rows)) = table.rows().split_first() else { return (Vec::new(), None) };
+    let index = names.map(|name| header.iter().position(|h| h.trim() == name));
+    if index.iter().all(Option::is_none) {
+        let note = format!("the first row of `{input}` names the columns: {}", names.join(", "));
+        return (Vec::new(), Some(note));
+    }
+    let mut note = None;
+    let read = |(r, row): (usize, &Vec<String>)| {
+        let mut bad = false;
+        let values = index.map(|col| {
+            let cell = col.and_then(|c| row.get(c)).map_or("", |c| c.trim());
+            match cell.parse::<f32>() {
+                _ if cell.is_empty() => 0.0,
+                Ok(x) if x.is_finite() => x,
+                _ => {
+                    bad = true;
+                    0.0
+                }
+            }
+        });
+        if bad {
+            let r = r + 1;
+            note.get_or_insert_with(|| {
+                format!("row {r} of `{input}` holds a cell that is not a number: {effect}")
+            });
+        }
+        (!bad).then_some(values)
+    };
+    let out = rows.iter().enumerate().take(MAX_BODIES).map(read).collect();
+    (out, note)
+}
+
+/// What pushes each body: the rows of `table` under a header that names any of
+/// [`FORCE_COLUMNS`]. A row that cannot be read pushes nothing, so the rows after it keep
+/// their bodies. Returns the pushes and a note, if any.
+pub fn pushes(table: &Table) -> (Vec<Push>, Option<String>) {
+    let (rows, note) = rows_of(table, &FORCE_COLUMNS, "forces", "that body is not pushed");
+    let most = |v: f32| v.clamp(-MAX_PUSH, MAX_PUSH);
+    let push = |row: Option<[f32; 6]>| {
+        let [fx, fy, fz, mx, my, mz] = row.unwrap_or_default().map(most);
+        Push { push: [fx, fy, fz], twist: [mx, my, mz] }
+    };
+    (rows.into_iter().map(push).collect(), note)
+}
+
+/// Where each body is pulled to: the rows of `table` under a header that names any of
+/// [`TARGET_COLUMNS`]. A row that cannot be read pulls nothing, so the rows after it keep
+/// their bodies. Returns the targets and a note, if any.
+pub fn targets(table: &Table) -> (Vec<Option<[f32; 3]>>, Option<String>) {
+    rows_of(table, &TARGET_COLUMNS, "targets", "that body is not pulled")
 }

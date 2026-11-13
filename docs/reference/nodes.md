@@ -2670,6 +2670,8 @@ Inputs:
 
 - `table` (table): One row per body. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). With mode dynamic a change puts the bodies of this group back to their start. With driven and fixed the bodies follow the table, and the speed and spin columns do nothing
 - `model` (geo): What each body looks like, with its material, and what `shape` is taken from. A change to its form puts the bodies of this group back to their start
+- `forces` (table): A push per body, read on every frame: row k pushes body k of the table. The first row names the columns: fx fy fz for the speed the body gains per second along x, y and z (metres per second squared), mx my mz for the spin it gains per second about them (degrees per second squared). A heavy body gains as much as a light one. A change here never puts the bodies back to their start. Bodies without a row are not pushed. Only with mode dynamic
+- `targets` (table): A place per body that a spring pulls it to: row k pulls body k of the table. The first row names the columns tx ty tz, in metres. The bodies form the figure these places draw, and collide on their way. `pull` at 0 lets them go. A change here never puts the bodies back to their start. Bodies without a row are not pulled. Only with mode dynamic
 
 Outputs:
 
@@ -2682,6 +2684,9 @@ Outputs:
 | `friction` | float | `0.5` | 0 to 2 (soft, held within 0 to 10) | How much these bodies grip: 0 slides like ice, 1 holds like rubber. Where two things touch, the mean of their two values counts |
 | `bounce` | float | `0` | 0 to 1 | How much of its speed a body keeps when it hits something: 0 lands dead, 1 bounces for ever. Where two things touch, the larger of their two values counts |
 | `density` | float | `1` | 0.1 to 10 (soft, held within 0.001 to 10000) | How heavy these bodies are for their size, compared with other groups. A body of density 10 pushes one of density 1 aside and is hardly slowed by it. Alone, a group falls the same at any density. Does something only with mode dynamic. |
+| `pull` | float | `1` | 0 to 1 | How much of the spring to the `targets` acts: 1 holds the bodies at their targets, 0 lets them go and they fall. A pulled body feels that much less of gravity, so at 1 the figure stands where the targets are and does not sag. Bind it to a channel to form the figure and drop it. Does something only while targets is wired. |
+| `stiffness` | float | `40` | 1 to 400 (soft, held within 0 to 100000) | How hard the spring pulls: the speed a body gains per second for every metre it is away from its target. 40 brings a body home in about a second, 400 in a quarter of one, 4 lets it drift there in three. Does something only while targets is wired. |
+| `pull_damping` | float | `1` | 0 to 2 (soft, held within 0 to 100) | How much the spring brakes. At 1 a body arrives without swinging past its target. Below 1 it swings about the target before it rests, at 0 for ever. Above 1 it creeps. A pulled body loses its spin at the same rate. Does something only while targets is wired. |
 
 ### physics.force
 

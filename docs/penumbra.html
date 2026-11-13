@@ -339,7 +339,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong><code>vol</code></strong>: volumes, such as smoke. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> simulates smoke in a box: emitters blow hot smoke in, the smoke rises against <code>gravity</code>, swirls and fades. <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a> is one emitter; wire several into the <code>emitter</code> inputs of <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a>, 64 at most, later ones acting on what earlier ones left. Any table with columns x and y (see <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a>'s output) gives one emitter per row, so a computed table can move or multiply them. With no emitter the box stays empty. Fuel in the smoke burns once it is hot enough: it heats, makes more smoke and swells, so a jet of it widens like a flame. A <a class="ref" href="#vol.obstacle"><code>vol.obstacle</code></a> on the <code>obstacle</code> inputs is a still sphere or box the smoke flows around. <a class="ref" href="#tex.render_volume"><code>tex.render_volume</code></a> draws a volume as a picture, seen from the front through the whole box. Hot smoke glows with <code>glow</code>, in the colours of a palette picture on its <code>palette</code> input. Its <code>density</code> output shows how much smoke covers each pixel, as grey, for <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a>. Burning smoke is dense: a <code>thickness</code> well below 1 lets the eye see into it. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> keeps its smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean the same; how strongly a number acts was matched by eye to one Flow scene.
 </li>
-<li><strong><code>physics</code></strong>: bodies that fall and collide. A <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> is one group of bodies: a table with one row per body places them, a model shows them, and its params say what they collide as (<code>hull</code>, <code>box</code>, <code>sphere</code>) and what they are made of (<code>friction</code>, <code>bounce</code>, <code>density</code>). Its <code>mode</code> says who moves them: the solver (<code>dynamic</code>), the table on every frame (<code>driven</code>, a hand that pushes the others aside) or nobody (<code>fixed</code>). <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a> takes one group on each of its <code>bodies</code> inputs. The bodies of all groups fall under <code>gravity</code>, hit each other, a floor and the geometry on its <code>obstacles</code> input, and come to rest. A <a class="ref" href="#physics.force"><code>physics.force</code></a> on a <code>force</code> input of the solver is a force field: a pull to a point, a wind, a whirl or a kick on a trigger. It moves the dynamic bodies of every group, and its params follow channels. Its <code>out</code> is geometry: every body where it is now, drawn as the model of its group, for <a class="ref" href="#tex.render"><code>tex.render</code></a>. Its <code>table</code> lists where the bodies are, in the columns <a class="ref" href="#geo.instance"><code>geo.instance</code></a> reads, with the number of their group. A dynamic group starts over when its table or its shape changes; the other groups go on (see <a href="nodes/physics.rigid_bodies.md">the solver's page</a>).
+<li><strong><code>physics</code></strong>: bodies that fall and collide. A <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> is one group of bodies: a table with one row per body places them, a model shows them, and its params say what they collide as (<code>hull</code>, <code>box</code>, <code>sphere</code>) and what they are made of (<code>friction</code>, <code>bounce</code>, <code>density</code>). Its <code>mode</code> says who moves them: the solver (<code>dynamic</code>), the table on every frame (<code>driven</code>, a hand that pushes the others aside) or nobody (<code>fixed</code>). Two more tables steer dynamic bodies while they move: <code>forces</code> pushes each body, and <code>targets</code> pulls each body to a place by a spring, so the bodies form a figure and fall apart when <code>pull</code> goes to 0 (see <a href="nodes/physics.bodies.md">the group's page</a>). <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a> takes one group on each of its <code>bodies</code> inputs. The bodies of all groups fall under <code>gravity</code>, hit each other, a floor and the geometry on its <code>obstacles</code> input, and come to rest. A <a class="ref" href="#physics.force"><code>physics.force</code></a> on a <code>force</code> input of the solver is a force field: a pull to a point, a wind, a whirl or a kick on a trigger. It moves the dynamic bodies of every group, and its params follow channels. Its <code>out</code> is geometry: every body where it is now, drawn as the model of its group, for <a class="ref" href="#tex.render"><code>tex.render</code></a>. Its <code>table</code> lists where the bodies are, in the columns <a class="ref" href="#geo.instance"><code>geo.instance</code></a> reads, with the number of their group. A dynamic group starts over when its table or its shape changes; the other groups go on (see <a href="nodes/physics.rigid_bodies.md">the solver's page</a>).
 </li>
 <li><strong><code>geo</code></strong>, <strong><code>mat</code></strong>, <strong><code>light</code></strong>, <strong><code>view</code></strong>: a 3D scene. Geometry from files or primitives, transformed and merged; materials put on it with <a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a>; lights and a <a class="ref" href="#view.camera"><code>view.camera</code></a> wired into a <a class="ref" href="#tex.render"><code>tex.render</code></a>, which makes a picture of it all (a render needs its camera; the camera is perspective, orthographic or calibrated). <a class="ref" href="#light.projector"><code>light.projector</code></a> throws a picture through a camera onto the geometry: a virtual projector, for trying a mapping on a model of the room. Coordinates are metres, z up. <a class="ref" href="#geo.file"><code>geo.file</code></a> reads OBJ, STL, glTF and FBX. FBX works from file version 7.0 on, binary or ASCII. Binary is the default of Blender, Maya, 3ds Max and Unity. An FBX 6 file gives an error: export it again as FBX 2011 or later. Each FBX model becomes a part with its name, placed as in the file, in metres and z up. Materials bring their diffuse colour and texture, embedded or from a file beside the FBX. Animated models play: each part moves as its model does in the file. A skinned character bends with its bones: each vertex follows the bones that weigh on it, blended by the weights (linear blend skinning). <code>take</code> picks the animation (the <code>takes</code> output lists them), <code>play</code>, <code>speed</code> and <code>loop</code> work as for a video, and with <code>play</code> off a channel bound to <code>time</code> drives it. Posing runs on the CPU and costs about 20 ns per vertex and frame. A file whose skin asks for dual quaternion blending is blended linearly, with a warning; twisting joints then thin out a little. Blend shapes, cameras and lights are not read. <a class="ref" href="#out.mesh"><code>out.mesh</code></a> writes geometry to an OBJ, STL or glb file, every model where it stands in the scene. Each part stays a part: an OBJ object or a glTF node. Only glb keeps material colours; textures are not written. File, <code>overwrite</code> and the modes <code>changes</code> and <code>manual</code> work as for <a class="ref" href="#out.table"><code>out.table</code></a>; the command is <a class="ref" href="#mesh_out.write"><code>mesh_out.write</code></a>. Copies from <a class="ref" href="#geo.tex_instance"><code>geo.tex_instance</code></a> are read back from the GPU and written one by one (<code>instances</code> on <code>expand</code>). For copies that move every frame, use mode <code>manual</code>: in mode <code>changes</code> such an input is written every frame. With <code>instances</code> on <code>skip</code> each model is written once, without its copies. A file holds at most 4 Mi triangles and 256 MiB; over that the node shows an error and writes nothing.
 </li>
@@ -5576,7 +5576,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <li><a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> with <code>mode</code> set to <code>driven</code>, into a <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a>.
 </li>
 </ol>
-<p>The page of <a href="#physics.rigid_bodies">physics.rigid_bodies</a> has the same for the blobs of a tracker.</p>
+<p>The page of <a href="#physics.bodies">physics.bodies</a> has the same for the blobs of a tracker.</p>
 </div>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
@@ -6352,6 +6352,8 @@ def cook(cx):
 <ul>
 <li><code>table</code> <span class="kind">table</span>: One row per body. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). With mode dynamic a change puts the bodies of this group back to their start. With driven and fixed the bodies follow the table, and the speed and spin columns do nothing</li>
 <li><code>model</code> <span class="kind">geo</span>: What each body looks like, with its material, and what <code>shape</code> is taken from. A change to its form puts the bodies of this group back to their start</li>
+<li><code>forces</code> <span class="kind">table</span>: A push per body, read on every frame: row k pushes body k of the table. The first row names the columns: fx fy fz for the speed the body gains per second along x, y and z (metres per second squared), mx my mz for the spin it gains per second about them (degrees per second squared). A heavy body gains as much as a light one. A change here never puts the bodies back to their start. Bodies without a row are not pushed. Only with mode dynamic</li>
+<li><code>targets</code> <span class="kind">table</span>: A place per body that a spring pulls it to: row k pulls body k of the table. The first row names the columns tx ty tz, in metres. The bodies form the figure these places draw, and collide on their way. <code>pull</code> at 0 lets them go. A change here never puts the bodies back to their start. Bodies without a row are not pulled. Only with mode dynamic</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -6366,8 +6368,145 @@ def cook(cx):
 <tr><td><code>friction</code></td><td>float</td><td><code>0.5</code></td><td>0 to 2 (soft, held within 0 to 10)</td><td>How much these bodies grip: 0 slides like ice, 1 holds like rubber. Where two things touch, the mean of their two values counts</td></tr>
 <tr><td><code>bounce</code></td><td>float</td><td><code>0</code></td><td>0 to 1</td><td>How much of its speed a body keeps when it hits something: 0 lands dead, 1 bounces for ever. Where two things touch, the larger of their two values counts</td></tr>
 <tr><td><code>density</code></td><td>float</td><td><code>1</code></td><td>0.1 to 10 (soft, held within 0.001 to 10000)</td><td>How heavy these bodies are for their size, compared with other groups. A body of density 10 pushes one of density 1 aside and is hardly slowed by it. Alone, a group falls the same at any density</td></tr>
+<tr><td><code>pull</code></td><td>float</td><td><code>1</code></td><td>0 to 1</td><td>How much of the spring to the <code>targets</code> acts: 1 holds the bodies at their targets, 0 lets them go and they fall. A pulled body feels that much less of gravity, so at 1 the figure stands where the targets are and does not sag. Bind it to a channel to form the figure and drop it</td></tr>
+<tr><td><code>stiffness</code></td><td>float</td><td><code>40</code></td><td>1 to 400 (soft, held within 0 to 100000)</td><td>How hard the spring pulls: the speed a body gains per second for every metre it is away from its target. 40 brings a body home in about a second, 400 in a quarter of one, 4 lets it drift there in three</td></tr>
+<tr><td><code>pull_damping</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft, held within 0 to 100)</td><td>How much the spring brakes. At 1 a body arrives without swinging past its target. Below 1 it swings about the target before it rests, at 0 for ever. Above 1 it creeps. A pulled body loses its spin at the same rate</td></tr>
 </tbody>
 </table>
+<div class="more">
+<h5 id="physics.bodies-what-it-is-for">What it is for</h5>
+<p>A <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> is one group of bodies for a <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a>. A table places the bodies, a model shows them. The params say who moves them (<code>mode</code>), what they collide as (<code>shape</code>) and what they are made of. Two more tables steer the bodies while they move: <code>forces</code> pushes each body, <code>targets</code> pulls each body to a place.</p>
+<p>The page of <a href="#physics.rigid_bodies">physics.rigid_bodies</a> starts with a pile in five nodes.</p>
+<h5 id="physics.bodies-the-table-of-a-group">The table of a group</h5>
+<p>Any table can place the bodies. Every column is optional, but the first row must name at least one:</p>
+<table>
+<thead><tr><th>column</th><th>meaning</th><th>when the column is missing</th></tr></thead>
+<tbody>
+<tr><td><code>tx</code>, <code>ty</code>, <code>tz</code></td><td>where the body starts, in metres; z is up</td><td>0</td></tr>
+<tr><td><code>rx</code>, <code>ry</code>, <code>rz</code></td><td>how it is turned at the start, in degrees about x, then y, then z</td><td>0</td></tr>
+<tr><td><code>sx</code>, <code>sy</code>, <code>sz</code></td><td>its size, times the model's</td><td>1</td></tr>
+<tr><td><code>vx</code>, <code>vy</code>, <code>vz</code></td><td>its speed at the start, in metres per second (<code>mode</code> <code>dynamic</code> only)</td><td>0</td></tr>
+<tr><td><code>wx</code>, <code>wy</code>, <code>wz</code></td><td>its spin at the start, in degrees per second about x, y and z (<code>mode</code> <code>dynamic</code> only)</td><td>0</td></tr>
+</tbody>
+</table>
+<p>A row with a cell that is not a finite number is left out, and <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> says so in a warning. The solver takes 4000 bodies at most, counted over all groups. Bodies beyond that are left out, and the solver names the group they belong to.</p>
+<p>Bodies that overlap at the start are pushed apart in the first frames, and fast. Leave a gap between them.</p>
+<h5 id="physics.bodies-bodies-that-follow-a-table">Bodies that follow a table</h5>
+<p><code>mode</code> on <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> says who moves the bodies of a group:</p>
+<ul>
+<li><strong><code>dynamic</code>:</strong> the solver. The table is the start. From then on the bodies fall and collide.
+</li>
+<li><strong><code>driven</code>:</strong> the table. On every frame each body goes where its row is now. On its way it pushes dynamic bodies aside, as fast as it moves itself. Nothing pushes it back, and gravity does not pull it.
+</li>
+<li><strong><code>fixed</code>:</strong> nobody. The bodies stand where the table puts them, and others land on them. A change to the table puts them at their new place at once, without a push.
+</li>
+</ul>
+<p>A driven group is a hand in the pile: a paddle moved by an LFO bats balls away, a person in front of a camera shoves boxes aside. A fixed group is scenery to rearrange: shelves, pegs, a funnel.</p>
+<p><strong>Rows and bodies.</strong> The first row is the first body, the second row the second. A new row at the end adds a body there. A row that goes takes the last body away. Keep each thing in its row from frame to frame. When two rows swap, the two bodies travel to each other's places.</p>
+<p><strong>The columns.</strong> <code>tx ty tz</code>, <code>rx ry rz</code> and <code>sx sy sz</code> count. A size that changes resizes the body at once. A body that grows pushes its neighbours out and does not throw them. <code>vx vy vz</code> and <code>wx wy wz</code> do nothing: the speed of a driven body is the way its row moved since the last frame. <code>density</code> does nothing either.</p>
+<p><strong>Jumps.</strong> A row that moves a long way in one frame would throw everything in between. <code>jump</code> on the solver sets the limit, 0.5 m at first. A body whose row moves farther is put there at once and pushes nothing. Raise <code>jump</code> for a fast paddle. Lower it for a tracker that loses a blob and finds it elsewhere.</p>
+<p><strong>Fast and thin.</strong> The solver looks where the bodies are once per step. A driven body that moves farther than it is thick in one frame can pass a small body without touching it. Raise <code>substeps</code>, or make the driven body thicker.</p>
+<p><strong>Time.</strong> While <code>speed</code> is 0, a driven body still goes where its row is, and pushes nothing. With <code>speed</code> below 1 a driven body hits harder: it covers the same way in less of the bodies' time.</p>
+<h5 id="physics.bodies-a-driven-group-from-channels">A driven group from channels</h5>
+<p><a class="ref" href="#table.from_chan"><code>table.from_chan</code></a> turns channels into the table of a group. Channels with one value each give one row: the channels <code>tx</code>, <code>ty</code> and <code>tz</code> place one body. A channel that is missing counts as 0.</p>
+<p>A paddle that an LFO swings through the pile:</p>
+<ol>
+<li><a class="ref" href="#chan.lfo"><code>chan.lfo</code></a> with <code>name</code> set to <code>tx</code>, <code>rate</code> 0.1 and <code>amplitude</code> 4: the paddle goes 4 m to each side, once in ten seconds.
+</li>
+<li><a class="ref" href="#chan.constant"><code>chan.constant</code></a> with <code>name0</code> set to <code>tz</code> and <code>value0</code> 0.4: the height of the paddle's middle.
+</li>
+<li><a class="ref" href="#chan.merge"><code>chan.merge</code></a>: the LFO into <code>in0</code>, the constant into <code>in1</code>.
+</li>
+<li><a class="ref" href="#table.from_chan"><code>table.from_chan</code></a>: the merge into <code>in</code>. Its table has the columns <code>tx</code> and <code>tz</code> and one row.
+</li>
+<li><a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> with <code>mode</code> set to <code>driven</code>: the table into <code>table</code>, a <a class="ref" href="#geo.primitive"><code>geo.primitive</code></a> box of 0.3 x 3 x 0.8 m into <code>model</code>.
+</li>
+<li>That group into the next free <code>bodies</code> input of the solver.
+</li>
+</ol>
+<h5 id="physics.bodies-a-trackers-blobs-as-a-driven-group">A tracker's blobs as a driven group</h5>
+<p><a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a> gives places in the picture, from 0 to 1. Its <code>chans</code> output keeps each blob in a slot: <code>id1</code>, <code>x1</code>, <code>y1</code> for the first slot, <code>id2</code>, <code>x2</code>, <code>y2</code> for the second. A group needs <code>tx ty tz</code> in metres and one row per blob. Channel nodes turn one into the other:</p>
+<ol>
+<li><a class="ref" href="#chan.select"><code>chan.select</code></a> with <code>channels</code> set to <code>x* y*</code>, fed by the tracker's <code>chans</code>.
+</li>
+<li><a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>op</code> <code>subtract</code> and <code>b</code> 0.5: the middle of the picture becomes 0.
+</li>
+<li><a class="ref" href="#chan.constant"><code>chan.constant</code></a> with <code>rows</code> 2: <code>name0</code> <code>x</code>, <code>value0</code> 4, <code>name1</code> <code>y</code>, <code>value1</code> -3. This is the room the picture covers, 4 m wide and 3 m deep. y is negative since it runs downwards in a picture.
+</li>
+<li><a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>op</code> <code>multiply</code>: step 2 into <code>a</code>, the constant into <code>b</code>. Every <code>x</code> channel meets <code>x</code>, every <code>y</code> channel meets <code>y</code>.
+</li>
+<li><a class="ref" href="#chan.rename"><code>chan.rename</code></a> with <code>names</code> set to <code>x*=tx* y*=ty*</code>.
+</li>
+<li><a class="ref" href="#chan.constant"><code>chan.constant</code></a> with <code>name0</code> <code>tz</code> and <code>value0</code> 0.4: the height of the hands.
+</li>
+<li><a class="ref" href="#chan.merge"><code>chan.merge</code></a>: step 5 into <code>in0</code>, the tracker's <code>chans</code> into <code>in1</code>, step 6 into <code>in2</code>.
+</li>
+<li><a class="ref" href="#table.from_chan"><code>table.from_chan</code></a> with <code>layout</code> set to <code>numbered</code> and <code>keep</code> set to <code>id</code>. The number at the end of a name picks the row, so each slot is one row. <code>tz</code> has no number and fills every row. <code>keep</code> leaves out the slots whose <code>id</code> is 0, the ones without a blob.
+</li>
+<li><a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> with <code>mode</code> set to <code>driven</code>: the table into <code>table</code>, a model for the hand into <code>model</code>, such as a <a class="ref" href="#geo.primitive"><code>geo.primitive</code></a> sphere.
+</li>
+<li>That group into the next free <code>bodies</code> input of the solver.
+</li>
+</ol>
+<p>A blob that appears adds a body. It is put there without sweeping through the scene. When a blob leaves, its row goes and the rows after it move up: each of their bodies takes the place of the next blob. Such a body jumps there without a push when the two blobs are farther apart than <code>jump</code>. Lower <code>jump</code> to 0.2 m if people come close to each other.</p>
+<h5 id="physics.bodies-a-push-per-body">A push per body</h5>
+<p>Wire a table into <code>forces</code>. Row 1 pushes the first body of the group's table, row 2 the second, on every frame:</p>
+<table>
+<thead><tr><th>column</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>fx</code>, <code>fy</code>, <code>fz</code></td><td>the speed the body gains per second along x, y and z, in metres per second squared</td></tr>
+<tr><td><code>mx</code>, <code>my</code>, <code>mz</code></td><td>the spin it gains per second about x, y and z, in degrees per second squared</td></tr>
+</tbody>
+</table>
+<p>A change to this table never puts the bodies back to their start. Change it on every frame if you like: make it from channels with <a class="ref" href="#table.from_chan"><code>table.from_chan</code></a>.</p>
+<p>The rows need not match the bodies. Bodies beyond the last row are not pushed. Rows beyond the last body do nothing. A row with a cell that is not a number pushes nothing, and the node says so in a warning.</p>
+<p>A heavy body gains speed as fast as a light one, as with a <a class="ref" href="#physics.force"><code>physics.force</code></a>. Only the bodies of a <code>dynamic</code> group are pushed.</p>
+<p><strong>Each body lifted by its own channel.</strong> Channels named <code>fz1</code>, <code>fz2</code>, <code>fz3</code>, each between 0 and 30, into a <a class="ref" href="#table.from_chan"><code>table.from_chan</code></a> with <code>layout</code> set to <code>numbered</code>. Its table has the column <code>fz</code> and three rows. Wire it into <code>forces</code>: each channel lifts its body when it passes 9.81.</p>
+<h5 id="physics.bodies-bodies-pulled-into-a-figure">Bodies pulled into a figure</h5>
+<p>Wire a table into <code>targets</code>, with the columns <code>tx ty tz</code> and one row per body. A spring pulls each body to the place in its row. The bodies fly there, collide on their way and form the figure the places draw: a ring, a grid, a word.</p>
+<ul>
+<li><strong><code>pull</code></strong> switches the spring. At 1 the bodies are held at their targets. At 0 they are let go and fall. Bind it to a channel.
+</li>
+<li><strong><code>stiffness</code></strong> is how hard the spring pulls. 40 brings a body home in about a second, 400 in a quarter of one.
+</li>
+<li><strong><code>pull_damping</code></strong> is how much the spring brakes. At 1 a body arrives without swinging past. Below 1 it swings about its target first.
+</li>
+</ul>
+<p>A pulled body feels less of gravity, by the share <code>pull</code> says. At <code>pull</code> 1 the figure stands exactly where the targets are, however soft the spring.</p>
+<p>A spring does not hold a body rigidly. Another body, a driven paddle or a force field pushes it off its place, and it comes back. This is the soft sibling of <code>mode</code> <code>driven</code>, where nothing pushes a body off its row.</p>
+<p>A change to the targets never puts the bodies back to their start. They go to their new places from where they are. Bodies without a row are not pulled. A row with a cell that is not a number pulls nothing. Only the bodies of a <code>dynamic</code> group are pulled. The spring pulls a body to its place only: how the body is turned is left to it.</p>
+<p><strong>A figure that forms and falls apart.</strong></p>
+<ol>
+<li><a class="ref" href="#table.text"><code>table.text</code></a> with <code>format</code> <code>csv</code>: <code>tx,ty,tz</code> and one row per body, the places of the figure. Leave at least a body's width between two places.
+</li>
+<li>That table into <code>targets</code> of the <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a>.
+</li>
+<li><a class="ref" href="#chan.lfo"><code>chan.lfo</code></a> with <code>shape</code> <code>square</code>, <code>amplitude</code> 0.5, <code>offset</code> 0.5 and <code>rate</code> 0.1. Bind <code>pull</code> to it: five seconds the figure, five seconds the heap.
+</li>
+</ol>
+<h5 id="physics.bodies-what-a-body-collides-as">What a body collides as</h5>
+<p><code>shape</code> on <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> decides what the solver makes of the group's model:</p>
+<ul>
+<li><code>hull</code>: the model with its dents filled in. A cup collides as a solid lump, and nothing falls into it.
+</li>
+<li><code>box</code>: the box around the model. Boxes stack well and cost little.
+</li>
+<li><code>sphere</code>: a ball as wide as the model's longest side. With a scale that differs per axis it stays a ball, as wide as the largest of the three.
+</li>
+</ul>
+<p>A flat model, such as a plane, has no hull. It collides as the box around it, and <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> says so in a warning.</p>
+<p>A ball on the floor rolls on for ever, since nothing slows a rolling ball down. Set <code>damping</code> and <code>spin_damping</code> on the solver, to 0.3 or so, and the balls come to rest.</p>
+<h5 id="physics.bodies-what-a-body-is-made-of">What a body is made of</h5>
+<p>Each group has its own <code>friction</code>, <code>bounce</code> and <code>density</code>. The solver has <code>friction</code> and <code>bounce</code> for the floor and the obstacles.</p>
+<ul>
+<li><strong><code>friction</code>:</strong> where two things touch, the mean of their two values counts. Ice (0) on a floor of 0.5 slides with 0.25.
+</li>
+<li><strong><code>bounce</code>:</strong> the larger of the two values counts. A ball with <code>bounce</code> 0.8 bounces off a floor with <code>bounce</code> 0, and off every other body.
+</li>
+<li><strong><code>density</code>:</strong> how heavy a body is for its size. Only the ratio between groups shows. A body of density 10 pushes a body of density 1 aside. A body twice as large weighs eight times as much.
+</li>
+</ul>
+</div>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 <details class="entry node" id="physics.force"><summary><code class="name">physics.force</code><span class="sum">A force field for physics.rigid_bodies: a pull to a point, a wind or a whirl that moves every dynamic body it reaches, and a kick on a trigger</span></summary>
@@ -6507,105 +6646,13 @@ def cook(cx):
 <p>Every group needs its own <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a>. Wire each into the next free <code>bodies</code> input of the solver: a new input appears when the last one is taken. Bodies of all groups collide with each other, so balls roll off boxes and boxes pile up on balls.</p>
 <p>A group has one model, one collision shape and one material. Balls and boxes are two groups. So are wooden boxes and rubber boxes.</p>
 <p>The solver's <code>out</code> draws every body as the model of its group, with the material that model carries (<a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a> before <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a>). One wire into <a class="ref" href="#tex.render"><code>tex.render</code></a> shows all groups.</p>
-<h5 id="physics.rigid_bodies-the-table-of-a-group">The table of a group</h5>
-<p>Any table can place the bodies. Every column is optional, but the first row must name at least one:</p>
-<table>
-<thead><tr><th>column</th><th>meaning</th><th>when the column is missing</th></tr></thead>
-<tbody>
-<tr><td><code>tx</code>, <code>ty</code>, <code>tz</code></td><td>where the body starts, in metres; z is up</td><td>0</td></tr>
-<tr><td><code>rx</code>, <code>ry</code>, <code>rz</code></td><td>how it is turned at the start, in degrees about x, then y, then z</td><td>0</td></tr>
-<tr><td><code>sx</code>, <code>sy</code>, <code>sz</code></td><td>its size, times the model's</td><td>1</td></tr>
-<tr><td><code>vx</code>, <code>vy</code>, <code>vz</code></td><td>its speed at the start, in metres per second (<code>mode</code> <code>dynamic</code> only)</td><td>0</td></tr>
-<tr><td><code>wx</code>, <code>wy</code>, <code>wz</code></td><td>its spin at the start, in degrees per second about x, y and z (<code>mode</code> <code>dynamic</code> only)</td><td>0</td></tr>
-</tbody>
-</table>
-<p>A row with a cell that is not a finite number is left out, and <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> says so in a warning. The solver takes 4000 bodies at most, counted over all groups. Bodies beyond that are left out, and the solver names the group they belong to.</p>
-<p>Bodies that overlap at the start are pushed apart in the first frames, and fast. Leave a gap between them.</p>
+<h5 id="physics.rigid_bodies-the-groups">The groups</h5>
+<p>A <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> is one group. Its page has the columns of the table, the modes (<code>dynamic</code>, <code>driven</code>, <code>fixed</code>), the collision shapes, the materials, a push per body and the spring that pulls bodies into a figure: <a href="#physics.bodies">physics.bodies</a>.</p>
 <h5 id="physics.rigid_bodies-what-starts-a-group-over">What starts a group over</h5>
 <p>A change to a group's table puts the bodies of that group back to their start. So does a change to the form of its model, and to <code>shape</code>. The other groups go on from where they are. A group that starts over can land inside bodies that have moved into its place. The solver pushes them apart.</p>
-<p>This holds for a group whose <code>mode</code> is <code>dynamic</code>. A <code>driven</code> or <code>fixed</code> group follows its table instead, see below. A switch of <code>mode</code> puts the bodies of the group where the table has them.</p>
+<p>This holds for a group whose <code>mode</code> is <code>dynamic</code>. A <code>driven</code> or <code>fixed</code> group follows its table instead. A switch of <code>mode</code> puts the bodies of the group where the table has them. The tables on <code>forces</code> and <code>targets</code> of a group never start it over.</p>
 <p><code>friction</code>, <code>bounce</code> and <code>density</code> of a group change while its bodies move. So does the material of its model.</p>
 <p><code>reset</code> on the solver and the reset button of the solver put every group back to its start.</p>
-<h5 id="physics.rigid_bodies-bodies-that-follow-a-table">Bodies that follow a table</h5>
-<p><code>mode</code> on <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> says who moves the bodies of a group:</p>
-<ul>
-<li><strong><code>dynamic</code>:</strong> the solver. The table is the start. From then on the bodies fall and collide.
-</li>
-<li><strong><code>driven</code>:</strong> the table. On every frame each body goes where its row is now. On its way it pushes dynamic bodies aside, as fast as it moves itself. Nothing pushes it back, and gravity does not pull it.
-</li>
-<li><strong><code>fixed</code>:</strong> nobody. The bodies stand where the table puts them, and others land on them. A change to the table puts them at their new place at once, without a push.
-</li>
-</ul>
-<p>A driven group is a hand in the pile: a paddle moved by an LFO bats balls away, a person in front of a camera shoves boxes aside. A fixed group is scenery to rearrange: shelves, pegs, a funnel.</p>
-<p><strong>Rows and bodies.</strong> The first row is the first body, the second row the second. A new row at the end adds a body there. A row that goes takes the last body away. Keep each thing in its row from frame to frame. When two rows swap, the two bodies travel to each other's places.</p>
-<p><strong>The columns.</strong> <code>tx ty tz</code>, <code>rx ry rz</code> and <code>sx sy sz</code> count. A size that changes resizes the body at once. A body that grows pushes its neighbours out and does not throw them. <code>vx vy vz</code> and <code>wx wy wz</code> do nothing: the speed of a driven body is the way its row moved since the last frame. <code>density</code> does nothing either.</p>
-<p><strong>Jumps.</strong> A row that moves a long way in one frame would throw everything in between. <code>jump</code> on the solver sets the limit, 0.5 m at first. A body whose row moves farther is put there at once and pushes nothing. Raise <code>jump</code> for a fast paddle. Lower it for a tracker that loses a blob and finds it elsewhere.</p>
-<p><strong>Fast and thin.</strong> The solver looks where the bodies are once per step. A driven body that moves farther than it is thick in one frame can pass a small body without touching it. Raise <code>substeps</code>, or make the driven body thicker.</p>
-<p><strong>Time.</strong> While <code>speed</code> is 0, a driven body still goes where its row is, and pushes nothing. With <code>speed</code> below 1 a driven body hits harder: it covers the same way in less of the bodies' time.</p>
-<h5 id="physics.rigid_bodies-a-driven-group-from-channels">A driven group from channels</h5>
-<p><a class="ref" href="#table.from_chan"><code>table.from_chan</code></a> turns channels into the table of a group. Channels with one value each give one row: the channels <code>tx</code>, <code>ty</code> and <code>tz</code> place one body. A channel that is missing counts as 0.</p>
-<p>A paddle that an LFO swings through the pile:</p>
-<ol>
-<li><a class="ref" href="#chan.lfo"><code>chan.lfo</code></a> with <code>name</code> set to <code>tx</code>, <code>rate</code> 0.1 and <code>amplitude</code> 4: the paddle goes 4 m to each side, once in ten seconds.
-</li>
-<li><a class="ref" href="#chan.constant"><code>chan.constant</code></a> with <code>name0</code> set to <code>tz</code> and <code>value0</code> 0.4: the height of the paddle's middle.
-</li>
-<li><a class="ref" href="#chan.merge"><code>chan.merge</code></a>: the LFO into <code>in0</code>, the constant into <code>in1</code>.
-</li>
-<li><a class="ref" href="#table.from_chan"><code>table.from_chan</code></a>: the merge into <code>in</code>. Its table has the columns <code>tx</code> and <code>tz</code> and one row.
-</li>
-<li><a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> with <code>mode</code> set to <code>driven</code>: the table into <code>table</code>, a <a class="ref" href="#geo.primitive"><code>geo.primitive</code></a> box of 0.3 x 3 x 0.8 m into <code>model</code>.
-</li>
-<li>That group into the next free <code>bodies</code> input of the solver.
-</li>
-</ol>
-<h5 id="physics.rigid_bodies-a-trackers-blobs-as-a-driven-group">A tracker's blobs as a driven group</h5>
-<p><a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a> gives places in the picture, from 0 to 1. Its <code>chans</code> output keeps each blob in a slot: <code>id1</code>, <code>x1</code>, <code>y1</code> for the first slot, <code>id2</code>, <code>x2</code>, <code>y2</code> for the second. A group needs <code>tx ty tz</code> in metres and one row per blob. Channel nodes turn one into the other:</p>
-<ol>
-<li><a class="ref" href="#chan.select"><code>chan.select</code></a> with <code>channels</code> set to <code>x* y*</code>, fed by the tracker's <code>chans</code>.
-</li>
-<li><a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>op</code> <code>subtract</code> and <code>b</code> 0.5: the middle of the picture becomes 0.
-</li>
-<li><a class="ref" href="#chan.constant"><code>chan.constant</code></a> with <code>rows</code> 2: <code>name0</code> <code>x</code>, <code>value0</code> 4, <code>name1</code> <code>y</code>, <code>value1</code> -3. This is the room the picture covers, 4 m wide and 3 m deep. y is negative since it runs downwards in a picture.
-</li>
-<li><a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>op</code> <code>multiply</code>: step 2 into <code>a</code>, the constant into <code>b</code>. Every <code>x</code> channel meets <code>x</code>, every <code>y</code> channel meets <code>y</code>.
-</li>
-<li><a class="ref" href="#chan.rename"><code>chan.rename</code></a> with <code>names</code> set to <code>x*=tx* y*=ty*</code>.
-</li>
-<li><a class="ref" href="#chan.constant"><code>chan.constant</code></a> with <code>name0</code> <code>tz</code> and <code>value0</code> 0.4: the height of the hands.
-</li>
-<li><a class="ref" href="#chan.merge"><code>chan.merge</code></a>: step 5 into <code>in0</code>, the tracker's <code>chans</code> into <code>in1</code>, step 6 into <code>in2</code>.
-</li>
-<li><a class="ref" href="#table.from_chan"><code>table.from_chan</code></a> with <code>layout</code> set to <code>numbered</code> and <code>keep</code> set to <code>id</code>. The number at the end of a name picks the row, so each slot is one row. <code>tz</code> has no number and fills every row. <code>keep</code> leaves out the slots whose <code>id</code> is 0, the ones without a blob.
-</li>
-<li><a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> with <code>mode</code> set to <code>driven</code>: the table into <code>table</code>, a model for the hand into <code>model</code>, such as a <a class="ref" href="#geo.primitive"><code>geo.primitive</code></a> sphere.
-</li>
-<li>That group into the next free <code>bodies</code> input of the solver.
-</li>
-</ol>
-<p>A blob that appears adds a body. It is put there without sweeping through the scene. When a blob leaves, its row goes and the rows after it move up: each of their bodies takes the place of the next blob. Such a body jumps there without a push when the two blobs are farther apart than <code>jump</code>. Lower <code>jump</code> to 0.2 m if people come close to each other.</p>
-<h5 id="physics.rigid_bodies-what-a-body-collides-as">What a body collides as</h5>
-<p><code>shape</code> on <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> decides what the solver makes of the group's model:</p>
-<ul>
-<li><code>hull</code>: the model with its dents filled in. A cup collides as a solid lump, and nothing falls into it.
-</li>
-<li><code>box</code>: the box around the model. Boxes stack well and cost little.
-</li>
-<li><code>sphere</code>: a ball as wide as the model's longest side. With a scale that differs per axis it stays a ball, as wide as the largest of the three.
-</li>
-</ul>
-<p>A flat model, such as a plane, has no hull. It collides as the box around it, and <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> says so in a warning.</p>
-<p>A ball on the floor rolls on for ever, since nothing slows a rolling ball down. Set <code>damping</code> and <code>spin_damping</code> on the solver, to 0.3 or so, and the balls come to rest.</p>
-<h5 id="physics.rigid_bodies-what-a-body-is-made-of">What a body is made of</h5>
-<p>Each group has its own <code>friction</code>, <code>bounce</code> and <code>density</code>. The solver has <code>friction</code> and <code>bounce</code> for the floor and the obstacles.</p>
-<ul>
-<li><strong><code>friction</code>:</strong> where two things touch, the mean of their two values counts. Ice (0) on a floor of 0.5 slides with 0.25.
-</li>
-<li><strong><code>bounce</code>:</strong> the larger of the two values counts. A ball with <code>bounce</code> 0.8 bounces off a floor with <code>bounce</code> 0, and off every other body.
-</li>
-<li><strong><code>density</code>:</strong> how heavy a body is for its size. Only the ratio between groups shows. A body of density 10 pushes a body of density 1 aside. A body twice as large weighs eight times as much.
-</li>
-</ul>
 <h5 id="physics.rigid_bodies-the-outputs">The outputs</h5>
 <ul>
 <li><strong><code>out</code></strong> is geometry: every body where it is now. Wire it into <a class="ref" href="#tex.render"><code>tex.render</code></a>, or into <a class="ref" href="#geo.merge"><code>geo.merge</code></a> together with the scenery.

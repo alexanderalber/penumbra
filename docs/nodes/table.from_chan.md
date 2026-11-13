@@ -32,5 +32,5 @@ A box that an LFO moves from side to side, as the one body of a driven group:
 4. `table.from_chan`. Its table: `tx,tz` and one row such as `0.7071,0.5`.
 5. `physics.bodies` with `mode` set to `driven`, into a `physics.rigid_bodies`.
 
-The page of [physics.rigid_bodies](../reference/nodes.md#physicsrigid_bodies) has the same for the blobs of a
-tracker.
+The page of [physics.bodies](../reference/nodes.md#physicsbodies) has the same for the blobs of
+a tracker.

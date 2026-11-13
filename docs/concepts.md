@@ -154,7 +154,10 @@ The families:
   with one row per body places them, a model shows them, and its params say what they collide as
   (`hull`, `box`, `sphere`) and what they are made of (`friction`, `bounce`, `density`). Its
   `mode` says who moves them: the solver (`dynamic`), the table on every frame (`driven`, a hand
-  that pushes the others aside) or nobody (`fixed`).
+  that pushes the others aside) or nobody (`fixed`). Two more tables steer dynamic bodies while
+  they move: `forces` pushes each body, and `targets` pulls each body to a place by a spring, so
+  the bodies form a figure and fall apart when `pull` goes to 0
+  (see [the group's page](nodes/physics.bodies.md)).
   `physics.rigid_bodies` takes one group on each of its `bodies` inputs. The bodies of all groups
   fall under `gravity`, hit each other, a floor and the geometry on its `obstacles` input, and
   come to rest. A `physics.force` on a `force` input of the solver is a force field: a pull to a
