@@ -8,6 +8,7 @@
 //! A dynamic group starts over when its starts or its collision shape change; the other groups
 //! go on. A driven or fixed group follows its table instead: the solver places its bodies anew
 //! whenever the table changes. Materials, obstacles and the params change while the bodies move.
+//! So do the push and the target a group gives each of its dynamic bodies.
 //!
 //! An obstacle that is moved or turned pushes the bodies it meets: the solver takes it from its
 //! old place to its new one within the frame. One whose size or mesh changes is built anew
@@ -313,6 +314,7 @@ impl Operator for RigidBodies {
                 Some(slot) if slot.data.same(data) => {}
                 Some(slot) if slot.data.get::<Bodies>().is_some_and(|old| goes_on(old, bodies)) => {
                     world.set_material(i, bodies.material);
+                    steer(world, i, bodies);
                     if bodies.mode != Mode::Dynamic {
                         // Before the step, so that a driven body travels to its row in it.
                         slot.note = world.place(i, &bodies.starts, jump).err().map(|e| left_out(i, &e));
@@ -349,6 +351,7 @@ impl Operator for RigidBodies {
         // places it, while the other groups have moved on.
         for (i, data, bodies) in restart {
             let note = start_group(world, i, bodies);
+            steer(world, i, bodies);
             if let Some(slot) = slots.get_mut(i) {
                 *slot = Some(Slot { data: data.clone(), note });
             }
@@ -425,6 +428,13 @@ fn start_group(world: &mut World, index: usize, bodies: &Bodies) -> Option<Strin
         }
     }
     None
+}
+
+/// Hands the pushes and the targets of `bodies` to group `index` of `world`. They act on the
+/// bodies as they move and start nothing over.
+fn steer(world: &mut World, index: usize, bodies: &Bodies) {
+    world.set_pushes(index, &bodies.pushes);
+    world.set_targets(index, &bodies.targets, bodies.spring);
 }
 
 fn settings(cx: &CookContext<'_>) -> Result<Settings, CookError> {
@@ -1214,5 +1224,100 @@ mod tests {
         rig.apply(&[set("/f0.trigger", 1.0)]);
         let (out, _) = rig.run(60);
         assert!((number(&out, 1, 2) - 4.0).abs() < 0.06, "{}", out.cell(1, 2));
+    }
+
+    /// A `table.text` at `path` holding `text`, wired into input `input` of the group `/b0`:
+    /// 2 is `forces`, 3 is `targets`.
+    fn steering(path: &str, text: &str, input: u32) -> Vec<Op> {
+        vec![
+            create(path, "table.text"),
+            set(&format!("{path}.text"), text),
+            set(&format!("{path}.format"), "csv"),
+            connect(path, "/b0", input),
+        ]
+    }
+
+    #[test]
+    fn a_table_of_forces_pushes_each_body_and_starts_nothing_over() {
+        // Three bodies, two rows: the third is not pushed.
+        let mut rig = in_space(&["tx\n0\n3\n6"]);
+        rig.apply(&steering("/push", "fz,mz\n2\n-2,90", 2));
+        let (out, warning) = rig.run(61);
+        assert_eq!((warning, rig.warning("/b0")), (None, None));
+        // One second at 2 m/s^2 up and down, and at 90 degrees/s^2 about z.
+        assert!((number(&out, 1, 2) - 1.0).abs() < 0.05, "{}", out.cell(1, 2));
+        assert!((number(&out, 2, 2) + 1.0).abs() < 0.05, "{}", out.cell(2, 2));
+        assert!((number(&out, 2, 5) - 45.0).abs() < 2.0, "{}", out.cell(2, 5));
+        assert_eq!((out.cell(3, 0), out.cell(3, 2), out.cell(1, 5)), ("6", "0", "0"));
+        // Other forces, more rows than bodies: every body goes on from where it is, at the
+        // speed it has.
+        rig.apply(&[set("/push.text", "fz\n0\n0\n4\n9\n9")]);
+        let (out, warning) = rig.run(60);
+        assert_eq!((out.num_rows(), warning, rig.warning("/b0")), (4, None, None));
+        assert!((number(&out, 1, 2) - 3.0).abs() < 0.1, "{}", out.cell(1, 2));
+        assert!((number(&out, 2, 2) + 3.0).abs() < 0.1, "{}", out.cell(2, 2));
+        assert!((number(&out, 3, 2) - 2.0).abs() < 0.1, "{}", out.cell(3, 2));
+        // A row that is no number pushes nothing and keeps its place: the row after it still
+        // pushes the second body.
+        rig.apply(&[set("/push.text", "fz\nup\n4")]);
+        let (out, _) = rig.run(60);
+        assert!(rig.warning("/b0").unwrap().contains("row 1 of `forces`"), "{:?}", rig.warning("/b0"));
+        assert!((number(&out, 1, 2) - 5.0).abs() < 0.15, "it coasts at 2 m/s: {}", out.cell(1, 2));
+        assert!((number(&out, 2, 2) + 3.0).abs() < 0.15, "braked to a halt and back: {}", out.cell(2, 2));
+        // A table of something else is said.
+        rig.apply(&[set("/push.text", "a,b\n1,2")]);
+        rig.run(2);
+        assert!(rig.warning("/b0").unwrap().contains("names the columns: fx"), "{:?}", rig.warning("/b0"));
+        // Driven bodies take no push: they stay at their rows.
+        rig.apply(&[set("/push.text", "fz\n9\n9\n9"), set("/b0.mode", "driven")]);
+        let (out, warning) = rig.run(30);
+        assert_eq!((out.cell(1, 2), out.cell(3, 2), warning), ("0", "0", None));
+    }
+
+    #[test]
+    fn targets_pull_the_bodies_into_a_figure_and_pull_0_lets_them_fall() {
+        // Three boxes of 1 m at rest on the floor. Two have a target in the air.
+        let mut rig = Rig::new(&["tx,tz\n0,0.5\n2,0.5\n4,0.5"]);
+        rig.run(90);
+        rig.apply(&steering("/to", "tx,ty,tz\n0,0,3\n2,1,3", 3));
+        let (out, warning) = rig.run(240);
+        assert_eq!((warning, rig.warning("/b0")), (None, None));
+        let place = |out: &Table, row: usize| [number(out, row, 0), number(out, row, 1), number(out, row, 2)];
+        let near = |p: [f64; 3], q: [f64; 3]| p.iter().zip(&q).all(|(a, b)| (a - b).abs() < 0.03);
+        assert!(near(place(&out, 1), [0.0, 0.0, 3.0]), "{:?}", place(&out, 1));
+        assert!(near(place(&out, 2), [2.0, 1.0, 3.0]), "{:?}", place(&out, 2));
+        assert!(near(place(&out, 3), [4.0, 0.0, 0.5]), "no row, no pull: {:?}", place(&out, 3));
+        // A target that moves starts nothing over: the body goes there from where it is.
+        rig.apply(&[set("/to.text", "tx,ty,tz\n0,0,4\n2,1,3")]);
+        let (out, _) = rig.run(3);
+        let z = number(&out, 1, 2);
+        assert!(z > 3.0 && z < 3.2, "on its way up from 3: {z}");
+        let (out, _) = rig.run(240);
+        assert!(near(place(&out, 1), [0.0, 0.0, 4.0]), "{:?}", place(&out, 1));
+        // Half a pull holds them lower, no pull at all lets them fall to the floor.
+        rig.apply(&[set("/b0.pull", 0.5)]);
+        let (out, _) = rig.run(300);
+        let z = number(&out, 2, 2);
+        assert!(z < 2.9 && z > 2.5, "it sags by about 9.81 / 40: {z}");
+        rig.apply(&[set("/b0.pull", 0.0)]);
+        let (out, _) = rig.run(240);
+        assert!((number(&out, 1, 2) - 0.5).abs() < 0.03, "{}", out.cell(1, 2));
+        assert!((number(&out, 2, 2) - 0.5).abs() < 0.03, "{}", out.cell(2, 2));
+        // Pulled again by a stiff spring, they are back within a second. A row that is no
+        // number pulls nothing, the row after it keeps its body.
+        let stiff =
+            [set("/b0.pull", 1.0), set("/b0.stiffness", 400.0), set("/to.text", "tx,ty,tz\nup,0,3\n2,1,3")];
+        rig.apply(&stiff);
+        let (out, _) = rig.run(60);
+        assert!(near(place(&out, 2), [2.0, 1.0, 3.0]), "{:?}", place(&out, 2));
+        assert!((number(&out, 1, 2) - 0.5).abs() < 0.03, "{}", out.cell(1, 2));
+        assert!(rig.warning("/b0").unwrap().contains("row 1 of `targets`"), "{:?}", rig.warning("/b0"));
+        // The params of the spring say when they count.
+        let types = builtin_types().unwrap();
+        let desc = types.get(group::KIND).unwrap().desc();
+        for name in ["pull", "stiffness", "pull_damping"] {
+            let spec = desc.params.iter().find(|p| p.name.as_str() == name).unwrap();
+            assert!(spec.applies_label().contains("targets"), "{name}: {}", spec.applies_label());
+        }
     }
 }
