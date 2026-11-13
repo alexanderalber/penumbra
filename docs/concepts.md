@@ -92,7 +92,7 @@ kind, and the wire takes that kind's colour:
 | `tex` | purple | 2D pictures on the GPU, linear light, premultiplied alpha, values above 1 allowed | `tex` |
 | `chan` | green | named channels of numbers; the last sample is the value now | `chan`, `script` |
 | `audio` | cyan | sound: a gapless stream of sample blocks at a sample rate | `audio`, `tex` (`ndi_in`) |
-| `table` | blue | rows of text cells | `table`, `script` |
+| `table` | blue | rows of text cells | `table`, `script`, `physics` |
 | `geo` | orange | meshes with parts, materials and transforms | `geo` |
 | `mat` | pink | a material | `mat` |
 | `light` | yellow | one or more lights | `light` |
@@ -147,6 +147,12 @@ The families:
   smoke is dense: a `thickness` well below 1 lets the eye see into it. `vol.smoke` keeps its
   smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean
   the same; how strongly a number acts was matched by eye to one Flow scene.
+- **`physics`**: bodies that fall and collide. `physics.rigid_bodies` takes a table with one row
+  per body and a model, and lets copies of the model fall under `gravity`, hit each other, a floor
+  and the geometry on its `obstacles` input, and come to rest. Its output is a table of where the
+  bodies are now, in the columns `geo.instance` reads: wire the same model and that table into a
+  `geo.instance` to see them. The bodies start over when the table or the model changes
+  (see [its page](nodes/physics.rigid_bodies.md)).
 - **`geo`**, **`mat`**, **`light`**, **`view`**: a 3D scene. Geometry from files or
   primitives, transformed and merged; materials put on it with `geo.assign_material`; lights and a
   `view.camera` wired into a `tex.render`, which makes a picture of it all (a render needs its

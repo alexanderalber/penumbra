@@ -4,7 +4,7 @@
    one body. `tx,ty,tz` and three rows `0,0,2`, `0.2,0,3.5`, `-0.1,0.1,5` drop three bodies from
    2 m, 3.5 m and 5 m.
 2. `geo.primitive`, shape `box`: the model of a body.
-3. `table.rigid_bodies`: the table into `bodies`, the model into `shape`.
+3. `physics.rigid_bodies`: the table into `bodies`, the model into `shape`.
 4. `geo.instance`: the model into `in`, the solver's `out` into `table`.
 5. `tex.render`: the instance into `geo`.
 

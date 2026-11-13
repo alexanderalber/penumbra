@@ -1,4 +1,4 @@
-//! `table.rigid_bodies`: rigid bodies that fall, collide and come to rest. A table places the
+//! `physics.rigid_bodies`: rigid bodies that fall, collide and come to rest. A table places the
 //! bodies at the start; the node hands out a table of where they are now, in the columns
 //! `geo.instance` reads. The solver runs on the CPU (`penumbra-physics`), one step per show
 //! frame, on the cook thread.
@@ -17,7 +17,7 @@ use penumbra_physics::{MAX_BODIES, MAX_SUBSTEPS, Obstacle, Placement, Settings, 
 
 use crate::tex::fluid::step;
 
-pub const KIND: &str = "table.rigid_bodies";
+pub const KIND: &str = "physics.rigid_bodies";
 
 /// Choices of `shape`.
 pub const SHAPES: [&str; 3] = ["hull", "box", "sphere"];
