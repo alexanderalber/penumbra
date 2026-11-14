@@ -1,6 +1,8 @@
 //! `tex.liquid` and `tex.liquid_emitter` on WARP: a block falls into a flat pool of the right
 //! height, emitters pour where and as much as they say, open edges drain, a full budget warns,
-//! reset, repeatability, a hitch, a squeeze and hostile input.
+//! reset, repeatability, a hitch, a squeeze and hostile input. Obstacles: a shelf holds a pool,
+//! an obstacle that appears in the liquid pushes it out, a moving one with its velocity pushes
+//! it along, friction holds liquid on a slope, an empty mask changes nothing.
 
 use penumbra_core::Value;
 use penumbra_gpu::Pixels;
@@ -8,8 +10,10 @@ use penumbra_graph::{MAX_RUN, Op};
 
 use super::{Rig, create, gpu, scratch, set};
 
-/// The `fill` input, after the run of emitters.
+/// The `fill` input, after the run of emitters, then `obstacles` and `obstacle_velocity`.
 const FILL: u32 = MAX_RUN as u32;
+const OBSTACLES: u32 = FILL + 1;
+const OBSTACLE_VELOCITY: u32 = FILL + 2;
 
 /// A liquid in a 4:3 picture of 128 x 96 pixels.
 fn liquid(params: &[(&str, Value)]) -> Op {
@@ -98,15 +102,21 @@ fn centre(d: &Pixels) -> [f64; 2] {
 /// The depth of the liquid in column `i`, picture heights: where the density, read upwards from
 /// the floor, falls below half.
 fn depth(d: &Pixels, i: u32) -> f64 {
+    depth_on(d, i, 1.0)
+}
+
+/// The depth of the liquid in column `i` that rests on a floor at `floor` picture heights.
+fn depth_on(d: &Pixels, i: u32, floor: f64) -> f64 {
     let dx = 1.0 / f64::from(d.height);
     let at = |j: u32| f64::from(d.get(i, j).unwrap()[0]);
-    for j in (1..d.height).rev() {
+    let rows = ((floor / dx).ceil() as u32).min(d.height);
+    for j in (1..rows).rev() {
         let (below, above) = (at(j), at(j - 1));
         if below >= 0.5 && above < 0.5 {
             // Between the centres of cells j and j - 1.
             let t = (below - 0.5) / (below - above);
             let y = (f64::from(j) + 0.5 - t) * dx;
-            return 1.0 - y;
+            return floor - y;
         }
     }
     0.0
@@ -403,6 +413,311 @@ fn a_squeeze_makes_no_nan_and_the_liquid_recovers() {
     assert!((particles(&d) / start - 1.0).abs() < 0.1, "{} after {start}", particles(&d));
 }
 
+/// Particles in the cells whose centre (in picture heights from the top left) `inside` takes.
+fn particles_where(d: &Pixels, inside: impl Fn(f64, f64) -> bool) -> f64 {
+    let dx = 1.0 / f64::from(d.height);
+    let mut sum = 0.0;
+    for j in 0..d.height {
+        for i in 0..d.width {
+            if inside((f64::from(i) + 0.5) * dx, (f64::from(j) + 0.5) * dx) {
+                sum += f64::from(d.get(i, j).unwrap()[0]);
+            }
+        }
+    }
+    sum * 4.0
+}
+
+/// A picture of 128 x 96 from a fragment shader body: `velocity` (a vec2f expression of `uv` and
+/// `t`, the show seconds) where `inside` holds, black elsewhere.
+fn moving(path: &str, file: &str, dir: &std::path::Path, inside: &str, velocity: &str) -> Op {
+    let source = format!(
+        "@fragment\nfn main(v: PnVertex) -> @location(0) vec4f {{\n    let uv = v.uv;\n    let t = pn_time.seconds;\n    \
+         return select(vec4f(0.0, 0.0, 0.0, 1.0), vec4f({velocity}, 0.0, 1.0), {inside});\n}}\n"
+    );
+    std::fs::write(dir.join(file), source).unwrap();
+    create(
+        path,
+        "tex.shader",
+        &[("file", file.into()), ("width", Value::Int(128)), ("height", Value::Int(96))],
+    )
+}
+
+/// A shelf across the whole picture, 0.1 heights thick at half its height, holds the liquid
+/// filled above it: nothing below it, a flat pool on it as deep as the fill over the width, no
+/// particle lost. The fill reaches into the shelf, and no liquid starts there.
+#[test]
+fn a_shelf_holds_a_pool_and_nothing_passes_through() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-shelf");
+    let mut ops = vec![
+        liquid(&[("particles", Value::Int(8192))]),
+        mask("/block", "block.wgsl", &dir, "abs(uv.x - 0.5) < 0.2 && uv.y > 0.2 && uv.y < 0.55"),
+        mask("/shelf", "shelf.wgsl", &dir, "uv.y > 0.5 && uv.y < 0.6"),
+        wire("/block", 0, "/liquid", FILL),
+        wire("/shelf", 0, "/liquid", OBSTACLES),
+    ];
+    ops.extend(outputs());
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.pixels("/block");
+    rig.pixels("/shelf");
+    let (_, _, d0) = run(&mut rig, 1);
+    let start = particles(&d0);
+    // The fill stops at the shelf: 0.4 widths by 0.3 heights.
+    let filled = 0.4 * (4.0 / 3.0) * 0.3 * 4.0 * 48.0 * 48.0;
+    assert!((start / filled - 1.0).abs() < 0.05, "{start} particles at the start, {filled} expected");
+    let (out, v, d) = run(&mut rig, 360);
+    assert!(finite(&out) && finite(&v) && finite(&d));
+    let below = particles_where(&d, |_, y| y > 0.62);
+    // The cells of the shelf's top row hold the pool's bottom.
+    let inside = particles_where(&d, |_, y| y > 0.53 && y < 0.58);
+    let on = particles_where(&d, |_, y| y < 0.53);
+    // The pool on the shelf: as deep as the fill's area over the width, its top at 0.5 less that.
+    let expected = 0.4 * 0.3;
+    let tops: Vec<f64> = (8..56).map(|i| depth_on(&d, i, 0.5)).collect();
+    let mean = tops.iter().sum::<f64>() / tops.len() as f64;
+    eprintln!(
+        "shelf: {start:.0} particles, then {on:.0} above, {inside:.0} inside, {below:.0} below; pool {mean:.4} \
+         heights deep (expected {expected:.4}), speed {:.4}",
+        mean_speed(&v, &d)
+    );
+    assert!(below < 1.0, "{below} particles below the shelf");
+    assert!(inside < 0.02 * start, "{inside} particles inside the shelf");
+    assert!((on / start - 1.0).abs() < 0.05, "{on} of {start} on the shelf");
+    assert!((mean / expected - 1.0).abs() < 0.1, "pool {mean} against {expected}: {tops:?}");
+    assert_eq!(warning(&rig), None);
+}
+
+/// A box that appears in a pool pushes the liquid out of itself within a second or two: the
+/// particles come out along the distance field, none is lost and none flies off. Particles inside
+/// a solid add nothing to the density picture, so its count drops while they are in there.
+#[test]
+fn an_obstacle_that_appears_in_the_liquid_pushes_it_out() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-appear");
+    let mut ops = vec![
+        liquid(&[("particles", Value::Int(16384))]),
+        mask("/pool", "pool.wgsl", &dir, "uv.y > 0.5"),
+        mask("/box", "box.wgsl", &dir, "abs(uv.x - 0.5) < 0.15 && uv.y > 0.7 && uv.y < 0.9"),
+        wire("/pool", 0, "/liquid", FILL),
+    ];
+    ops.extend(outputs());
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.pixels("/pool");
+    rig.pixels("/box");
+    let (_, _, d) = run(&mut rig, 30);
+    let start = particles(&d);
+    rig.edit(&[wire("/box", 0, "/liquid", OBSTACLES)]);
+    // The box in heights: x from 0.35 to 0.65 of 4/3, y from 0.7 to 0.9; a cell less all round.
+    let in_box = |x: f64, y: f64| (x / (4.0 / 3.0) - 0.5).abs() < 0.15 - 0.03 && y > 0.72 && y < 0.88;
+    let (_, _, d) = run(&mut rig, 2);
+    let early = particles(&d);
+    let (out, v, d) = run(&mut rig, 150);
+    assert!(finite(&out) && finite(&v) && finite(&d));
+    let late = particles_where(&d, in_box);
+    let total = particles(&d);
+    eprintln!(
+        "appear: {start:.0} particles; {early:.0} outside the box at once, {total:.0} after 2.5 s, {late:.1} in \
+         the box; speed {:.4}",
+        mean_speed(&v, &d)
+    );
+    // The box covers 0.08 heights squared of the pool: about 740 particles.
+    assert!(early < start - 400.0, "{early} of {start} outside the box at once");
+    assert!((total / start - 1.0).abs() < 0.01, "{total} after {start}");
+    assert!(late < 0.005 * start, "{late} particles left in the box");
+    assert!(mean_speed(&v, &d) < 0.1, "{}", mean_speed(&v, &d));
+}
+
+/// A paddle that moves through a pool pushes the liquid ahead of it when `obstacle_velocity`
+/// says how it moves. Without the velocity the paddle only takes the liquid's place, and less
+/// of it ends up ahead.
+#[test]
+fn a_moving_obstacle_with_its_velocity_pushes_the_liquid() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-paddle");
+    // From x 0.1 to 0.6 of the width in 1.5 s, 0.05 wide, from 0.4 down to the floor.
+    let paddle = "abs(uv.x - (0.1 + t / 3.0)) < 0.025 && uv.y > 0.4";
+    let pushes = |with_velocity: bool| {
+        let mut ops = vec![
+            liquid(&[("particles", Value::Int(16384))]),
+            mask("/pool", "pool.wgsl", &dir, "uv.y > 0.7"),
+            moving("/paddle", "paddle.wgsl", &dir, paddle, "vec2f(1.0, 1.0)"),
+            moving("/push", "push.wgsl", &dir, paddle, "vec2f(1.0 / 3.0, 0.0)"),
+            wire("/pool", 0, "/liquid", FILL),
+            wire("/paddle", 0, "/liquid", OBSTACLES),
+        ];
+        if with_velocity {
+            ops.push(wire("/push", 0, "/liquid", OBSTACLE_VELOCITY));
+        }
+        ops.extend(outputs());
+        let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+        rig.pixels("/pool");
+        rig.pixels("/paddle");
+        rig.pixels("/push");
+        let (_, _, d) = run(&mut rig, 1);
+        let start = particles(&d);
+        let (out, v, d) = run(&mut rig, 80);
+        assert!(finite(&out) && finite(&v) && finite(&d));
+        // Liquid ahead of the paddle's place at the end (x 0.6 of the width = 0.8 heights).
+        let ahead = particles_where(&d, |x, _| x > 0.8 + 0.035);
+        (start, ahead, centre(&d)[0], particles(&d))
+    };
+    let (start, ahead, x, total) = pushes(true);
+    let (_, ahead_still, x_still, _) = pushes(false);
+    eprintln!(
+        "paddle: {start:.0} particles; with its velocity {ahead:.0} ahead and centre {x:.3}, {total:.0} in all; \
+         without {ahead_still:.0} ahead and centre {x_still:.3}"
+    );
+    // The pool at the start: 0.3 deep everywhere, so 40 % of it lies beyond x 0.6.
+    assert!(ahead > 0.5 * start, "{ahead} of {start} ahead");
+    assert!(ahead > ahead_still + 0.05 * start, "{ahead} with velocity, {ahead_still} without");
+    assert!(x > x_still, "{x} {x_still}");
+}
+
+/// A film of liquid two cells thick on a slope of 24 degrees: without friction it runs down to
+/// the bottom corner; with `friction` 1 it stays near where it was.
+#[test]
+fn friction_holds_liquid_on_a_slope() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-slope");
+    let slide = |friction: f64| {
+        let mut ops = vec![
+            liquid(&[("friction", Value::Float(friction))]),
+            mask("/drop", "drop.wgsl", &dir, "uv.x > 0.05 && uv.x < 0.4 && uv.y > 0.26 + 0.6 * uv.x"),
+            mask("/slope", "slope.wgsl", &dir, "uv.y > 0.3 + 0.6 * uv.x"),
+            wire("/drop", 0, "/liquid", FILL),
+            wire("/slope", 0, "/liquid", OBSTACLES),
+        ];
+        ops.extend(outputs());
+        let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+        rig.pixels("/drop");
+        rig.pixels("/slope");
+        let (out, v, d) = run(&mut rig, 60);
+        assert!(finite(&out) && finite(&v) && finite(&d));
+        (centre(&d)[0], particles(&d))
+    };
+    let (free, n_free) = slide(0.0);
+    let (held, n_held) = slide(1.0);
+    eprintln!(
+        "slope after 1 s: centre x {free:.3} without friction ({n_free:.0}), {held:.3} with 1 ({n_held:.0})"
+    );
+    // The film starts with its centre at 0.3 heights.
+    assert!(free > 0.65, "{free}");
+    assert!(held < 0.45 && held < free - 0.25, "{held} against {free}");
+}
+
+/// A mask that changes inside the same texture still moves the obstacle: `tex.cache` of length
+/// 1 copies every new frame into the one texture it outputs. The mask is empty for the first
+/// half second, then a box appears in the pool, and the liquid leaves the box.
+#[test]
+fn a_mask_rewritten_in_the_same_texture_is_seen() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-same-texture");
+    let mut ops = vec![
+        liquid(&[("particles", Value::Int(16384))]),
+        mask("/pool", "pool.wgsl", &dir, "uv.y > 0.5"),
+        moving(
+            "/box",
+            "box.wgsl",
+            &dir,
+            "t > 0.5 && abs(uv.x - 0.5) < 0.15 && uv.y > 0.7 && uv.y < 0.9",
+            "vec2f(1.0, 1.0)",
+        ),
+        create("/held", "tex.cache", &[("length", Value::Int(1))]),
+        wire("/box", 0, "/held", 0),
+        wire("/pool", 0, "/liquid", FILL),
+        wire("/held", 0, "/liquid", OBSTACLES),
+    ];
+    ops.extend(outputs());
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.pixels("/pool");
+    rig.pixels("/box");
+    let (_, _, d) = run(&mut rig, 2);
+    let first = rig.tex("/held").unwrap();
+    let start = particles(&d);
+    let (out, _, d) = run(&mut rig, 150);
+    assert!(finite(&out) && finite(&d));
+    // The fixture: the cache still outputs the texture of the first frames.
+    assert!(rig.tex("/held").unwrap().same(&first), "tex.cache made a new texture");
+    let in_box = |x: f64, y: f64| (x / (4.0 / 3.0) - 0.5).abs() < 0.15 - 0.03 && y > 0.72 && y < 0.88;
+    let left = particles_where(&d, in_box);
+    eprintln!("same texture: {start:.0} particles, {left:.1} left in the box after 2.5 s");
+    assert!(left < 0.005 * start, "{left} particles in the box: the obstacle was not seen");
+}
+
+/// An all-black `obstacles` picture gives the same liquid as none: the edges flooded on the GPU
+/// are the edges the CPU writes.
+#[test]
+fn an_empty_obstacle_picture_changes_nothing() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-empty-obstacles");
+    let once = |wired: bool| {
+        let mut ops = vec![
+            liquid(&[]),
+            mask("/block", "block.wgsl", &dir, "uv.x < 0.4 && uv.y > 0.3"),
+            mask("/none", "none.wgsl", &dir, "uv.x < 0.0"),
+            wire("/block", 0, "/liquid", FILL),
+        ];
+        if wired {
+            ops.push(wire("/none", 0, "/liquid", OBSTACLES));
+        }
+        ops.extend(outputs());
+        let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+        rig.pixels("/block");
+        rig.pixels("/none");
+        run(&mut rig, 120)
+    };
+    let (a, b) = (once(false), once(true));
+    let (ca, cb) = (centre(&a.2), centre(&b.2));
+    eprintln!(
+        "empty obstacles: centre {ca:?} against {cb:?}, identical: {}",
+        a.0.data == b.0.data && a.2.data == b.2.data
+    );
+    assert!((particles(&a.2) - particles(&b.2)).abs() < 0.01 * particles(&a.2));
+    assert!((ca[0] - cb[0]).abs() < 0.01 && (ca[1] - cb[1]).abs() < 0.01, "{ca:?} {cb:?}");
+}
+
+const HOSTILE_OBSTACLE: &str = "\
+@fragment
+fn main(v: PnVertex) -> @location(0) vec4f {
+    let zero = v.uv.x - v.uv.x;
+    let p = vec2i(v.pos.xy);
+    if ((p.x + 2 * p.y) % 5 == 0) {
+        return vec4f(zero / zero, 1.0 / zero, -1.0 / zero, zero / zero);
+    }
+    if (v.uv.x > 0.6 && v.uv.y > 0.3) {
+        return vec4f(1e30, -1e30, 1.0, 1.0);
+    }
+    return vec4f(0.0, 0.0, 0.0, 1.0);
+}
+";
+
+/// NaN and infinity in the obstacles and their velocity leave every output finite.
+#[test]
+fn hostile_obstacles_leave_the_liquid_finite() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-hostile-obstacles");
+    std::fs::write(dir.join("hostile.wgsl"), HOSTILE_OBSTACLE).unwrap();
+    let mut ops = vec![
+        liquid(&[("grid", Value::Int(32))]),
+        create(
+            "/bad",
+            "tex.shader",
+            &[("file", "hostile.wgsl".into()), ("width", Value::Int(128)), ("height", Value::Int(96))],
+        ),
+        mask("/block", "block.wgsl", &dir, "uv.y > 0.2"),
+        wire("/block", 0, "/liquid", FILL),
+        wire("/bad", 0, "/liquid", OBSTACLES),
+        wire("/bad", 0, "/liquid", OBSTACLE_VELOCITY),
+    ];
+    ops.extend(outputs());
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.pixels("/bad");
+    rig.pixels("/block");
+    let (out, v, d) = run(&mut rig, 60);
+    assert!(finite(&out) && finite(&v) && finite(&d));
+    assert!(particles(&d) > 100.0, "{}", particles(&d));
+}
+
 const HOSTILE: &str = "\
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
@@ -445,19 +760,24 @@ fn hostile_input_leaves_the_liquid_finite() {
 
 /// Times the node on the hardware GPU: at the defaults (1920 x 1080, grid 384, 65536 particles,
 /// most of them in a pool and a pour), and at the size of the compute fixture's timing (65536
-/// particles, 384 cells per picture height, 37 substeps). Prints the wall time per frame waited for, and per frame of
-/// frames cooked back to back.
+/// particles, 384 cells per picture height, 37 substeps). The defaults again with a still
+/// obstacle (flooded once) and with a moving one (flooded every frame). Prints the wall time per
+/// frame waited for, and per frame of frames cooked back to back.
 #[test]
 #[ignore = "times the liquid on the hardware GPU: cargo test -p penumbra-ops --release liquid_timing -- --ignored --nocapture"]
 fn liquid_timing() {
     let gpu = penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Hardware).unwrap();
     eprintln!("{}", gpu.name());
     let dir = scratch("liquid-timing");
-    for (name, width, height, grid, particles, inside) in [
-        ("small", 1920, 1080, 256, 16384, "uv.y > 0.9"),
-        ("defaults", 1920, 1080, 384, 65536, "uv.y > 0.82"),
-        ("large", 1920, 1080, 512, 131_072, "uv.y > 0.8"),
-        ("fixture size", 1440, 1080, 512, 65536, "uv.x < 0.25 && uv.y > 2.0 / 3.0"),
+    let still = "abs(uv.x - 0.5) < 0.2 && abs(uv.y - 0.5) < 0.03";
+    let shelf = "abs(uv.x - 0.5 - 0.2 * sin(t)) < 0.2 && abs(uv.y - 0.5) < 0.03";
+    for (name, width, height, grid, particles, inside, obstacle) in [
+        ("small", 1920, 1080, 256, 16384, "uv.y > 0.9", ""),
+        ("defaults", 1920, 1080, 384, 65536, "uv.y > 0.82", ""),
+        ("defaults, still obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", still),
+        ("defaults, moving obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", shelf),
+        ("large", 1920, 1080, 512, 131_072, "uv.y > 0.8", ""),
+        ("fixture size", 1440, 1080, 512, 65536, "uv.x < 0.25 && uv.y > 2.0 / 3.0", ""),
     ] {
         std::fs::write(
             dir.join("fill.wgsl"),
@@ -466,7 +786,18 @@ fn liquid_timing() {
             ),
         )
         .unwrap();
-        let ops = [
+        std::fs::write(
+            dir.join("obstacle.wgsl"),
+            format!(
+                "@fragment\nfn main(v: PnVertex) -> @location(0) vec4f {{\n    let uv = v.uv;\n    {}\n    \
+                 return vec4f(vec3f(select(0.0, 1.0, {})), 1.0);\n}}\n",
+                // Only a mask that reads the clock renders anew every frame.
+                if obstacle.contains("(t)") { "let t = pn_time.seconds;" } else { "" },
+                if obstacle.is_empty() { "false" } else { obstacle }
+            ),
+        )
+        .unwrap();
+        let mut ops = vec![
             create(
                 "/liquid",
                 "tex.liquid",
@@ -486,8 +817,23 @@ fn liquid_timing() {
             create("/tap", "tex.liquid_emitter", &[]),
             wire("/tap", 0, "/liquid", 0),
         ];
+        if !obstacle.is_empty() {
+            ops.push(create(
+                "/obstacle",
+                "tex.shader",
+                &[
+                    ("file", "obstacle.wgsl".into()),
+                    ("width", Value::Int(width)),
+                    ("height", Value::Int(height)),
+                ],
+            ));
+            ops.push(wire("/obstacle", 0, "/liquid", OBSTACLES));
+        }
         let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
         rig.pixels("/fill");
+        if !obstacle.is_empty() {
+            rig.pixels("/obstacle");
+        }
         let id = rig.id("/liquid");
         let frames = 300;
         let mut wall = Vec::new();

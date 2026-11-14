@@ -17,6 +17,8 @@
 const PAD: f32 = 3.0;
 const FREE: u32 = 0u;
 const MATERIALS: u32 = 4u;
+// How far friction reaches out from a solid's surface, in cells.
+const FRICTION_REACH: f32 = 1.0;
 
 // The counters, `counter[...]`.
 const FREE_SEEN: u32 = 0u;   // free particles the emit pass saw this frame
@@ -100,6 +102,18 @@ fn node_at(c: vec2i) -> u32 {
 
 fn solid_at(c: vec2i) -> vec4f {
     return solid[node_at(c)];
+}
+
+// The distance to the nearest solid at grid coordinates `at`, interpolated.
+fn solid_distance(at: vec2f) -> f32 {
+    let f = floor(at);
+    let t = at - f;
+    let c = vec2i(f);
+    let s00 = solid_at(c).x;
+    let s10 = solid_at(c + vec2i(1, 0)).x;
+    let s01 = solid_at(c + vec2i(0, 1)).x;
+    let s11 = solid_at(c + vec2i(1, 1)).x;
+    return mix(mix(s00, s10, t.x), mix(s01, s11, t.x), t.y);
 }
 
 // A particle's place in grid coordinates (node i at i).
@@ -219,25 +233,36 @@ fn grid_update(@builtin(global_invocation_id) id: vec3u) {
             let s11 = solid_at(c + vec2i(1, 1)).x;
             s = mix(mix(s00, s10, t.x), mix(s01, s11, t.x), t.y);
         }
-        if (s < u.wall.z * dx) {
+        let band = u.wall.z * dx;
+        // Friction reaches a cell beyond the band: the nodes beside a surface carry a film
+        // along it, and a film held only at the band slides on over it.
+        let reach = select(band, max(band, FRICTION_REACH * dx), u.wall.y > 0.0);
+        if (s < reach) {
             let c = vec2i(round(at));
             let g = vec2f(
                 solid_at(c + vec2i(1, 0)).x - solid_at(c - vec2i(1, 0)).x,
                 solid_at(c + vec2i(0, 1)).x - solid_at(c - vec2i(0, 1)).x,
             );
             let len = length(g);
-            if (s < -1.5 * dx || len < 1e-9) {
+            if (s < -1.5 * dx || (len < 1e-9 && s < band)) {
                 v = vs;
-            } else {
+            } else if (len >= 1e-9) {
                 let n = g / len;
                 var vr = v - vs;
                 let vn = dot(vr, n);
                 if (vn < 0.0) {
-                    vr -= vn * n;
+                    // Within the band nothing goes into the solid; beyond it only friction acts.
+                    let vt = vr - vn * n;
+                    var kept = vt;
                     // Coulomb: what presses on the solid is held by up to that much.
-                    let t = length(vr);
+                    let t = length(vt);
                     if (t > 1e-9) {
-                        vr *= max(1.0 - u.wall.y * so.w * (-vn) / t, 0.0);
+                        kept = vt * max(1.0 - u.wall.y * so.w * (-vn) / t, 0.0);
+                    }
+                    if (s < band) {
+                        vr = kept;
+                    } else {
+                        vr = kept + vn * n;
                     }
                 }
                 // Friction as a rate: what slides along the solid loses this share per second.
@@ -306,8 +331,13 @@ fn g2p(@builtin(global_invocation_id) id: vec3u) {
     // Out of a solid, by the distance field the grid carries.
     let sn = s + dot(gs, step);
     let gl = length(gs);
-    if (sn < 0.0 && gl > 1e-9) {
-        let n = gs / gl;
+    if (sn < 0.0) {
+        // Where the field has no slope (the middle of a symmetric obstacle, a picture that is
+        // all solid) the particle goes up, so it does not stay inside for ever.
+        var n = vec2f(0.0, -1.0);
+        if (gl > 1e-9) {
+            n = gs / gl;
+        }
         let vs = solid_at(vec2i(round(xg))).yz;
         // Out at a bounded speed (on top of the solid's own): liquid that a solid appears in
         // leaves over a few frames instead of bursting out.
@@ -402,7 +432,8 @@ fn emit(@builtin(global_invocation_id) id: vec3u) {
 }
 
 // After a start: a particle at every point of a lattice over the picture where the `fill`
-// picture (pic0) is brighter than half, as far as the buffer holds. The buffer is free before.
+// picture (pic0) is brighter than half and no obstacle is, as far as the buffer holds. The
+// buffer is free before.
 @compute @workgroup_size(16, 4)
 fn fill(@builtin(global_invocation_id) id: vec3u) {
     if (any(id.xy >= pn.size.xy)) {
@@ -413,7 +444,8 @@ fn fill(@builtin(global_invocation_id) id: vec3u) {
     let pos = (vec2f(id.xy) + vec2f(0.5) + j) * sp;
     let uv = pos / u.room.xy;
     let c = textureSampleLevel(pic0, pn_clamp, uv, 0.0);
-    if (!(pn_luma(c.rgb) > 0.5)) {
+    // No liquid inside an obstacle.
+    if (!(pn_luma(c.rgb) > 0.5) || solid_distance(grid_of(pos)) < 0.0) {
         return;
     }
     let k = atomicAdd(&counter[FILL_WANTED], 1u);
