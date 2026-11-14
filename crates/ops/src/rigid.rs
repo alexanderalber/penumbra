@@ -30,7 +30,7 @@ use penumbra_graph::{
 use penumbra_mesh::Mesh;
 use penumbra_physics::{
     Field, MAX_BODIES, MAX_FIELDS, MAX_GROUPS, MAX_SUBSTEPS, MIN_STEP, Mode, Obstacle, Place, Placement,
-    Settings, World,
+    Plane, Settings, World,
 };
 
 use crate::geo::trs;
@@ -46,6 +46,9 @@ pub const KIND: &str = "physics.rigid_bodies";
 /// The columns of the `table` output: the ones `geo.instance` reads, then the number of the
 /// `bodies` input the body came in by.
 pub const OUT_COLUMNS: [&str; 10] = ["tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz", "group"];
+
+/// Choices of `plane`, in the order of [`plane_of`].
+pub const PLANES: [&str; 4] = ["off", "xy", "xz", "yz"];
 
 /// The `obstacles` input, after the run of `bodies` inputs.
 const OBSTACLES: usize = MAX_RUN;
@@ -72,6 +75,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::vec3("gravity", [0.0, 0.0, -9.81])
                 .range(-20.0, 20.0)
                 .doc("The pull on every body, in metres per second squared; z is up, so -9.81 in z is the earth's"),
+        )
+        .param(
+            ParamSpec::choice("plane", &PLANES)
+                .doc("Holds every dynamic body in one plane, for 2D scenes such as balls on a wall. Each body keeps its place across the plane and turns only about the plane's normal. Driven and fixed bodies, obstacles and the floor stay as they are. A switch acts at once and starts nothing over")
+                .choice_doc("off", "bodies move and turn every way")
+                .choice_doc("xy", "level, like a table top: bodies keep their z and turn about z")
+                .choice_doc("xz", "upright, like a wall that faces along y: bodies keep their y and turn about y")
+                .choice_doc("yz", "upright, like a wall that faces along x: bodies keep their x and turn about x"),
         )
         .param(ParamSpec::bool("floor", true).doc("A level floor without end that the bodies land on"))
         .param(
@@ -477,12 +488,23 @@ fn settings(cx: &CookContext<'_>) -> Result<Settings, CookError> {
     };
     Ok(Settings {
         gravity,
+        plane: plane_of(cx.text("plane")?),
         floor: cx.bool("floor")?.then_some(cx.float("floor_height")? as f32),
         friction: cx.float("friction")? as f32,
         bounce: cx.float("bounce")? as f32,
         damping: cx.float("damping")? as f32,
         spin_damping: cx.float("spin_damping")? as f32,
     })
+}
+
+/// The plane a choice of `plane` names; no plane for any other text.
+pub fn plane_of(name: &str) -> Plane {
+    match name {
+        "xy" => Plane::Xy,
+        "xz" => Plane::Xz,
+        "yz" => Plane::Yz,
+        _ => Plane::Off,
+    }
 }
 
 /// A box of 1 m on the GPU, or none without a GPU or when the upload fails.

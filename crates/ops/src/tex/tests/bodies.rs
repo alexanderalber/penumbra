@@ -175,6 +175,50 @@ fn the_pile_of_the_docs_renders_once_a_camera_is_wired() {
 }
 
 #[test]
+fn a_plane_holds_the_bodies_in_it_until_it_is_switched_off() {
+    let Some(gpu) = gpu() else { return };
+    // A box thrown across the plane of x and z and spun about x, with a pull across the plane
+    // too, and no floor.
+    let rows = "tx,ty,tz,vy,wx\n0,2,3,1,90";
+    let ops = [
+        create("/t0", "table.text", &[("text", rows.into()), ("format", "csv".into())]),
+        create("/b0", "physics.bodies", &[("shape", "box".into())]),
+        connect("/t0", "/b0", 0),
+        create(
+            "/r",
+            "physics.rigid_bodies",
+            &[("gravity", Value::Vec3([0.0, 2.0, -9.81])), ("plane", "xz".into()), ("floor", false.into())],
+        ),
+        connect("/b0", "/r", 0),
+        create("/show", "geo.null", &[]),
+        connect("/r", "/show", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let world = |rig: &mut Rig, frames: usize| {
+        for _ in 0..frames {
+            rig.clock.advance(1);
+            rig.cook("/show");
+        }
+        let s = rig.cooker.status(rig.id("/r")).unwrap();
+        assert_eq!((s.error, s.warning), (None, None));
+        let out = rig.cooker.output(Port { node: rig.id("/show"), output: 0 }).unwrap();
+        out.get::<Geo>().unwrap().items[0].world
+    };
+    let held = world(&mut rig, 60);
+    // It falls, and keeps its y and its upright y axis: the box turned about y only.
+    assert!(held[2][3] < 0.0, "it falls: {held:?}");
+    assert_eq!(held[1][3], 2.0, "{held:?}");
+    let y_axis = [held[0][1], held[1][1], held[2][1]];
+    assert!((y_axis[1] - 1.0).abs() < 1e-5, "{y_axis:?}");
+    // Switched off, nothing starts over: the box falls on from where it was, and the pull
+    // along y moves it.
+    rig.edit(&[set("/r.plane", "off".into())]);
+    let free = world(&mut rig, 60);
+    assert!(free[2][3] < held[2][3], "{free:?}");
+    assert!(free[1][3] > 2.8, "about 1 m along y in a second: {free:?}");
+}
+
+#[test]
 fn an_obstacle_flattened_by_its_transform_collides_where_it_is_drawn() {
     let Some(gpu) = gpu() else { return };
     let ops = [

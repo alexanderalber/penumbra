@@ -2739,6 +2739,7 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `gravity` | vec3 | `[0, 0, -9.81]` | -20 to 20 (soft) | The pull on every body, in metres per second squared; z is up, so -9.81 in z is the earth's |
+| `plane` | off \| xy \| xz \| yz | `"off"` |  | Holds every dynamic body in one plane, for 2D scenes such as balls on a wall. Each body keeps its place across the plane and turns only about the plane's normal. Driven and fixed bodies, obstacles and the floor stay as they are. A switch acts at once and starts nothing over; off: bodies move and turn every way; xy: level, like a table top: bodies keep their z and turn about z; xz: upright, like a wall that faces along y: bodies keep their y and turn about y; yz: upright, like a wall that faces along x: bodies keep their x and turn about x |
 | `floor` | bool | `true` |  | A level floor without end that the bodies land on |
 | `floor_height` | float | `0` | -5 to 5 m (soft, held within -10000 to 10000 m) | How high the floor lies, along z |
 | `friction` | float | `0.5` | 0 to 2 (soft, held within 0 to 10) | How much the floor and the obstacles grip: 0 slides like ice, 1 holds like rubber. A body on them slides by the mean of this and its group's `friction` |

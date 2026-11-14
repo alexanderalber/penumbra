@@ -174,7 +174,17 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("physics.field", &["force comp", "force", "wind", "attractor", "vortex", "impulse force", "simulation"]),
     (
         "physics.rigid_bodies",
-        &["bullet solver", "multi body", "multibody", "simulation", "collision", "rapier", "dynamics"],
+        &[
+            "bullet solver",
+            "multi body",
+            "multibody",
+            "simulation",
+            "collision",
+            "rapier",
+            "dynamics",
+            "2d physics",
+            "planar",
+        ],
     ),
     ("vol.emitter", &["nvidia flow emitter", "simulation"]),
     ("vol.obstacle", &["simulation", "collision"]),

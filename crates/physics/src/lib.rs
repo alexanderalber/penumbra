@@ -5,7 +5,8 @@
 //! be moved too and carry along what they touch. Dynamic bodies can be pushed besides: by
 //! [`Field`]s that fill the world (a wind, a pull to a point, a whirl), by a push of its own per
 //! body ([`Push`]) and by a spring that pulls a body to a place ([`Spring`]). All of these count
-//! as speed gained per second, whatever a body weighs. Space is penumbra's: metres, z up. Rotations
+//! as speed gained per second, whatever a body weighs. A [`Plane`] in the [`Settings`] keeps the
+//! dynamic bodies in one plane, as on a wall. Space is penumbra's: metres, z up. Rotations
 //! cross as degrees about x, then y, then z, the order `geo.transform` and `geo.instance` apply
 //! them in.
 //!
@@ -87,6 +88,10 @@ pub const FIELD_CORE: f32 = 0.2;
 
 /// A body pushed by less than this may sleep, in metres per second squared.
 const WAKE: f32 = 1e-3;
+
+/// A body that nothing presses on and that moves slower than this may sleep, in metres per
+/// second and in radians per second.
+const DRIFT: f32 = 1e-4;
 
 /// What a field does to the bodies it reaches.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -229,11 +234,75 @@ impl Spring {
     }
 }
 
+/// A plane through the world that dynamic bodies stay in: each keeps its place across the
+/// plane and turns about the plane's normal only. Bodies at different places across the plane
+/// move in parallel layers. Driven and fixed bodies, obstacles and the floor are not held.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Plane {
+    /// No plane: bodies move and turn every way.
+    #[default]
+    Off,
+    /// Bodies keep their z and turn about z only.
+    Xy,
+    /// Bodies keep their y and turn about y only.
+    Xz,
+    /// Bodies keep their x and turn about x only.
+    Yz,
+}
+
+impl Plane {
+    /// The plane's normal: the axis a body keeps its place along. None without a plane.
+    fn normal(self) -> Option<Vector> {
+        match self {
+            Plane::Off => None,
+            Plane::Xy => Some(Vector::Z),
+            Plane::Xz => Some(Vector::Y),
+            Plane::Yz => Some(Vector::X),
+        }
+    }
+
+    /// What the solver holds still for a body in the plane: moving along the normal and the
+    /// two turns that would tilt the body out of the plane.
+    fn locks(self) -> LockedAxes {
+        match self {
+            Plane::Off => LockedAxes::empty(),
+            Plane::Xy => {
+                LockedAxes::TRANSLATION_LOCKED_Z
+                    | LockedAxes::ROTATION_LOCKED_X
+                    | LockedAxes::ROTATION_LOCKED_Y
+            }
+            Plane::Xz => {
+                LockedAxes::TRANSLATION_LOCKED_Y
+                    | LockedAxes::ROTATION_LOCKED_X
+                    | LockedAxes::ROTATION_LOCKED_Z
+            }
+            Plane::Yz => {
+                LockedAxes::TRANSLATION_LOCKED_X
+                    | LockedAxes::ROTATION_LOCKED_Y
+                    | LockedAxes::ROTATION_LOCKED_Z
+            }
+        }
+    }
+
+    /// `speed` without its part along the normal. The solver's locks stop forces along the
+    /// normal, but a speed set on a body moves it all the same.
+    fn along(self, speed: Vector) -> Vector {
+        self.normal().map_or(speed, |n| speed - n * speed.dot(n))
+    }
+
+    /// Only the part of `spin` about the normal: the turn that keeps a body in the plane.
+    fn about(self, spin: Vector) -> Vector {
+        self.normal().map_or(spin, |n| n * spin.dot(n))
+    }
+}
+
 /// What may change while the bodies move.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
     /// Metres per second squared.
     pub gravity: [f32; 3],
+    /// The plane dynamic bodies stay in, or none.
+    pub plane: Plane,
     /// The height of a horizontal floor without end, or none.
     pub floor: Option<f32>,
     /// Of the floor and the obstacles: 0 slides like ice, 1 grips like rubber. Where a body
@@ -252,6 +321,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             gravity: [0.0, 0.0, -9.81],
+            plane: Plane::Off,
             floor: Some(0.0),
             friction: 0.5,
             bounce: 0.0,
@@ -267,6 +337,7 @@ impl Settings {
         let n = |v: f32, lo: f32, hi: f32| if v.is_finite() { v.clamp(lo, hi) } else { lo.max(0.0).min(hi) };
         Self {
             gravity: self.gravity.map(|g| n(g, -1e4, 1e4)),
+            plane: self.plane,
             floor: self.floor.filter(|z| z.is_finite()),
             friction: n(self.friction, 0.0, 10.0),
             bounce: n(self.bounce, 0.0, 1.0),
@@ -595,10 +666,13 @@ impl World {
         };
         let scale = sized(start.scale);
         let collider = g.collider(scale);
+        let plane = self.settings.plane;
         let body = match g.mode {
             Mode::Dynamic => RigidBodyBuilder::dynamic()
-                .linvel(capped(start.velocity, MAX_SPEED))
-                .angvel(capped(start.spin.map(f32::to_radians), MAX_SPEED))
+                .linvel(plane.along(capped(start.velocity, MAX_SPEED)))
+                .angvel(plane.about(capped(start.spin.map(f32::to_radians), MAX_SPEED)))
+                .locked_axes(plane.locks())
+                .gyroscopic_forces_enabled(plane == Plane::Off)
                 .linear_damping(self.settings.damping)
                 .angular_damping(self.settings.spin_damping),
             Mode::Driven => RigidBodyBuilder::kinematic_position_based(),
@@ -791,7 +865,7 @@ impl World {
         let dynamic = self.groups.iter().flatten().filter(|g| g.mode == Mode::Dynamic);
         for b in dynamic.flat_map(|g| &g.bodies) {
             let Some(body) = self.world.bodies.get_mut(b.body) else { continue };
-            let change = field.at(body.translation());
+            let change = self.settings.plane.along(field.at(body.translation()));
             if change != Vector::ZERO {
                 body.set_linvel((body.linvel() + change).clamp_length_max(MAX_SPEED), true);
             }
@@ -850,6 +924,22 @@ impl World {
                 body.set_angular_damping(settings.spin_damping);
             }
         }
+        if old.plane != settings.plane {
+            // Each body stays where it is across the new plane, and loses the speed and the
+            // spin that would take it out.
+            let plane = settings.plane;
+            let dynamic = self.groups.iter().flatten().filter(|g| g.mode == Mode::Dynamic);
+            for b in dynamic.flat_map(|g| &g.bodies) {
+                let Some(body) = self.world.bodies.get_mut(b.body) else { continue };
+                body.set_locked_axes(plane.locks(), false);
+                // The solver's turning of a spinning body about its own axes ignores the
+                // locks, and in a plane it has nothing to do.
+                body.enable_gyroscopic_forces(plane == Plane::Off);
+                let (speed, spin) = (body.linvel(), body.angvel());
+                body.set_linvel(plane.along(speed), false);
+                body.set_angvel(plane.about(spin), false);
+            }
+        }
         // Bodies at rest sleep; a new gravity or a floor that left must reach them too.
         self.world.wake_up_all(true);
     }
@@ -884,6 +974,7 @@ impl World {
         self.world.integration_parameters.dt = seconds / n as f32;
         for k in 1..=n {
             self.push(seconds / n as f32);
+            self.keep_drifting();
             // The solver takes a body to its next place within one of its steps, at the speed
             // that takes. Each substep therefore gets its share of the way.
             for (handle, from, to) in &moves {
@@ -959,6 +1050,7 @@ impl World {
             return;
         }
         self.pushed = any;
+        let plane = self.settings.plane;
         for g in self.groups.iter().flatten().filter(|g| g.mode == Mode::Dynamic) {
             let spring = g.spring;
             // The spring as a body feels it: how hard it pulls per metre, how hard it brakes
@@ -975,8 +1067,8 @@ impl World {
                 for field in &self.fields {
                     push += field.at(at);
                 }
-                let push = push.clamp_length_max(MAX_PUSH);
-                let twist = vector(own.twist.map(f32::to_radians));
+                let push = plane.along(push.clamp_length_max(MAX_PUSH));
+                let twist = plane.about(vector(own.twist.map(f32::to_radians)));
                 // A pulled body feels less of gravity: at its target nothing pushes it, and
                 // it may sleep there, in the air.
                 if body.gravity_scale() != 1.0 - lift {
@@ -984,7 +1076,7 @@ impl World {
                     // Awake for good: a body merely stirred sleeps again within the step.
                     body.wake_up(true);
                 }
-                let pull = target.map_or(Vector::ZERO, |t| (t - at) * stiffness);
+                let pull = plane.along(target.map_or(Vector::ZERO, |t| (t - at) * stiffness));
                 if (push + pull).length() > WAKE || twist.length() > WAKE {
                     body.wake_up(true);
                 } else if body.is_sleeping() {
@@ -1003,12 +1095,36 @@ impl World {
                 }
                 speed += push * dt;
                 spin += twist * dt;
-                let speed = speed.clamp_length_max(MAX_SPEED);
-                let spin = spin.clamp_length_max(MAX_SPEED);
+                // A target beside the plane pulls across it too.
+                let speed = plane.along(speed.clamp_length_max(MAX_SPEED));
+                let spin = plane.about(spin.clamp_length_max(MAX_SPEED));
                 if speed.is_finite() && spin.is_finite() {
                     body.set_linvel(speed, false);
                     body.set_angvel(spin, false);
                 }
+            }
+        }
+    }
+
+    /// Keeps awake every dynamic body that moves and that nothing holds. The solver lets a slow
+    /// body sleep whether or not it has come to rest, and a sleeping body loses its speed: a
+    /// ball that drifts slowly through empty space, or slowly past a wall, would stop dead. A
+    /// body that something presses on may still sleep, so a heap comes to rest as before.
+    fn keep_drifting(&mut self) {
+        let dynamic = self.groups.iter().flatten().filter(|g| g.mode == Mode::Dynamic);
+        for b in dynamic.flat_map(|g| &g.bodies) {
+            let Some(body) = self.world.bodies.get(b.body) else { continue };
+            let moving = body.linvel().length() > DRIFT || body.angvel().length() > DRIFT;
+            if body.is_sleeping() || !moving {
+                continue;
+            }
+            // A contact counts once it pushed in the last step: the solver also keeps contacts
+            // with what is merely near.
+            if self.world.contact_pairs_with(b.collider).any(|pair| pair.total_impulse_magnitude() > 0.0) {
+                continue;
+            }
+            if let Some(body) = self.world.bodies.get_mut(b.body) {
+                body.wake_up(true);
             }
         }
     }
@@ -2848,5 +2964,338 @@ mod tests {
             assert!(sound(&world), "{:?}", world.groups[0].as_ref().unwrap().shape);
         }
         assert!(made > 50 && refused > 50, "{made} hulls made, {refused} refused");
+    }
+
+    #[test]
+    fn a_slow_body_in_free_flight_keeps_its_speed() {
+        for speed in [0.05f32, 0.005] {
+            let mut world = space();
+            world.add(0, &Start { velocity: [speed, 0.0, 0.0], ..Start::default() }).unwrap();
+            run(&mut world, 30.0);
+            let x = world.placements(0)[0].translate[0];
+            let gone = f64::from(speed) * 30.0;
+            assert!((x - gone).abs() < 0.01 * gone, "{speed} m/s for 30 s: {x} m, {gone} m expected");
+            let v =
+                world.world.bodies.get(world.groups[0].as_ref().unwrap().bodies[0].body).unwrap().linvel();
+            assert!((v.x - speed).abs() < 1e-4 * speed, "{speed} m/s became {v:?}");
+        }
+    }
+
+    /// Each plane with its normal and two axes that lie in it.
+    const PLANES: [(Plane, Vector, Vector, Vector); 3] = [
+        (Plane::Xy, Vector::Z, Vector::X, Vector::Y),
+        (Plane::Xz, Vector::Y, Vector::X, Vector::Z),
+        (Plane::Yz, Vector::X, Vector::Y, Vector::Z),
+    ];
+
+    fn array(v: Vector) -> [f32; 3] {
+        [v.x, v.y, v.z]
+    }
+
+    /// The solver's body for body `k` of `group`.
+    fn body(world: &World, group: usize, k: usize) -> &RigidBody {
+        world.world.bodies.get(world.groups[group].as_ref().unwrap().bodies[k].body).unwrap()
+    }
+
+    /// Where every dynamic body is and how it is turned, group after group.
+    fn dynamic_poses(world: &World) -> Vec<Pose> {
+        let groups = world.groups.iter().flatten().filter(|g| g.mode == Mode::Dynamic);
+        groups.flat_map(|g| &g.bodies).map(|b| *world.world.bodies.get(b.body).unwrap().position()).collect()
+    }
+
+    /// Over all bodies: the farthest one has moved along `n` from `start` to `now`, in metres,
+    /// and the most one has turned about an axis across `n`, in radians.
+    fn out_of_plane(start: &[Pose], now: &[Pose], n: Vector) -> (f32, f32) {
+        assert_eq!(start.len(), now.len());
+        let (mut off, mut tilt) = (0.0f32, 0.0f32);
+        for (a, b) in start.iter().zip(now) {
+            off = off.max((b.translation - a.translation).dot(n).abs());
+            // The turn since the start: its axis times the sine of half its angle.
+            let turn = b.rotation * a.rotation.inverse();
+            let axis = Vector::new(turn.x, turn.y, turn.z);
+            tilt = tilt.max(2.0 * (axis - n * axis.dot(n)).length());
+        }
+        (off, tilt)
+    }
+
+    #[test]
+    fn bodies_in_a_plane_stay_in_it_whatever_pushes_them() {
+        for (plane, n, u, v) in PLANES {
+            // A point given along u, v and n.
+            let p = |a: f32, b: f32, c: f32| array(u * a + v * b + n * c);
+            // Gravity pulls along v, and across the plane as well.
+            let gravity = array(v * -9.81 + n * 4.0 + u);
+            let mut world = World::new(Settings { gravity, plane, floor: None, ..Settings::default() });
+            // A ground and two walls of fixed boxes, deep enough across the plane for two
+            // layers of bodies: one at 0, one at 2 along n.
+            let slab = |half: Vector| Shape::Box { center: [0.0; 3], half: array(half) };
+            world.set_group(2, slab(u * 7.0 + v * 0.5 + n * 4.0), Material::default(), Mode::Fixed).unwrap();
+            world.set_group(3, slab(u * 0.5 + v * 6.0 + n * 4.0), Material::default(), Mode::Fixed).unwrap();
+            world.add(2, &Start { translate: p(0.0, -0.5, 1.0), ..Start::default() }).unwrap();
+            for side in [-6.5, 6.5] {
+                world.add(3, &Start { translate: p(side, 5.0, 1.0), ..Start::default() }).unwrap();
+            }
+            // Balls and boxes, the boxes tilted out of the plane at their start. A box of three
+            // different sides that spins about another axis than its own would wobble, were
+            // it free.
+            let ball = Shape::Sphere { center: [0.0; 3], radius: 0.4 };
+            world.set_group(0, ball, Material::default(), Mode::Dynamic).unwrap();
+            let brick = Shape::Box { center: [0.0; 3], half: [0.5, 0.35, 0.2] };
+            world.set_group(1, brick, Material::default(), Mode::Dynamic).unwrap();
+            for k in 0..16 {
+                let layer = if k % 3 == 0 { 2.0 } else { 0.0 };
+                let at = p(-4.0 + (k % 8) as f32 * 1.1, 1.0 + (k / 8) as f32 * 1.5, layer);
+                let tilt = if k >= 8 { [10.0, 20.0, 30.0] } else { [0.0; 3] };
+                world.add(k / 8, &Start { translate: at, rotate_degrees: tilt, ..Start::default() }).unwrap();
+            }
+            let start = dynamic_poses(&world);
+            run(&mut world, 3.0);
+            // Fields: a wind and a pull that lean across the plane, a vortex about an axis in
+            // it, and a kick from a point beside it.
+            let field = |kind, strength, at: [f32; 3], toward: Vector| Field {
+                kind,
+                strength,
+                position: at,
+                direction: array(toward),
+                ..Field::default()
+            };
+            world
+                .set_fields(&[
+                    field(FieldKind::Wind, 6.0, [0.0; 3], u + n * 2.0),
+                    field(FieldKind::Point, 10.0, p(0.0, 3.0, 4.0), Vector::Z),
+                    field(FieldKind::Vortex, 5.0, p(0.0, 2.0, 1.0), u),
+                ])
+                .unwrap();
+            world.kick(&field(FieldKind::Point, -4.0, p(0.0, 0.0, -3.0), Vector::Z)).unwrap();
+            run(&mut world, 3.0);
+            world.set_fields(&[]).unwrap();
+            // Pushes of their own, along and about every axis.
+            let push = Push { push: array(n * 5.0 + u * 2.0), twist: [40.0, -60.0, 80.0] };
+            world.set_pushes(0, &[push; 8]);
+            world.set_pushes(1, &[push; 8]);
+            run(&mut world, 3.0);
+            world.set_pushes(0, &[]);
+            world.set_pushes(1, &[]);
+            // Springs to targets beside the plane.
+            for group in [0, 1] {
+                let targets: Vec<Option<[f32; 3]>> =
+                    (0..8).map(|k| Some(array(body(&world, group, k).translation() + n * 2.0 + v))).collect();
+                world.set_targets(group, &targets, Spring::default());
+            }
+            run(&mut world, 3.0);
+            world.set_targets(0, &[], Spring::default());
+            world.set_targets(1, &[], Spring::default());
+            // A driven paddle sweeps through the heap, along u and across the plane at once.
+            let paddle = Shape::Box { center: [0.0; 3], half: [0.5; 3] };
+            world.set_group(4, paddle, Material::default(), Mode::Driven).unwrap();
+            for k in 0..=480 {
+                let s = k as f32 / 480.0;
+                let row = Start { translate: p(-5.0 + 10.0 * s, 0.8, -1.0 + 4.0 * s), ..Start::default() };
+                world.place(4, &[row], NEVER).unwrap();
+                world.step(DT, 1);
+            }
+            let now = dynamic_poses(&world);
+            let (off, tilt) = out_of_plane(&start, &now, n);
+            assert!(off <= 1e-6, "{plane:?}: a body left its place across the plane by {off} m");
+            assert!(tilt <= 1e-4, "{plane:?}: a body tilted out of the plane by {tilt} rad");
+            let moved = start.iter().zip(&now).map(|(a, b)| (b.translation - a.translation).length());
+            assert!(moved.fold(0.0f32, f32::max) > 1.0, "{plane:?}: the bodies were pushed about");
+            assert!(sound(&world));
+        }
+    }
+
+    /// The deepest any two bodies of `world` overlap, in metres; 0 when none do.
+    fn deepest_overlap(world: &World) -> f32 {
+        let colliders: Vec<&Collider> = world.world.colliders.iter().map(|(_, c)| c).collect();
+        let mut deepest = 0.0f32;
+        for (k, a) in colliders.iter().enumerate() {
+            for b in &colliders[k + 1..] {
+                let found =
+                    rapier3d::parry::query::contact(a.position(), a.shape(), b.position(), b.shape(), 0.0);
+                if let Ok(Some(contact)) = found {
+                    deepest = deepest.max(-contact.dist);
+                }
+            }
+        }
+        deepest
+    }
+
+    #[test]
+    fn bodies_at_different_depths_of_a_plane_touch_aslant_and_come_apart() {
+        // Balls and boxes of 1 m in a row on the plane of x and y, each at its own depth in
+        // z: 0, 0.1 or 0.3. Neighbours overlap in a picture taken from the front, and touch
+        // with their rounded or tilted sides.
+        let mut world =
+            World::new(Settings { gravity: [0.0; 3], plane: Plane::Xy, floor: None, ..Settings::default() });
+        world.set_group(0, ball(), Material::default(), Mode::Dynamic).unwrap();
+        world.set_group(1, unit_box(), Material::default(), Mode::Dynamic).unwrap();
+        let depths = [0.0, 0.1, 0.3];
+        for k in 0..7 {
+            let at = [-3.0 + k as f32, 0.2 * (k % 2) as f32, depths[k % 3]];
+            world.add(k % 2, &Start { translate: at, ..Start::default() }).unwrap();
+        }
+        // A fixed wall on the right, a driven paddle on the left.
+        let slab = Shape::Box { center: [0.0; 3], half: [0.5, 3.0, 2.0] };
+        world.set_group(2, slab.clone(), Material::default(), Mode::Fixed).unwrap();
+        world.set_group(3, slab, Material::default(), Mode::Driven).unwrap();
+        world.add(2, &at_x(5.0, 0.0)).unwrap();
+        world.add(3, &at_x(-5.0, 0.0)).unwrap();
+        let start = dynamic_poses(&world);
+        // The paddle squeezes the row against the wall in 4 s, holds 2 s, goes back in 2 s,
+        // then the bodies are left alone for 12 s.
+        let paddle = |s: f32| {
+            let x = if s < 4.0 {
+                -5.0 + 2.5 * s / 4.0
+            } else if s < 6.0 {
+                -2.5
+            } else {
+                -2.5 - 6.5 * ((s - 6.0) / 2.0).min(1.0)
+            };
+            at_x(x, 0.0)
+        };
+        let (mut fastest, mut squeezed) = (0.0f32, 0.0f32);
+        for frame in 1..=1200 {
+            let s = frame as f32 * DT;
+            world.place(3, &[paddle(s)], NEVER).unwrap();
+            world.step(DT, 1);
+            let groups = world.groups.iter().flatten().filter(|g| g.mode == Mode::Dynamic);
+            for b in groups.flat_map(|g| &g.bodies) {
+                fastest = fastest.max(world.world.bodies.get(b.body).unwrap().linvel().length());
+            }
+            if s > 4.0 && s < 6.0 {
+                squeezed = squeezed.max(deepest_overlap(&world));
+            }
+        }
+        let now = dynamic_poses(&world);
+        let (off, tilt) = out_of_plane(&start, &now, Vector::Z);
+        let left = deepest_overlap(&world);
+        assert!(sound(&world));
+        assert!(off <= 1e-6 && tilt <= 1e-4, "{off} m, {tilt} rad");
+        // The paddle reached the row: the first body was shoved, and the row was pressed
+        // together (2 mm deep, on the day this was written).
+        assert!(now[0].translation.x - start[0].translation.x > 0.5, "{:?}", now[0]);
+        assert!(
+            squeezed > 0.0 && squeezed < 0.02,
+            "held against the wall, bodies overlapped by {squeezed} m"
+        );
+        assert!(fastest < 5.0, "the paddle goes 0.6 m/s, a body went {fastest} m/s");
+        assert!(left < 5e-3, "two bodies still overlap by {left} m");
+    }
+
+    #[test]
+    fn a_plane_switched_on_holds_bodies_where_they_are_and_switched_off_lets_them_go() {
+        let mut world =
+            world_of(unit_box(), Settings { gravity: [0.0; 3], floor: None, ..Settings::default() });
+        world.add(0, &Start { velocity: [1.0; 3], spin: [90.0; 3], ..Start::default() }).unwrap();
+        run(&mut world, 1.0);
+        let before = *body(&world, 0, 0).position();
+        assert!((before.translation.z - 1.0).abs() < 0.02, "{before:?}");
+        world.apply(Settings { plane: Plane::Xy, ..world.settings() });
+        let b = body(&world, 0, 0);
+        assert_eq!((b.linvel().z, b.angvel().x, b.angvel().y), (0.0, 0.0, 0.0));
+        assert_eq!((b.linvel().x, b.linvel().y), (1.0, 1.0), "the speed in the plane stays");
+        assert!((b.angvel().z - 90f32.to_radians()).abs() < 1e-3, "{:?}", b.angvel());
+        // Nothing starts over: the body goes on from where it was, and a wind across the plane
+        // does not move it.
+        world.set_fields(&[Field { kind: FieldKind::Wind, strength: 3.0, ..Field::default() }]).unwrap();
+        run(&mut world, 1.0);
+        let held = *body(&world, 0, 0).position();
+        assert_eq!(held.translation.z, before.translation.z);
+        assert!((held.translation.x - before.translation.x - 1.0).abs() < 0.03, "{held:?}");
+        let (_, tilt) = out_of_plane(&[before], &[held], Vector::Z);
+        assert!(tilt <= 1e-4, "{tilt}");
+        // Off again, the wind lifts the body and a twist about x tilts it.
+        world.apply(Settings { plane: Plane::Off, ..world.settings() });
+        world.set_pushes(0, &[Push { twist: [90.0, 0.0, 0.0], ..Push::default() }]);
+        run(&mut world, 1.0);
+        let free = *body(&world, 0, 0).position();
+        assert!(free.translation.z > before.translation.z + 1.0, "{free:?}");
+        let (_, tilt) = out_of_plane(&[held], &[free], Vector::Z);
+        assert!(tilt > 0.3, "{tilt}");
+    }
+
+    #[test]
+    fn a_start_speed_across_the_plane_and_a_tilting_start_spin_are_dropped() {
+        for (plane, n, u, v) in PLANES {
+            let settings = Settings { gravity: [0.0; 3], floor: None, plane, ..Settings::default() };
+            let mut world = world_of(unit_box(), settings);
+            let start =
+                Start { velocity: array(u + n * 5.0), spin: array((n + u + v) * 90.0), ..Start::default() };
+            world.add(0, &start).unwrap();
+            let b = body(&world, 0, 0);
+            assert_eq!(b.linvel(), u, "{plane:?}");
+            assert_eq!(b.angvel(), n * 90f32.to_radians(), "{plane:?}");
+            run(&mut world, 1.0);
+            let b = body(&world, 0, 0);
+            assert_eq!(b.translation().dot(n), 0.0, "{plane:?}");
+            assert!((b.translation().dot(u) - 1.0).abs() < 0.02, "{plane:?}: {:?}", b.translation());
+            let (_, tilt) = out_of_plane(&[Pose::IDENTITY], &[*b.position()], n);
+            assert!(tilt <= 1e-4, "{plane:?}: {tilt}");
+        }
+    }
+
+    /// A world for balls on a wall: in the plane of x and y, without gravity, with nothing
+    /// that slows a body and everything bouncing fully. Group 0 takes balls of 0.4 m; four
+    /// fixed boxes frame the square from -5 to 5.
+    fn wall() -> World {
+        let settings = Settings {
+            gravity: [0.0; 3],
+            plane: Plane::Xy,
+            floor: None,
+            friction: 0.0,
+            bounce: 1.0,
+            damping: 0.0,
+            spin_damping: 0.0,
+        };
+        let mut world = World::new(settings);
+        let rubber = Material { friction: 0.0, bounce: 1.0, density: 1.0 };
+        let ball = Shape::Sphere { center: [0.0; 3], radius: 0.2 };
+        world.set_group(0, ball, rubber, Mode::Dynamic).unwrap();
+        let long = Shape::Box { center: [0.0; 3], half: [6.0, 0.5, 1.0] };
+        let tall = Shape::Box { center: [0.0; 3], half: [0.5, 6.0, 1.0] };
+        world.set_group(1, long, rubber, Mode::Fixed).unwrap();
+        world.set_group(2, tall, rubber, Mode::Fixed).unwrap();
+        for side in [-5.5, 5.5] {
+            world.add(1, &Start { translate: [0.0, side, 0.0], ..Start::default() }).unwrap();
+            world.add(2, &Start { translate: [side, 0.0, 0.0], ..Start::default() }).unwrap();
+        }
+        world
+    }
+
+    #[test]
+    fn balls_in_a_plane_between_boxes_keep_bouncing() {
+        let mut world = wall();
+        // Twelve balls at speeds from 5 cm/s to 2 m/s, each its own way.
+        let speeds = [0.05f32, 0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.2, 1.5, 1.7, 2.0, 0.05];
+        for (k, speed) in speeds.iter().enumerate() {
+            let (s, c) = (k as f32 * 47.0).to_radians().sin_cos();
+            let at = [-4.0 + (k % 4) as f32 * 2.5, -3.0 + (k / 4) as f32 * 2.5, 0.0];
+            world
+                .add(0, &Start { translate: at, velocity: [speed * c, speed * s, 0.0], ..Start::default() })
+                .unwrap();
+        }
+        let energy = |world: &World| {
+            (0..speeds.len()).map(|k| body(world, 0, k).linvel().length_squared()).sum::<f32>()
+        };
+        let before = energy(&world);
+        run(&mut world, 60.0);
+        let after = energy(&world);
+        let now: Vec<f32> = (0..speeds.len()).map(|k| body(&world, 0, k).linvel().length()).collect();
+        let inside = (0..speeds.len()).all(|k| body(&world, 0, k).translation().abs().max_element() < 5.0);
+        assert!(inside, "a ball left the frame");
+        // The balls trade speed when they meet, so each has its own speed by now. Together they
+        // keep nearly all of it: 98 % of the energy, on the day this was written.
+        assert!(now.iter().all(|s| *s > 0.01), "every ball still moves: {now:?}");
+        assert!(after > 0.95 * before, "energy kept: {after} of {before}");
+        // A slow ball alone, started by a corner, meets both walls there and comes back.
+        let mut world = wall();
+        world
+            .add(0, &Start { translate: [4.5, 4.5, 0.0], velocity: [0.05, 0.05, 0.0], ..Start::default() })
+            .unwrap();
+        run(&mut world, 60.0);
+        let slow = body(&world, 0, 0);
+        assert!(slow.translation().x < 4.5 && slow.translation().y < 4.5, "{slow:?}");
+        let kept = slow.linvel().length() / 0.05f32.hypot(0.05);
+        assert!((kept - 1.0).abs() < 0.01, "the slow ball keeps its speed: {kept}");
     }
 }

@@ -115,6 +115,47 @@ Set `strength` to -12 and the point throws the bodies apart.
 The page of [physics.field](../reference/nodes.md#physicsfield) has the types, the kick and the
 table that takes the place of the node.
 
+## Bodies in one plane (2D)
+
+`plane` holds every dynamic body in one plane: `xy` is level like a table top, `xz` and `yz` are
+upright like a wall. A body in the plane cannot leave it and turns only about the plane's normal.
+Gravity, fields, `accelerations`, `targets`, start speeds and pushes from other bodies move it
+within the plane only. Driven and fixed bodies, obstacles and the floor are not held.
+
+**Depth.** Each body keeps the depth it starts at: its z for `xy`, its y for `xz`, its x for
+`yz`. Bodies at different depths are layers that pass each other or touch at their rounded or
+turned sides. Seen from the front they then seem to overlap. For a clean 2D picture, give all
+bodies the same depth, the driven and fixed ones too.
+
+A switch of `plane` acts at once and starts nothing over. Switched on, each body stays at its
+depth of that moment and loses its speed and spin out of the plane. Switched off, the bodies are
+free again.
+
+## Balls that bounce off tracked blobs on a wall
+
+Post-its on a wall, filmed by a camera, become boxes. Projected balls bounce off them.
+
+1. The post-its: a driven group, built as in "A tracker's blobs as a driven group" on the page of
+   [physics.bodies](../reference/nodes.md#physicsbodies), with `shape` `box`. Its blobs land at
+   `tx ty` and at the `tz` of step 6.
+2. The balls: a dynamic group with `shape` `sphere`, `bounce` 1 and `friction` 0. Its table
+   gives every ball the same `tz` as the post-its, and a start speed in `vx vy`.
+3. The frame: a group with `mode` `fixed` and four long boxes around the picture's room, at the
+   same `tz`. For the room of 4 m by 3 m of that recipe, the table `tx,ty,tz,sx,sy` with the
+   rows `0,1.6,0.4,4.4,0.2`, `0,-1.6,0.4,4.4,0.2`, `2.1,0,0.4,0.2,3.4` and
+   `-2.1,0,0.4,0.2,3.4`.
+4. The solver: `plane` `xy`, `gravity` 0 0 0, `floor` off, `bounce` 1, `damping` 0.
+
+With these settings a ball keeps its speed, slow balls included. Ball against ball, the balls
+lose a little: about 2 % of their energy in a minute.
+
+**What follows a post-it.** Its place does. Its angle does not: `tex.blob_track` measures none,
+so every post-it collides as a box square to the picture's edges, however it is turned. Its
+size does not come through `chans` either, which has only `area`. Give the post-its their size
+by hand: set `rows` of the `chan.constant` of step 6 to 3 and add `sx` and `sy`, the size of a
+post-it in metres. For a size that follows, the tracker's `blobs` table has `width` and
+`height` of the box around each blob, as shares of the picture.
+
 ## Time
 
 The bodies move one step per show frame, as long as something shows the node's result. `speed`
