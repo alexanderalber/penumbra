@@ -25,8 +25,9 @@ and 11 only so far; Linux is planned but untested, macOS is not planned.
 
 ## Features
 
-About 160 node types in nine data kinds: `tex` pictures, `chan` channels of numbers, `audio`
-sound, `table` text tables, `geo`, `mat`, `light` and `view` for 3D, `vol` volumes. The
+About 160 node types in ten data kinds: `tex` pictures, `chan` channels of numbers, `audio`
+sound, `table` text tables, `geo`, `mat`, `light` and `view` for 3D, `vol` volumes, `bodies`
+groups of rigid bodies. The
 [node reference](docs/reference/nodes.md) lists every one.
 
 - **Pictures:** noise, ramps, text, shapes, images, PSD layers, video (a channel can scrub it
@@ -36,6 +37,10 @@ sound, `table` text tables, `geo`, `mat`, `light` and `view` for 3D, `vol` volum
   normals).
 - **Volumes:** 3D smoke with burning fuel in a box (`vol.smoke`), up to 64 emitters, drawn by
   `tex.render_volume` ([smoke](examples/smoke/README.md) example).
+- **Rigid bodies:** boxes, balls and hulls of any model fall, pile up and come to rest
+  (`physics.rigid_bodies`). A table or a tracker moves bodies that push the others aside.
+  Obstacles that move, force fields, kicks on a trigger, springs that pull the bodies into a
+  figure.
 - **3D:** OBJ, STL, glTF, FBX. Primitives, solid 3D text, texture projection (planar, cylinder,
   sphere, box). Instancing from a table or a texture, tens of thousands on the GPU. Phong, PBR,
   wireframe, occluder materials. Ambient, directional, point, spot, environment lights. Shadows,
@@ -137,8 +142,8 @@ Not in penumbra, as of now. Some of this is planned, some stays out, see [Scope]
   steers channels from a phone. Keyframe animation and a timeline: a show
   runs as a list of steps instead (`chan.sequence`).
 - Geometry modelling beyond primitives, 3D text, transforms, merging and instancing.
-- Particle systems and rigid bodies have no dedicated nodes. Particles can be done in shaders,
-  as in the curl-noise example.
+- Particle systems have no dedicated nodes. Particles can be done in shaders, as in the
+  curl-noise example. Rigid bodies have no joints.
 - Network I/O beyond OSC, Art-Net, sACN, DDP, NDI and incoming HTTP and WebSocket: no raw TCP,
   UDP or serial nodes, no outgoing web requests, no streaming (RTMP, SRT, WebRTC).
 - GLSL (shaders are WGSL), a C++ plugin API, macOS and Syphon.
