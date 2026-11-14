@@ -6619,6 +6619,7 @@ def cook(cx):
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
 <tr><td><code>gravity</code></td><td>vec3</td><td><code>[0, 0, -9.81]</code></td><td>-20 to 20 (soft)</td><td>The pull on every body, in metres per second squared; z is up, so -9.81 in z is the earth's</td></tr>
+<tr><td><code>plane</code></td><td>off | xy | xz | yz</td><td><code>&quot;off&quot;</code></td><td></td><td>Holds every dynamic body in one plane, for 2D scenes such as balls on a wall. Each body keeps its place across the plane and turns only about the plane's normal. Driven and fixed bodies, obstacles and the floor stay as they are. A switch acts at once and starts nothing over<ul><li><code>off</code>: bodies move and turn every way</li><li><code>xy</code>: level, like a table top: bodies keep their z and turn about z</li><li><code>xz</code>: upright, like a wall that faces along y: bodies keep their y and turn about y</li><li><code>yz</code>: upright, like a wall that faces along x: bodies keep their x and turn about x</li></ul></td></tr>
 <tr><td><code>floor</code></td><td>bool</td><td><code>true</code></td><td></td><td>A level floor without end that the bodies land on</td></tr>
 <tr><td><code>floor_height</code></td><td>float</td><td><code>0</code></td><td>-5 to 5 m (soft, held within -10000 to 10000 m)</td><td>How high the floor lies, along z</td></tr>
 <tr><td><code>friction</code></td><td>float</td><td><code>0.5</code></td><td>0 to 2 (soft, held within 0 to 10)</td><td>How much the floor and the obstacles grip: 0 slides like ice, 1 holds like rubber. A body on them slides by the mean of this and its group's <code>friction</code></td></tr>
@@ -6692,6 +6693,24 @@ def cook(cx):
 </ol>
 <p>Set <code>strength</code> to -12 and the point throws the bodies apart.</p>
 <p>The page of <a href="#physics.field">physics.field</a> has the types, the kick and the table that takes the place of the node.</p>
+<h5 id="physics.rigid_bodies-bodies-in-one-plane-2d">Bodies in one plane (2D)</h5>
+<p><code>plane</code> holds every dynamic body in one plane: <code>xy</code> is level like a table top, <code>xz</code> and <code>yz</code> are upright like a wall. A body in the plane cannot leave it and turns only about the plane's normal. Gravity, fields, <code>accelerations</code>, <code>targets</code>, start speeds and pushes from other bodies move it within the plane only. Driven and fixed bodies, obstacles and the floor are not held.</p>
+<p><strong>Depth.</strong> Each body keeps the depth it starts at: its z for <code>xy</code>, its y for <code>xz</code>, its x for <code>yz</code>. Bodies at different depths are layers that pass each other or touch at their rounded or turned sides. Seen from the front they then seem to overlap. For a clean 2D picture, give all bodies the same depth, the driven and fixed ones too.</p>
+<p>A switch of <code>plane</code> acts at once and starts nothing over. Switched on, each body stays at its depth of that moment and loses its speed and spin out of the plane. Switched off, the bodies are free again.</p>
+<h5 id="physics.rigid_bodies-balls-that-bounce-off-tracked-blobs-on-a-wall">Balls that bounce off tracked blobs on a wall</h5>
+<p>Post-its on a wall, filmed by a camera, become boxes. Projected balls bounce off them.</p>
+<ol>
+<li>The post-its: a driven group, built as in &quot;A tracker's blobs as a driven group&quot; on the page of <a href="#physics.bodies">physics.bodies</a>, with <code>shape</code> <code>box</code>. Its blobs land at <code>tx ty</code> and at the <code>tz</code> of step 6.
+</li>
+<li>The balls: a dynamic group with <code>shape</code> <code>sphere</code>, <code>bounce</code> 1 and <code>friction</code> 0. Its table gives every ball the same <code>tz</code> as the post-its, and a start speed in <code>vx vy</code>.
+</li>
+<li>The frame: a group with <code>mode</code> <code>fixed</code> and four long boxes around the picture's room, at the same <code>tz</code>. For the room of 4 m by 3 m of that recipe, the table <code>tx,ty,tz,sx,sy</code> with the rows <code>0,1.6,0.4,4.4,0.2</code>, <code>0,-1.6,0.4,4.4,0.2</code>, <code>2.1,0,0.4,0.2,3.4</code> and <code>-2.1,0,0.4,0.2,3.4</code>.
+</li>
+<li>The solver: <code>plane</code> <code>xy</code>, <code>gravity</code> 0 0 0, <code>floor</code> off, <code>bounce</code> 1, <code>damping</code> 0.
+</li>
+</ol>
+<p>With these settings a ball keeps its speed, slow balls included. Ball against ball, the balls lose a little: about 2 % of their energy in a minute.</p>
+<p><strong>What follows a post-it.</strong> Its place does. Its angle does not: <a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a> measures none, so every post-it collides as a box square to the picture's edges, however it is turned. Its size does not come through <code>chans</code> either, which has only <code>area</code>. Give the post-its their size by hand: set <code>rows</code> of the <a class="ref" href="#chan.constant"><code>chan.constant</code></a> of step 6 to 3 and add <code>sx</code> and <code>sy</code>, the size of a post-it in metres. For a size that follows, the tracker's <code>blobs</code> table has <code>width</code> and <code>height</code> of the box around each blob, as shares of the picture.</p>
 <h5 id="physics.rigid_bodies-time">Time</h5>
 <p>The bodies move one step per show frame, as long as something shows the node's result. <code>speed</code> slows time down or holds it at 0. A frame that takes longer than a twentieth of a second counts as a twentieth, so the bodies slow down instead of jumping.</p>
 <p>While time stands (<code>speed</code> at 0, or a show clock on hold), driven bodies and obstacles still go where they are put, and push nothing. A <code>kick</code> whose <code>trigger</code> rises in that time is lost. It is not saved up for later.</p>
