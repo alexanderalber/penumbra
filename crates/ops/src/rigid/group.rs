@@ -1,7 +1,7 @@
 //! `physics.bodies`: one group of rigid bodies for `physics.rigid_bodies`. A table places the
 //! bodies, a model says what they look like, and the node's params say who moves them, what
 //! they collide as and what they are made of. Two more tables steer dynamic bodies while they
-//! move, without starting them over: `forces` pushes each body, `targets` pulls each body to a
+//! move, without starting them over: `accelerations` pushes each body, `targets` pulls each body to a
 //! place by a spring. The group travels as one [`Bodies`] on a wire of its own kind.
 
 use penumbra_core::{Curve, Error, ParamSpec, Table};
@@ -26,9 +26,9 @@ pub const MODES: [&str; 3] = ["dynamic", "driven", "fixed"];
 pub const START_COLUMNS: [&str; 15] =
     ["tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz", "vx", "vy", "vz", "wx", "wy", "wz"];
 
-/// The columns of the `forces` input, by header name: how fast a body gains speed along x, y
+/// The columns of the `accelerations` input, by header name: how fast a body gains speed along x, y
 /// and z (metres per second squared) and spin about them (degrees per second squared).
-pub const FORCE_COLUMNS: [&str; 6] = ["fx", "fy", "fz", "mx", "my", "mz"];
+pub const ACCELERATION_COLUMNS: [&str; 6] = ["ax", "ay", "az", "wax", "way", "waz"];
 
 /// The columns of the `targets` input, by header name: the place a body is pulled to.
 pub const TARGET_COLUMNS: [&str; 3] = ["tx", "ty", "tz"];
@@ -36,7 +36,7 @@ pub const TARGET_COLUMNS: [&str; 3] = ["tx", "ty", "tz"];
 /// The inputs, by index.
 const TABLE: usize = 0;
 const MODEL: usize = 1;
-const FORCES: usize = 2;
+const ACCELERATIONS: usize = 2;
 const TARGETS: usize = 3;
 
 /// The payload of `bodies` data: one group of bodies as a solver takes it.
@@ -139,11 +139,11 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .input("table", DataKind::Table)
         .input("model", DataKind::Geo)
-        .input("forces", DataKind::Table)
+        .input("accelerations", DataKind::Table)
         .input("targets", DataKind::Table)
         .describe_input(
-            "forces",
-            "A push per body, read on every frame: row k pushes body k of the table. The first row names the columns: fx fy fz for the speed the body gains per second along x, y and z (metres per second squared), mx my mz for the spin it gains per second about them (degrees per second squared). A heavy body gains as much as a light one. A change here never puts the bodies back to their start. Bodies without a row are not pushed. Only with mode dynamic",
+            "accelerations",
+            "A push per body, read on every frame: row k pushes body k of the table. The first row names the columns: ax ay az for the speed the body gains per second along x, y and z (metres per second squared), wax way waz for the spin it gains per second about them (degrees per second squared). A heavy body gains as much as a light one. A change here never puts the bodies back to their start. Bodies without a row are not pushed. Only with mode dynamic",
         )
         .describe_input(
             "targets",
@@ -198,9 +198,9 @@ impl Operator for Group {
             None if wired(input) && !cx.input_stuck(input) => Err(CookError::Pending),
             None => Ok(None),
         };
-        let (pushes, push_note) = steering(FORCES)?.map(pushes).unwrap_or_default();
+        let (pushes, push_note) = steering(ACCELERATIONS)?.map(pushes).unwrap_or_default();
         let (targets, target_note) = steering(TARGETS)?.map(targets).unwrap_or_default();
-        let failed = [(FORCES, "forces"), (TARGETS, "targets")]
+        let failed = [(ACCELERATIONS, "accelerations"), (TARGETS, "targets")]
             .into_iter()
             .filter(|(input, _)| wired(*input) && cx.input_stuck(*input))
             .map(|(_, name)| format!("the node on `{name}` failed: the bodies go without it"));
@@ -414,14 +414,14 @@ fn rows_of<const N: usize>(
 }
 
 /// What pushes each body: the rows of `table` under a header that names any of
-/// [`FORCE_COLUMNS`]. A row that cannot be read pushes nothing, so the rows after it keep
+/// [`ACCELERATION_COLUMNS`]. A row that cannot be read pushes nothing, so the rows after it keep
 /// their bodies. Returns the pushes and a note, if any.
 pub fn pushes(table: &Table) -> (Vec<Push>, Option<String>) {
-    let (rows, note) = rows_of(table, &FORCE_COLUMNS, "forces", "that body is not pushed");
+    let (rows, note) = rows_of(table, &ACCELERATION_COLUMNS, "accelerations", "that body is not pushed");
     let most = |v: f32| v.clamp(-MAX_PUSH, MAX_PUSH);
     let push = |row: Option<[f32; 6]>| {
-        let [fx, fy, fz, mx, my, mz] = row.unwrap_or_default().map(most);
-        Push { push: [fx, fy, fz], twist: [mx, my, mz] }
+        let [ax, ay, az, wax, way, waz] = row.unwrap_or_default().map(most);
+        Push { push: [ax, ay, az], twist: [wax, way, waz] }
     };
     (rows.into_iter().map(push).collect(), note)
 }
