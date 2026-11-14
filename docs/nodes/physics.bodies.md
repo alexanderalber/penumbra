@@ -176,6 +176,9 @@ place only: how the body is turned is left to it.
 3. `chan.lfo` with `shape` `square`, `amplitude` 0.5, `offset` 0.5 and `rate` 0.1. Bind `pull`
    to it: five seconds the figure, five seconds the heap.
 
+The shipped example `rigid-bodies` does this with rings of balls and boxes. Its bodies start on
+the rings, so one table is both the start and the targets.
+
 ## What a body collides as
 
 `shape` on `physics.bodies` decides what the solver makes of the group's model:

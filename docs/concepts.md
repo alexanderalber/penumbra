@@ -166,6 +166,8 @@ The families:
   as the model of its group, for `tex.render`. The solver's `table` lists where the bodies are,
   in the columns `geo.instance` reads, with the number of their group. A dynamic group starts over when its table or its shape
   changes; the other groups go on (see [the solver's page](nodes/physics.rigid_bodies.md)).
+  The [rigid-bodies](../examples/rigid-bodies/README.md) example has two groups, a driven
+  paddle, an obstacle, a field and the spring.
 - **`geo`**, **`mat`**, **`light`**, **`view`**: a 3D scene. Geometry from files or
   primitives, transformed and merged; materials put on it with `geo.assign_material`; lights and a
   `view.camera` wired into a `tex.render`, which makes a picture of it all (a render needs its
