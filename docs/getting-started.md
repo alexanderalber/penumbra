@@ -102,7 +102,8 @@ it.
    family; small families share one: `rendering` holds the 3D ones, `system` the scripts,
    components and notes. Two tabs hold a topic instead of a family. `mapping` has what setting
    up projectors needs: `tex.mapper`, the scan and its shapes (`out.projector` itself is
-   under `out`). `simulations` has `tex.fluid` and the smoke of `vol.smoke`. Each type is in one
+   under `out`). `simulations` has `tex.fluid`, the smoke of `vol.smoke` and the rigid bodies of
+   `physics`. Each type is in one
    tab only, so `tex.scan` is under `mapping`, not `tex`. Tab cycles the tabs; while you type, it
    skips tabs without a match, so the search finds a type from any tab.
    Typing greys out the types that do not match, Enter takes the type named exactly as typed,

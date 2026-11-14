@@ -162,9 +162,9 @@ The families:
   fall under `gravity`, hit each other, a floor and the geometry on its `obstacles` input, and
   come to rest. A `physics.force` on a `force` input of the solver is a force field: a pull to a
   point, a wind, a whirl or a kick on a trigger. It moves the dynamic bodies of every group, and
-  its params follow channels. Its `out` is geometry: every body where it is now, drawn as the model of its
-  group, for `tex.render`. Its `table` lists where the bodies are, in the columns `geo.instance`
-  reads, with the number of their group. A dynamic group starts over when its table or its shape
+  its params follow channels. The solver's `out` is geometry: every body where it is now, drawn
+  as the model of its group, for `tex.render`. The solver's `table` lists where the bodies are,
+  in the columns `geo.instance` reads, with the number of their group. A dynamic group starts over when its table or its shape
   changes; the other groups go on (see [the solver's page](nodes/physics.rigid_bodies.md)).
 - **`geo`**, **`mat`**, **`light`**, **`view`**: a 3D scene. Geometry from files or
   primitives, transformed and merged; materials put on it with `geo.assign_material`; lights and a
