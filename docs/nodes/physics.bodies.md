@@ -2,8 +2,8 @@
 
 A `physics.bodies` is one group of bodies for a `physics.rigid_bodies`. A table places the
 bodies, a model shows them. The params say who moves them (`mode`), what they collide as
-(`shape`) and what they are made of. Two more tables steer the bodies while they move: `forces`
-pushes each body, `targets` pulls each body to a place.
+(`shape`) and what they are made of. Two more tables steer the bodies while they move:
+`accelerations` pushes each body, `targets` pulls each body to a place.
 
 The page of [physics.rigid_bodies](../reference/nodes.md#physicsrigid_bodies) starts with a pile
 in six nodes.
@@ -121,13 +121,13 @@ next blob. Such a body jumps there without a push when the two blobs are farther
 
 ## A push per body
 
-Wire a table into `forces`. Row 1 pushes the first body of the group's table, row 2 the second,
-on every frame:
+Wire a table into `accelerations`. Row 1 pushes the first body of the group's table, row 2 the
+second, on every frame:
 
 | column | meaning |
 |---|---|
-| `fx`, `fy`, `fz` | the speed the body gains per second along x, y and z, in metres per second squared |
-| `mx`, `my`, `mz` | the spin it gains per second about x, y and z, in degrees per second squared |
+| `ax`, `ay`, `az` | the speed the body gains per second along x, y and z, in metres per second squared |
+| `wax`, `way`, `waz` | the spin it gains per second about x, y and z, in degrees per second squared |
 
 A change to this table never puts the bodies back to their start. Change it on every frame if
 you like: make it from channels with `table.from_chan`.
@@ -136,12 +136,12 @@ The rows need not match the bodies. Bodies beyond the last row are not pushed. R
 last body do nothing. A row with a cell that is not a number pushes nothing and keeps its place,
 and the node says so in a warning.
 
-A heavy body gains speed as fast as a light one, as with a `physics.force`. Only the bodies of a
+A heavy body gains speed as fast as a light one, as with a `physics.field`. Only the bodies of a
 `dynamic` group are pushed.
 
-**Each body lifted by its own channel.** Channels named `fz1`, `fz2`, `fz3`, each between 0 and
-30, into a `table.from_chan` with `layout` set to `numbered`. Its table has the column `fz` and
-three rows. Wire it into `forces`: each channel lifts its body when it passes 9.81.
+**Each body lifted by its own channel.** Channels named `az1`, `az2`, `az3`, each between 0 and
+30, into a `table.from_chan` with `layout` set to `numbered`. Its table has the column `az` and
+three rows. Wire it into `accelerations`: each channel lifts its body when it passes 9.81.
 
 ## Bodies pulled into a figure
 
@@ -159,8 +159,8 @@ the places draw: a ring, a grid, a word.
 A pulled body feels less of gravity, by the share `pull` says. At `pull` 1 the figure stands
 exactly where the targets are, however soft the spring.
 
-A spring does not hold a body rigidly. Another body, a driven paddle or a force field pushes it
-off its place, and it comes back. This is the soft sibling of `mode` `driven`, where nothing
+A spring does not hold a body rigidly. Another body, a driven paddle or a `physics.field` pushes
+it off its place, and it comes back. This is the soft sibling of `mode` `driven`, where nothing
 pushes a body off its row.
 
 A change to the targets never puts the bodies back to their start. They go to their new places

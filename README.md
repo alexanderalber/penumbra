@@ -39,8 +39,8 @@ groups of rigid bodies. The
   `tex.render_volume` ([smoke](examples/smoke/README.md) example).
 - **Rigid bodies:** boxes, balls and hulls of any model fall, pile up and come to rest
   (`physics.rigid_bodies`). A table or a tracker moves bodies that push the others aside.
-  Obstacles that move, force fields, kicks on a trigger, springs that pull the bodies into a
-  figure.
+  Obstacles that move, fields that pull, blow or whirl the bodies, kicks on a trigger, springs
+  that pull the bodies into a figure.
 - **3D:** OBJ, STL, glTF, FBX. Primitives, solid 3D text, texture projection (planar, cylinder,
   sphere, box). Instancing from a table or a texture, tens of thousands on the GPU. Phong, PBR,
   wireframe, occluder materials. Ambient, directional, point, spot, environment lights. Shadows,

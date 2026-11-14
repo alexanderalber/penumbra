@@ -1598,7 +1598,7 @@ mod tests {
                 "vol.in",
                 "vol.out",
                 "physics.bodies",
-                "physics.force",
+                "physics.field",
                 "physics.null",
                 "physics.rigid_bodies",
                 "physics.in",
@@ -1666,7 +1666,7 @@ mod tests {
         assert_eq!(at("vol"), "simulations", "a family a topic takes whole");
         assert_eq!(at("physics.rigid_bodies"), "simulations");
         assert_eq!(at("physics.bodies"), "simulations");
-        assert_eq!(at("physics.force"), "simulations");
+        assert_eq!(at("physics.field"), "simulations");
         assert_eq!(at("light"), "geo");
         assert_eq!(at("mapping"), "mapping");
         assert_eq!(at("nothing"), "tex");

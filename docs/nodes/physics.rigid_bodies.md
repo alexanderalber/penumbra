@@ -42,7 +42,7 @@ starts over can land inside bodies that have moved into its place. The solver pu
 
 This holds for a group whose `mode` is `dynamic`. A `driven` or `fixed` group follows its table
 instead. A switch of `mode` puts the bodies of the group where the table has them. The tables on
-`forces` and `targets` of a group never start it over.
+`accelerations` and `targets` of a group never start it over.
 
 `friction`, `bounce` and `density` of a group change while its bodies move. So does the material
 of its model.
@@ -91,11 +91,11 @@ less than a mesh.
 
 Copies made by `geo.tex_instance` are no obstacles, since their places exist on the GPU only.
 
-## Forces
+## Fields
 
-Gravity pulls every body the same way. A `physics.force` adds a field of its own: a pull to a
-point, a wind, a whirl, or a kick on a trigger. Wire it into a `force` input of the solver. Each
-further field takes the next `force` input, 64 fields in all at most.
+Gravity pulls every body the same way. A `physics.field` adds a field of its own: a pull to a
+point, a wind, a whirl, or a kick on a trigger. Wire it into a `field` input of the solver. Each
+further field takes the next `field` input, 64 fields in all at most.
 
 A field moves the dynamic bodies of every group. `strength` is the speed a body gains per second,
 so a large or heavy body moves as readily as a small or light one. Driven and fixed bodies and
@@ -103,13 +103,13 @@ obstacles do not feel a field.
 
 A point that pulls the pile to where an LFO puts it:
 
-1. `physics.force` with `type` `point` and `strength` 12, into `force0` of the solver.
+1. `physics.field` with `type` `point` and `strength` 12, into `field0` of the solver.
 2. `chan.lfo` with `rate` 0.1 and `amplitude` 3. Bind the x of the field's `position` to it.
 3. `damping` 0.5 on the solver, so the bodies settle around the point.
 
 Set `strength` to -12 and the point throws the bodies apart.
 
-The page of [physics.force](../reference/nodes.md#physicsforce) has the types, the kick and the
+The page of [physics.field](../reference/nodes.md#physicsfield) has the types, the kick and the
 table that takes the place of the node.
 
 ## Time

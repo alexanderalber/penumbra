@@ -1,4 +1,4 @@
-//! `physics.force`: one force field as a table, for the `force` inputs of
+//! `physics.field`: one field that moves bodies, as a table, for the `field` inputs of
 //! `physics.rigid_bodies`. Those inputs read any table by its column names ([`COLUMNS`]), so a
 //! table made by hand or from channels works as well; such a table may hold many fields, one
 //! per row.
@@ -9,7 +9,7 @@ use penumbra_graph::{
 };
 use penumbra_physics::{Falloff, Field, FieldKind, MAX_KICK, MAX_PUSH};
 
-pub const KIND: &str = "physics.force";
+pub const KIND: &str = "physics.field";
 
 /// Choices of `type`, in the order a table may number them from 0.
 pub const TYPES: [&str; 3] = ["point", "wind", "vortex"];
@@ -17,7 +17,7 @@ pub const TYPES: [&str; 3] = ["point", "wind", "vortex"];
 /// Choices of `falloff`, in the order a table may number them from 0.
 pub const FALLOFFS: [&str; 2] = ["none", "linear"];
 
-/// The column names of a table of force fields, as `physics.force` writes them.
+/// The column names of a table of fields, as `physics.field` writes them.
 pub const COLUMNS: [&str; 12] =
     ["type", "strength", "tx", "ty", "tz", "dx", "dy", "dz", "radius", "falloff", "kick", "trigger"];
 
@@ -30,7 +30,7 @@ const MAX_PLACE: f64 = 1e6;
 /// `trigger` counts as on above this.
 const TRIGGER_ON: f64 = 0.5;
 
-/// One row of a table of force fields.
+/// One row of a table of fields.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Row {
     /// The field as it acts all the time; `strength` in metres per second squared.
@@ -40,7 +40,7 @@ pub struct Row {
     pub trigger: bool,
 }
 
-/// `physics.force`'s defaults, and what stands in for a column a table does not have.
+/// `physics.field`'s defaults, and what stands in for a column a table does not have.
 const DEFAULT: Row = Row {
     field: Field {
         kind: FieldKind::Point,
@@ -59,7 +59,7 @@ fn desc() -> NodeDesc {
     let d = DEFAULT.field;
     NodeDesc::new(
         KIND,
-        "A force field for physics.rigid_bodies: a pull to a point, a wind or a whirl that moves every dynamic body it reaches, and a kick on a trigger",
+        "A field that moves the bodies of a physics.rigid_bodies: a pull to a point, a wind or a whirl that speeds up every dynamic body it reaches, and a kick on a trigger",
     )
     .param(
         ParamSpec::choice("type", &TYPES)
@@ -115,12 +115,12 @@ fn desc() -> NodeDesc {
     .output("out", DataKind::Table)
     .describe_output(
         "out",
-        "One row under a row of column names: type, strength, tx, ty, tz, dx, dy, dz, radius, falloff, kick, trigger. Wire it into a `force` input of physics.rigid_bodies",
+        "One row under a row of column names: type, strength, tx, ty, tz, dx, dy, dz, radius, falloff, kick, trigger. Wire it into a `field` input of physics.rigid_bodies",
     )
 }
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    types.register(FnNodeType::new(desc(), || Box::new(Force) as Box<dyn Operator>))
+    types.register(FnNodeType::new(desc(), || Box::new(FieldNode) as Box<dyn Operator>))
 }
 
 fn vec3(cx: &CookContext<'_>, name: &str) -> [f32; 3] {
@@ -166,9 +166,9 @@ fn table_of(row: &Row) -> Result<Table, Error> {
     Table::new(vec![COLUMNS.iter().map(ToString::to_string).collect(), cells])
 }
 
-struct Force;
+struct FieldNode;
 
-impl Operator for Force {
+impl Operator for FieldNode {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let row = Row {
             field: Field {
@@ -187,11 +187,11 @@ impl Operator for Force {
     }
 }
 
-/// The force fields of a table whose first row names the columns ([`COLUMNS`]), up to `room`
+/// The fields of a table whose first row names the columns ([`COLUMNS`]), up to `room`
 /// of them, each with the number of its row (0 for the first under the header), and how many
 /// rows were left out: those with a cell that is no finite number, or with a type or falloff
 /// nobody knows. Numbers beyond the params' bounds are brought within them. A column that is
-/// missing takes `physics.force`'s default; `type` and `falloff` may be words or the number of
+/// missing takes `physics.field`'s default; `type` and `falloff` may be words or the number of
 /// the choice. `Err` for a table with rows but neither a `strength` nor a `kick` column: it is
 /// some other table, wired here by mistake.
 pub fn from_table(table: &Table, room: usize) -> Result<(Vec<(usize, Row)>, usize), String> {

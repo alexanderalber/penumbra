@@ -14,7 +14,7 @@
 //! old place to its new one within the frame. One whose size or mesh changes is built anew
 //! where it is now, and pushes nothing.
 //!
-//! Each `force` input takes a table of force fields ([`force`], made by `physics.force`): a
+//! Each `field` input takes a table of fields ([`field`], made by `physics.field`): a
 //! pull to a point, a wind, a whirl. The fields speed up the dynamic bodies on every frame, and
 //! give them a kick when their trigger turns on.
 
@@ -36,7 +36,7 @@ use penumbra_physics::{
 use crate::geo::trs;
 use crate::tex::fluid::step;
 
-pub mod force;
+pub mod field;
 pub mod group;
 
 use group::Bodies;
@@ -50,8 +50,8 @@ pub const OUT_COLUMNS: [&str; 10] = ["tx", "ty", "tz", "rx", "ry", "rz", "sx", "
 /// The `obstacles` input, after the run of `bodies` inputs.
 const OBSTACLES: usize = MAX_RUN;
 
-/// The run of `force` inputs, after `obstacles`.
-const FORCES: usize = OBSTACLES + 1;
+/// The run of `field` inputs, after `obstacles`.
+const FIELDS: usize = OBSTACLES + 1;
 
 /// The outputs, by index.
 const GEO_OUT: usize = 0;
@@ -62,7 +62,7 @@ const _: () = assert!(MAX_RUN <= MAX_GROUPS);
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     group::register(types)?;
-    force::register(types)?;
+    field::register(types)?;
     types.register(FnNodeType::new(
         NodeDesc::new(
             KIND,
@@ -110,7 +110,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::float("speed", 1.0)
                 .clamp(0.0, 16.0)
                 .range(0.0, 4.0)
-                .doc("How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion. While they are held, a kick from a physics.force does nothing"),
+                .doc("How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion. While they are held, a kick from a physics.field does nothing"),
         )
         .param(
             ParamSpec::int("substeps", 1)
@@ -139,10 +139,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "Geometry that the bodies land on and bounce off, hollows and all. An obstacle that is moved or turned, by a geo.transform with a bound param for one, carries along the bodies on it and pushes those in its way. One that changes its size or its mesh jumps and pushes nothing",
         )
         .input_run(
-            "force",
+            "field",
             DataKind::Table,
             1,
-            "A force field from physics.force: a pull to a point, a wind or a whirl that speeds up the dynamic bodies of every group, and a kick on a trigger. A table with the same columns works as well and may hold a field per row: type, strength, tx, ty, tz, dx, dy, dz, radius, falloff, kick, trigger. 64 fields in all at most",
+            "A field from physics.field: a pull to a point, a wind or a whirl that speeds up the dynamic bodies of every group, and a kick on a trigger. A table with the same columns works as well and may hold a field per row: type, strength, tx, ty, tz, dx, dy, dz, radius, falloff, kick, trigger. 64 fields in all at most",
         )
         .output("out", DataKind::Geo)
         .describe_output("out", "Every body where it is now, drawn as the model of its group. A group without a model shows boxes of 1 m")
@@ -185,8 +185,8 @@ struct RigidBodies {
     draw_note: Option<String>,
     /// The box of 1 m a group without a model is drawn as.
     unit: Option<Arc<Model>>,
-    /// Whether the trigger of each force field was on in the last cook. A field is known by
-    /// the number of its `force` input and of its row there, so a field that comes or goes
+    /// Whether the trigger of each field was on in the last cook. A field is known by
+    /// the number of its `field` input and of its row there, so a field that comes or goes
     /// elsewhere does not pass its trigger on to another.
     triggers: Vec<((usize, usize), bool)>,
 }
@@ -239,34 +239,34 @@ impl Operator for RigidBodies {
             }
             None => None,
         };
-        let mut fields: Vec<((usize, usize), force::Row)> = Vec::new();
+        let mut fields: Vec<((usize, usize), field::Row)> = Vec::new();
         let mut field_notes: Vec<String> = Vec::new();
         for i in 0..MAX_RUN {
-            let table = match cx.input_as::<Table>(FORCES + i) {
+            let table = match cx.input_as::<Table>(FIELDS + i) {
                 Some(table) => table,
-                None if wired(FORCES + i) && cx.input_stuck(FORCES + i) => {
-                    field_notes.push(format!("the node on `force{i}` failed: the solver runs without it"));
+                None if wired(FIELDS + i) && cx.input_stuck(FIELDS + i) => {
+                    field_notes.push(format!("the node on `field{i}` failed: the solver runs without it"));
                     continue;
                 }
-                None if wired(FORCES + i) => {
-                    cx.warn(format!("waiting for the table on `force{i}`"));
+                None if wired(FIELDS + i) => {
+                    cx.warn(format!("waiting for the table on `field{i}`"));
                     return Err(CookError::Pending);
                 }
                 None => continue,
             };
-            match force::from_table(table, MAX_FIELDS + 1 - fields.len()) {
+            match field::from_table(table, MAX_FIELDS + 1 - fields.len()) {
                 Ok((found, left_out)) => {
                     fields.extend(found.into_iter().map(|(line, row)| ((i, line), row)));
                     if left_out > 0 {
                         field_notes.push(format!(
-                            "`force{i}`: {left_out} rows are left out, they hold a cell that is not a number or a type that does not exist"
+                            "`field{i}`: {left_out} rows are left out, they hold a cell that is not a number or a type that does not exist"
                         ));
                     }
                 }
-                Err(e) => field_notes.push(format!("`force{i}`: {e}")),
+                Err(e) => field_notes.push(format!("`field{i}`: {e}")),
             }
             if fields.len() > MAX_FIELDS {
-                field_notes.push(format!("more than {MAX_FIELDS} force fields: the rest are left out"));
+                field_notes.push(format!("more than {MAX_FIELDS} fields: the rest are left out"));
                 fields.truncate(MAX_FIELDS);
                 break;
             }
@@ -1172,12 +1172,12 @@ mod tests {
         }
     }
 
-    /// A `physics.force` at `/f<n>` with `params`, wired into `force<n>` of the solver at `/r`.
+    /// A `physics.field` at `/f<n>` with `params`, wired into `field<n>` of the solver at `/r`.
     fn field(n: u32, params: &[(&str, Value)]) -> Vec<Op> {
         let path = format!("/f{n}");
-        let mut ops = vec![create(&path, force::KIND)];
+        let mut ops = vec![create(&path, field::KIND)];
         ops.extend(params.iter().map(|(name, value)| set(&format!("{path}.{name}"), value.clone())));
-        ops.push(connect(&path, "/r", FORCES as u32 + n));
+        ops.push(connect(&path, "/r", FIELDS as u32 + n));
         ops
     }
 
@@ -1208,7 +1208,7 @@ mod tests {
         // the body within half a second and send it back.
         let fields = "type,strength,dx\nwind,-2,1\n1,-2,1";
         let mut ops = vec![create("/ft", "table.text"), set("/ft.text", fields), set("/ft.format", "csv")];
-        ops.push(connect("/ft", "/r", FORCES as u32 + 1));
+        ops.push(connect("/ft", "/r", FIELDS as u32 + 1));
         rig.apply(&ops);
         let (out, warning) = rig.run(60);
         assert_eq!(warning, None);
@@ -1217,19 +1217,19 @@ mod tests {
         rig.apply(&[set("/ft.text", "type,strength,dx\nstorm,-2,1\nwind,0,1\nwind,,1\nwind,x,1")]);
         let (out, warning) = rig.run(30);
         let warning = warning.unwrap();
-        assert!(warning.contains("`force1`") && warning.contains("2 rows are left out"), "{warning}");
+        assert!(warning.contains("`field1`") && warning.contains("2 rows are left out"), "{warning}");
         let coasting = number(&out, 1, 0);
         assert!((coasting - 2.0).abs() < 0.15, "it went on at -2 m/s: {coasting}");
         // The table of a group wired in by mistake is no field, and the node says what is missing.
         rig.apply(&[set("/ft.text", "tx,ty,tz\n1,2,3")]);
         let (_, warning) = rig.run(2);
         let warning = warning.unwrap();
-        assert!(warning.contains("`force1`") && warning.contains("`strength`"), "{warning}");
-        // A node in error on a force input is named, and the solver runs on.
-        rig.apply(&[create("/empty", "table.from_chan"), connect("/empty", "/r", FORCES as u32 + 2)]);
+        assert!(warning.contains("`field1`") && warning.contains("`strength`"), "{warning}");
+        // A node in error on a field input is named, and the solver runs on.
+        rig.apply(&[create("/empty", "table.from_chan"), connect("/empty", "/r", FIELDS as u32 + 2)]);
         let (out, warning) = rig.run(30);
         let warning = warning.unwrap();
-        assert!(warning.contains("the node on `force2` failed"), "{warning}");
+        assert!(warning.contains("the node on `field2` failed"), "{warning}");
         assert!(number(&out, 1, 0) < coasting - 0.5, "the body moves on: {}", out.cell(1, 0));
     }
 
@@ -1288,7 +1288,7 @@ mod tests {
     }
 
     /// A `table.text` at `path` holding `text`, wired into input `input` of the group `/b0`:
-    /// 2 is `forces`, 3 is `targets`.
+    /// 2 is `accelerations`, 3 is `targets`.
     fn steering(path: &str, text: &str, input: u32) -> Vec<Op> {
         vec![
             create(path, "table.text"),
@@ -1299,10 +1299,10 @@ mod tests {
     }
 
     #[test]
-    fn a_table_of_forces_pushes_each_body_and_starts_nothing_over() {
+    fn a_table_of_accelerations_pushes_each_body_and_starts_nothing_over() {
         // Three bodies, two rows: the third is not pushed.
         let mut rig = in_space(&["tx\n0\n3\n6"]);
-        rig.apply(&steering("/push", "fz,mz\n2\n-2,90", 2));
+        rig.apply(&steering("/push", "az,waz\n2\n-2,90", 2));
         let (out, warning) = rig.run(61);
         assert_eq!((warning, rig.warning("/b0")), (None, None));
         // One second at 2 m/s^2 up and down, and at 90 degrees/s^2 about z.
@@ -1310,9 +1310,9 @@ mod tests {
         assert!((number(&out, 2, 2) + 1.0).abs() < 0.05, "{}", out.cell(2, 2));
         assert!((number(&out, 2, 5) - 45.0).abs() < 2.0, "{}", out.cell(2, 5));
         assert_eq!((out.cell(3, 0), out.cell(3, 2), out.cell(1, 5)), ("6", "0", "0"));
-        // Other forces, more rows than bodies: every body goes on from where it is, at the
+        // Other pushes, more rows than bodies: every body goes on from where it is, at the
         // speed it has.
-        rig.apply(&[set("/push.text", "fz\n0\n0\n4\n9\n9")]);
+        rig.apply(&[set("/push.text", "az\n0\n0\n4\n9\n9")]);
         let (out, warning) = rig.run(60);
         assert_eq!((out.num_rows(), warning, rig.warning("/b0")), (4, None, None));
         assert!((number(&out, 1, 2) - 3.0).abs() < 0.1, "{}", out.cell(1, 2));
@@ -1320,17 +1320,17 @@ mod tests {
         assert!((number(&out, 3, 2) - 2.0).abs() < 0.1, "{}", out.cell(3, 2));
         // A row that is no number pushes nothing and keeps its place: the row after it still
         // pushes the second body.
-        rig.apply(&[set("/push.text", "fz\nup\n4")]);
+        rig.apply(&[set("/push.text", "az\nup\n4")]);
         let (out, _) = rig.run(60);
-        assert!(rig.warning("/b0").unwrap().contains("row 1 of `forces`"), "{:?}", rig.warning("/b0"));
+        assert!(rig.warning("/b0").unwrap().contains("row 1 of `accelerations`"), "{:?}", rig.warning("/b0"));
         assert!((number(&out, 1, 2) - 5.0).abs() < 0.15, "it coasts at 2 m/s: {}", out.cell(1, 2));
         assert!((number(&out, 2, 2) + 3.0).abs() < 0.15, "braked to a halt and back: {}", out.cell(2, 2));
         // A table of something else is said.
         rig.apply(&[set("/push.text", "a,b\n1,2")]);
         rig.run(2);
-        assert!(rig.warning("/b0").unwrap().contains("names the columns: fx"), "{:?}", rig.warning("/b0"));
+        assert!(rig.warning("/b0").unwrap().contains("names the columns: ax"), "{:?}", rig.warning("/b0"));
         // Driven bodies take no push: they stay at their rows.
-        rig.apply(&[set("/push.text", "fz\n9\n9\n9"), set("/b0.mode", "driven")]);
+        rig.apply(&[set("/push.text", "az\n9\n9\n9"), set("/b0.mode", "driven")]);
         let (out, warning) = rig.run(30);
         assert_eq!((out.cell(1, 2), out.cell(3, 2), warning), ("0", "0", None));
     }
@@ -1445,7 +1445,7 @@ mod tests {
         assert!(warning.contains("row 3") && warning.contains("4000"), "{warning}");
         // So with the tables that steer.
         let mut rig = in_space(&["tx\n0\n3"]);
-        rig.apply(&steering("/push", "FZ\n2\n-2", 2));
+        rig.apply(&steering("/push", "AZ\n2\n-2", 2));
         let (out, _) = rig.run(61);
         assert!((number(&out, 1, 2) - 1.0).abs() < 0.05 && (number(&out, 2, 2) + 1.0).abs() < 0.05);
     }
@@ -1488,13 +1488,13 @@ mod tests {
             ("kick", 3.0.into()),
             ("trigger", 1.0.into()),
         ];
-        // A field on `force0`, and on `force1` one whose trigger is on from the start.
+        // A field on `field0`, and on `field1` one whose trigger is on from the start.
         let mut rig = in_space(&["tz\n1"]);
         rig.apply(&field(0, &[("strength", 0.0.into())]));
         rig.apply(&field(1, &held));
         assert_eq!(rig.run(30).0.cell(1, 2), "1", "the trigger was on when the field came");
         // The first field's wire goes: nothing rose, so nothing kicks.
-        rig.apply(&[Op::Disconnect { to: "/r".parse().unwrap(), input: FORCES as u32 }]);
+        rig.apply(&[Op::Disconnect { to: "/r".parse().unwrap(), input: FIELDS as u32 }]);
         let (out, _) = rig.run(30);
         assert_eq!(out.cell(1, 2), "1", "it was kicked without a rise of its trigger");
         // So when the node before it fails, and when it works again.
@@ -1502,11 +1502,11 @@ mod tests {
         rig.apply(&field(0, &[("strength", 0.0.into())]));
         rig.apply(&field(1, &held));
         rig.run(30);
-        rig.apply(&[create("/empty", "table.from_chan"), connect("/empty", "/r", FORCES as u32)]);
+        rig.apply(&[create("/empty", "table.from_chan"), connect("/empty", "/r", FIELDS as u32)]);
         let (out, warning) = rig.run(30);
-        assert!(warning.unwrap().contains("the node on `force0` failed"));
+        assert!(warning.unwrap().contains("the node on `field0` failed"));
         assert_eq!(out.cell(1, 2), "1", "it was kicked when the field before it failed");
-        rig.apply(&[connect("/f0", "/r", FORCES as u32)]);
+        rig.apply(&[connect("/f0", "/r", FIELDS as u32)]);
         assert_eq!(rig.run(30).0.cell(1, 2), "1", "it was kicked when the field before it came back");
         // A table whose first row goes while the second holds its trigger: a table before
         // this one does not shift it either.
@@ -1516,7 +1516,7 @@ mod tests {
                 create(path, "table.text"),
                 set(&format!("{path}.text"), text),
                 set(&format!("{path}.format"), "csv"),
-                connect(path, "/r", FORCES as u32 + n),
+                connect(path, "/r", FIELDS as u32 + n),
             ]
         };
         rig.apply(&table("/fa", "type,kick,trigger\nwind,0,0\nwind,0,0", 0));

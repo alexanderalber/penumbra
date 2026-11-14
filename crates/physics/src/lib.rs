@@ -63,7 +63,7 @@ pub const MAX_TURN: f32 = 90.0;
 /// How near to a body that jumped, left or changed its size a sleeping body is woken, in metres.
 const NEAR: f32 = 0.1;
 
-/// Most force fields a world holds.
+/// Most fields a world holds.
 pub const MAX_FIELDS: usize = 64;
 
 /// The most a field or a push speeds a body up, in metres per second squared, and the most a
@@ -88,7 +88,7 @@ pub const FIELD_CORE: f32 = 0.2;
 /// A body pushed by less than this may sleep, in metres per second squared.
 const WAKE: f32 = 1e-3;
 
-/// What a force field does.
+/// What a field does to the bodies it reaches.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FieldKind {
     /// Pulls towards `position`; a negative strength pushes away from it.
@@ -111,7 +111,7 @@ pub enum Falloff {
     Linear,
 }
 
-/// A force field: it speeds up every dynamic body it reaches, a heavy one as much as a light one.
+/// A field: it speeds up every dynamic body it reaches, a heavy one as much as a light one.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Field {
     pub kind: FieldKind,
@@ -765,16 +765,16 @@ impl World {
         Ok(())
     }
 
-    /// Replaces every force field. The fields act on dynamic bodies in every [`World::step`]
+    /// Replaces every field. The fields act on dynamic bodies in every [`World::step`]
     /// until they are replaced: `strength` is the speed a body gains per second. An error, and
     /// the fields stay as they were, for more than [`MAX_FIELDS`] and for a number that is not
     /// finite.
     pub fn set_fields(&mut self, fields: &[Field]) -> Result<(), String> {
         if fields.len() > MAX_FIELDS {
-            return Err(format!("a world holds {MAX_FIELDS} force fields at most"));
+            return Err(format!("a world holds {MAX_FIELDS} fields at most"));
         }
         let Some(checked) = fields.iter().map(|f| f.checked(MAX_PUSH)).collect::<Option<Vec<Field>>>() else {
-            return Err("a force field's numbers must be finite".into());
+            return Err("a field's numbers must be finite".into());
         };
         // A field switched off costs nothing, and lets the bodies sleep.
         self.fields = checked.into_iter().filter(|f| f.strength != 0.0).collect();
@@ -786,7 +786,7 @@ impl World {
     /// An error, and no body is touched, for a number that is not finite.
     pub fn kick(&mut self, field: &Field) -> Result<(), String> {
         let Some(field) = field.checked(MAX_KICK) else {
-            return Err("a force field's numbers must be finite".into());
+            return Err("a field's numbers must be finite".into());
         };
         let dynamic = self.groups.iter().flatten().filter(|g| g.mode == Mode::Dynamic);
         for b in dynamic.flat_map(|g| &g.bodies) {
@@ -2187,7 +2187,7 @@ mod tests {
     }
 
     #[test]
-    fn a_force_wakes_a_body_that_sleeps_and_keeps_it_awake() {
+    fn a_field_wakes_a_body_that_sleeps_and_keeps_it_awake() {
         let mut world = world_of(unit_box(), Settings::default());
         world.add(0, &at(0.5)).unwrap();
         run(&mut world, 2.0);

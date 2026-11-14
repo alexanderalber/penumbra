@@ -1,8 +1,9 @@
 ## What it is for
 
-A `physics.force` is one force field for a `physics.rigid_bodies`: a pull to a point, a wind or a
-whirl. Wire it into a `force` input of the solver. A second field goes into the next `force`
-input, which appears when the last one is taken.
+A `physics.field` speeds up the bodies of a `physics.rigid_bodies`: it pulls them to a point,
+blows them along as a wind or drives them round as a whirl. Wire it into a `field` input of the
+solver. A second field goes into the next `field` input, which appears when the last one is
+taken.
 
 A field moves the dynamic bodies of every group. Driven and fixed bodies do not feel it, and
 neither do obstacles.
@@ -56,11 +57,11 @@ trigger that rises gives no kick. The kick is not saved up for later.
 
 ## Recipes
 
-**Sound blows the pile apart.** A `physics.force` with `type` `point`, `strength` 0, `kick` -6
+**Sound blows the pile apart.** A `physics.field` with `type` `point`, `strength` 0, `kick` -6
 and `position` in the middle of the pile, a little under the floor so the bodies fly upwards
 too. Bind `trigger` to the `kick` channel of a `chan.beat_analysis`.
 
-**An attractor that wanders.** A `physics.force` with `type` `point` and `strength` 12. Bind the
+**An attractor that wanders.** A `physics.field` with `type` `point` and `strength` 12. Bind the
 x of `position` to a `chan.lfo` with `amplitude` 3 and `rate` 0.1. The bodies follow the point
 from side to side. `damping` 0.5 on the solver keeps them from circling it for ever.
 
@@ -69,7 +70,7 @@ from side to side. `damping` 0.5 on the solver keeps them from circling it for e
 
 ## A table of fields
 
-A `force` input takes any table with these columns in its first row. Each further row is one
+A `field` input takes any table with these columns in its first row. Each further row is one
 field, 64 fields in all at most. This is how a tracker places attractors: its channels, turned
 into metres and into a table by `table.from_chan`, with a `strength` channel beside them.
 
@@ -88,6 +89,6 @@ The table needs a `strength` or a `kick` column. A table without both is taken f
 the solver says so. A row with a cell that is not a number is left out, and the solver counts
 such rows in a warning.
 
-A kick belongs to its `force` input and its row there. A field that comes or goes on another
+A kick belongs to its `field` input and its row there. A field that comes or goes on another
 input changes nothing. Inside one table, a row that takes the place of another can kick in its
 stead when rows come and go.
