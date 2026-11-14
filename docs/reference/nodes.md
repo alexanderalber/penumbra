@@ -536,7 +536,7 @@ Outputs: `out` (tex).
 
 ### tex.liquid
 
-A liquid seen from the side: it pours from emitters, falls, splashes and pools at the bottom of the picture
+A liquid seen from the side: it pours from emitters, falls, splashes and pools at the bottom of the picture or on obstacles
 
 Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
@@ -544,6 +544,8 @@ Inputs:
 
 - `emitter0 .. emitter63` (table): Where liquid pours in: tex.liquid_emitter, or any table whose first row names columns x, y and more (see tex.liquid_emitter's output). 64 emitters in all at most. Any number, up to 64: each one wired adds a free slot below it
 - `fill` (tex): Liquid lies where this picture is brighter than half when the node starts or `reset` is on. A changed picture shows at the next reset
+- `obstacles` (tex): Solid where brighter than half: the liquid lands on it, pools on it and flows around it. May change every frame
+- `obstacle_velocity` (tex): How the obstacles move, so they push the liquid: red x in widths, green y in heights, down positive, per second, as the `velocity` output. Unwired, obstacles stand still
 
 Outputs:
 
@@ -562,6 +564,7 @@ Outputs:
 | `edges` | walls \| open | `"walls"` |  | What the picture's edges are to the liquid; walls: the liquid stays in the picture and pools at the bottom; open: the liquid flows out and is gone, and its particles pour again from the emitters |
 | `viscosity` | float | `0.000222` | 0 to 0.004 (soft, held within 0 to 0.01) | Thickness: honey instead of water. In picture heights squared per second: 0.0002 is water in a picture 3 m high, 0.001 honey, 0.003 mud. A thick liquid needs more substeps on a fine grid |
 | `drag` | float | `0.5` | 0 to 5 (soft, held within 0 to 1000) | How fast the liquid calms: the share of its speed it loses per second. 0 sloshes for minutes |
+| `friction` | float | `0` | 0 to 2 (soft, held within 0 to 10) | How much the liquid sticks to the obstacles and the picture's edges: 0 slides freely. At 1 a thin film on a slope slides about a sixth as far as without; deep liquid still runs down over it |
 | `color` | colour | `[0.25, 0.55, 1, 1]` |  | Colour of the liquid in `out`; transparent around it |
 | `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | How fast the liquid moves against the show clock: 0 holds it, 0.25 is slow motion. Faster costs more substeps |
 | `reset` | bool | `false` |  | Starts over from the `fill` picture, every frame while on |

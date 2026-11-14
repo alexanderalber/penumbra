@@ -13,7 +13,11 @@
 //! the CPU a frame or two late, without waiting, for the warnings.
 //!
 //! Walls and obstacles are one field on the grid: per node the distance to the nearest solid,
-//! its velocity and its friction. Here it holds the picture's edges.
+//! its velocity and its friction. Without an `obstacles` picture the CPU writes the picture's
+//! edges into it once. With one, a second program (`liquid_solid.wgsl`) makes it on the GPU by
+//! jump flooding the mask at twice the grid's resolution, whenever the mask, its velocity picture
+//! or the edges change. The simulation program binds 6 of the 7 storage buffers a program may
+//! have, so the flooding has buffers of its own in a program of its own.
 //!
 //! Time steps follow the show clock as `tex.fluid`'s do, at most [`MAX_DT`] long and scaled by
 //! `speed`. Each frame takes as many substeps as the sound speed, the fastest flow and the
@@ -35,9 +39,13 @@ use crate::on_gpu;
 
 pub(crate) const KIND: &str = "tex.liquid";
 const SOURCE: &str = include_str!("liquid.wgsl");
+const SOLID_KIND: &str = "tex.liquid obstacles";
+const SOLID_SOURCE: &str = include_str!("liquid_solid.wgsl");
 
-/// Input of the `fill` picture, after the run of emitters.
+/// Input of the `fill` picture, after the run of emitters, then the obstacles and their velocity.
 const FILL: usize = MAX_RUN;
+const OBSTACLES: usize = MAX_RUN + 1;
+const OBSTACLE_VELOCITY: usize = MAX_RUN + 2;
 
 /// Longest time step, in seconds: one frame a 60 fps show skipped is simulated in full, a longer
 /// stall is cut short, so a hitch costs at most twice the substeps of a frame.
@@ -80,6 +88,14 @@ const MIN_FLOW: f64 = 3.0;
 const MAX_GRID: i64 = 1024;
 /// Most particles: 64 MiB.
 const MAX_PARTICLES: i64 = 1 << 20;
+/// Mask cells per grid cell along each side: the mask is sampled at twice the grid. At the grid's
+/// own resolution a pool on a shelf sits half a cell low.
+const MASK_PER_CELL: f64 = 2.0;
+/// The fastest an obstacle moves, picture heights per second: a faster velocity picture is cut
+/// down to this.
+const MOST_OBSTACLE_SPEED: f64 = 30.0;
+/// Highest Coulomb friction coefficient `friction` takes.
+const MOST_FRICTION: f64 = 10.0;
 /// Bytes per particle (`P` in the shader).
 const PARTICLE_BYTES: u64 = 64;
 /// 32-bit words per emitter (`Em`) and in the frame's constants (`U`).
@@ -97,7 +113,7 @@ const LIQUID: u32 = 1;
 fn desc() -> NodeDesc {
     NodeDesc::new(
         KIND,
-        "A liquid seen from the side: it pours from emitters, falls, splashes and pools at the bottom of the picture",
+        "A liquid seen from the side: it pours from emitters, falls, splashes and pools at the bottom of the picture or on obstacles",
     )
     .stateful()
     .time_dependent()
@@ -113,6 +129,18 @@ fn desc() -> NodeDesc {
         "fill",
         "Liquid lies where this picture is brighter than half when the node starts or `reset` is on. A changed \
          picture shows at the next reset",
+    )
+    .input("obstacles", DataKind::Tex)
+    .describe_input(
+        "obstacles",
+        "Solid where brighter than half: the liquid lands on it, pools on it and flows around it. May change \
+         every frame",
+    )
+    .input("obstacle_velocity", DataKind::Tex)
+    .describe_input(
+        "obstacle_velocity",
+        "How the obstacles move, so they push the liquid: red x in widths, green y in heights, down positive, \
+         per second, as the `velocity` output. Unwired, obstacles stand still",
     )
     .param(width_param())
     .param(height_param())
@@ -169,6 +197,15 @@ fn desc() -> NodeDesc {
             .range(0.0, 5.0)
             .doc("How fast the liquid calms: the share of its speed it loses per second. 0 sloshes for minutes"),
     )
+    .param(
+        ParamSpec::float("friction", 0.0)
+            .clamp(0.0, MOST_FRICTION)
+            .range(0.0, 2.0)
+            .doc(
+                "How much the liquid sticks to the obstacles and the picture's edges: 0 slides freely. At 1 a \
+                 thin film on a slope slides about a sixth as far as without; deep liquid still runs down over it",
+            ),
+    )
     .param(ParamSpec::color("color", [0.25, 0.55, 1.0, 1.0]).doc("Colour of the liquid in `out`; transparent around it"))
     .param(
         ParamSpec::float("speed", 1.0)
@@ -203,10 +240,18 @@ fn program(gpu: &Gpu) -> Result<Arc<Compute>, Error> {
     gpu.cached_compute(KIND, SOURCE, &program_params())
 }
 
+fn solid_params() -> Vec<ParamSpec> {
+    vec![ParamSpec::float("step", 1.0), ParamSpec::float("from_b", 0.0)]
+}
+
+fn solid_program(gpu: &Gpu) -> Result<Arc<Compute>, Error> {
+    gpu.cached_compute(SOLID_KIND, SOLID_SOURCE, &solid_params())
+}
+
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(
         FnNodeType::new(desc(), || Box::new(Liquid::default()) as Box<dyn Operator>)
-            .warm_up(on_gpu(|gpu| program(gpu).map(|_| ()))),
+            .warm_up(on_gpu(|gpu| program(gpu).and_then(|_| solid_program(gpu)).map(|_| ()))),
     )?;
     liquid_emitter::register(types)
 }
@@ -260,6 +305,72 @@ struct Counted {
     wrapped: u32,
 }
 
+/// Jump flooding steps over a mask of `across` x `down` cells: from half the larger side (as a
+/// power of two) down to 1, then 1 once more.
+fn flood_steps(across: u32, down: u32) -> Vec<u32> {
+    let mut steps = Vec::new();
+    let mut s = across.max(down).max(1).next_power_of_two() / 2;
+    while s >= 1 {
+        steps.push(s);
+        s /= 2;
+    }
+    steps.push(1);
+    steps
+}
+
+/// The buffers that turn the `obstacles` mask into the solid field.
+struct Obstacles {
+    /// Mask cells across and down the picture.
+    mask: (u32, u32),
+    j: Buffer,
+    sa: Buffer,
+    sb: Buffer,
+    /// Whether the edges were open when the field was last made; `None` until a flood went out.
+    /// The pictures themselves are not compared: a node may draw a new picture into the texture
+    /// it gave last frame (`tex.cache` of length 1 does), so only the cook's own word that an
+    /// input changed says the mask is the same.
+    flooded: Option<bool>,
+}
+
+impl Obstacles {
+    fn new(gpu: &Gpu, aspect: f64, dx: f64) -> Result<Self, Error> {
+        let side = dx / MASK_PER_CELL;
+        let across = (aspect / side).ceil().clamp(1.0, f64::from(MAX_GRID as u32) * 8.0) as u32;
+        let down = (1.0 / side).round().clamp(1.0, f64::from(MAX_GRID as u32) * 8.0) as u32;
+        let n = u64::from(across) * u64::from(down);
+        Ok(Self {
+            mask: (across, down),
+            j: Buffer::of::<u32>(gpu, 12, "tex.liquid obstacle constants")?,
+            sa: Buffer::of::<[i32; 4]>(gpu, n, "tex.liquid obstacle seeds")?,
+            sb: Buffer::of::<[i32; 4]>(gpu, n, "tex.liquid obstacle seeds")?,
+            flooded: None,
+        })
+    }
+
+    fn bytes(&self) -> u64 {
+        self.j.bytes() + self.sa.bytes() + self.sb.bytes()
+    }
+
+    /// The constants, as `J` in `liquid_solid.wgsl` lays them out.
+    fn words(&self, nodes: (u32, u32), aspect: f64, dx: f64, open: bool) -> [u32; 12] {
+        let f = |v: f64| (v as f32).to_bits();
+        [
+            self.mask.0,
+            self.mask.1,
+            nodes.0,
+            nodes.1,
+            f(aspect),
+            f(1.0),
+            f(dx / MASK_PER_CELL),
+            f(dx),
+            f(if open { 1.0 } else { 0.0 }),
+            f(MOST_OBSTACLE_SPEED),
+            0,
+            0,
+        ]
+    }
+}
+
 /// The buffers of one grid.
 struct Sim {
     /// Cells across and down the picture, and the nodes of the grid with its margin.
@@ -278,6 +389,8 @@ struct Sim {
     solid: Buffer,
     counter: Buffer,
     emitters: Buffer,
+    /// The obstacles' field maker, while `obstacles` is wired.
+    obstacles: Option<Obstacles>,
     /// Whether the particles came from the `fill` picture since the last start.
     filled: bool,
     /// Whether the particles in use must be counted anew (the buffer changed size).
@@ -308,6 +421,7 @@ impl Sim {
             solid: Buffer::of::<[f32; 4]>(gpu, n, "tex.liquid solids")?,
             counter: Buffer::of::<u32>(gpu, COUNTERS as u64, "tex.liquid counters")?,
             emitters: Buffer::of::<u32>(gpu, (MAX_EMITTERS * EMITTER_WORDS) as u64, "tex.liquid emitters")?,
+            obstacles: None,
             filled: false,
             recount: false,
             runs: Vec::new(),
@@ -319,7 +433,8 @@ impl Sim {
         [&self.u, &self.parts, &self.ga, &self.gf, &self.solid, &self.counter, &self.emitters]
             .iter()
             .map(|b| b.bytes())
-            .sum()
+            .sum::<u64>()
+            + self.obstacles.as_ref().map_or(0, Obstacles::bytes)
     }
 
     /// Every particle free, the counters at zero: the liquid starts over.
@@ -423,6 +538,7 @@ struct Frame {
     gravity: [f64; 2],
     drag: f64,
     viscosity: f64,
+    friction: f64,
     open: bool,
     emitters: u32,
     slots: u32,
@@ -450,8 +566,8 @@ fn uniform_words(sim: Layout, f: &Frame) -> Vec<u32> {
         float(pscale),
         float(f.vmax),
         float(PUSH),
-        float(0.0), // friction rate: none for a liquid
-        float(0.0), // Coulomb friction
+        float(0.0),        // friction rate: none for a liquid
+        float(f.friction), // Coulomb friction
         float(BAND),
         float(GHOST),
         float(f.gravity[0]),
@@ -484,6 +600,7 @@ fn uniform_words(sim: Layout, f: &Frame) -> Vec<u32> {
 #[derive(Default)]
 struct Liquid {
     program: Option<Arc<Compute>>,
+    solid_program: Option<Arc<Compute>>,
     sim: Option<Sim>,
     out_ring: TexRing,
     velocity_ring: TexRing,
@@ -608,7 +725,47 @@ impl Operator for Liquid {
             self.counted = Counted::default();
         }
         sim.resize(gpu, budget)?;
-        sim.write_edges(gpu, open)?;
+        // The solid field: the edges from the CPU, or edges and obstacles by jump flooding, made
+        // again when an input or the edges changed. Inputs are told apart only as a whole, so a
+        // changing emitter table floods again too.
+        let mask = cx.input_as::<Tex>(OBSTACLES);
+        let mask_velocity = mask.and(cx.input_as::<Tex>(OBSTACLE_VELOCITY));
+        let flood = match mask {
+            Some(_) => {
+                if sim.obstacles.is_none() {
+                    sim.obstacles = Some(Obstacles::new(gpu, sim.aspect, sim.dx)?);
+                }
+                let inputs_changed = cx.inputs_changed();
+                match sim.obstacles.as_mut() {
+                    Some(o) if inputs_changed || o.flooded != Some(open) => {
+                        // Until this flood went out: a cook that fails on the way floods again
+                        // next time, when the inputs no longer count as changed.
+                        o.flooded = None;
+                        let words = o.words(sim.nodes, sim.aspect, sim.dx, open);
+                        o.j.write(gpu, 0, &words)?;
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            None => {
+                sim.obstacles = None;
+                sim.write_edges(gpu, open)?;
+                false
+            }
+        };
+        let solid_program = if flood {
+            Some(match &self.solid_program {
+                Some(p) => p.clone(),
+                None => {
+                    let p = solid_program(gpu)?;
+                    self.solid_program = Some(p.clone());
+                    p
+                }
+            })
+        } else {
+            None
+        };
 
         let gravity = match cx.param("gravity") {
             Some(Value::Vec2([x, y])) if x.is_finite() && y.is_finite() => [*x, *y],
@@ -618,6 +775,8 @@ impl Operator for Liquid {
         let viscosity = if viscosity.is_finite() { viscosity.clamp(0.0, 0.01) } else { 0.0 };
         let drag = cx.float("drag")?;
         let drag = if drag.is_finite() { drag.max(0.0) } else { 0.0 };
+        let friction = cx.float("friction")?;
+        let friction = if friction.is_finite() { friction.clamp(0.0, MOST_FRICTION) } else { 0.0 };
         // The fastest flow: a fall across the picture, or an emitter's stream.
         let fall = (2.0 * gravity[0].hypot(gravity[1])).sqrt();
         let pour = emitters.iter().map(|e| e.velocity[0].hypot(e.velocity[1])).fold(0.0, f64::max);
@@ -649,6 +808,7 @@ impl Operator for Liquid {
             gravity,
             drag,
             viscosity,
+            friction,
             open,
             emitters: emitters.len().min(MAX_EMITTERS) as u32,
             slots,
@@ -715,9 +875,53 @@ impl Operator for Liquid {
         }
         let buffers = [&sim.u, &sim.parts, &sim.ga, &sim.gf, &sim.solid, &sim.counter, &sim.emitters];
         let mut batch = Batch::new(gpu, KIND);
+        if let (Some(solid), Some(o), Some(m)) = (&solid_program, &sim.obstacles, mask) {
+            // The field first: the fill and the substeps read it.
+            let (across, down) = o.mask;
+            let jumps = flood_steps(across, down);
+            let jump_params: Vec<_> = jumps
+                .iter()
+                .enumerate()
+                .map(|(k, s)| {
+                    let (step, from_b) = (f64::from(*s), (k % 2) as f64);
+                    move |n: &str| match n {
+                        "step" => Some(Value::Float(step)),
+                        "from_b" => Some(Value::Float(from_b)),
+                        _ => None,
+                    }
+                })
+                .collect();
+            // After an odd number of jumps the seeds are in `sb`.
+            let last = (jumps.len() % 2) as f64;
+            let read_last = move |n: &str| (n == "from_b").then_some(Value::Float(last));
+            let mask_pictures = [Some(m)];
+            let velocity_pictures = [None, mask_velocity];
+            // Not `dispatch`: its pictures and params would have to outlive the frame's steps.
+            let own = |pictures, param| Dispatch {
+                volumes: &[],
+                pictures,
+                data: None,
+                seconds: 0.0,
+                frame: 0,
+                param,
+            };
+            let seeded = own(&mask_pictures, &zero);
+            let jump_inputs: Vec<Dispatch<'_>> = jump_params.iter().map(|p| own(&[], p)).collect();
+            let resolved = own(&velocity_pictures, &read_last);
+            let cells = Out::grid(across, down);
+            let mut flood = vec![Step { entry: "seed", out: cells, input: &seeded }];
+            flood.extend(jump_inputs.iter().map(|input| Step { entry: "flood", out: cells, input }));
+            flood.push(Step { entry: "resolve", out: nodes, input: &resolved });
+            solid.encode_with(&mut batch, &[&o.j, &o.sa, &o.sb, &sim.solid], &flood)?;
+        }
         program.encode_with(&mut batch, &buffers, &steps)?;
         batch.submit();
         drop(steps);
+        if flood && let Some(o) = sim.obstacles.as_mut() {
+            o.flooded = Some(open);
+            // The edges from the CPU are gone: written again when the obstacles go.
+            sim.open = None;
+        }
         if filling {
             sim.filled = true;
         }
@@ -785,6 +989,7 @@ mod tests {
             gravity: [0.0, 3.27],
             drag: 0.5,
             viscosity: 0.0,
+            friction: 0.0,
             open: true,
             emitters: 0,
             slots: 0,
