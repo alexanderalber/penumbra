@@ -27,6 +27,7 @@ saves into it.)
 | [python-pictures](python-pictures/README.md) | Python scripts that draw a picture and build a mesh with numpy: rings on a wavy sheet | `/render` | Python 3.12 or later with numpy |
 | [projection-room](projection-room/README.md) | a 3D room lit by a projector, lamps and its surroundings | `/view`, `/through_beamer` | |
 | [smoke](smoke/README.md) | smoke in a box in space from three emitters: a ball blowing sideways, a moving ball, a flat box; hot smoke glows in colours of its own | `/out` | |
+| [rigid-bodies](rigid-bodies/README.md) | rigid bodies: 25 balls and 50 boxes stand as rings in the air, fall onto a ramp when their springs let go, and fly back; a paddle moved by an LFO shoves the heap up the ramp; a field to switch on | `/out` | |
 | [sand](sand/README.md) | falling sand from the library: grains rain on a word, pile up and pour off its edges; ten scenes from an hourglass to a board of pins, chosen on one param, then tuned | `/out` | |
 | [growth](growth/README.md) | slow growth from the library: frost grows over a word and melts where a moving blob passes, coral grows around it, lichen spreads; eleven presets from window frost to a Lichtenberg figure, chosen on one param, then tuned | `/out` | |
 | [chladni](chladni/README.md) | Chladni figures from the library: sand on a vibrating plate gathers on its still lines, and a melody, heard by a pitch tracker, changes the figure every 2 s; eight presets on a square, a round and a guitar-shaped plate, chosen on one param, then tuned | `/out` | (for your own voice: a microphone) |

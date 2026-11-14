@@ -28,6 +28,9 @@ The solver's `out` draws every body as the model of its group, with the material
 carries (`geo.assign_material` before `physics.bodies`). One wire into `tex.render` shows all
 groups.
 
+The shipped example `rigid-bodies` has balls and boxes as two groups, a driven paddle as a
+third, a ramp as an obstacle and a `physics.field` to switch on.
+
 ## The groups
 
 A `physics.bodies` is one group. Its page has the columns of the table, the modes (`dynamic`,
