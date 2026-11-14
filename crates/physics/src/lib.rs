@@ -9,8 +9,12 @@
 //! cross as degrees about x, then y, then z, the order `geo.transform` and `geo.instance` apply
 //! them in.
 //!
-//! The solver is rapier3d. Everything that reaches it is checked here first: numbers must be
-//! finite, triangles must name vertices that exist, counts stay under the limits below.
+//! The solver is rapier3d. Everything that reaches it is checked here first. A number that is
+//! not finite is an error or counts as nothing, as each function says. A finite number beyond
+//! what the solver can work with is brought within the limits below: sizes, scales, places and
+//! speeds from above as well as from below. Triangles must name vertices that exist, and counts
+//! stay under the limits. Should a number in a body stop being one all the same, the solver
+//! switches that body off, and [`World::disabled`] counts it.
 
 use rapier3d::prelude::*;
 
@@ -32,6 +36,33 @@ pub const MAX_SUBSTEPS: u32 = 8;
 /// The smallest scale of a body along an axis; smaller (and zero) counts as this.
 pub const MIN_SCALE: f32 = 1e-3;
 
+/// The least a body collides as along an axis, from its middle, in metres: a box or a ball
+/// that shape and scale make smaller is this large. The solver cannot hold a lighter body.
+pub const MIN_HALF: f32 = 2.5e-5;
+
+/// The largest scale of a body along an axis; larger counts as this.
+pub const MAX_SCALE: f32 = 1e3;
+
+/// The most a body collides as along an axis, from its middle, in metres, whatever shape and
+/// scale say: a box, a ball or the way to its middle that they make larger is this large, and
+/// a hull that reaches farther collides as a box of this size. A heavier body the solver
+/// cannot weigh.
+pub const MAX_SIZE: f32 = 1e6;
+
+/// The farthest place from the origin along an axis, in metres. Farther counts as this.
+pub const MAX_PLACE: f32 = 1e6;
+
+/// The shortest time [`World::step`] takes as time, in seconds. Shorter counts as none.
+pub const MIN_STEP: f32 = 1e-6;
+
+/// The farthest a driven body or an obstacle turns within one step and still pushes, in
+/// degrees. A turn beyond it is a jump: nothing says which way round such a turn went, and the
+/// spin it stands for would throw whatever the body touches.
+pub const MAX_TURN: f32 = 90.0;
+
+/// How near to a body that jumped, left or changed its size a sleeping body is woken, in metres.
+const NEAR: f32 = 0.1;
+
 /// Most force fields a world holds.
 pub const MAX_FIELDS: usize = 64;
 
@@ -42,7 +73,9 @@ pub const MAX_PUSH: f32 = 1e4;
 /// The most a kick changes a body's speed by, in metres per second.
 pub const MAX_KICK: f32 = 1e3;
 
-/// The fastest a pushed, kicked or pulled body goes, in metres per second.
+/// The fastest a body is told to go, in metres per second: at its start, pushed, kicked or
+/// pulled. The solver has a lower limit of its own for what a body then does: 400 metres per
+/// second, and an eighth of a turn per solver step.
 pub const MAX_SPEED: f32 = 1e4;
 
 /// The stiffest spring, in metres per second squared per metre.
@@ -88,7 +121,8 @@ pub struct Field {
     /// The middle of a point field, a point on the axis of a vortex, the middle of what a wind
     /// with a radius reaches.
     pub position: [f32; 3],
-    /// Where a wind blows, the axis of a vortex; any length but zero.
+    /// Where a wind blows, the axis of a vortex. Only the direction counts. A wind without one
+    /// (all zeros) blows nowhere, a vortex without one drives nothing.
     pub direction: [f32; 3],
     /// How far the field reaches, in metres: from `position`, for a vortex from its axis. Zero
     /// or less: everywhere.
@@ -121,6 +155,7 @@ impl Field {
         let direction = vector(self.direction).normalize_or_zero();
         Some(Self {
             strength: self.strength.clamp(-most, most),
+            position: self.position.map(|v| v.clamp(-MAX_PLACE, MAX_PLACE)),
             direction: [direction.x, direction.y, direction.z],
             radius: self.radius.max(0.0),
             ..self
@@ -336,7 +371,8 @@ impl Default for Start {
 pub struct Placement {
     pub translate: [f64; 3],
     pub rotate_degrees: [f64; 3],
-    /// As the body started; bodies do not change size.
+    /// The size the body has now: as it started, or for a driven or fixed body as its row said
+    /// last. Negative along an axis for a body mirrored there.
     pub scale: [f32; 3],
 }
 
@@ -383,8 +419,18 @@ struct Group {
     /// Where body k is pulled to, by k; a body beyond the last, or with none, is not pulled.
     targets: Vec<Option<Vector>>,
     spring: Spring,
-    /// The hull per scale, since a body's scale is part of its collision shape.
-    hulls: Vec<([f32; 3], SharedShape)>,
+    /// What a body of a hull group collides as, per scale, since a body's scale is part of
+    /// its collision shape.
+    hulls: Vec<([f32; 3], Made)>,
+}
+
+/// What the bodies of a hull group collide as at one scale.
+#[derive(Clone)]
+enum Made {
+    Hull(SharedShape),
+    /// The box around the points, where they enclose too little room at this scale for a
+    /// hull: its middle and its half sizes. Kept, so that the hull is not tried again.
+    Box(Vector, Vector),
 }
 
 /// Most hulls a group keeps for scales it has seen; a driven body may change its scale on
@@ -529,7 +575,14 @@ impl World {
     }
 
     /// Adds a body to `group`. A body of a group that is not dynamic takes its place, turn and
-    /// scale from `start` and nothing else. An error leaves the world as it was.
+    /// scale from `start` and nothing else. A place beyond [`MAX_PLACE`], a scale outside
+    /// [`MIN_SCALE`] to [`MAX_SCALE`] and a speed beyond [`MAX_SPEED`] count as those; a
+    /// negative scale mirrors the body along that axis.
+    ///
+    /// A hull that encloses too little room at this scale collides as the box around it.
+    ///
+    /// An error, and the world stays as it was: for a number that is not finite, for a group
+    /// that does not exist and for a world that is full.
     pub fn add(&mut self, group: usize, start: &Start) -> Result<(), String> {
         if self.count >= MAX_BODIES {
             return Err(format!("more than {MAX_BODIES} bodies"));
@@ -541,17 +594,22 @@ impl World {
             return Err(format!("there is no group {group}"));
         };
         let scale = sized(start.scale);
-        let collider = g.collider(scale)?;
+        let collider = g.collider(scale);
         let body = match g.mode {
             Mode::Dynamic => RigidBodyBuilder::dynamic()
-                .linvel(vector(start.velocity))
-                .angvel(vector(start.spin.map(f32::to_radians)))
+                .linvel(capped(start.velocity, MAX_SPEED))
+                .angvel(capped(start.spin.map(f32::to_radians), MAX_SPEED))
                 .linear_damping(self.settings.damping)
                 .angular_damping(self.settings.spin_damping),
             Mode::Driven => RigidBodyBuilder::kinematic_position_based(),
             Mode::Fixed => RigidBodyBuilder::fixed(),
         };
         let (body, collider) = self.world.insert(body.pose(pose(start)), collider);
+        if g.mode != Mode::Dynamic {
+            // The solver does not wake a sleeping body that this one appears inside of, and
+            // once the step is over it no longer sees that the two overlap.
+            wake_near(&mut self.world, body, None);
+        }
         g.bodies.push(Body { body, collider, scale, target: None });
         self.count += 1;
         Ok(())
@@ -562,13 +620,28 @@ impl World {
     /// rows leave the world.
     ///
     /// A driven body travels to its row within the next [`World::step`] and pushes what is in
-    /// its way with the speed that takes. A row farther than `jump` metres from its body puts
-    /// the body there at once instead, and nothing is pushed. A fixed body is always put there
-    /// at once. A change of scale never pushes: the body is the new size at once.
+    /// its way with the speed that takes. A row farther than `jump` metres from its body, or
+    /// turned by more than [`MAX_TURN`] against it, puts the body there at once instead, and
+    /// nothing is pushed; so does every row while `jump` is 0. A fixed body is always put
+    /// there at once. A body takes a new scale at once: what it then overlaps is pushed out
+    /// of it by the solver.
     ///
-    /// An error for a dynamic group, for rows that are not finite (the world stays as it was)
-    /// and for rows the world has no room for (the rows before them are placed).
+    /// An error for a group that does not exist, for a dynamic group and for rows that are
+    /// not finite: the world stays as it was. An error also for rows the world has no room
+    /// for: the rows before them are placed.
     pub fn place(&mut self, group: usize, rows: &[Start], jump: f32) -> Result<(), String> {
+        self.place_held(group, rows, &[], jump)
+    }
+
+    /// As [`World::place`], with rows to pass over: where `held` says true for row k, body k
+    /// stays as it is, and keeps its number. A body that row k adds takes the row all the same.
+    pub fn place_held(
+        &mut self,
+        group: usize,
+        rows: &[Start],
+        held: &[bool],
+        jump: f32,
+    ) -> Result<(), String> {
         if !rows.iter().all(finite) {
             return Err("a body's numbers must be finite".into());
         }
@@ -578,36 +651,37 @@ impl World {
         if g.mode == Mode::Dynamic {
             return Err(format!("the solver moves the bodies of group {group}"));
         }
-        let mut jumped = false;
         for gone in g.bodies.drain(rows.len().min(g.bodies.len())..) {
+            // What rested on a body that leaves must fall on.
+            wake_near(&mut self.world, gone.body, None);
             self.world.remove_body(gone.body);
             self.count = self.count.saturating_sub(1);
-            jumped = true;
         }
         let mode = g.mode;
         for k in 0..g.bodies.len().min(rows.len()) {
+            if held.get(k).copied().unwrap_or(false) {
+                continue;
+            }
             let (Some(row), Some(scale)) = (rows.get(k), g.bodies.get(k).map(|b| b.scale)) else { break };
             let wanted = sized(row.scale);
-            // A shape that cannot be made at the new scale leaves the body the size it is.
-            let resized = if wanted == scale { None } else { g.collider(wanted).ok() };
+            let resized = (wanted != scale).then(|| g.collider(wanted));
             let Some(body) = g.bodies.get_mut(k) else { break };
             if let Some(collider) = resized {
+                // What rested on a body that shrinks must fall on, and what sleeps where a
+                // body grows to must make room.
+                wake_near(&mut self.world, body.body, None);
                 self.world.remove_collider(body.collider);
                 body.collider = self.world.insert_collider(collider, Some(body.body));
                 body.scale = wanted;
-                jumped = true;
+                wake_near(&mut self.world, body.body, None);
             }
             let to = pose(row);
-            jumped |= match mode {
+            match mode {
                 Mode::Driven => aim(&mut self.world, body.body, &mut body.target, to, jump),
                 _ => put(&mut self.world, body.body, to),
             };
         }
         let have = g.bodies.len();
-        if jumped {
-            // What rested on a body that left, shrank or was put elsewhere must fall on.
-            self.world.wake_up_all(true);
-        }
         rows.iter().skip(have).try_for_each(|row| self.add(group, row))
     }
 
@@ -637,6 +711,10 @@ impl World {
             };
             if o.vertices.iter().flatten().any(|v| !v.is_finite()) {
                 return failed(self, "an obstacle has a vertex that is not a number".into());
+            }
+            if o.vertices.iter().flatten().any(|v| v.abs() > MAX_PLACE) {
+                let why = format!("an obstacle reaches farther than {MAX_PLACE} m from its origin");
+                return failed(self, why);
             }
             let count = o.vertices.len();
             if o.triangles.iter().flatten().any(|&i| i as usize >= count) {
@@ -668,9 +746,10 @@ impl World {
 
     /// Gives every obstacle another place, in the order [`World::set_obstacles`] took them. An
     /// obstacle travels there within the next [`World::step`] and pushes the bodies in its way.
-    /// One whose place is farther than `jump` metres from where it stands is put there at once
-    /// and pushes nothing. An error, and no obstacle moves, when the count differs or a place
-    /// is not finite.
+    /// One whose place is farther than `jump` metres from where it stands, or turned by more
+    /// than [`MAX_TURN`], is put there at once and pushes nothing; so is every obstacle that
+    /// moves while `jump` is 0. An error, and no obstacle moves, when the count differs or a
+    /// place is not finite.
     pub fn move_obstacles(&mut self, places: &[Place], jump: f32) -> Result<(), String> {
         if places.len() != self.obstacles.len() {
             return Err(format!("{} places for {} obstacles", places.len(), self.obstacles.len()));
@@ -678,14 +757,10 @@ impl World {
         let Some(poses) = places.iter().map(pose_of).collect::<Option<Vec<Pose>>>() else {
             return Err("an obstacle is to stand at a place that is not a number".into());
         };
-        let mut jumped = false;
         for (fixture, to) in self.obstacles.iter_mut().zip(poses) {
             if let Some(f) = fixture {
-                jumped |= aim(&mut self.world, f.body, &mut f.target, to, jump);
+                aim(&mut self.world, f.body, &mut f.target, to, jump);
             }
-        }
-        if jumped {
-            self.world.wake_up_all(true);
         }
         Ok(())
     }
@@ -744,7 +819,8 @@ impl World {
         g.spring = spring.checked();
         g.targets.clear();
         let finite = |t: &[f32; 3]| t.iter().all(|v| v.is_finite());
-        g.targets.extend(targets.iter().take(MAX_BODIES).map(|t| t.filter(finite).map(vector)));
+        let within = |t: [f32; 3]| vector(t.map(|v| v.clamp(-MAX_PLACE, MAX_PLACE)));
+        g.targets.extend(targets.iter().take(MAX_BODIES).map(|t| t.filter(finite).map(within)));
     }
 
     /// Takes over `settings` for the bodies that exist and those to come.
@@ -782,9 +858,9 @@ impl World {
     /// bodies steadier). Driven bodies and moved obstacles travel to their places evenly over
     /// the whole time, so the speed they push with does not depend on `substeps`.
     ///
-    /// For a time that is not positive and finite no body moves on its own. Driven bodies and
-    /// moved obstacles are then put at their places at once and push nothing: without time
-    /// there is no speed to push with.
+    /// For a time that is not finite or shorter than [`MIN_STEP`] no body moves on its own.
+    /// Driven bodies and moved obstacles are then put at their places at once and push
+    /// nothing: without time there is no speed to push with.
     pub fn step(&mut self, seconds: f32, substeps: u32) {
         let mut moves: Vec<(RigidBodyHandle, Pose, Pose)> = Vec::new();
         let bodies = self.groups.iter_mut().flatten().flat_map(|g| &mut g.bodies);
@@ -793,16 +869,14 @@ impl World {
         for (handle, target) in driven.chain(moved) {
             let Some(to) = target.take() else { continue };
             if let Some(from) = self.world.bodies.get(handle).map(|b| *b.position()) {
-                moves.push((handle, from, to));
+                moves.push((handle, from, short(&from, to)));
             }
         }
-        if !seconds.is_finite() || seconds <= 0.0 {
-            let mut jumped = false;
+        // The solver divides by the time of a step: one too short to divide by gives every
+        // body it moves a speed that is no number.
+        if !seconds.is_finite() || seconds < MIN_STEP {
             for (handle, _, to) in moves {
-                jumped |= put(&mut self.world, handle, to);
-            }
-            if jumped {
-                self.world.wake_up_all(true);
+                put(&mut self.world, handle, to);
             }
             return;
         }
@@ -822,18 +896,8 @@ impl World {
         }
         // The solver wakes a sleeping body only when what moves already touched it. A body
         // that moved fast may have arrived inside one that sleeps, without a touch before.
-        let mut reached: Vec<RigidBodyHandle> = Vec::new();
         for (handle, _, _) in &moves {
-            let colliders = self.world.bodies.get(*handle).map(RigidBody::colliders).unwrap_or_default();
-            for aabb in
-                colliders.iter().filter_map(|c| self.world.colliders.get(*c)).map(Collider::compute_aabb)
-            {
-                let near = self.world.intersect_aabb_conservative(aabb, QueryFilter::only_dynamic());
-                reached.extend(near.filter_map(|(_, collider)| collider.parent()));
-            }
-        }
-        for handle in reached {
-            self.world.wake_up(handle, true);
+            wake_near(&mut self.world, *handle, None);
         }
     }
 
@@ -860,6 +924,19 @@ impl World {
     pub fn asleep(&self) -> usize {
         let sleeping = |b: &&Body| self.world.bodies.get(b.body).is_some_and(RigidBody::is_sleeping);
         self.groups.iter().flatten().flat_map(|g| &g.bodies).filter(sleeping).count()
+    }
+
+    /// How many bodies and obstacles the solver has switched off because a number in them
+    /// stopped being one. Such a body stays where it was, collides with nothing and still
+    /// counts as a body. Only a world built anew brings it back.
+    pub fn disabled(&self) -> usize {
+        let on = |body: RigidBodyHandle, collider: ColliderHandle| {
+            self.world.bodies.get(body).is_some_and(RigidBody::is_enabled)
+                && self.world.colliders.get(collider).is_some_and(Collider::is_enabled)
+        };
+        let bodies = self.groups.iter().flatten().flat_map(|g| &g.bodies);
+        let off = bodies.filter(|b| !on(b.body, b.collider)).count();
+        off + self.obstacles.iter().flatten().filter(|f| !on(f.body, f.collider)).count()
     }
 
     fn group(&self, group: usize) -> Option<&Group> {
@@ -959,38 +1036,50 @@ impl World {
 
 impl Group {
     /// What a body of this group collides with at `scale`: its shape, of the group's material.
-    fn collider(&mut self, scale: [f32; 3]) -> Result<ColliderBuilder, String> {
-        Ok(self
-            .shape_at(scale)?
+    fn collider(&mut self, scale: [f32; 3]) -> ColliderBuilder {
+        self.shape_at(scale)
             .friction(self.material.friction)
             .restitution(self.material.bounce)
             .restitution_combine_rule(CoefficientCombineRule::Max)
-            .density(self.material.density))
+            .density(self.material.density)
     }
 
-    /// The collision shape at `scale`.
-    fn shape_at(&mut self, scale: [f32; 3]) -> Result<ColliderBuilder, String> {
-        let [sx, sy, sz] = scale;
+    /// The collision shape at `scale`. A hull that encloses too little room at this scale
+    /// gives way to the box around its points, so that every scale has a shape.
+    fn shape_at(&mut self, scale: [f32; 3]) -> ColliderBuilder {
+        // A negative scale mirrors: it turns the middle and the points over, and a size stays
+        // a size.
+        let [sx, sy, sz] = scale.map(f32::abs);
         match &self.shape {
             Shape::Box { center, half } => {
                 let [hx, hy, hz] = *half;
-                Ok(ColliderBuilder::cuboid(hx * sx, hy * sy, hz * sz).translation(scaled(*center, scale)))
+                let [x, y, z] = [hx * sx, hy * sy, hz * sz].map(|h| h.clamp(MIN_HALF, MAX_SIZE));
+                ColliderBuilder::cuboid(x, y, z).translation(offset(*center, scale))
             }
             Shape::Sphere { center, radius } => {
                 // A ball stays a ball: the widest scale decides.
-                Ok(ColliderBuilder::ball(radius * sx.max(sy).max(sz)).translation(scaled(*center, scale)))
+                let radius = (radius * sx.max(sy).max(sz)).clamp(MIN_HALF, MAX_SIZE);
+                ColliderBuilder::ball(radius).translation(offset(*center, scale))
             }
             Shape::Hull { points } => {
-                if let Some((_, shape)) = self.hulls.iter().find(|(s, _)| *s == scale) {
-                    return Ok(ColliderBuilder::new(shape.clone()));
+                let made = match self.hulls.iter().find(|(s, _)| *s == scale) {
+                    Some((_, made)) => made.clone(),
+                    None => {
+                        let scaled: Vec<Vector> = points.iter().map(|p| scaled(*p, scale)).collect();
+                        let made = hull(&scaled).map_or_else(|_| boxed(&scaled), Made::Hull);
+                        if self.hulls.len() >= MAX_HULLS {
+                            self.hulls.clear();
+                        }
+                        self.hulls.push((scale, made.clone()));
+                        made
+                    }
+                };
+                match made {
+                    Made::Hull(shape) => ColliderBuilder::new(shape),
+                    Made::Box(center, half) => {
+                        ColliderBuilder::cuboid(half.x, half.y, half.z).translation(center)
+                    }
                 }
-                let scaled: Vec<Vector> = points.iter().map(|p| scaled(*p, scale)).collect();
-                let shape = hull(&scaled)?;
-                if self.hulls.len() >= MAX_HULLS {
-                    self.hulls.clear();
-                }
-                self.hulls.push((scale, shape.clone()));
-                Ok(ColliderBuilder::new(shape))
             }
         }
     }
@@ -1002,37 +1091,92 @@ fn finite(start: &Start) -> bool {
     all.iter().flatten().all(|v| v.is_finite())
 }
 
-/// A scale as a body takes it: positive and away from zero.
+/// A scale as a body takes it: no nearer to zero than [`MIN_SCALE`], no farther than
+/// [`MAX_SCALE`]. Its sign stays: a negative scale mirrors.
 fn sized(scale: [f32; 3]) -> [f32; 3] {
-    scale.map(|s| s.abs().max(MIN_SCALE))
+    scale.map(|s| {
+        let size = s.abs().clamp(MIN_SCALE, MAX_SCALE);
+        if s < 0.0 { -size } else { size }
+    })
+}
+
+/// `p` as a place the solver takes: no farther out than [`MAX_PLACE`].
+fn within(p: [f32; 3]) -> Vector {
+    vector(p.map(|v| v.clamp(-MAX_PLACE, MAX_PLACE)))
+}
+
+/// `v` no longer than `most`, however large its numbers.
+fn capped(v: [f32; 3], most: f32) -> Vector {
+    vector(v.map(|x| x.clamp(-most, most))).clamp_length_max(most)
 }
 
 /// Where `start` places a body.
 fn pose(start: &Start) -> Pose {
-    Pose::from_parts(vector(start.translate), rotation(start.rotate_degrees))
+    Pose::from_parts(within(start.translate), rotation(start.rotate_degrees))
 }
 
 /// `place` as the solver takes it; none when a number of it is not finite.
 fn pose_of(place: &Place) -> Option<Pose> {
     let [x, y, z] = place.turn;
     let turn = Rotation::from_mat3(&Matrix::from_cols(vector(x), vector(y), vector(z)).transpose());
-    let pose = Pose::from_parts(vector(place.translate), turn.normalize());
-    pose.is_finite().then_some(pose)
+    let finite = place.translate.iter().all(|v| v.is_finite());
+    let pose = Pose::from_parts(within(place.translate), turn.normalize());
+    (finite && pose.is_finite()).then_some(pose)
+}
+
+/// `to` written so that the turn from `from` to it is the short way round. A rotation has two
+/// quaternions, one the negative of the other. The solver takes the speed of a body it is
+/// told to move from the two as they are written, and with the far one that speed is nearly a
+/// full turn the other way round within one step.
+fn short(from: &Pose, to: Pose) -> Pose {
+    if from.rotation.dot(to.rotation) < 0.0 { Pose::from_parts(to.translation, -to.rotation) } else { to }
+}
+
+/// Wakes the dynamic bodies that sleep where the body `handle` is, or within [`NEAR`] of it:
+/// those that rest on it or that it stands inside of. With `at`, where the body would be if
+/// it stood there.
+fn wake_near(world: &mut PhysicsWorld, handle: RigidBodyHandle, at: Option<Pose>) {
+    let colliders = world.bodies.get(handle).map(RigidBody::colliders).unwrap_or_default();
+    let mut reached: Vec<RigidBodyHandle> = Vec::new();
+    for collider in colliders.iter().filter_map(|c| world.colliders.get(*c)) {
+        let aabb = match at {
+            Some(pose) => {
+                let own = collider.position_wrt_parent().copied().unwrap_or(Pose::IDENTITY);
+                collider.shape().compute_aabb(&(pose * own))
+            }
+            None => collider.compute_aabb(),
+        };
+        let wide = Aabb::new(aabb.mins - Vector::splat(NEAR), aabb.maxs + Vector::splat(NEAR));
+        let near = world.intersect_aabb_conservative(wide, QueryFilter::only_dynamic());
+        reached.extend(near.filter_map(|(_, collider)| collider.parent()));
+    }
+    for handle in reached {
+        world.wake_up(handle, true);
+    }
 }
 
 /// Puts the body `handle` at `to` at once, without a speed. Returns whether it stood elsewhere.
+/// What slept on it or beside it is then woken, and falls on.
 fn put(world: &mut PhysicsWorld, handle: RigidBodyHandle, to: Pose) -> bool {
-    let Some(body) = world.bodies.get_mut(handle) else { return false };
+    let Some(body) = world.bodies.get(handle) else { return false };
+    let to = short(body.position(), to);
     if *body.position() == to && *body.next_position() == to {
         return false;
     }
-    body.set_position(to, true);
+    wake_near(world, handle, None);
+    if let Some(body) = world.bodies.get_mut(handle) {
+        body.set_position(to, true);
+    }
+    // What sleeps where the body lands must make room. The solver would not wake it: it
+    // wakes a sleeping body only through a touch it already knows of.
+    wake_near(world, handle, Some(to));
     true
 }
 
 /// Sends the body `handle`, which the caller moves, to `to`: it is there after the next step,
-/// by way of `target`. Farther than `jump` metres from where it stands it is put there at once
-/// instead. Returns whether it was.
+/// by way of `target`. Farther than `jump` metres from where it stands, or turned by more than
+/// [`MAX_TURN`], it is put there at once instead; so it is whenever `jump` is 0. Returns
+/// whether it was put.
 fn aim(
     world: &mut PhysicsWorld,
     handle: RigidBodyHandle,
@@ -1041,9 +1185,12 @@ fn aim(
     jump: f32,
 ) -> bool {
     let Some(from) = world.bodies.get(handle).map(|b| *b.position()) else { return false };
+    let to = short(&from, to);
     // Not a number counts as no way at all, so a bad `jump` never flings a body.
-    let near = (to.translation - from.translation).length() <= jump;
-    if near {
+    let near = jump > 0.0 && (to.translation - from.translation).length() <= jump;
+    // The cosine of half the angle between the two turns.
+    let slow = from.rotation.dot(to.rotation) >= (0.5 * MAX_TURN.to_radians()).cos();
+    if near && slow {
         *target = (from != to).then_some(to);
         false
     } else {
@@ -1068,6 +1215,12 @@ fn vector(v: [f32; 3]) -> Vector {
 fn scaled(p: [f32; 3], scale: [f32; 3]) -> Vector {
     let ([x, y, z], [sx, sy, sz]) = (p, scale);
     Vector::new(x * sx, y * sy, z * sz)
+}
+
+/// Where the middle of a box or a ball lies in a body of `scale`, no farther out than
+/// [`MAX_SIZE`].
+fn offset(center: [f32; 3], scale: [f32; 3]) -> Vector {
+    scaled(center, scale).clamp(Vector::splat(-MAX_SIZE), Vector::splat(MAX_SIZE))
 }
 
 /// Degrees about x, then y, then z, as one rotation.
@@ -1100,24 +1253,52 @@ pub fn degrees_of(q: [f64; 4]) -> [f64; 3] {
     [rx, ry, rz].map(f64::to_degrees)
 }
 
+/// The corners of the box around `points`: the least and the most along each axis.
+fn bounds(points: &[Vector]) -> (Vector, Vector) {
+    points.iter().fold((Vector::MAX, Vector::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)))
+}
+
+/// The box around `points`, no thinner and no larger along an axis than a body may be.
+fn boxed(points: &[Vector]) -> Made {
+    let (lo, hi) = bounds(points);
+    let most = Vector::splat(MAX_SIZE);
+    // Halved before they are taken from each other: the difference of two far corners may be
+    // more than a number holds.
+    let half = (hi * 0.5 - lo * 0.5).clamp(Vector::splat(MIN_HALF), most);
+    Made::Box((lo * 0.5 + hi * 0.5).clamp(-most, most), half)
+}
+
 /// The convex hull of `points`. An error for points that enclose no room (all in one plane, on
 /// one line or in one place): such a hull weighs nothing, and a body without weight hangs in
-/// the air.
+/// the air. An error also for a hull so small that the lightest body of it weighs less than
+/// the solver can divide by, and for one that reaches farther than [`MAX_SIZE`]: the solver
+/// would switch such a body off.
 fn hull(points: &[Vector]) -> Result<SharedShape, String> {
     const FLAT: &str = "the shape is flat: no convex hull encloses it";
+    // What the solver still divides by, with room to spare; the smallest box weighs more.
+    const LEAST: f32 = 1e-27;
+    let (lo, hi) = bounds(points);
+    if hi.max(-lo).max_element() > MAX_SIZE {
+        return Err(format!("the shape reaches farther than {MAX_SIZE} m from its origin"));
+    }
     let shape = SharedShape::convex_hull(points).ok_or(FLAT)?;
-    let (lo, hi) = points.iter().fold((Vector::MAX, Vector::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
     let reach = (hi - lo).length();
     let room = shape.mass_properties(1.0).mass();
-    if room.is_finite() && reach.is_finite() && room > 1e-6 * reach * reach * reach {
+    if !(room.is_finite() && reach.is_finite() && room > 1e-6 * reach * reach * reach) {
+        return Err(FLAT.into());
+    }
+    let [light, heavy] = DENSITY_RANGE.map(|density| shape.mass_properties(density));
+    let weighs = |m: &MassProperties| m.mass().min(m.principal_inertia().min_element());
+    if weighs(&light) > LEAST && weighs(&heavy).is_finite() {
         Ok(shape)
     } else {
-        Err(FLAT.into())
+        Err("the shape is too small for a convex hull".into())
     }
 }
 
-/// `shape` as a world takes it: sizes away from zero, a hull thinned to [`MAX_HULL_POINTS`].
-/// An error for numbers that are not finite and for a hull that encloses no room.
+/// `shape` as a world takes it: sizes away from zero and no larger than [`MAX_SIZE`], a hull
+/// thinned to [`MAX_HULL_POINTS`]. An error for numbers that are not finite, for a hull that
+/// encloses no room or too little, and for one that reaches farther than [`MAX_SIZE`].
 pub fn check(shape: Shape) -> Result<Shape, String> {
     let finite = |v: &[f32]| v.iter().all(|x| x.is_finite());
     match shape {
@@ -1125,13 +1306,15 @@ pub fn check(shape: Shape) -> Result<Shape, String> {
             if !finite(&center) || !finite(&half) {
                 return Err("the box's numbers must be finite".into());
             }
-            Ok(Shape::Box { center, half: half.map(|h| h.abs().max(MIN_SCALE * 0.5)) })
+            let center = center.map(|c| c.clamp(-MAX_SIZE, MAX_SIZE));
+            Ok(Shape::Box { center, half: half.map(|h| h.abs().clamp(MIN_SCALE * 0.5, MAX_SIZE)) })
         }
         Shape::Sphere { center, radius } => {
             if !finite(&center) || !radius.is_finite() {
                 return Err("the sphere's numbers must be finite".into());
             }
-            Ok(Shape::Sphere { center, radius: radius.abs().max(MIN_SCALE * 0.5) })
+            let center = center.map(|c| c.clamp(-MAX_SIZE, MAX_SIZE));
+            Ok(Shape::Sphere { center, radius: radius.abs().clamp(MIN_SCALE * 0.5, MAX_SIZE) })
         }
         Shape::Hull { points } => {
             if points.iter().any(|p| !finite(p)) {
@@ -1480,7 +1663,11 @@ mod tests {
         world.step(f32::NAN, 1);
         world.step(-1.0, 1);
         world.step(DT, 100);
-        assert!(world.placements(0)[0].translate.iter().all(|v| v.is_finite()));
+        assert!(sound(&world));
+        // Under gravity the body falls and lands all the same.
+        world.apply(Settings::default());
+        run(&mut world, 2.0);
+        assert!((world.placements(0)[0].translate[2] - 0.5).abs() < 0.02 && sound(&world));
     }
 
     #[test]
@@ -1818,7 +2005,7 @@ mod tests {
         if world.set_obstacles(vec![slab(flat)]).is_ok() {
             run(&mut world, 0.2);
         }
-        assert!(world.placements(0)[0].translate.iter().all(|v| v.is_finite()));
+        assert!(sound(&world));
     }
 
     /// A world without gravity and without a floor, its group 0 dynamic balls of 1 m.
@@ -2058,7 +2245,7 @@ mod tests {
         world.set_pushes(0, &[]);
         run(&mut world, 1.0);
         let p = world.placements(0)[2].translate;
-        assert!(p.iter().all(|v| v.is_finite()) && p[0] == 6.0 && p[1] == 0.0, "{p:?}");
+        assert!(sound(&world) && p[0] == 6.0 && p[1] == 0.0, "{p:?}");
         assert!((p[2] - f64::from(MAX_PUSH) / 60.0).abs() < 5.0, "one frame of the most: {p:?}");
         // A group that is not dynamic, and one that does not exist, take rows without harm.
         world.set_group(1, unit_box(), Material::default(), Mode::Fixed).unwrap();
@@ -2184,8 +2371,8 @@ mod tests {
         run(&mut world, 10.0);
         let p = world.placements(0)[0];
         let reach = f64::from(MAX_SPEED) * 10.0 * 1.01;
-        assert!(p.translate.iter().all(|v| v.is_finite() && v.abs() <= reach), "{p:?}");
-        assert!(p.rotate_degrees.iter().all(|v| v.is_finite()));
+        assert!(sound(&world));
+        assert!(p.translate[0] > 1000.0 && p.translate.iter().all(|v| v.abs() <= reach), "{p:?}");
         // It still answers: a spring fetches it back.
         world.set_fields(&[]).unwrap();
         world.set_pushes(0, &[]);
@@ -2193,5 +2380,473 @@ mod tests {
         run(&mut world, 20.0);
         let back = world.placements(0)[0].translate;
         assert!(back.iter().all(|v| v.abs() < 0.5), "{back:?}");
+    }
+
+    /// Whether the solver still moves everything: every body and obstacle is switched on, with
+    /// a place and a speed that are numbers. `placements` cannot tell, since it reports 0 for
+    /// what is not a number.
+    fn sound(world: &World) -> bool {
+        let bodies = world.world.rigid_bodies().all(|(_, b)| {
+            b.is_enabled() && b.position().is_finite() && b.linvel().is_finite() && b.angvel().is_finite()
+        });
+        bodies && world.world.colliders.iter().all(|(_, c)| c.is_enabled()) && world.disabled() == 0
+    }
+
+    fn turned(degrees: [f32; 3]) -> Start {
+        Start { rotate_degrees: degrees, ..Start::default() }
+    }
+
+    #[test]
+    fn a_driven_body_whose_angle_wraps_takes_the_short_way() {
+        let mut world = World::new(Settings { floor: None, ..Settings::default() });
+        let slab = Shape::Box { center: [0.0; 3], half: [2.0, 2.0, 0.1] };
+        world.set_group(0, unit_box(), Material::default(), Mode::Dynamic).unwrap();
+        world.set_group(1, slab, Material::default(), Mode::Driven).unwrap();
+        // Tilted by two degrees the other way: 358 is -2.
+        world.add(1, &turned([0.0, 358.0, 0.0])).unwrap();
+        world.add(0, &at_x(1.5, 0.7)).unwrap();
+        world.add(0, &at_x(-1.5, 0.7)).unwrap();
+        run(&mut world, 2.0);
+        let before = world.placements(0);
+        // Half a degree a frame, past 360 to 0 and on.
+        for degrees in [358.5, 359.0, 359.5, 0.0, 0.5, 1.0] {
+            world.place(1, &[turned([0.0, degrees, 0.0])], NEVER).unwrap();
+            world.step(DT, 1);
+        }
+        for _ in 0..60 {
+            world.step(DT, 1);
+            for (now, was) in world.placements(0).iter().zip(&before) {
+                let far = (0..3).map(|k| (now.translate[k] - was.translate[k]).powi(2)).sum::<f64>().sqrt();
+                assert!(far < 0.3, "a box on the slab was flung {far} m, to {:?}", now.translate);
+            }
+        }
+        // So with -180..180, as the angles come out of the solver, and with several steps.
+        for substeps in [1, 3] {
+            let mut world = box_at_rest_and(Mode::Driven);
+            world.add(1, &Start { translate: [0.0, 0.0, 3.0], ..turned([0.0, 0.0, 179.0]) }).unwrap();
+            for degrees in [179.5, 180.0, -179.5, -179.0] {
+                let row = Start { translate: [0.0, 0.0, 3.0], ..turned([0.0, 0.0, degrees]) };
+                world.place(1, &[row], NEVER).unwrap();
+                world.step(DT, substeps);
+                let spin = world.world.bodies.get(world.groups[1].as_ref().unwrap().bodies[0].body).unwrap();
+                let fast = spin.angvel().length().to_degrees();
+                assert!((fast - 30.0).abs() < 1.0, "half a degree a frame is 30 a second, not {fast}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_turn_too_far_for_one_frame_is_a_jump() {
+        // A box at rest near the edge of a driven slab. Tilted by 30 degrees in one frame, the
+        // slab throws the box up. Tilted by 120 degrees it is put there and throws nothing:
+        // the box falls from where it was.
+        let slab = Shape::Box { center: [0.0; 3], half: [2.0, 2.0, 0.1] };
+        let on_a_slab = |x: f32| {
+            let mut world = World::new(Settings { floor: None, ..Settings::default() });
+            world.set_group(0, unit_box(), Material::default(), Mode::Dynamic).unwrap();
+            world.set_group(1, slab.clone(), Material::default(), Mode::Driven).unwrap();
+            world.add(1, &at(0.0)).unwrap();
+            world.add(0, &at_x(x, 0.6)).unwrap();
+            run(&mut world, 2.0);
+            world
+        };
+        for (degrees, pushes) in [(120.0, false), (30.0, true)] {
+            let mut world = on_a_slab(-1.5);
+            world.place(1, &[turned([0.0, degrees, 0.0])], NEVER).unwrap();
+            world.step(DT, 1);
+            run(&mut world, 0.2);
+            let p = world.placements(0)[0].translate;
+            assert_eq!(p[2] > 1.0, pushes, "tilted by {degrees}: the box is at {p:?}");
+            assert!(pushes || (p[2] < 0.6 && (p[0] + 1.5).abs() < 0.05), "{p:?}");
+        }
+        // With `jump` 0 nothing pushes, a turn on the spot included: the slab turns under the
+        // box and does not take it along.
+        let mut world = on_a_slab(1.5);
+        for k in 1..=60 {
+            world.place(1, &[turned([0.0, 0.0, k as f32])], 0.0).unwrap();
+            world.step(DT, 1);
+        }
+        let p = world.placements(0)[0].translate;
+        assert!((p[0] - 1.5).abs() < 1e-2 && p[1].abs() < 1e-2, "{p:?}");
+        assert!((world.placements(1)[0].rotate_degrees[2] - 60.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn an_obstacle_turned_past_a_quarter_takes_the_short_way() {
+        // A sheet that stands upright in its own space, laid flat by a turn of 270 degrees
+        // about x: the matrix of that turn gives its quaternion with the other sign from 270 on.
+        let sheet = |degrees: f32| {
+            let (s, c) = degrees.to_radians().sin_cos();
+            Obstacle {
+                vertices: vec![[-3.0, 0.0, -3.0], [3.0, 0.0, -3.0], [3.0, 0.0, 3.0], [-3.0, 0.0, 3.0]],
+                triangles: vec![[0, 1, 2], [0, 2, 3]],
+                place: Place { translate: [0.0; 3], turn: [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]] },
+            }
+        };
+        let mut world = world_of(unit_box(), Settings { floor: None, ..Settings::default() });
+        world.set_obstacles(vec![sheet(268.0)]).unwrap();
+        world.add(0, &Start { translate: [0.0, 1.5, 0.6], ..Start::default() }).unwrap();
+        run(&mut world, 2.0);
+        let before = world.placements(0)[0].translate;
+        assert!((before[2] - 0.45).abs() < 0.1, "it rests on the sheet: {before:?}");
+        for k in 1..=8 {
+            world.move_obstacles(&[sheet(268.0 + 0.5 * k as f32).place], NEVER).unwrap();
+            world.step(DT, 1);
+            let sheet = world.obstacles[0].as_ref().unwrap().body;
+            let spin = world.world.bodies.get(sheet).unwrap().angvel();
+            // Half a degree a frame is 30 degrees a second about x.
+            assert!((spin.x.to_degrees() - 30.0).abs() < 1.0, "step {k}: the sheet spins at {spin:?}");
+        }
+        for _ in 0..60 {
+            world.step(DT, 1);
+            let now = world.placements(0)[0].translate;
+            let far = (0..3).map(|k| (now[k] - before[k]).powi(2)).sum::<f64>().sqrt();
+            assert!(far < 0.3, "the box on the sheet was flung {far} m, to {now:?}");
+        }
+    }
+
+    #[test]
+    fn numbers_too_large_for_the_solver_are_brought_within_bounds() {
+        // A scale whose volume no number holds: the body is as large as a body gets, and falls.
+        let mut world = world_of(unit_box(), Settings::default());
+        world.add(0, &Start { translate: [0.0, 0.0, 5.0], scale: [1e15; 3], ..Start::default() }).unwrap();
+        assert_eq!(world.placements(0)[0].scale, [MAX_SCALE; 3]);
+        run(&mut world, 1.0);
+        assert!(sound(&world));
+        // It overlaps the floor by half its size and is pushed out, or still on its way up.
+        assert!(world.placements(0)[0].translate[2] > 5.0, "{:?}", world.placements(0)[0]);
+        // A speed and a spin beyond all measure: the fastest there is.
+        let mut world = space();
+        let wild = Start { velocity: [3e38, 0.0, 0.0], spin: [0.0, 0.0, 3e38], ..Start::default() };
+        world.add(0, &wild).unwrap();
+        run(&mut world, 1.0);
+        assert!(sound(&world));
+        // The solver has a limit of its own, and a lower one: 400 m/s.
+        let x = world.placements(0)[0].translate[0];
+        assert!((x - 400.0).abs() < 10.0, "a second at the fastest: {x}");
+        // A place beyond the farthest is the farthest.
+        let mut world = space();
+        world.add(0, &at(3e38)).unwrap();
+        world.step(DT, 1);
+        assert!(sound(&world));
+        assert_eq!(world.placements(0)[0].translate[2], f64::from(MAX_PLACE));
+        // Shapes: the largest box, ball and offset at the largest scale and density still
+        // weigh something a number holds. A hull that large is refused.
+        let far = [3e38; 3];
+        for shape in [Shape::Box { center: far, half: far }, Shape::Sphere { center: far, radius: 3e38 }] {
+            let mut world = World::new(Settings::default());
+            let heavy = Material { density: f32::MAX, ..Material::default() };
+            world.set_group(0, shape, heavy, Mode::Dynamic).unwrap();
+            world.add(0, &Start { scale: [f32::MAX; 3], ..Start::default() }).unwrap();
+            world.set_group(1, unit_box(), Material::default(), Mode::Dynamic).unwrap();
+            world.add(1, &at(-5.0)).unwrap();
+            run(&mut world, 0.5);
+            assert!(sound(&world));
+        }
+        let points = vec![[0.0; 3], [1e30, 0.0, 0.0], [0.0, 1e30, 0.0], [0.0, 0.0, 1e30]];
+        assert!(check(Shape::Hull { points }).is_err());
+        // An obstacle beyond the farthest place is refused, and so is one sent there.
+        let mut world = world_of(unit_box(), Settings::default());
+        let mut huge = slab(Place::default());
+        huge.vertices[1] = [1e30, 0.0, 0.0];
+        assert!(world.set_obstacles(vec![huge]).is_err());
+        world.set_obstacles(vec![slab(Place::default())]).unwrap();
+        world.move_obstacles(&[placed_at(1e30, 0.0)], NEVER).unwrap();
+        world.step(DT, 1);
+        assert!(sound(&world));
+    }
+
+    #[test]
+    fn a_step_too_short_to_count_is_no_step() {
+        // A box at rest on a slab. A time so short that its inverse is no number would give
+        // every obstacle a speed that is none, and the solver would switch the slab off.
+        let mut world = world_of(unit_box(), Settings { floor: None, ..Settings::default() });
+        world.set_obstacles(vec![slab(placed_at(0.0, 0.0))]).unwrap();
+        world.add(0, &at(0.5)).unwrap();
+        run(&mut world, 2.0);
+        for seconds in [1e-40, 1e-30, 1e-9, f32::MIN_POSITIVE] {
+            world.step(seconds, 1);
+            world.step(seconds, 8);
+        }
+        assert!(sound(&world));
+        // The slab still holds the box: kicked sideways it slides and stays on it.
+        world.kick(&wind(1.0)).unwrap();
+        run(&mut world, 2.0);
+        let p = world.placements(0)[0].translate;
+        assert!(p[0] > 0.05 && (p[2] - 0.5).abs() < 0.02, "{p:?}");
+        // A driven body is put at its row in such a step, as when time stands.
+        let mut world = box_at_rest_and(Mode::Driven);
+        world.add(1, &at_x(-3.0, 0.5)).unwrap();
+        world.place(1, &[at_x(-2.8, 0.5)], NEVER).unwrap();
+        world.step(1e-40, 1);
+        assert!(sound(&world));
+        assert!((world.placements(1)[0].translate[0] + 2.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_body_the_solver_switched_off_is_counted() {
+        let mut world = space();
+        world.add(0, &at(0.0)).unwrap();
+        world.add(0, &at(5.0)).unwrap();
+        run(&mut world, 0.1);
+        assert_eq!(world.disabled(), 0);
+        // Nothing here can do it through the crate: reach past it.
+        let handle = world.groups[0].as_ref().unwrap().bodies[1].body;
+        world.world.bodies.get_mut(handle).unwrap().set_linvel(Vector::NAN, true);
+        world.step(DT, 1);
+        assert_eq!(world.disabled(), 1);
+        assert_eq!(world.placements(0)[1].translate, [0.0, 0.0, 5.0], "it stays where it was");
+    }
+
+    #[test]
+    fn a_negative_scale_mirrors_the_body_and_zero_is_the_smallest() {
+        // A box of 1 m whose middle is 1 m over the body's origin. Mirrored along z the box
+        // hangs under the origin, so the body comes to rest with its origin 1.5 m up.
+        let shape = Shape::Box { center: [0.0, 0.0, 1.0], half: [0.5; 3] };
+        let mut world = world_of(shape, Settings::default());
+        let mirrored = Start { translate: [0.0, 0.0, 3.0], scale: [1.0, 1.0, -1.0], ..Start::default() };
+        world.add(0, &mirrored).unwrap();
+        let none = Start { translate: [5.0, 0.0, 3.0], scale: [0.0, -0.0, 1.0], ..Start::default() };
+        world.add(0, &none).unwrap();
+        run(&mut world, 3.0);
+        let p = world.placements(0);
+        assert_eq!(p[0].scale, [1.0, 1.0, -1.0], "the sign stays, for whoever draws the body");
+        assert!((p[0].translate[2] - 1.5).abs() < 0.03, "{:?}", p[0].translate);
+        assert_eq!(p[1].scale, [MIN_SCALE, MIN_SCALE, 1.0]);
+        assert!(sound(&world));
+    }
+
+    #[test]
+    fn a_body_that_appears_inside_a_sleeping_one_wakes_it() {
+        for mode in [Mode::Fixed, Mode::Driven] {
+            let mut world = box_at_rest_and(mode);
+            // A new row: a box that overlaps the one at rest by 0.4 m.
+            world.place(1, &[at_x(0.6, 0.5)], 1.0).unwrap();
+            run(&mut world, 1.0);
+            let x = world.placements(0)[0].translate[0];
+            assert!(x < -0.39, "{mode:?}: the box at rest stayed inside the new one, at {x}");
+            // So with a body that jumps there from far away, while time runs or stands.
+            for seconds in [DT, 0.0] {
+                let mut world = box_at_rest_and(mode);
+                world.place(1, &[at_x(9.0, 0.5)], 1.0).unwrap();
+                run(&mut world, 1.0);
+                let resting = world.groups[0].as_ref().unwrap().bodies[0].body;
+                assert!(world.world.bodies.get(resting).unwrap().is_sleeping());
+                world.place(1, &[at_x(0.6, 0.5)], 1.0).unwrap();
+                world.step(seconds, 1);
+                run(&mut world, 1.0);
+                let x = world.placements(0)[0].translate[0];
+                assert!(x < -0.39, "{mode:?}: the box at rest stayed inside the one that came, at {x}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_fixed_body_that_moves_wakes_what_is_near_and_lets_the_rest_sleep() {
+        // A box on a shelf with another box on top, and a heap of boxes far away.
+        let mut world = world_of(unit_box(), Settings::default());
+        world.set_group(1, unit_box(), Material::default(), Mode::Fixed).unwrap();
+        world.set_group(2, unit_box(), Material::default(), Mode::Driven).unwrap();
+        world.add(1, &at(3.0)).unwrap();
+        world.add(2, &at_x(-30.0, 9.0)).unwrap();
+        world.add(0, &at(4.0)).unwrap();
+        world.add(0, &at(5.0)).unwrap();
+        for k in 0..20 {
+            world.add(0, &at_x(40.0 + 2.0 * k as f32, 0.5)).unwrap();
+        }
+        run(&mut world, 3.0);
+        // Of the dynamic boxes; a fixed body counts as asleep too.
+        let asleep = |world: &World| {
+            let boxes = &world.groups[0].as_ref().unwrap().bodies;
+            boxes.iter().filter(|b| world.world.bodies.get(b.body).unwrap().is_sleeping()).count()
+        };
+        assert_eq!(asleep(&world), 22);
+        // The shelf changes its size a little, another joins it far off, the driven box jumps
+        // about: the heap sleeps on.
+        for k in 0..30 {
+            let size = [1.0 + 0.01 * (k % 2) as f32; 3];
+            let wobble = Start { translate: [0.0, 0.0, 3.0], scale: size, ..Start::default() };
+            let rows: Vec<Start> = [wobble].into_iter().chain((k > 10).then(|| at_x(-60.0, 3.0))).collect();
+            world.place(1, &rows, 1.0).unwrap();
+            world.place(2, &[at_x(-30.0 + 5.0 * (k % 2) as f32, 9.0)], 1.0).unwrap();
+            world.step(DT, 1);
+            assert!(asleep(&world) >= 20, "frame {k}: {} of the heap's 20 sleep", asleep(&world));
+        }
+        // The shelf goes away: both boxes fall to the floor, the upper one too.
+        world.place(1, &[at_x(-60.0, 3.0)], 1.0).unwrap();
+        run(&mut world, 3.0);
+        let p = world.placements(0);
+        assert!(p[0].translate[2] < 2.0 && p[1].translate[2] < 2.0, "{:?} {:?}", p[0], p[1]);
+        // So with an obstacle that jumps away from under a box, beside a heap.
+        let mut world = world_of(unit_box(), Settings::default());
+        world.set_obstacles(vec![slab(placed_at(0.0, 3.0))]).unwrap();
+        world.add(0, &at(3.5)).unwrap();
+        for k in 0..20 {
+            world.add(0, &at_x(40.0 + 2.0 * k as f32, 0.5)).unwrap();
+        }
+        run(&mut world, 3.0);
+        assert_eq!(world.asleep(), 21);
+        world.move_obstacles(&[placed_at(-20.0, 3.0)], 1.0).unwrap();
+        world.step(DT, 1);
+        assert_eq!(world.asleep(), 20);
+        run(&mut world, 3.0);
+        assert!((world.placements(0)[0].translate[2] - 0.5).abs() < 0.03);
+    }
+
+    /// The pyramid of the hull tests: base 2 x 2 at z = 0, tip at z = 1.
+    fn pyramid() -> Vec<[f32; 3]> {
+        vec![[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    }
+
+    #[test]
+    fn a_scale_that_flattens_a_hull_is_tried_once() {
+        let mut world = World::new(Settings::default());
+        world.set_group(0, Shape::Hull { points: pyramid() }, Material::default(), Mode::Driven).unwrap();
+        world.add(0, &at(2.0)).unwrap();
+        // A million times wider than high: no hull encloses room worth the name.
+        let flat = Start { translate: [0.0, 0.0, 2.0], scale: [1000.0, 1000.0, 0.001], ..Start::default() };
+        for _ in 0..3 {
+            world.place(0, &[flat], 1.0).unwrap();
+            world.step(DT, 1);
+        }
+        // The body takes the scale all the same, as the box around the flat pyramid.
+        assert_eq!(world.placements(0)[0].scale, flat.scale);
+        let hulls = &world.groups[0].as_ref().unwrap().hulls;
+        let kept: Vec<&Made> =
+            hulls.iter().filter(|(scale, _)| *scale == flat.scale).map(|(_, m)| m).collect();
+        assert!(matches!(kept[..], [Made::Box(..)]), "kept once, so the hull is not tried again");
+        // A ball dropped on it far from its middle comes to rest on it, 2 m up.
+        world.set_group(1, ball(), Material::default(), Mode::Dynamic).unwrap();
+        world.add(1, &at_x(400.0, 4.0)).unwrap();
+        world.add(0, &Start { translate: [0.0, 5000.0, 2.0], ..flat }).unwrap();
+        run(&mut world, 2.0);
+        assert!((world.placements(1)[0].translate[2] - 2.5).abs() < 0.03, "{:?}", world.placements(1)[0]);
+        assert!(sound(&world));
+        // The smallest of everything still weighs enough for the solver.
+        let dust = Material { density: 0.0, ..Material::default() };
+        let mut world = World::new(Settings::default());
+        world.set_group(0, Shape::Box { center: [0.0; 3], half: [0.0; 3] }, dust, Mode::Dynamic).unwrap();
+        world.set_group(1, Shape::Sphere { center: [0.0; 3], radius: 0.0 }, dust, Mode::Dynamic).unwrap();
+        world.set_group(2, Shape::Hull { points: pyramid() }, dust, Mode::Dynamic).unwrap();
+        for group in 0..3 {
+            let start = Start { translate: [group as f32, 0.0, 1.0], scale: [0.0; 3], ..Start::default() };
+            world.add(group, &start).unwrap();
+        }
+        run(&mut world, 1.0);
+        assert!(sound(&world));
+        assert!(world.placements(2)[0].translate[2] < 0.01, "it fell: {:?}", world.placements(2)[0]);
+    }
+
+    #[test]
+    fn a_scaled_hull_is_as_large_as_its_scale_says() {
+        // The pyramid three times as wide and twice as high, and one as it is.
+        let mut world = world_of(Shape::Hull { points: pyramid() }, Settings::default());
+        world
+            .add(0, &Start { translate: [0.0, 0.0, 1.0], scale: [3.0, 3.0, 2.0], ..Start::default() })
+            .unwrap();
+        world.add(0, &at_x(20.0, 1.0)).unwrap();
+        // A ball dropped on the big pyramid's flank 2 m from its middle, where the small one
+        // does not reach: it must not fall straight to the floor.
+        world.set_group(1, ball(), Material::default(), Mode::Dynamic).unwrap();
+        world.add(1, &at_x(2.0, 3.0)).unwrap();
+        let mut lowest = f64::MAX;
+        for _ in 0..90 {
+            world.step(DT, 1);
+            let b = world.placements(1)[0].translate;
+            if b[0] < 2.3 {
+                lowest = lowest.min(b[2]);
+            }
+        }
+        // The flank at x = 2.3 is 2 * (1 - 2.3 / 3) = 0.47 m high; the ball's middle is 0.6 m
+        // above it.
+        assert!(lowest > 0.9, "the ball sank to {lowest} over the flank");
+        let p = world.placements(0);
+        assert_eq!(p[0].scale, [3.0, 3.0, 2.0]);
+        assert!(p[0].translate[2].abs() < 0.05 && p[1].translate[2].abs() < 0.05, "on their bases");
+        // A model drawn in millimetres and sized down by its row is a hull like any other.
+        let large: Vec<[f32; 3]> = pyramid().iter().map(|p| p.map(|v| v * 2000.0)).collect();
+        let mut world = world_of(Shape::Hull { points: large }, Settings::default());
+        world.add(0, &Start { translate: [0.0, 0.0, 1.0], scale: [0.001; 3], ..Start::default() }).unwrap();
+        run(&mut world, 3.0);
+        assert!(world.placements(0)[0].translate[2].abs() < 0.03 && sound(&world));
+        assert!(matches!(world.groups[0].as_ref().unwrap().hulls[..], [(_, Made::Hull(_))]));
+    }
+
+    #[test]
+    fn hulls_of_points_on_a_plane_or_a_line_are_refused_and_large_clouds_are_thinned() {
+        let flat = "the shape is flat";
+        let plane: Vec<[f32; 3]> = (0..100).map(|k| [(k % 10) as f32, (k / 10) as f32, 2.0]).collect();
+        assert!(check(Shape::Hull { points: plane }).unwrap_err().contains(flat));
+        let line: Vec<[f32; 3]> = (0..50).map(|k| [k as f32, 2.0 * k as f32, -(k as f32)]).collect();
+        assert!(check(Shape::Hull { points: line }).unwrap_err().contains(flat));
+        // A ball of 10 000 points: every fifth is kept, and it still rolls like a ball.
+        let cloud: Vec<[f32; 3]> = (0..10_000)
+            .map(|k| {
+                let (z, turn) = (1.0 - 2.0 * (k as f32 + 0.5) / 10_000.0, k as f32 * 2.399_963);
+                let r = (1.0 - z * z).sqrt();
+                [0.5 * r * turn.cos(), 0.5 * r * turn.sin(), 0.5 * z]
+            })
+            .collect();
+        let Shape::Hull { points } = check(Shape::Hull { points: cloud }).unwrap() else { panic!() };
+        assert_eq!(points.len(), 2000);
+        assert!(points.len() <= MAX_HULL_POINTS);
+        let mut world = world_of(Shape::Hull { points }, Settings::default());
+        world.add(0, &at(3.0)).unwrap();
+        run(&mut world, 3.0);
+        assert!((world.placements(0)[0].translate[2] - 0.5).abs() < 0.02);
+    }
+
+    #[test]
+    fn hostile_clouds_make_no_hull_panic() {
+        // Numbers from a fixed sequence, so a failure can be found again.
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 40) as f32 / (1u64 << 24) as f32 - 0.5
+        };
+        let mut clouds: Vec<Vec<[f32; 3]>> = Vec::new();
+        for round in 0..40 {
+            let n = 4 + round * 7;
+            // Nearly in one plane, nearly on one line, nearly in one place.
+            clouds.push((0..n).map(|_| [next(), next(), next() * 1e-7]).collect());
+            clouds.push((0..n).map(|_| [next(), next() * 1e-7, next() * 1e-7]).collect());
+            clouds.push((0..n).map(|_| [1.0 + next() * 1e-7, next() * 1e-7, next() * 1e-7]).collect());
+            // Many points twice, and a cube's corners many times over.
+            let some: Vec<[f32; 3]> = (0..n).map(|_| [next(), next(), next()]).collect();
+            clouds.push(some.iter().chain(&some).chain(&some).copied().collect());
+            clouds.push(
+                (0..n * 8).map(|k| [(k & 1) as f32, (k >> 1 & 1) as f32, (k >> 2 & 1) as f32]).collect(),
+            );
+            // Sizes that do not go together.
+            let odd = |k: usize| [1e30, 1e-30, 1.0, 1e-7, 1e15][k % 5];
+            clouds
+                .push((0..n).map(|k| [next() * odd(k), next() * odd(k + 1), next() * odd(k + 2)]).collect());
+            clouds.push((0..n).map(|k| [next() * odd(k), next() * odd(k), next() * odd(k)]).collect());
+            clouds.push((0..n).map(|_| [next() * 1e-30, next() * 1e-30, next() * 1e-30]).collect());
+            clouds.push((0..n).map(|_| [next() * 1e3, next() * 1e3, next() * 1e-4]).collect());
+        }
+        let scales = [[1.0; 3], [1e-3; 3], [1e3, 1e-3, 1.0], [1e3; 3], [1.0, 1e-3, 1e-3], [-1.0, 1.0, 1e3]];
+        let (mut made, mut refused) = (0, 0);
+        for cloud in clouds {
+            let Ok(shape) = check(Shape::Hull { points: cloud }) else {
+                refused += 1;
+                continue;
+            };
+            made += 1;
+            // Far apart and without a floor: this is about the hulls, and bodies of such
+            // sizes inside each other are another matter.
+            let mut world = world_of(shape, Settings { floor: None, ..Settings::default() });
+            for scale in scales {
+                let k = world.len() as f32;
+                world
+                    .add(0, &Start { translate: [k * 5000.0, 0.0, 0.0], scale, ..Start::default() })
+                    .unwrap();
+            }
+            run(&mut world, 0.2);
+            assert!(sound(&world), "{:?}", world.groups[0].as_ref().unwrap().shape);
+        }
+        assert!(made > 50 && refused > 50, "{made} hulls made, {refused} refused");
     }
 }
