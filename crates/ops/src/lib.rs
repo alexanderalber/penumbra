@@ -102,6 +102,23 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("tex.image_file", &["movie file in"]),
     ("tex.level", &["math"]),
     (
+        "tex.liquid",
+        &[
+            "simulation",
+            "physics",
+            "water",
+            "pour",
+            "splash",
+            "particles",
+            "mpm",
+            "material point",
+            "flex solver",
+            "nvidia flex",
+            "fluid 2d",
+        ],
+    ),
+    ("tex.liquid_emitter", &["simulation", "water", "pour", "tap", "nozzle", "source", "flex"]),
+    (
         "tex.mapper",
         &[
             "kantan mapper",

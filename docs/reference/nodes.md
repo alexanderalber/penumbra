@@ -8,7 +8,7 @@ Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#g
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.dilate](#texdilate), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.erode](#texerode), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.render_volume](#texrender_volume), [tex.resolution](#texresolution), [tex.scatter](#texscatter), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.dilate](#texdilate), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.erode](#texerode), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.liquid](#texliquid), [tex.liquid_emitter](#texliquid_emitter), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.render_volume](#texrender_volume), [tex.resolution](#texresolution), [tex.scatter](#texscatter), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
 
 *inputs:* [tex.ndi_in](#texndi_in), [tex.screen_in](#texscreen_in), [tex.spout_in](#texspout_in), [tex.video_in](#texvideo_in)
 
@@ -16,7 +16,7 @@ Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#g
 
 *in the add dialog's `mapping` tab:* [tex.blend_weight](#texblend_weight), [tex.face_content](#texface_content), [tex.mapper](#texmapper), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes)
 
-*in the add dialog's `simulations` tab:* [tex.fluid](#texfluid), [tex.render_volume](#texrender_volume)
+*in the add dialog's `simulations` tab:* [tex.fluid](#texfluid), [tex.liquid](#texliquid), [tex.liquid_emitter](#texliquid_emitter), [tex.render_volume](#texrender_volume)
 
 ### tex.blend_weight
 
@@ -533,6 +533,57 @@ Outputs: `out` (tex).
 | `max` | float | `1` | -1 to 2 (soft) | Highest value kept; at or below min everything becomes min |
 | `mode` | clamp \| wrap \| mirror | `"clamp"` |  | What happens to values outside min to max; clamp: they stop at min or max; wrap: they start again from min: a ramp becomes a sawtooth; mirror: they turn back: a ramp becomes a triangle wave |
 | `alpha` | bool | `false` |  | Limit alpha the same way; off keeps the input's alpha |
+
+### tex.liquid
+
+A liquid seen from the side: it pours from emitters, falls, splashes and pools at the bottom of the picture
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs:
+
+- `emitter0 .. emitter63` (table): Where liquid pours in: tex.liquid_emitter, or any table whose first row names columns x, y and more (see tex.liquid_emitter's output). 64 emitters in all at most. Any number, up to 64: each one wired adds a free slot below it
+- `fill` (tex): Liquid lies where this picture is brighter than half when the node starts or `reset` is on. A changed picture shows at the next reset
+
+Outputs:
+
+- `out` (tex): The liquid in `color`, transparent around it, at width x height
+- `velocity` (tex): The liquid's velocity at the grid's size: red x in widths, green y in heights, down positive, per second; 0 where there is no liquid
+- `density` (tex): How full each cell of the grid is, as grey on black at the grid's size: 1 where the liquid is at rest, less at its surface and in spray. Opaque
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
+| `grid` | int | `384` | 64 to 1024 (soft, held within 16 to 1024) | Cells across the picture's width; the height follows its shape. More gives finer drops and thinner streams. At the same `particles`, twice the cells cost twice as much and hold a quarter of the liquid. A change starts the liquid over |
+| `particles` | int | `65536` | 4096 to 262144 (soft, held within 1024 to 1048576) | Most particles the liquid has: how much liquid there can be. Four particles fill a cell, so at the default grid 65536 fill a fifth of a 16:9 picture. Cost grows with this number |
+| `gravity` | vec2 | `[0, 3.27]` | -10 to 10 (soft, held within -1000 to 1000) | Which way the liquid falls and how fast it speeds up, in picture heights per second squared, y down. 3.27 is the earth's when the picture is 3 m high |
+| `edges` | walls \| open | `"walls"` |  | What the picture's edges are to the liquid; walls: the liquid stays in the picture and pools at the bottom; open: the liquid flows out and is gone, and its particles pour again from the emitters |
+| `viscosity` | float | `0.000222` | 0 to 0.004 (soft, held within 0 to 0.01) | Thickness: honey instead of water. In picture heights squared per second: 0.0002 is water in a picture 3 m high, 0.001 honey, 0.003 mud. A thick liquid needs more substeps on a fine grid |
+| `drag` | float | `0.5` | 0 to 5 (soft, held within 0 to 1000) | How fast the liquid calms: the share of its speed it loses per second. 0 sloshes for minutes |
+| `color` | colour | `[0.25, 0.55, 1, 1]` |  | Colour of the liquid in `out`; transparent around it |
+| `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | How fast the liquid moves against the show clock: 0 holds it, 0.25 is slow motion. Faster costs more substeps |
+| `reset` | bool | `false` |  | Starts over from the `fill` picture, every frame while on |
+
+### tex.liquid_emitter
+
+A place that pours liquid into tex.liquid: where, how wide, which way and how fast
+
+Inputs: none.
+
+Outputs:
+
+- `out` (table): One row under a row of column names: x, y, width, vx, vy, on, material. x and y are shares of the picture, width is in picture heights, vx and vy in picture heights per second
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `position` | vec2 | `[0.3, 0.1]` | 0 to 1 (soft) | Middle of the stream where it leaves the emitter, as shares of the picture: 0, 0 is the top left, 1, 1 the bottom right |
+| `width` | float | `0.04` | 0 to 0.3 (soft, held within 0 to 10) | How wide the stream is, in picture heights. 0 pours a stream one particle wide |
+| `direction` | vec2 | `[0, 1]` | -1 to 1 | The way the stream leaves: x right, y down, so 0, 1 pours straight down. Only its direction counts |
+| `speed` | float | `0.5` | 0 to 3 (soft, held within 0 to 100) | How fast the stream leaves, in picture heights per second. The amount follows: width times speed is the area of liquid poured per second. 0 pours nothing |
+| `on` | bool | `true` |  | Pours while on; bind it to a channel to switch the pour |
+| `material` | liquid | `"liquid"` |  | What the emitter pours; liquid: water-like liquid that runs, splashes and pools |
 
 ### tex.lookup
 

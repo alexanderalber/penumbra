@@ -92,7 +92,10 @@ pub const TOPICS: [(&str, &[&str]); 2] = [
             "tex.shapes",
         ],
     ),
-    ("simulations", &["tex.fluid", "tex.render_volume", "vol", "physics"]),
+    (
+        "simulations",
+        &["tex.fluid", "tex.liquid", "tex.liquid_emitter", "tex.render_volume", "vol", "physics"],
+    ),
 ];
 /// The tab of the component files on offer: penumbra's library, the user's and the project's
 /// `components/`. Not a family of node types; it takes the colour of `comp`.
@@ -1590,6 +1593,8 @@ mod tests {
             of("simulations"),
             [
                 "tex.fluid",
+                "tex.liquid",
+                "tex.liquid_emitter",
                 "tex.render_volume",
                 "vol.emitter",
                 "vol.null",
@@ -1609,7 +1614,9 @@ mod tests {
         assert!(of("table").iter().any(|k| k == "table.text"));
         assert!(of("table").iter().any(|k| k == "table.from_chan"));
         let tex = of("tex");
-        for gone in ["tex.mapper", "tex.scan", "tex.fluid", "tex.render_volume"] {
+        for gone in
+            ["tex.mapper", "tex.scan", "tex.fluid", "tex.liquid", "tex.liquid_emitter", "tex.render_volume"]
+        {
             assert!(!tex.iter().any(|k| k == gone), "{gone} left tex");
         }
         for stays in ["tex.remap", "tex.feedback", "tex.scatter", "tex.blob_track"] {
@@ -1663,6 +1670,8 @@ mod tests {
         assert_eq!(at("out.projector"), "out");
         assert_eq!(at("out.video"), "out");
         assert_eq!(at("vol.smoke"), "simulations");
+        assert_eq!(at("tex.liquid"), "simulations");
+        assert_eq!(at("tex.liquid_emitter"), "simulations");
         assert_eq!(at("vol"), "simulations", "a family a topic takes whole");
         assert_eq!(at("physics.rigid_bodies"), "simulations");
         assert_eq!(at("physics.bodies"), "simulations");
