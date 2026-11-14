@@ -654,7 +654,7 @@ fn every_builtin_cooks_without_warnings() {
         let path = path_of(i, kind);
         let mut params: Vec<(&str, Value)> = Vec::new();
         let desc = types.desc(kind).unwrap();
-        if desc.param_spec("width").is_some() {
+        if desc.param_spec("width").is_some() && desc.param_spec("height").is_some() {
             params.extend(size());
         }
         match kind.as_str() {
@@ -2877,6 +2877,7 @@ mod bodies;
 mod fluid;
 mod geo;
 mod layers;
+mod liquid;
 mod mesh_out;
 mod palettes;
 mod reduce;

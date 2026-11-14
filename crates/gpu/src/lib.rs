@@ -45,7 +45,7 @@ use std::time::{Duration, Instant};
 
 use penumbra_core::{Error, lock};
 
-pub use buffer::Buffer;
+pub use buffer::{Buffer, BufferRead};
 pub use canvas::{Canvas, Paint};
 pub use compute::{
     BufferSlot, Compute, DataBlock, Dispatch, Medium, MediumShape, Out, Step, Target, VOLUME_FORMAT, Volume,

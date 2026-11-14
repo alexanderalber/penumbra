@@ -20,6 +20,8 @@ mod flow;
 pub(crate) mod fluid;
 mod image_file;
 mod layer;
+pub(crate) mod liquid;
+pub(crate) mod liquid_emitter;
 pub mod mapper;
 pub(crate) mod meters_picture;
 pub mod ndi_in;
@@ -550,6 +552,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     flow::register(types)?;
     sequence::register(types)?;
     fluid::register(types)?;
+    liquid::register(types)?;
     render_volume::register(types)?;
     image_file::register(types)?;
     layer::register(types)?;

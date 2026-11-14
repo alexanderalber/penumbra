@@ -27,3 +27,8 @@ fluid without dye.
 - A mask into `obstacles` (solid where brighter than half) makes the fluid flow around a shape;
   `edges` decides whether the picture's border is a wall or lets the fluid out.
 - The `velocity` output into `tex.displace` (midpoint 0) moves any picture along the flow.
+
+## tex.fluid or tex.liquid
+
+Take `tex.liquid` instead for a liquid with a surface, such as water that is poured in, falls and
+pools at the bottom; `tex.fluid` fills the whole picture and suits smoke, ink and swirls.

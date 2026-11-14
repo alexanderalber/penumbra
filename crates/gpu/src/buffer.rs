@@ -5,16 +5,18 @@
 //! A [`Buffer`] is bytes on the GPU, zero when made. The shader decides what they are: an
 //! `array<P>` of a struct, an `array<atomic<i32>>`, a single struct of constants. On the CPU
 //! the same bytes are a slice of any [`bytemuck::Pod`] type of the same layout ([`Buffer::write`],
-//! [`Buffer::read`]). Reading back waits for the GPU and is meant for tests and diagnostics, not
-//! for every frame.
+//! [`Buffer::read`]). [`Buffer::read`] waits for the GPU and is meant for tests and diagnostics;
+//! [`Buffer::read_async`] does not wait, for a few numbers every frame.
 
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, mpsc};
+use std::time::Duration;
 
 use bytemuck::Pod;
 use penumbra_core::Error;
 
 use crate::Gpu;
-use crate::readback::READ_TIMEOUT;
+use crate::readback::{READ_TIMEOUT, ReadState};
 
 struct Inner {
     buffer: wgpu::Buffer,
@@ -197,6 +199,102 @@ impl Buffer {
         drop(view);
         staging.unmap();
         Ok(out)
+    }
+
+    /// Starts reading the whole buffer back without waiting, after the dispatches recorded
+    /// before this ([`BufferRead`]). The copy is submitted at once; the bytes arrive once the GPU
+    /// got there and [`Gpu::poll`] ran (the engine polls every frame). For a few counters a
+    /// simulation reports every frame. `spare`, a finished earlier readback of the same size,
+    /// gives its staging buffer back, so a readback per frame allocates nothing.
+    pub fn read_async(&self, gpu: &Gpu, spare: Option<BufferRead>) -> Result<BufferRead, Error> {
+        let device = gpu.device();
+        let reuse = spare.filter(|s| s.bytes == self.0.bytes && s.state() == ReadState::Ready).map(|s| {
+            s.staging.unmap();
+            s.staging
+        });
+        let ((staging, index), error) = gpu.scoped(|| {
+            let staging = reuse.unwrap_or_else(|| {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("buffer read_async"),
+                    size: self.0.bytes,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                })
+            });
+            let mut encoder = device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("buffer read_async") });
+            encoder.copy_buffer_to_buffer(&self.0.buffer, 0, &staging, 0, self.0.bytes);
+            let index = gpu.submit([encoder.finish()]);
+            (staging, index)
+        });
+        if let Some(e) = error {
+            return Err(Error::new(format!("buffer readback failed: {e}")));
+        }
+        let state = Arc::new(AtomicU8::new(WAITING));
+        let set = state.clone();
+        staging.map_async(wgpu::MapMode::Read, .., move |r| {
+            set.store(if r.is_ok() { READY } else { FAILED }, Ordering::Release);
+        });
+        Ok(BufferRead { staging, bytes: self.0.bytes, index, state })
+    }
+}
+
+const WAITING: u8 = 0;
+const READY: u8 = 1;
+const FAILED: u8 = 2;
+
+/// A readback of a [`Buffer`] started without waiting ([`Buffer::read_async`]).
+pub struct BufferRead {
+    staging: wgpu::Buffer,
+    bytes: u64,
+    index: wgpu::SubmissionIndex,
+    state: Arc<AtomicU8>,
+}
+
+impl BufferRead {
+    pub fn state(&self) -> ReadState {
+        match self.state.load(Ordering::Acquire) {
+            READY => ReadState::Ready,
+            FAILED => ReadState::Failed,
+            _ => ReadState::Waiting,
+        }
+    }
+
+    /// Waits at most `timeout` for the copy, then says where the readback stands. Blocks the
+    /// calling thread: for tests, and for a result wanted in the same frame.
+    pub fn wait(&self, gpu: &Gpu, timeout: Duration) -> ReadState {
+        if self.state() == ReadState::Waiting {
+            let wait =
+                wgpu::PollType::Wait { submission_index: Some(self.index.clone()), timeout: Some(timeout) };
+            // A timeout is not an error here: the caller looks again later.
+            let _ = gpu.device().poll(wait);
+        }
+        self.state()
+    }
+
+    /// The bytes as elements of `T`, once [`ReadState::Ready`]. `Err` before, and when the size
+    /// is no whole number of `T`.
+    pub fn get<T: Pod>(&self) -> Result<Vec<T>, Error> {
+        if self.state() != ReadState::Ready {
+            return Err(Error::new("the buffer readback is not ready"));
+        }
+        let size = size_of::<T>() as u64;
+        if size == 0 || !self.bytes.is_multiple_of(size) {
+            return Err(Error::new(format!(
+                "a buffer of {} bytes is no whole number of elements of {size} bytes",
+                self.bytes
+            )));
+        }
+        let view =
+            self.staging.get_mapped_range(..).map_err(|e| Error::new(format!("buffer readback: {e}")))?;
+        let out: Vec<T> = bytemuck::pod_collect_to_vec(&view);
+        drop(view);
+        Ok(out)
+    }
+
+    /// Bytes of the staging buffer.
+    pub fn bytes(&self) -> u64 {
+        self.bytes
     }
 }
 
