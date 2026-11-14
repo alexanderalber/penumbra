@@ -3,6 +3,7 @@
 (
     version: 2,
     nodes: {
+        "/about_credit": (kind: "ui.note", params: {"height": 90, "text": "# Credit\nInspired by the video \"TouchDesigner _03 Curl Noise\" by threedashes:\nhttps://www.youtube.com/watch?v=DkSwEY-m9GA", "width": 440}, pos: [1600.0, 440.0]),
         "/about_draw": (kind: "ui.note", params: {"height": 115, "text": "# Drawing\n`sticks` places one copy of `stick` per texel: position from `pos`, turned along `vel`, length from `scale` (size times `pulse`), colour from `palette`. `render` lights them with `light`. `out` lays them over `background`.", "width": 560}, pos: [1000.0, 670.0]),
         "/about_sim": (kind: "ui.note", params: {"height": 175, "text": "# Simulation on the GPU\nOne particle per texel of a 256 x 256 texture.\n- `ini`: start point in rgb (a round cloud), life in alpha\n- `pos`: moves each particle by its velocity and ages it. A spent one starts again at its place in `ini`\n- `vel`: pushes along the curl of a noise field, damps the velocity\n- `pos_last`, `vel_last`: hand the result to the next frame", "width": 560}, pos: [0.0, -60.0]),
         "/about_try": (kind: "ui.note", params: {"height": 195, "text": "# Try\n- `palette` on `palette`: `ember`, `plasma`, `ice`, or a list of hex colours\n- `noise` on `vel`: first value the push's strength, second how small the swirls are\n- `rate`, `amplitude` on `pulse`\n- `size` on `box`: thicker or longer sticks\n- `spread` on `ini`: size of the start cloud", "width": 440}, pos: [1600.0, 220.0]),
