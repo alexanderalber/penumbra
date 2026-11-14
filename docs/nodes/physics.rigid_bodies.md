@@ -1,4 +1,4 @@
-## A pile of boxes in five nodes
+## A pile of boxes in six nodes
 
 1. `table.text` with `format` set to `csv`: the first row names the columns, each further row is
    one body. `tx,ty,tz` and three rows `0,0,2`, `0.2,0,3.5`, `-0.1,0.1,5` drop three bodies from
@@ -7,6 +7,8 @@
 3. `physics.bodies`: the table into `table`, the model into `model`. This is one group of bodies.
 4. `physics.rigid_bodies`: the group into `bodies0`.
 5. `tex.render`: the solver's `out` into `geo`.
+6. `view.camera` into `camera` of the `tex.render`. Without a camera the render shows nothing
+   and says so.
 
 The bodies fall onto the floor at z = 0 and come to rest. The floor is part of the solver and is
 not drawn. Put a flat `geo.primitive` there if it should show.
@@ -75,8 +77,14 @@ balls away, a platform lifts what stands on it.
 **What still jumps.** An obstacle whose size changes (`scale`, `uniform`) or whose mesh changes is
 built anew where it is now. It pushes nothing, and it can leave bodies stuck inside itself. So
 does an obstacle that moves farther than `jump` in one frame, 0.5 m at first. `jump` measures
-the way of the obstacle's own origin: a long bar turning fast about its middle never jumps, and
-its ends can pass small bodies without touching them. Raise `substeps` then.
+the way of the obstacle's own origin. A turn counts on its own: an obstacle that turns by more
+than 90 degrees in one frame jumps too, at any `jump`. A long bar that turns fast, but by less
+than that, pushes with its full speed, and its ends can pass small bodies without touching them.
+Raise `substeps` then. With `jump` at 0 no obstacle and no driven body pushes, whether it moves
+or turns.
+
+An obstacle may be flat: a `geo.transform` with a `scale` of 0 along one axis gives a sheet, and
+the bodies land on it where it is drawn.
 
 For moving things with a simple form, a `driven` group is the cheaper way: a box or a ball costs
 less than a mesh.
@@ -110,6 +118,25 @@ The bodies move one step per show frame, as long as something shows the node's r
 slows time down or holds it at 0. A frame that takes longer than a twentieth of a second counts as
 a twentieth, so the bodies slow down instead of jumping.
 
+While time stands (`speed` at 0, or a show clock on hold), driven bodies and obstacles still go
+where they are put, and push nothing. A `kick` whose `trigger` rises in that time is lost. It is
+not saved up for later.
+
 The solver runs on one core of the CPU. A few hundred boxes cost little. Hulls of detailed models
 and obstacles of many triangles cost more, and thousands of bodies in one pile can take longer
 than a frame.
+
+## Limits
+
+- **Bodies:** 4000 in all groups together. The solver names the group whose last bodies it left
+  out. They come in, each at its row, as soon as another group makes room.
+- **Sizes:** a body is at most 1000 times and at least a thousandth of its model's size. Nothing
+  collides as smaller than 0.05 mm across or as larger than 2000 km.
+- **Places:** at most 1 000 000 m from the origin along each axis. A number beyond counts as
+  that.
+- **Speeds:** no body moves faster than 400 m/s, or turns by more than an eighth of a turn in
+  one solver step.
+
+A number beyond these limits is brought within them. If a number in a body grows past what the
+solver can hold all the same, the solver drops that body: it stays where it was and collides with
+nothing. The solver's warning counts such bodies. `reset` brings them back.

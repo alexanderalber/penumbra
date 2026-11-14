@@ -43,8 +43,12 @@ const TARGETS: usize = 3;
 #[derive(Clone)]
 pub struct Bodies {
     /// One per row of the table, in its order: where a dynamic body starts, and where a driven
-    /// or fixed body is.
+    /// or fixed body is. Row k is body k.
     pub starts: Vec<Start>,
+    /// Per row, whether it held a cell that is not a number. Such a cell counts as the
+    /// column's default in `starts`. A driven or fixed body that exists stays as it is while
+    /// its row is held.
+    pub held: Vec<bool>,
     /// Who moves the bodies.
     pub mode: Mode,
     /// What every body is drawn as. Empty: a box of 1 m.
@@ -147,7 +151,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .describe_input(
             "table",
-            "One row per body. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). With mode dynamic a change puts the bodies of this group back to their start. With driven and fixed the bodies follow the table, and the speed and spin columns do nothing",
+            "One row per body: row k is body k. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). With mode dynamic a change puts the bodies of this group back to their start. With driven and fixed the bodies follow the table, and the speed and spin columns do nothing. A cell that is not a number counts as 0 (1 for a scale), and a driven or fixed body stays where it is while its row holds one",
         )
         .describe_input(
             "model",
@@ -205,11 +209,15 @@ impl Operator for Group {
             Some((k, shape, note)) if *k == shape_key => (shape.clone(), note.clone()),
             _ => {
                 let (shape, note) = shape_of(&shape_key.0, placed(geo));
+                // A model that holds nothing a shape can be taken from is not the same as no
+                // model: the bodies are drawn as it and collide as something else.
+                let unseen = geo.is_some_and(|g| !g.items.is_empty()) && placed(geo).next().is_none();
+                let note = note.or_else(|| unseen.then(|| COPIES_ONLY.to_string()));
                 self.shape = Some((shape_key, shape.clone(), note.clone()));
                 (shape, note)
             }
         };
-        let (starts, table_note) = starts(table);
+        let (starts, held, table_note) = starts(table);
         let notes: Vec<String> = table_note
             .into_iter()
             .chain(shape_note)
@@ -234,10 +242,13 @@ impl Operator for Group {
         let mode = mode_of(cx.text("mode")?);
         Ok(Cooked::Outputs(vec![Data::new(
             DataKind::Bodies,
-            Bodies { starts, mode, model, shape, material, pushes, targets, spring },
+            Bodies { starts, held, mode, model, shape, material, pushes, targets, spring },
         )]))
     }
 }
+
+/// The note for a model made of nothing but copies placed by textures.
+const COPIES_ONLY: &str = "the model holds only copies placed by textures (geo.tex_instance), whose places exist on the GPU only: the bodies collide as a box of 1 m";
 
 /// The mode the `mode` param calls `name`.
 pub fn mode_of(name: &str) -> Mode {
@@ -299,23 +310,29 @@ pub fn shape_of<'a>(
     }
 }
 
+/// Where a table's header names `name`: the first cell that reads so, whatever its case.
+fn column(header: &[String], name: &str) -> Option<usize> {
+    header.iter().position(|h| h.trim().eq_ignore_ascii_case(name))
+}
+
 /// Where the bodies start: the first row of `table` names the columns (any of
-/// [`START_COLUMNS`], in any order, others ignored), every further row is one body. A missing
-/// column or an empty cell is 0 (1 for scale). Returns the starts and a note, if any.
-pub fn starts(table: &Table) -> (Vec<Start>, Option<String>) {
-    let Some(header) = table.rows().first() else { return (Vec::new(), None) };
-    let index: Vec<Option<usize>> =
-        START_COLUMNS.iter().map(|name| header.iter().position(|h| h.trim() == *name)).collect();
+/// [`START_COLUMNS`], in any order and case, others ignored), every further row is one body, up
+/// to [`MAX_BODIES`] rows. A missing column or an empty cell is 0 (1 for scale).
+///
+/// Row k is body k, whatever its cells hold: a cell that is not a finite number counts as
+/// empty, and its row is marked as held. Returns the starts, per row whether it is held, and a
+/// note, if any.
+pub fn starts(table: &Table) -> (Vec<Start>, Vec<bool>, Option<String>) {
+    let Some((header, rows)) = table.rows().split_first() else { return (Vec::new(), Vec::new(), None) };
+    let index = START_COLUMNS.map(|name| column(header, name));
     if index.iter().all(Option::is_none) {
-        return (Vec::new(), Some(format!("the first row names the columns: {}", START_COLUMNS.join(", "))));
+        let note = format!("the first row names the columns: {}", START_COLUMNS.join(", "));
+        return (Vec::new(), Vec::new(), Some(note));
     }
-    let mut note = None;
-    let mut out = Vec::new();
-    for (r, row) in table.rows().iter().enumerate().skip(1) {
-        if out.len() >= MAX_BODIES {
-            note = Some(format!("more than {MAX_BODIES} rows: the rest are left out"));
-            break;
-        }
+    let mut first_bad = None;
+    let mut out = Vec::with_capacity(rows.len().min(MAX_BODIES));
+    let mut held = Vec::with_capacity(rows.len().min(MAX_BODIES));
+    for (r, row) in rows.iter().enumerate().take(MAX_BODIES) {
         let mut v = [0.0f32; 15];
         v[6..9].fill(1.0);
         let mut bad = false;
@@ -329,9 +346,9 @@ pub fn starts(table: &Table) -> (Vec<Start>, Option<String>) {
             }
         }
         if bad {
-            note.get_or_insert_with(|| format!("row {r} holds a cell that is not a number: left out"));
-            continue;
+            first_bad.get_or_insert(r + 1);
         }
+        held.push(bad);
         out.push(Start {
             translate: [v[0], v[1], v[2]],
             rotate_degrees: [v[3], v[4], v[5]],
@@ -340,7 +357,18 @@ pub fn starts(table: &Table) -> (Vec<Start>, Option<String>) {
             spin: [v[12], v[13], v[14]],
         });
     }
-    (out, note)
+    let bad = first_bad.map(|r| {
+        format!(
+            "row {r} holds a cell that is not a number: the cell counts as 0 (1 for a scale), and a driven or fixed body stays where it is"
+        )
+    });
+    let cut =
+        (rows.len() > MAX_BODIES).then(|| format!("more than {MAX_BODIES} rows: the rest are left out"));
+    let note = match (bad, cut) {
+        (Some(a), Some(b)) => Some(format!("{a}; {b}")),
+        (a, b) => a.or(b),
+    };
+    (out, held, note)
 }
 
 /// The numbers of the rows of `table` in the columns `names`, found by the header in its first
@@ -354,7 +382,7 @@ fn rows_of<const N: usize>(
     effect: &str,
 ) -> (Vec<Option<[f32; N]>>, Option<String>) {
     let Some((header, rows)) = table.rows().split_first() else { return (Vec::new(), None) };
-    let index = names.map(|name| header.iter().position(|h| h.trim() == name));
+    let index = names.map(|name| column(header, name));
     if index.iter().all(Option::is_none) {
         let note = format!("the first row of `{input}` names the columns: {}", names.join(", "));
         return (Vec::new(), Some(note));

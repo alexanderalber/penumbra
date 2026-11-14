@@ -29,8 +29,8 @@ use penumbra_graph::{
 };
 use penumbra_mesh::Mesh;
 use penumbra_physics::{
-    Field, MAX_BODIES, MAX_FIELDS, MAX_GROUPS, MAX_SUBSTEPS, Mode, Obstacle, Place, Placement, Settings,
-    World,
+    Field, MAX_BODIES, MAX_FIELDS, MAX_GROUPS, MAX_SUBSTEPS, MIN_STEP, Mode, Obstacle, Place, Placement,
+    Settings, World,
 };
 
 use crate::geo::trs;
@@ -110,7 +110,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::float("speed", 1.0)
                 .clamp(0.0, 16.0)
                 .range(0.0, 4.0)
-                .doc("How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion"),
+                .doc("How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion. While they are held, a kick from a physics.force does nothing"),
         )
         .param(
             ParamSpec::int("substeps", 1)
@@ -124,7 +124,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(0.0, 5.0)
                 .unit(Unit::Metres)
                 .more()
-                .doc("How far a driven body or an obstacle may move in one frame and still push what is in its way. Moved farther, it is put at its new place at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. 0: driven bodies and obstacles never push"),
+                .doc("How far a driven body or an obstacle may move in one frame and still push what is in its way. Moved farther, it is put at its new place at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. A turn of more than 90 degrees in one frame counts as too far at any value. 0: driven bodies and obstacles never push"),
         )
         .param(ParamSpec::bool("reset", false).doc("Puts every body of every group back to its start, every frame while on"))
         .input_run(
@@ -185,8 +185,10 @@ struct RigidBodies {
     draw_note: Option<String>,
     /// The box of 1 m a group without a model is drawn as.
     unit: Option<Arc<Model>>,
-    /// Whether the trigger of each force field was on in the last cook, in the fields' order.
-    triggers: Vec<bool>,
+    /// Whether the trigger of each force field was on in the last cook. A field is known by
+    /// the number of its `force` input and of its row there, so a field that comes or goes
+    /// elsewhere does not pass its trigger on to another.
+    triggers: Vec<((usize, usize), bool)>,
 }
 
 impl Operator for RigidBodies {
@@ -237,7 +239,7 @@ impl Operator for RigidBodies {
             }
             None => None,
         };
-        let mut fields: Vec<force::Row> = Vec::new();
+        let mut fields: Vec<((usize, usize), force::Row)> = Vec::new();
         let mut field_notes: Vec<String> = Vec::new();
         for i in 0..MAX_RUN {
             let table = match cx.input_as::<Table>(FORCES + i) {
@@ -254,7 +256,7 @@ impl Operator for RigidBodies {
             };
             match force::from_table(table, MAX_FIELDS + 1 - fields.len()) {
                 Ok((found, left_out)) => {
-                    fields.extend(found);
+                    fields.extend(found.into_iter().map(|(line, row)| ((i, line), row)));
                     if left_out > 0 {
                         field_notes.push(format!(
                             "`force{i}`: {left_out} rows are left out, they hold a cell that is not a number or a type that does not exist"
@@ -282,22 +284,29 @@ impl Operator for RigidBodies {
             self.last = None;
         }
         self.slots.resize_with(MAX_RUN, || None);
+        // A world just built shows its start; time moves it from the next frame on.
+        let dt = if built { 0.0 } else { step(now, self.last, period) * cx.float("speed")?.max(0.0) };
+        self.last = Some(now);
+        // Whether the solver takes this frame as time at all.
+        let moving = dt as f32 >= MIN_STEP;
         let Self { world, slots, triggers, .. } = self;
         let world = world.get_or_insert_with(|| World::new(settings));
         world.apply(settings);
-        let steady: Vec<Field> = fields.iter().map(|row| row.field).collect();
+        let steady: Vec<Field> = fields.iter().map(|(_, row)| row.field).collect();
         if let Err(e) = world.set_fields(&steady) {
             field_notes.push(e);
         }
         // A field kicks when its trigger turns on: it was off in the cook before. A field
-        // seen for the first time with its trigger on does not kick.
-        for (k, row) in fields.iter().enumerate() {
-            let was_on = triggers.get(k).copied().unwrap_or(true);
-            if row.trigger && !was_on && row.kick != 0.0 {
+        // seen for the first time with its trigger on does not kick. Neither does one whose
+        // trigger turns on while time stands: nothing moves then, and kicks saved up for
+        // later would all come at once.
+        for (key, row) in &fields {
+            let was_on = triggers.iter().find(|(k, _)| k == key).is_none_or(|(_, on)| *on);
+            if row.trigger && !was_on && row.kick != 0.0 && moving {
                 let _ = world.kick(&Field { strength: row.kick, ..row.field });
             }
         }
-        *triggers = fields.iter().map(|row| row.trigger).collect();
+        *triggers = fields.iter().map(|(key, row)| (*key, row.trigger)).collect();
         let mut changed = built;
 
         // Groups whose wire left, materials that changed, and the groups to start over.
@@ -311,13 +320,21 @@ impl Operator for RigidBodies {
         let mut restart = Vec::new();
         for &(i, data, bodies) in &groups {
             match slots.get_mut(i).and_then(Option::as_mut) {
-                Some(slot) if slot.data.same(data) => {}
+                Some(slot) if slot.data.same(data) => {
+                    // A group the world had no room for gets its missing bodies once another
+                    // group has made room.
+                    let short = world.has_group(i) && world.group_len(i) < bodies.starts.len();
+                    if slot.note.is_some() && short && world.len() < MAX_BODIES {
+                        slot.note = fill(world, i, bodies, jump);
+                        changed = true;
+                    }
+                }
                 Some(slot) if slot.data.get::<Bodies>().is_some_and(|old| goes_on(old, bodies)) => {
                     world.set_material(i, bodies.material);
                     steer(world, i, bodies);
                     if bodies.mode != Mode::Dynamic {
                         // Before the step, so that a driven body travels to its row in it.
-                        slot.note = world.place(i, &bodies.starts, jump).err().map(|e| left_out(i, &e));
+                        slot.note = fill(world, i, bodies, jump);
                     }
                     slot.data = data.clone();
                     changed = true;
@@ -326,10 +343,16 @@ impl Operator for RigidBodies {
             }
         }
         let (forms, places, instanced_note) = obstacle_parts(obstacle_geo);
+        let mut move_note = None;
         if self.obstacles.as_ref().is_some_and(|old| same_forms(old, &forms)) {
-            // Only moved, if at all: before the step, so that they travel in it and push. An
-            // error means the obstacles failed when they were built, and the note says so.
-            let _ = world.move_obstacles(&places, jump);
+            // Only moved, if at all: before the step, so that they travel in it and push.
+            // Obstacles that failed when they were built cannot be moved either, and their
+            // note says why they are missing.
+            if let Err(e) = world.move_obstacles(&places, jump)
+                && self.obstacle_note.is_none()
+            {
+                move_note = Some(format!("{e}: the obstacles stay where they were"));
+            }
         } else {
             let obstacles = obstacles_of(obstacle_geo, &forms, &places);
             // Kept even when they fail, so a mesh that cannot be collided with is not tried
@@ -342,10 +365,13 @@ impl Operator for RigidBodies {
             changed = true;
         }
 
-        // A world just built shows its start; time moves it from the next frame on.
-        let dt = if built { 0.0 } else { step(now, self.last, period) * cx.float("speed")?.max(0.0) };
-        self.last = Some(now);
         world.step(dt as f32, u32::try_from(cx.int("substeps")?).unwrap_or(1));
+        let disabled_note = match world.disabled() {
+            0 => None,
+            off => Some(format!(
+                "{off} bodies or obstacles dropped out: a number in them grew past what the solver can hold. They stay where they were and collide with nothing. `reset` brings them back"
+            )),
+        };
 
         // A group starts after the step, so the frame it starts in shows it where its table
         // places it, while the other groups have moved on.
@@ -359,7 +385,7 @@ impl Operator for RigidBodies {
         }
 
         let still =
-            dt == 0.0 && !changed && !cx.params_changed() && !cx.first_cook() && !cx.outputs_wanted_changed();
+            !moving && !changed && !cx.params_changed() && !cx.first_cook() && !cx.outputs_wanted_changed();
         let outputs = if still {
             None
         } else {
@@ -389,6 +415,8 @@ impl Operator for RigidBodies {
             .flatten()
             .filter_map(|s| s.note.as_ref())
             .chain(&self.obstacle_note)
+            .chain(&move_note)
+            .chain(&disabled_note)
             .chain(&instanced_note)
             .chain(&self.draw_note)
             .chain(&input_note)
@@ -409,11 +437,6 @@ fn goes_on(old: &Bodies, new: &Bodies) -> bool {
     old.shape == new.shape && old.mode == new.mode && (new.mode != Mode::Dynamic || old.starts == new.starts)
 }
 
-/// The note for bodies of the group on input `index` that the world did not take.
-fn left_out(index: usize, why: &str) -> String {
-    format!("`bodies{index}`: {why} in all: the last bodies of this group are left out")
-}
-
 /// Makes group `index` of `world` anew from `bodies`, every body at its start. Returns what
 /// kept bodies out, if anything did.
 fn start_group(world: &mut World, index: usize, bodies: &Bodies) -> Option<String> {
@@ -421,13 +444,23 @@ fn start_group(world: &mut World, index: usize, bodies: &Bodies) -> Option<Strin
         world.remove_group(index);
         return Some(format!("`bodies{index}`: {e}: its bodies are left out"));
     }
-    for (k, start) in bodies.starts.iter().enumerate() {
-        if let Err(e) = world.add(index, start) {
-            let rest = bodies.starts.len() - k;
-            return Some(format!("`bodies{index}`: {e} in all: the last {rest} of this group are left out"));
+    fill(world, index, bodies, 0.0)
+}
+
+/// Brings group `index` of `world` in line with the rows of `bodies`. A dynamic group gets
+/// the bodies it still lacks, each at its start. A driven or fixed group is placed: every
+/// body at its row, except where the row is held. Row k is body k either way. Returns what
+/// kept bodies out, if anything did: the world takes only so many.
+fn fill(world: &mut World, index: usize, bodies: &Bodies, jump: f32) -> Option<String> {
+    let rows = bodies.starts.len();
+    let placed = match bodies.mode {
+        Mode::Dynamic => {
+            bodies.starts.iter().skip(world.group_len(index)).try_for_each(|start| world.add(index, start))
         }
-    }
-    None
+        _ => world.place_held(index, &bodies.starts, &bodies.held, jump),
+    };
+    let rest = rows.saturating_sub(world.group_len(index));
+    placed.err().map(|e| format!("`bodies{index}`: {e} in all: the last {rest} of this group are left out"))
 }
 
 /// Hands the pushes and the targets of `bodies` to group `index` of `world`. They act on the
@@ -555,10 +588,11 @@ type Form = (u64, [[f64; 3]; 3]);
 
 /// Splits where an item stands into the part that changes its form and the part that only
 /// moves it: `world` is the move (a turn, then a shift) applied after the form. A matrix that
-/// flattens the item has no such split: all of it then counts as form, around the origin.
+/// flattens the item has no turn to take out: all but its shift then counts as form.
 pub fn split(world: &Mat4) -> ([[f64; 3]; 3], Place) {
     let [[a, b, c, tx], [d, e, f, ty], [g, h, i, tz], _] = *world;
-    let whole = ([[a, b, c], [d, e, f], [g, h, i]], Place::default());
+    let shift = [tx, ty, tz].map(|v| v as f32);
+    let whole = ([[a, b, c], [d, e, f], [g, h, i]], Place { translate: shift, ..Place::default() });
     let dot = |p: [f64; 3], q: [f64; 3]| p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
     // The columns, made square to each other one after the other (Gram-Schmidt): the turn is
     // what is left of them, the form is what was taken off.
@@ -578,7 +612,7 @@ pub fn split(world: &Mat4) -> ([[f64; 3]; 3], Place) {
     let cross = [q0[1] * q1[2] - q0[2] * q1[1], q0[2] * q1[0] - q0[0] * q1[2], q0[0] * q1[1] - q0[1] * q1[0]];
     let (q2, u22) = if dot(cross, q2) < 0.0 { (q2.map(|x| -x), -u22) } else { (q2, u22) };
     let turn = [[q0[0], q1[0], q2[0]], [q0[1], q1[1], q2[1]], [q0[2], q1[2], q2[2]]];
-    let place = Place { translate: [tx, ty, tz].map(|v| v as f32), turn: turn.map(|r| r.map(|v| v as f32)) };
+    let place = Place { translate: shift, turn: turn.map(|r| r.map(|v| v as f32)) };
     ([[u00, u01, u02], [0.0, u11, u12], [0.0, 0.0, u22]], place)
 }
 
@@ -655,6 +689,8 @@ mod tests {
         net: Arc<Network>,
         cooker: Cooker,
         frame: i64,
+        /// The outputs somebody reads; both are made only while read.
+        shown: Vec<usize>,
     }
 
     impl Rig {
@@ -666,15 +702,15 @@ mod tests {
             }
             let net = Arc::new(Network::new().apply(&types, &ops).unwrap().network);
             let cooker = Cooker::new(types.clone(), Arc::new(JobPool::new(1).unwrap()));
-            Self { types, net, cooker, frame: 0 }
+            Self { types, net, cooker, frame: 0, shown: vec![GEO_OUT, TABLE_OUT] }
         }
 
         fn apply(&mut self, ops: &[Op]) {
             self.net = Arc::new(self.net.apply(&self.types, ops).unwrap().network);
         }
 
-        /// Cooks `frames` show frames at 60 a second and returns the table and the warning.
-        fn run(&mut self, frames: i64) -> (Table, Option<String>) {
+        /// Cooks `frames` show frames at 60 a second.
+        fn cook(&mut self, frames: i64) {
             let id = self.net.resolve(&"/r".parse().unwrap()).unwrap();
             for _ in 0..frames {
                 let time = FrameTime {
@@ -682,11 +718,17 @@ mod tests {
                     tick: Tick::from_seconds(self.frame as f64 / 60.0),
                     rate: Rate::FPS_60,
                 };
-                // Both outputs are made only while something reads them.
-                let shown = [GEO_OUT, TABLE_OUT].map(|output| Port { node: id, output: output as u32 });
+                let shown: Vec<Port> =
+                    self.shown.iter().map(|output| Port { node: id, output: *output as u32 }).collect();
                 self.cooker.cook_showing(&self.net, time, &[id], &[], &shown);
                 self.frame += 1;
             }
+        }
+
+        /// Cooks `frames` show frames at 60 a second and returns the table and the warning.
+        fn run(&mut self, frames: i64) -> (Table, Option<String>) {
+            let id = self.net.resolve(&"/r".parse().unwrap()).unwrap();
+            self.cook(frames);
             let status = self.cooker.status(id).unwrap();
             assert!(status.error.is_none(), "{:?}", status.error);
             let port = Port { node: id, output: TABLE_OUT as u32 };
@@ -764,8 +806,10 @@ mod tests {
         let (out, warning) = rig.run(2);
         assert_eq!((out.num_rows(), warning), (1, None));
         assert!(rig.warning("/b0").unwrap().contains("names the columns"));
+        // A row with a cell that is no number is a body all the same, at the cell's default.
         let mut rig = Rig::new(&["tz\n1\nhigh\n2"]);
-        assert_eq!(rig.run(2).0.num_rows(), 3);
+        let (out, _) = rig.run(1);
+        assert_eq!((out.num_rows(), out.cell(2, 2), out.cell(3, 2)), (4, "0", "2"));
         assert!(rig.warning("/b0").unwrap().contains("row 2"));
     }
 
@@ -1060,11 +1104,11 @@ mod tests {
                 + t[0][2] * (t[1][0] * t[2][1] - t[1][1] * t[2][0]);
             assert!((det - 1.0).abs() < 1e-5, "the turn mirrors: {det}");
         }
-        // A matrix that flattens has no turn to take out: all of it is form, and a matrix
-        // that is not a number does not panic.
+        // A matrix that flattens has no turn to take out: all of it but the shift is form,
+        // and a matrix that is not a number does not panic.
         let flat = trs([1.0, 2.0, 3.0], [0.0, 30.0, 0.0], [1.0, 1.0, 0.0]);
         let (form, place) = split(&flat);
-        assert_eq!(place, Place::default());
+        assert_eq!(place, Place { translate: [1.0, 2.0, 3.0], ..Place::default() });
         assert!((form[0][0] - flat[0][0]).abs() < 1e-12);
         let _ = split(&[[f64::NAN; 4]; 4]);
         let _ = split(&[[0.0; 4]; 4]);
@@ -1094,21 +1138,38 @@ mod tests {
 
     #[test]
     fn the_angles_that_come_out_turn_a_copy_as_the_body_is_turned() {
-        // A body thrown with a spin about a skew axis, read back through geo.instance's own
-        // reading of the table: its matrix must be a rotation (no shear, no mirror).
-        let mut rig = Rig::new(&["tz,wx,wy,wz\n1,200,-310,45"]);
-        rig.apply(&[set("/r.gravity", Value::Vec3([0.0; 3])), set("/r.floor", false)]);
-        let (out, _) = rig.run(40);
+        // Bodies that start turned and stay so: nothing pulls, nothing spins. What comes out,
+        // read as geo.instance reads it, is the turn that went in, also where the y turn
+        // looks straight along an axis and the angles themselves come out as others.
+        let turns = [[20.0, -35.0, 70.0], [170.0, 80.0, -160.0], [-40.0, 90.0, 25.0], [0.0, 0.0, 359.0]];
+        let mut text = String::from("tx,rx,ry,rz");
+        for (k, [rx, ry, rz]) in turns.iter().enumerate() {
+            text.push_str(&format!("\n{},{rx},{ry},{rz}", k * 5));
+        }
+        let mut rig = in_space(&[&text]);
+        let (out, _) = rig.run(20);
         let (places, _) = placements(&out);
-        let m = places[0];
-        for a in 0..3 {
-            for b in 0..3 {
-                let dot: f64 = (0..3).map(|k| m[k][a] * m[k][b]).sum();
-                let want = if a == b { 1.0 } else { 0.0 };
-                assert!((dot - want).abs() < 1e-4, "columns {a} and {b}: {dot}");
+        assert_eq!(places.len(), turns.len());
+        for (k, degrees) in turns.iter().enumerate() {
+            let want = trs([k as f64 * 5.0, 0.0, 0.0], *degrees, [1.0; 3]);
+            for r in 0..3 {
+                for c in 0..4 {
+                    let (got, want) = (places[k][r][c], want[r][c]);
+                    assert!((got - want).abs() < 2e-3, "{degrees:?}, row {r}, column {c}: {got} for {want}");
+                }
             }
         }
-        assert!(out.rows()[1][3..6].iter().any(|c| c != "0"), "it turned");
+        // A body that spins comes out turned by as much as it spun: 90 degrees a second
+        // about x for a third of a second.
+        let mut rig = in_space(&["wx\n90"]);
+        let (out, _) = rig.run(21);
+        let (places, _) = placements(&out);
+        let want = trs([0.0; 3], [30.0, 0.0, 0.0], [1.0; 3]);
+        for r in 0..3 {
+            for c in 0..3 {
+                assert!((places[0][r][c] - want[r][c]).abs() < 0.02, "{:?}", places[0]);
+            }
+        }
     }
 
     /// A `physics.force` at `/f<n>` with `params`, wired into `force<n>` of the solver at `/r`.
@@ -1319,5 +1380,276 @@ mod tests {
             let spec = desc.params.iter().find(|p| p.name.as_str() == name).unwrap();
             assert!(spec.applies_label().contains("targets"), "{name}: {}", spec.applies_label());
         }
+    }
+
+    fn place_of(out: &Table, row: usize) -> [f64; 3] {
+        [number(out, row, 0), number(out, row, 1), number(out, row, 2)]
+    }
+
+    fn close(p: [f64; 3], q: [f64; 3], by: f64) -> bool {
+        p.iter().zip(&q).all(|(a, b)| (a - b).abs() < by)
+    }
+
+    #[test]
+    fn row_k_is_body_k_whatever_a_cell_holds() {
+        // Dynamic: the second row has a cell that is no number. Its body starts with that cell
+        // at 0 and keeps its number, so the third body still takes the third target.
+        let mut rig = in_space(&["tx,ty\n0,0\nx,4\n6,0"]);
+        rig.apply(&steering("/to", "tx,ty,tz\n0,0,3\n3,0,3\n6,0,3", 3));
+        let (out, _) = rig.run(1);
+        assert_eq!(out.num_rows(), 4, "three rows, three bodies");
+        assert_eq!((out.cell(2, 0), out.cell(2, 1), out.cell(3, 0)), ("0", "4", "6"));
+        let warning = rig.warning("/b0").unwrap();
+        assert!(warning.contains("row 2") && warning.contains("not a number"), "{warning}");
+        let (out, _) = rig.run(300);
+        assert!(close(place_of(&out, 3), [6.0, 0.0, 3.0], 0.03), "{:?}", place_of(&out, 3));
+        assert!(close(place_of(&out, 2), [3.0, 0.0, 3.0], 0.03), "{:?}", place_of(&out, 2));
+        // Driven: a cell that turns bad for a frame holds its body where it is, and the rows
+        // after it go on moving their own bodies.
+        for mode in ["driven", "fixed"] {
+            let mut rig = in_space(&["tx,tz\n0,5\n3,5\n6,5"]);
+            rig.apply(&[set("/b0.mode", mode)]);
+            rig.run(5);
+            rig.apply(&[set("/t0.text", "tx,tz\n0.1,5\ninf,5\n6.1,5")]);
+            let (out, _) = rig.run(1);
+            assert_eq!(out.num_rows(), 4, "{mode}");
+            let x = [1, 2, 3].map(|row| number(&out, row, 0));
+            assert!(close(x, [0.1, 3.0, 6.1], 1e-4), "{mode}: {x:?}");
+            assert!(rig.warning("/b0").unwrap().contains("row 2"), "{mode}");
+            rig.apply(&[set("/t0.text", "tx,tz\n0.2,5\n3.1,5\n6.2,5")]);
+            let (out, warning) = rig.run(1);
+            let x = [1, 2, 3].map(|row| number(&out, row, 0));
+            assert!(close(x, [0.2, 3.1, 6.2], 1e-4), "{mode}: {x:?}");
+            assert_eq!((warning, rig.warning("/b0")), (None, None));
+            // A new row with a bad cell appears, with that cell at 0.
+            rig.apply(&[set("/t0.text", "tx,tz\n0.2,5\n3.1,5\n6.2,5\n-,7\n9,7")]);
+            let (out, _) = rig.run(1);
+            assert_eq!((out.num_rows(), out.cell(4, 0), out.cell(4, 2), out.cell(5, 0)), (6, "0", "7", "9"));
+        }
+    }
+
+    #[test]
+    fn the_first_4000_rows_are_the_bodies_and_headers_may_be_capitals() {
+        // Row r starts 2 r up. Row 3 holds a bad cell: it is a body all the same, so the last
+        // body is row 4000 and no row beyond it moves up.
+        let mut text = String::from("TZ , Tx");
+        for r in 1..=MAX_BODIES + 5 {
+            text.push_str(&if r == 3 { "\nhigh,1".to_string() } else { format!("\n{},1", 2 * r) });
+        }
+        let mut rig = in_space(&[&text]);
+        let (out, warning) = rig.run(1);
+        assert_eq!((out.num_rows(), warning), (1 + MAX_BODIES, None));
+        assert_eq!((out.cell(1, 2), out.cell(1, 0)), ("2", "1"), "the header is read whatever its case");
+        assert_eq!(out.cell(MAX_BODIES, 2), (2 * MAX_BODIES).to_string());
+        let warning = rig.warning("/b0").unwrap();
+        assert!(warning.contains("row 3") && warning.contains("4000"), "{warning}");
+        // So with the tables that steer.
+        let mut rig = in_space(&["tx\n0\n3"]);
+        rig.apply(&steering("/push", "FZ\n2\n-2", 2));
+        let (out, _) = rig.run(61);
+        assert!((number(&out, 1, 2) - 1.0).abs() < 0.05 && (number(&out, 2, 2) + 1.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn a_flattened_obstacle_stands_where_it_is_drawn() {
+        // Flattened to a sheet, and squeezed beyond what a turn can be taken out of: neither
+        // matrix splits, and both keep their shift.
+        let flat = trs([10.0, 2.0, 3.0], [0.0; 3], [1.0, 1.0, 0.0]);
+        let thin = trs([-4.0, 1.0, 0.5], [0.0, 30.0, 0.0], [1.0, 1.0, 1e-12]);
+        for world in [flat, thin] {
+            let (form, place) = split(&world);
+            let back = joined(&form, &place);
+            for r in 0..3 {
+                for c in 0..4 {
+                    assert!((back[r][c] - world[r][c]).abs() < 1e-6, "{world:?} came back as {back:?}");
+                }
+            }
+        }
+        // A box dropped over the sheet lands on it, 3 m up.
+        let slab = prim::cuboid([4.0, 4.0, 0.2]).unwrap();
+        let mut world = World::new(Settings::default());
+        world
+            .set_group(0, shape_of("box", std::iter::empty()).0, Material::default(), Mode::Dynamic)
+            .unwrap();
+        world.set_obstacles(vec![obstacle_of(&slab, &flat)]).unwrap();
+        world.add(0, &Start { translate: [10.0, 2.0, 5.0], ..Start::default() }).unwrap();
+        for _ in 0..300 {
+            world.step(1.0 / 60.0, 1);
+        }
+        let z = world.placements(0)[0].translate[2];
+        assert!((z - 3.5).abs() < 0.03, "{z}");
+    }
+
+    #[test]
+    fn a_held_trigger_does_not_kick_when_a_field_before_it_goes() {
+        let held = [
+            ("type", "wind".into()),
+            ("strength", 0.0.into()),
+            ("kick", 3.0.into()),
+            ("trigger", 1.0.into()),
+        ];
+        // A field on `force0`, and on `force1` one whose trigger is on from the start.
+        let mut rig = in_space(&["tz\n1"]);
+        rig.apply(&field(0, &[("strength", 0.0.into())]));
+        rig.apply(&field(1, &held));
+        assert_eq!(rig.run(30).0.cell(1, 2), "1", "the trigger was on when the field came");
+        // The first field's wire goes: nothing rose, so nothing kicks.
+        rig.apply(&[Op::Disconnect { to: "/r".parse().unwrap(), input: FORCES as u32 }]);
+        let (out, _) = rig.run(30);
+        assert_eq!(out.cell(1, 2), "1", "it was kicked without a rise of its trigger");
+        // So when the node before it fails, and when it works again.
+        let mut rig = in_space(&["tz\n1"]);
+        rig.apply(&field(0, &[("strength", 0.0.into())]));
+        rig.apply(&field(1, &held));
+        rig.run(30);
+        rig.apply(&[create("/empty", "table.from_chan"), connect("/empty", "/r", FORCES as u32)]);
+        let (out, warning) = rig.run(30);
+        assert!(warning.unwrap().contains("the node on `force0` failed"));
+        assert_eq!(out.cell(1, 2), "1", "it was kicked when the field before it failed");
+        rig.apply(&[connect("/f0", "/r", FORCES as u32)]);
+        assert_eq!(rig.run(30).0.cell(1, 2), "1", "it was kicked when the field before it came back");
+        // A table whose first row goes while the second holds its trigger: a table before
+        // this one does not shift it either.
+        let mut rig = in_space(&["tz\n1"]);
+        let table = |path: &str, text: &str, n: u32| {
+            vec![
+                create(path, "table.text"),
+                set(&format!("{path}.text"), text),
+                set(&format!("{path}.format"), "csv"),
+                connect(path, "/r", FORCES as u32 + n),
+            ]
+        };
+        rig.apply(&table("/fa", "type,kick,trigger\nwind,0,0\nwind,0,0", 0));
+        rig.apply(&table("/fb", "type,kick,trigger\nwind,3,1", 1));
+        rig.run(30);
+        rig.apply(&[set("/fa.text", "type,kick,trigger\nwind,0,0")]);
+        assert_eq!(rig.run(30).0.cell(1, 2), "1", "it was kicked when a table before it lost a row");
+    }
+
+    #[test]
+    fn a_group_cut_short_by_the_limit_is_filled_when_room_appears() {
+        let rows = |count: usize, y: usize| -> String {
+            let mut text = String::from("tx,ty");
+            for k in 0..count {
+                text.push_str(&format!("\n{},{y}", k * 3));
+            }
+            text
+        };
+        let mut rig = in_space(&[&rows(2500, 0), &rows(2500, 10)]);
+        let (out, warning) = rig.run(2);
+        assert_eq!(out.num_rows(), 1 + MAX_BODIES);
+        assert!(warning.unwrap().contains("the last 1000"));
+        // The first group shrinks: the second one's missing bodies come in, each at its row,
+        // and the warning goes.
+        rig.apply(&[set("/t0.text", rows(100, 0))]);
+        let (out, warning) = rig.run(3);
+        assert_eq!((out.num_rows(), warning), (1 + 100 + 2500, None));
+        assert_eq!((out.cell(2600, 0), out.cell(2600, 1), out.cell(2600, 9)), ("7497", "10", "1"));
+        // So with a driven group, and with a group whose neighbour is unwired.
+        let mut rig = in_space(&[&rows(2500, 0), &rows(2500, 10)]);
+        rig.apply(&[set("/b1.mode", "driven")]);
+        assert!(rig.run(2).1.unwrap().contains("`bodies1`"));
+        rig.apply(&[Op::Disconnect { to: "/r".parse().unwrap(), input: 0 }]);
+        let (out, warning) = rig.run(3);
+        assert_eq!((out.num_rows(), warning), (1 + 2500, None));
+    }
+
+    #[test]
+    fn a_kick_while_time_stands_does_nothing() {
+        let mut rig = in_space(&["tz\n1"]);
+        rig.apply(&field(0, &[("type", "wind".into()), ("strength", 0.0.into()), ("kick", 3.0.into())]));
+        rig.run(5);
+        rig.apply(&[set("/r.speed", 0.0)]);
+        rig.run(2);
+        // Three rises of the trigger while the bodies are held.
+        for _ in 0..3 {
+            rig.apply(&[set("/f0.trigger", 1.0)]);
+            rig.run(2);
+            rig.apply(&[set("/f0.trigger", 0.0)]);
+            rig.run(2);
+        }
+        rig.apply(&[set("/r.speed", 1.0)]);
+        let (out, _) = rig.run(60);
+        assert_eq!(out.cell(1, 2), "1", "the kicks were saved up and came all at once");
+        // A trigger that rose while time stood and is still on does not kick later either;
+        // the next rise does.
+        rig.apply(&[set("/r.speed", 0.0)]);
+        rig.run(2);
+        rig.apply(&[set("/f0.trigger", 1.0)]);
+        rig.run(2);
+        rig.apply(&[set("/r.speed", 1.0)]);
+        assert_eq!(rig.run(30).0.cell(1, 2), "1");
+        rig.apply(&[set("/f0.trigger", 0.0)]);
+        rig.run(1);
+        rig.apply(&[set("/f0.trigger", 1.0)]);
+        let (out, _) = rig.run(60);
+        assert!((number(&out, 1, 2) - 4.0).abs() < 0.06, "{}", out.cell(1, 2));
+    }
+
+    #[test]
+    fn the_outputs_are_made_only_for_who_reads_them_and_the_bodies_move_all_the_same() {
+        let read = |rig: &Rig, output: usize| {
+            let id = rig.net.resolve(&"/r".parse().unwrap()).unwrap();
+            rig.cooker.output(Port { node: id, output: output as u32 }).unwrap().clone()
+        };
+        // Nobody reads: both outputs are placeholders.
+        let mut rig = Rig::new(&["tz\n30"]);
+        rig.shown = vec![];
+        rig.cook(30);
+        assert!(read(&rig, GEO_OUT).is_skipped() && read(&rig, TABLE_OUT).is_skipped());
+        // A reader of the table arrives: the body has fallen meanwhile, about 1.2 m in half
+        // a second.
+        rig.shown = vec![TABLE_OUT];
+        rig.cook(1);
+        assert!(read(&rig, GEO_OUT).is_skipped());
+        let z: f64 = read(&rig, TABLE_OUT).get::<Table>().unwrap().cell(1, 2).parse().unwrap();
+        assert!(z < 29.0 && z > 28.4, "{z}");
+        // Only the geometry is read: the table is a placeholder again.
+        rig.shown = vec![GEO_OUT];
+        rig.cook(2);
+        assert!(read(&rig, TABLE_OUT).is_skipped() && read(&rig, GEO_OUT).get::<Geo>().is_some());
+        // Time stands, and then a reader of the table arrives: it gets the table as it is.
+        rig.apply(&[set("/r.speed", 0.0)]);
+        rig.cook(3);
+        rig.shown = vec![GEO_OUT, TABLE_OUT];
+        rig.cook(1);
+        let held: f64 = read(&rig, TABLE_OUT).get::<Table>().unwrap().cell(1, 2).parse().unwrap();
+        assert!(held < z, "{held}");
+        rig.cook(5);
+        let later: f64 = read(&rig, TABLE_OUT).get::<Table>().unwrap().cell(1, 2).parse().unwrap();
+        assert_eq!(held, later);
+    }
+
+    #[test]
+    fn time_that_runs_back_and_a_reset_of_the_node() {
+        let mut rig = Rig::new(&["tz\n30"]);
+        let (out, _) = rig.run(30);
+        let z = number(&out, 1, 2);
+        // The clock jumps back: the bodies go on by a frame, they neither jump nor start over.
+        rig.frame = 3;
+        let (out, _) = rig.run(1);
+        let after = number(&out, 1, 2);
+        assert!(after < z && after > z - 0.2, "{z} then {after}");
+        // The node's reset button puts every body back to its start.
+        let id = rig.net.resolve(&"/r".parse().unwrap()).unwrap();
+        assert!(matches!(rig.cooker.reset(id), penumbra_graph::ResetOutcome::Reset));
+        assert_eq!(rig.run(1).0.cell(1, 2), "30");
+        assert!(number(&rig.run(10).0, 1, 2) < 30.0);
+    }
+
+    #[test]
+    fn inputs_that_fail_or_wait_are_named() {
+        // A node in error on `obstacles`: named, and the bodies fall without it.
+        let mut rig = Rig::new(&["tz\n3"]);
+        rig.apply(&[create("/gt", "geo.transform"), connect("/gt", "/r", OBSTACLES as u32)]);
+        let (out, warning) = rig.run(30);
+        let warning = warning.unwrap();
+        assert!(warning.contains("the node on `obstacles` failed"), "{warning}");
+        assert!(number(&out, 1, 2) < 2.9);
+        // The tables that steer a group: one in error is named at the group, which goes on.
+        rig.apply(&[create("/empty", "table.from_chan"), connect("/empty", "/b0", 3)]);
+        rig.run(2);
+        let warning = rig.warning("/b0").unwrap();
+        assert!(warning.contains("the node on `targets` failed"), "{warning}");
     }
 }

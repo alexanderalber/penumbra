@@ -51,6 +51,9 @@ negative `kick` blasts the bodies apart, a `wind` gives a gust, a `vortex` a twi
 
 The kick comes besides `strength`. For a kick alone set `strength` to 0.
 
+While time stands for the bodies (`speed` at 0 on the solver, or a show clock on hold), a
+trigger that rises gives no kick. The kick is not saved up for later.
+
 ## Recipes
 
 **Sound blows the pile apart.** A `physics.force` with `type` `point`, `strength` 0, `kick` -6
@@ -85,5 +88,6 @@ The table needs a `strength` or a `kick` column. A table without both is taken f
 the solver says so. A row with a cell that is not a number is left out, and the solver counts
 such rows in a warning.
 
-A kick belongs to its row. When rows come and go, a row that takes the place of another can kick
-in its stead.
+A kick belongs to its `force` input and its row there. A field that comes or goes on another
+input changes nothing. Inside one table, a row that takes the place of another can kick in its
+stead when rows come and go.

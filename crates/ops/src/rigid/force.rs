@@ -188,12 +188,13 @@ impl Operator for Force {
 }
 
 /// The force fields of a table whose first row names the columns ([`COLUMNS`]), up to `room`
-/// of them, and how many rows were left out: those with a cell that is no finite number, or
-/// with a type or falloff nobody knows. Numbers beyond the params' bounds are brought within
-/// them. A column that is missing takes `physics.force`'s default; `type` and `falloff` may be
-/// words or the number of the choice. `Err` for a table with rows but neither a `strength` nor
-/// a `kick` column: it is some other table, wired here by mistake.
-pub fn from_table(table: &Table, room: usize) -> Result<(Vec<Row>, usize), String> {
+/// of them, each with the number of its row (0 for the first under the header), and how many
+/// rows were left out: those with a cell that is no finite number, or with a type or falloff
+/// nobody knows. Numbers beyond the params' bounds are brought within them. A column that is
+/// missing takes `physics.force`'s default; `type` and `falloff` may be words or the number of
+/// the choice. `Err` for a table with rows but neither a `strength` nor a `kick` column: it is
+/// some other table, wired here by mistake.
+pub fn from_table(table: &Table, room: usize) -> Result<(Vec<(usize, Row)>, usize), String> {
     let Some((header, rows)) = table.rows().split_first() else { return Ok((Vec::new(), 0)) };
     if rows.is_empty() {
         return Ok((Vec::new(), 0));
@@ -219,7 +220,7 @@ pub fn from_table(table: &Table, room: usize) -> Result<(Vec<Row>, usize), Strin
     let d = DEFAULT.field;
     let mut out = Vec::new();
     let mut left_out = 0;
-    for row in rows.iter().take(MAX_ROWS) {
+    for (line, row) in rows.iter().enumerate().take(MAX_ROWS) {
         if out.len() >= room {
             break;
         }
@@ -251,7 +252,7 @@ pub fn from_table(table: &Table, room: usize) -> Result<(Vec<Row>, usize), Strin
             })
         };
         match read() {
-            Some(row) => out.push(row),
+            Some(row) => out.push((line, row)),
             None => left_out += 1,
         }
     }
@@ -261,6 +262,12 @@ pub fn from_table(table: &Table, room: usize) -> Result<(Vec<Row>, usize), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The fields of `table` without their row numbers.
+    fn fields(table: &Table, room: usize) -> Result<(Vec<Row>, usize), String> {
+        from_table(table, room)
+            .map(|(rows, left_out)| (rows.into_iter().map(|(_, row)| row).collect(), left_out))
+    }
 
     fn table(rows: &[&[&str]]) -> Table {
         Table::new(rows.iter().map(|r| r.iter().map(|c| c.to_string()).collect()).collect()).unwrap()
@@ -283,7 +290,7 @@ mod tests {
         for row in [DEFAULT, other] {
             let t = table_of(&row).unwrap();
             assert_eq!((t.num_rows(), t.rows()[0].len()), (2, COLUMNS.len()));
-            assert_eq!(from_table(&t, 64).unwrap(), (vec![row], 0));
+            assert_eq!(fields(&t, 64).unwrap(), (vec![row], 0));
         }
     }
 
@@ -291,7 +298,7 @@ mod tests {
     fn missing_columns_take_the_defaults_and_a_table_of_something_else_is_refused() {
         // A table of attractors made from a tracker's channels: numbers only.
         let t = table(&[&["tx", "ty", "strength", "type"], &["1", "2", "5", "0"], &["3", "", "-5", "1"]]);
-        let (rows, left_out) = from_table(&t, 64).unwrap();
+        let (rows, left_out) = fields(&t, 64).unwrap();
         assert_eq!(left_out, 0);
         let first = Field { strength: 5.0, position: [1.0, 2.0, 0.0], ..DEFAULT.field };
         assert_eq!(rows[0], Row { field: first, ..DEFAULT });
@@ -299,17 +306,17 @@ mod tests {
         assert_eq!(rows[1].field.direction, [0.0, 0.0, 1.0], "the default: up");
         // Only `dx`: along x, and nothing of the default's z.
         let t = table(&[&["strength", "dx", "type"], &["5", "-2", "wind"]]);
-        assert_eq!(from_table(&t, 64).unwrap().0[0].field.direction, [-2.0, 0.0, 0.0]);
+        assert_eq!(fields(&t, 64).unwrap().0[0].field.direction, [-2.0, 0.0, 0.0]);
         // A kick alone has no steady strength.
         let t = table(&[&["Kick", " trigger "], &["4", "1"], &["4", "0.5"]]);
-        let (rows, _) = from_table(&t, 64).unwrap();
+        let (rows, _) = fields(&t, 64).unwrap();
         assert_eq!((rows[0].field.strength, rows[0].kick, rows[0].trigger), (0.0, 4.0, true));
         assert!(!rows[1].trigger, "on above 0.5");
         // The table of a group of bodies is no table of fields.
-        assert!(from_table(&table(&[&["tx", "ty", "tz"], &["1", "2", "3"]]), 64).is_err());
+        assert!(fields(&table(&[&["tx", "ty", "tz"], &["1", "2", "3"]]), 64).is_err());
         // No rows: nothing to complain about.
-        assert_eq!(from_table(&table(&[]), 64).unwrap(), (vec![], 0));
-        assert_eq!(from_table(&table(&[&["a", "b"]]), 64).unwrap(), (vec![], 0));
+        assert_eq!(fields(&table(&[]), 64).unwrap(), (vec![], 0));
+        assert_eq!(fields(&table(&[&["a", "b"]]), 64).unwrap(), (vec![], 0));
     }
 
     #[test]
@@ -326,7 +333,7 @@ mod tests {
             &["1e300", "-1e300", "2", "-5", "1", "-1e300"],
             &["2"],
         ]);
-        let (rows, left_out) = from_table(&t, 64).unwrap();
+        let (rows, left_out) = fields(&t, 64).unwrap();
         assert_eq!((rows.len(), left_out), (3, 6), "{rows:?}");
         assert_eq!((rows[0].field.kind, rows[0].field.falloff), (FieldKind::Wind, Falloff::Linear));
         let huge = rows[1];
@@ -339,6 +346,9 @@ mod tests {
             "a short row"
         );
         // A table is read only as far as there is room.
-        assert_eq!(from_table(&t, 2).unwrap().0.len(), 2);
+        assert_eq!(fields(&t, 2).unwrap().0.len(), 2);
+        // Each field comes with the number of its row, the rows left out counted.
+        let lines: Vec<usize> = from_table(&t, 64).unwrap().0.iter().map(|(line, _)| *line).collect();
+        assert_eq!(lines, [0, 7, 8]);
     }
 }

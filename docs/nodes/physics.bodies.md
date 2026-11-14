@@ -6,7 +6,7 @@ bodies, a model shows them. The params say who moves them (`mode`), what they co
 pushes each body, `targets` pulls each body to a place.
 
 The page of [physics.rigid_bodies](../reference/nodes.md#physicsrigid_bodies) starts with a pile
-in five nodes.
+in six nodes.
 
 ## The table of a group
 
@@ -20,9 +20,18 @@ Any table can place the bodies. Every column is optional, but the first row must
 | `vx`, `vy`, `vz` | its speed at the start, in metres per second (`mode` `dynamic` only) | 0 |
 | `wx`, `wy`, `wz` | its spin at the start, in degrees per second about x, y and z (`mode` `dynamic` only) | 0 |
 
-A row with a cell that is not a finite number is left out, and `physics.bodies` says so in a
-warning. The solver takes 4000 bodies at most, counted over all groups. Bodies beyond that are
-left out, and the solver names the group they belong to.
+**Row k is body k.** Every row is a body, whatever its cells hold, and a row never moves up
+into the place of another. A cell that is not a finite number counts as an empty one: 0, or 1
+for a size. `physics.bodies` names the first such row in a warning. In a `driven` or `fixed`
+group the body of such a row stays where it is until the row can be read again. The names in the
+first row may be written in capitals.
+
+A negative size mirrors the body along that axis, as it does in `geo.instance`. A size of 0
+counts as 0.001.
+
+The solver takes 4000 bodies at most, counted over all groups, and a group reads the first 4000
+rows of its table. Bodies beyond the limit are left out, and the solver names the group they
+belong to. They come in when another group makes room.
 
 Bodies that overlap at the start are pushed apart in the first frames, and fast. Leave a gap
 between them.
@@ -53,7 +62,11 @@ at once. A body that grows pushes its neighbours out and does not throw them. `v
 **Jumps.** A row that moves a long way in one frame would throw everything in between. `jump` on
 the solver sets the limit, 0.5 m at first. A body whose row moves farther is put there at once and
 pushes nothing. Raise `jump` for a fast paddle. Lower it for a tracker that loses a blob and finds
-it elsewhere.
+it elsewhere. A row that turns its body by more than 90 degrees in one frame is a jump too, at
+any `jump`. With `jump` at 0 a driven body never pushes, whether it moves or turns.
+
+**Angles.** An angle may wrap: from 359 to 1 the body turns on by 2 degrees. It always takes the
+shorter way round, so a body cannot be told to turn by more than half a turn in one frame.
 
 **Fast and thin.** The solver looks where the bodies are once per step. A driven body that moves
 farther than it is thick in one frame can pass a small body without touching it. Raise `substeps`,
@@ -120,8 +133,8 @@ A change to this table never puts the bodies back to their start. Change it on e
 you like: make it from channels with `table.from_chan`.
 
 The rows need not match the bodies. Bodies beyond the last row are not pushed. Rows beyond the
-last body do nothing. A row with a cell that is not a number pushes nothing, and the node says so
-in a warning.
+last body do nothing. A row with a cell that is not a number pushes nothing and keeps its place,
+and the node says so in a warning.
 
 A heavy body gains speed as fast as a light one, as with a `physics.force`. Only the bodies of a
 `dynamic` group are pushed.
@@ -174,7 +187,13 @@ place only: how the body is turned is left to it.
   a ball, as wide as the largest of the three.
 
 A flat model, such as a plane, has no hull. It collides as the box around it, and `physics.bodies`
-says so in a warning.
+says so in a warning. So does a model made only of copies from `geo.tex_instance`: the bodies
+then collide as a box of 1 m.
+
+With `hull`, every size in the table needs a hull of its own. The group keeps the hulls of 64
+sizes. A driven group whose bodies change their size on every frame builds hulls on every frame:
+use `box` or `sphere` for it. A size that squeezes the hull flat makes that body collide as the
+box around it.
 
 A ball on the floor rolls on for ever, since nothing slows a rolling ball down. Set `damping` and
 `spin_damping` on the solver, to 0.3 or so, and the balls come to rest.

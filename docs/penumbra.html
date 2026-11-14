@@ -6350,7 +6350,7 @@ def cook(cx):
 <p>One group of rigid bodies for physics.rigid_bodies: a table places them, a model shows them, the params say who moves them, what they collide as and what they are made of</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>table</code> <span class="kind">table</span>: One row per body. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). With mode dynamic a change puts the bodies of this group back to their start. With driven and fixed the bodies follow the table, and the speed and spin columns do nothing</li>
+<li><code>table</code> <span class="kind">table</span>: One row per body: row k is body k. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). With mode dynamic a change puts the bodies of this group back to their start. With driven and fixed the bodies follow the table, and the speed and spin columns do nothing. A cell that is not a number counts as 0 (1 for a scale), and a driven or fixed body stays where it is while its row holds one</li>
 <li><code>model</code> <span class="kind">geo</span>: What each body looks like, with its material, and what <code>shape</code> is taken from. A change to its form puts the bodies of this group back to their start</li>
 <li><code>forces</code> <span class="kind">table</span>: A push per body, read on every frame: row k pushes body k of the table. The first row names the columns: fx fy fz for the speed the body gains per second along x, y and z (metres per second squared), mx my mz for the spin it gains per second about them (degrees per second squared). A heavy body gains as much as a light one. A change here never puts the bodies back to their start. Bodies without a row are not pushed. Only with mode dynamic</li>
 <li><code>targets</code> <span class="kind">table</span>: A place per body that a spring pulls it to: row k pulls body k of the table. The first row names the columns tx ty tz, in metres. The bodies form the figure these places draw, and collide on their way. <code>pull</code> at 0 lets them go. A change here never puts the bodies back to their start. Bodies without a row are not pulled. Only with mode dynamic</li>
@@ -6376,7 +6376,7 @@ def cook(cx):
 <div class="more">
 <h5 id="physics.bodies-what-it-is-for">What it is for</h5>
 <p>A <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> is one group of bodies for a <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a>. A table places the bodies, a model shows them. The params say who moves them (<code>mode</code>), what they collide as (<code>shape</code>) and what they are made of. Two more tables steer the bodies while they move: <code>forces</code> pushes each body, <code>targets</code> pulls each body to a place.</p>
-<p>The page of <a href="#physics.rigid_bodies">physics.rigid_bodies</a> starts with a pile in five nodes.</p>
+<p>The page of <a href="#physics.rigid_bodies">physics.rigid_bodies</a> starts with a pile in six nodes.</p>
 <h5 id="physics.bodies-the-table-of-a-group">The table of a group</h5>
 <p>Any table can place the bodies. Every column is optional, but the first row must name at least one:</p>
 <table>
@@ -6389,7 +6389,9 @@ def cook(cx):
 <tr><td><code>wx</code>, <code>wy</code>, <code>wz</code></td><td>its spin at the start, in degrees per second about x, y and z (<code>mode</code> <code>dynamic</code> only)</td><td>0</td></tr>
 </tbody>
 </table>
-<p>A row with a cell that is not a finite number is left out, and <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> says so in a warning. The solver takes 4000 bodies at most, counted over all groups. Bodies beyond that are left out, and the solver names the group they belong to.</p>
+<p><strong>Row k is body k.</strong> Every row is a body, whatever its cells hold, and a row never moves up into the place of another. A cell that is not a finite number counts as an empty one: 0, or 1 for a size. <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> names the first such row in a warning. In a <code>driven</code> or <code>fixed</code> group the body of such a row stays where it is until the row can be read again. The names in the first row may be written in capitals.</p>
+<p>A negative size mirrors the body along that axis, as it does in <a class="ref" href="#geo.instance"><code>geo.instance</code></a>. A size of 0 counts as 0.001.</p>
+<p>The solver takes 4000 bodies at most, counted over all groups, and a group reads the first 4000 rows of its table. Bodies beyond the limit are left out, and the solver names the group they belong to. They come in when another group makes room.</p>
 <p>Bodies that overlap at the start are pushed apart in the first frames, and fast. Leave a gap between them.</p>
 <h5 id="physics.bodies-bodies-that-follow-a-table">Bodies that follow a table</h5>
 <p><code>mode</code> on <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> says who moves the bodies of a group:</p>
@@ -6404,7 +6406,8 @@ def cook(cx):
 <p>A driven group is a hand in the pile: a paddle moved by an LFO bats balls away, a person in front of a camera shoves boxes aside. A fixed group is scenery to rearrange: shelves, pegs, a funnel.</p>
 <p><strong>Rows and bodies.</strong> The first row is the first body, the second row the second. A new row at the end adds a body there. A row that goes takes the last body away. Keep each thing in its row from frame to frame. When two rows swap, the two bodies travel to each other's places.</p>
 <p><strong>The columns.</strong> <code>tx ty tz</code>, <code>rx ry rz</code> and <code>sx sy sz</code> count. A size that changes resizes the body at once. A body that grows pushes its neighbours out and does not throw them. <code>vx vy vz</code> and <code>wx wy wz</code> do nothing: the speed of a driven body is the way its row moved since the last frame. <code>density</code> does nothing either.</p>
-<p><strong>Jumps.</strong> A row that moves a long way in one frame would throw everything in between. <code>jump</code> on the solver sets the limit, 0.5 m at first. A body whose row moves farther is put there at once and pushes nothing. Raise <code>jump</code> for a fast paddle. Lower it for a tracker that loses a blob and finds it elsewhere.</p>
+<p><strong>Jumps.</strong> A row that moves a long way in one frame would throw everything in between. <code>jump</code> on the solver sets the limit, 0.5 m at first. A body whose row moves farther is put there at once and pushes nothing. Raise <code>jump</code> for a fast paddle. Lower it for a tracker that loses a blob and finds it elsewhere. A row that turns its body by more than 90 degrees in one frame is a jump too, at any <code>jump</code>. With <code>jump</code> at 0 a driven body never pushes, whether it moves or turns.</p>
+<p><strong>Angles.</strong> An angle may wrap: from 359 to 1 the body turns on by 2 degrees. It always takes the shorter way round, so a body cannot be told to turn by more than half a turn in one frame.</p>
 <p><strong>Fast and thin.</strong> The solver looks where the bodies are once per step. A driven body that moves farther than it is thick in one frame can pass a small body without touching it. Raise <code>substeps</code>, or make the driven body thicker.</p>
 <p><strong>Time.</strong> While <code>speed</code> is 0, a driven body still goes where its row is, and pushes nothing. With <code>speed</code> below 1 a driven body hits harder: it covers the same way in less of the bodies' time.</p>
 <h5 id="physics.bodies-a-driven-group-from-channels">A driven group from channels</h5>
@@ -6459,7 +6462,7 @@ def cook(cx):
 </tbody>
 </table>
 <p>A change to this table never puts the bodies back to their start. Change it on every frame if you like: make it from channels with <a class="ref" href="#table.from_chan"><code>table.from_chan</code></a>.</p>
-<p>The rows need not match the bodies. Bodies beyond the last row are not pushed. Rows beyond the last body do nothing. A row with a cell that is not a number pushes nothing, and the node says so in a warning.</p>
+<p>The rows need not match the bodies. Bodies beyond the last row are not pushed. Rows beyond the last body do nothing. A row with a cell that is not a number pushes nothing and keeps its place, and the node says so in a warning.</p>
 <p>A heavy body gains speed as fast as a light one, as with a <a class="ref" href="#physics.force"><code>physics.force</code></a>. Only the bodies of a <code>dynamic</code> group are pushed.</p>
 <p><strong>Each body lifted by its own channel.</strong> Channels named <code>fz1</code>, <code>fz2</code>, <code>fz3</code>, each between 0 and 30, into a <a class="ref" href="#table.from_chan"><code>table.from_chan</code></a> with <code>layout</code> set to <code>numbered</code>. Its table has the column <code>fz</code> and three rows. Wire it into <code>forces</code>: each channel lifts its body when it passes 9.81.</p>
 <h5 id="physics.bodies-bodies-pulled-into-a-figure">Bodies pulled into a figure</h5>
@@ -6494,7 +6497,8 @@ def cook(cx):
 <li><code>sphere</code>: a ball as wide as the model's longest side. With a scale that differs per axis it stays a ball, as wide as the largest of the three.
 </li>
 </ul>
-<p>A flat model, such as a plane, has no hull. It collides as the box around it, and <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> says so in a warning.</p>
+<p>A flat model, such as a plane, has no hull. It collides as the box around it, and <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a> says so in a warning. So does a model made only of copies from <a class="ref" href="#geo.tex_instance"><code>geo.tex_instance</code></a>: the bodies then collide as a box of 1 m.</p>
+<p>With <code>hull</code>, every size in the table needs a hull of its own. The group keeps the hulls of 64 sizes. A driven group whose bodies change their size on every frame builds hulls on every frame: use <code>box</code> or <code>sphere</code> for it. A size that squeezes the hull flat makes that body collide as the box around it.</p>
 <p>A ball on the floor rolls on for ever, since nothing slows a rolling ball down. Set <code>damping</code> and <code>spin_damping</code> on the solver, to 0.3 or so, and the balls come to rest.</p>
 <h5 id="physics.bodies-what-a-body-is-made-of">What a body is made of</h5>
 <p>Each group has its own <code>friction</code>, <code>bounce</code> and <code>density</code>. The solver has <code>friction</code> and <code>bounce</code> for the floor and the obstacles.</p>
@@ -6557,6 +6561,7 @@ def cook(cx):
 <h5 id="physics.force-a-kick-on-a-trigger">A kick on a trigger</h5>
 <p><code>kick</code> is a change of speed in metres per second. The field gives it once, at the moment <code>trigger</code> rises past 0.5, to every body it reaches. It has the field's shape: a <code>point</code> with a negative <code>kick</code> blasts the bodies apart, a <code>wind</code> gives a gust, a <code>vortex</code> a twirl.</p>
 <p>The kick comes besides <code>strength</code>. For a kick alone set <code>strength</code> to 0.</p>
+<p>While time stands for the bodies (<code>speed</code> at 0 on the solver, or a show clock on hold), a trigger that rises gives no kick. The kick is not saved up for later.</p>
 <h5 id="physics.force-recipes">Recipes</h5>
 <p><strong>Sound blows the pile apart.</strong> A <a class="ref" href="#physics.force"><code>physics.force</code></a> with <code>type</code> <code>point</code>, <code>strength</code> 0, <code>kick</code> -6 and <code>position</code> in the middle of the pile, a little under the floor so the bodies fly upwards too. Bind <code>trigger</code> to the <code>kick</code> channel of a <a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a>.</p>
 <p><strong>An attractor that wanders.</strong> A <a class="ref" href="#physics.force"><code>physics.force</code></a> with <code>type</code> <code>point</code> and <code>strength</code> 12. Bind the x of <code>position</code> to a <a class="ref" href="#chan.lfo"><code>chan.lfo</code></a> with <code>amplitude</code> 3 and <code>rate</code> 0.1. The bodies follow the point from side to side. <code>damping</code> 0.5 on the solver keeps them from circling it for ever.</p>
@@ -6577,7 +6582,7 @@ def cook(cx):
 </tbody>
 </table>
 <p>The table needs a <code>strength</code> or a <code>kick</code> column. A table without both is taken for a mistake, and the solver says so. A row with a cell that is not a number is left out, and the solver counts such rows in a warning.</p>
-<p>A kick belongs to its row. When rows come and go, a row that takes the place of another can kick in its stead.</p>
+<p>A kick belongs to its <code>force</code> input and its row there. A field that comes or goes on another input changes nothing. Inside one table, a row that takes the place of another can kick in its stead when rows come and go.</p>
 </div>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
@@ -6617,17 +6622,17 @@ def cook(cx):
 <tr><td><code>floor_height</code></td><td>float</td><td><code>0</code></td><td>-5 to 5 m (soft, held within -10000 to 10000 m)</td><td>How high the floor lies, along z</td></tr>
 <tr><td><code>friction</code></td><td>float</td><td><code>0.5</code></td><td>0 to 2 (soft, held within 0 to 10)</td><td>How much the floor and the obstacles grip: 0 slides like ice, 1 holds like rubber. A body on them slides by the mean of this and its group's <code>friction</code></td></tr>
 <tr><td><code>bounce</code></td><td>float</td><td><code>0</code></td><td>0 to 1</td><td>How much of its speed a body keeps when it hits the floor or an obstacle: 0 lands dead, 1 bounces for ever. The larger of this and the group's <code>bounce</code> counts</td></tr>
-<tr><td><code>speed</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft, held within 0 to 16)</td><td>How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion</td></tr>
+<tr><td><code>speed</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft, held within 0 to 16)</td><td>How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion. While they are held, a kick from a physics.force does nothing</td></tr>
 <tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>Puts every body of every group back to its start, every frame while on</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>damping</code></td><td>float</td><td><code>0</code></td><td>0 to 5 (soft, held within 0 to 1000)</td><td>Slows every body down as thick air would: the share of its speed it loses per second</td></tr>
 <tr><td><code>spin_damping</code></td><td>float</td><td><code>0</code></td><td>0 to 5 (soft, held within 0 to 1000)</td><td>Slows every body's turning down: the share of its spin it loses per second</td></tr>
 <tr><td><code>substeps</code></td><td>int</td><td><code>1</code></td><td>1 to 8</td><td>Solver steps per frame: raise it when fast bodies pass through thin things or a tall stack wobbles. Each step costs the same again</td></tr>
-<tr><td><code>jump</code></td><td>float</td><td><code>0.5</code></td><td>0 to 5 m (soft, held within 0 to 1000000 m)</td><td>How far a driven body or an obstacle may move in one frame and still push what is in its way. Moved farther, it is put at its new place at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. 0: driven bodies and obstacles never push</td></tr>
+<tr><td><code>jump</code></td><td>float</td><td><code>0.5</code></td><td>0 to 5 m (soft, held within 0 to 1000000 m)</td><td>How far a driven body or an obstacle may move in one frame and still push what is in its way. Moved farther, it is put at its new place at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. A turn of more than 90 degrees in one frame counts as too far at any value. 0: driven bodies and obstacles never push</td></tr>
 </tbody>
 </table>
 <div class="more">
-<h5 id="physics.rigid_bodies-a-pile-of-boxes-in-five-nodes">A pile of boxes in five nodes</h5>
+<h5 id="physics.rigid_bodies-a-pile-of-boxes-in-six-nodes">A pile of boxes in six nodes</h5>
 <ol>
 <li><a class="ref" href="#table.text"><code>table.text</code></a> with <code>format</code> set to <code>csv</code>: the first row names the columns, each further row is one body. <code>tx,ty,tz</code> and three rows <code>0,0,2</code>, <code>0.2,0,3.5</code>, <code>-0.1,0.1,5</code> drop three bodies from 2 m, 3.5 m and 5 m.
 </li>
@@ -6638,6 +6643,8 @@ def cook(cx):
 <li><a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a>: the group into <code>bodies0</code>.
 </li>
 <li><a class="ref" href="#tex.render"><code>tex.render</code></a>: the solver's <code>out</code> into <code>geo</code>.
+</li>
+<li><a class="ref" href="#view.camera"><code>view.camera</code></a> into <code>camera</code> of the <a class="ref" href="#tex.render"><code>tex.render</code></a>. Without a camera the render shows nothing and says so.
 </li>
 </ol>
 <p>The bodies fall onto the floor at z = 0 and come to rest. The floor is part of the solver and is not drawn. Put a flat <a class="ref" href="#geo.primitive"><code>geo.primitive</code></a> there if it should show.</p>
@@ -6665,7 +6672,8 @@ def cook(cx):
 <p>Wire any geometry into <code>obstacles</code>: a model from <a class="ref" href="#geo.file"><code>geo.file</code></a>, primitives placed by <a class="ref" href="#geo.transform"><code>geo.transform</code></a>, several joined by <a class="ref" href="#geo.merge"><code>geo.merge</code></a>. Bodies collide with its triangles, so they fall into a bowl and roll down a ramp. An obstacle is a thin shell with nothing inside. A fast or small body can pass through it: raise <code>substeps</code>, or make the bodies larger or slower.</p>
 <p>Obstacles may change while the bodies move, and bodies that rested on one fall on when it goes.</p>
 <p><strong>Obstacles that move.</strong> An obstacle that is moved or turned pushes the bodies in its way and carries along those that lie on it. Put a <a class="ref" href="#geo.transform"><code>geo.transform</code></a> before <code>obstacles</code> and bind its <code>translate</code> or <code>rotate</code> to a channel: a wall shoves a pile across the floor, a turning bar bats balls away, a platform lifts what stands on it.</p>
-<p><strong>What still jumps.</strong> An obstacle whose size changes (<code>scale</code>, <code>uniform</code>) or whose mesh changes is built anew where it is now. It pushes nothing, and it can leave bodies stuck inside itself. So does an obstacle that moves farther than <code>jump</code> in one frame, 0.5 m at first. <code>jump</code> measures the way of the obstacle's own origin: a long bar turning fast about its middle never jumps, and its ends can pass small bodies without touching them. Raise <code>substeps</code> then.</p>
+<p><strong>What still jumps.</strong> An obstacle whose size changes (<code>scale</code>, <code>uniform</code>) or whose mesh changes is built anew where it is now. It pushes nothing, and it can leave bodies stuck inside itself. So does an obstacle that moves farther than <code>jump</code> in one frame, 0.5 m at first. <code>jump</code> measures the way of the obstacle's own origin. A turn counts on its own: an obstacle that turns by more than 90 degrees in one frame jumps too, at any <code>jump</code>. A long bar that turns fast, but by less than that, pushes with its full speed, and its ends can pass small bodies without touching them. Raise <code>substeps</code> then. With <code>jump</code> at 0 no obstacle and no driven body pushes, whether it moves or turns.</p>
+<p>An obstacle may be flat: a <a class="ref" href="#geo.transform"><code>geo.transform</code></a> with a <code>scale</code> of 0 along one axis gives a sheet, and the bodies land on it where it is drawn.</p>
 <p>For moving things with a simple form, a <code>driven</code> group is the cheaper way: a box or a ball costs less than a mesh.</p>
 <p>Copies made by <a class="ref" href="#geo.tex_instance"><code>geo.tex_instance</code></a> are no obstacles, since their places exist on the GPU only.</p>
 <h5 id="physics.rigid_bodies-forces">Forces</h5>
@@ -6684,7 +6692,20 @@ def cook(cx):
 <p>The page of <a href="#physics.force">physics.force</a> has the types, the kick and the table that takes the place of the node.</p>
 <h5 id="physics.rigid_bodies-time">Time</h5>
 <p>The bodies move one step per show frame, as long as something shows the node's result. <code>speed</code> slows time down or holds it at 0. A frame that takes longer than a twentieth of a second counts as a twentieth, so the bodies slow down instead of jumping.</p>
+<p>While time stands (<code>speed</code> at 0, or a show clock on hold), driven bodies and obstacles still go where they are put, and push nothing. A <code>kick</code> whose <code>trigger</code> rises in that time is lost. It is not saved up for later.</p>
 <p>The solver runs on one core of the CPU. A few hundred boxes cost little. Hulls of detailed models and obstacles of many triangles cost more, and thousands of bodies in one pile can take longer than a frame.</p>
+<h5 id="physics.rigid_bodies-limits">Limits</h5>
+<ul>
+<li><strong>Bodies:</strong> 4000 in all groups together. The solver names the group whose last bodies it left out. They come in, each at its row, as soon as another group makes room.
+</li>
+<li><strong>Sizes:</strong> a body is at most 1000 times and at least a thousandth of its model's size. Nothing collides as smaller than 0.05 mm across or as larger than 2000 km.
+</li>
+<li><strong>Places:</strong> at most 1 000 000 m from the origin along each axis. A number beyond counts as that.
+</li>
+<li><strong>Speeds:</strong> no body moves faster than 400 m/s, or turns by more than an eighth of a turn in one solver step.
+</li>
+</ul>
+<p>A number beyond these limits is brought within them. If a number in a body grows past what the solver can hold all the same, the solver drops that body: it stays where it was and collides with nothing. The solver's warning counts such bodies. <code>reset</code> brings them back.</p>
 </div>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>

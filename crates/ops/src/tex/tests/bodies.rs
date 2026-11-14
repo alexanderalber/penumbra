@@ -5,7 +5,7 @@ use penumbra_core::Value;
 use penumbra_gpu::Geo;
 use penumbra_graph::Port;
 
-use super::{Rig, connect, create, gpu, set};
+use super::{H, Rig, W, connect, create, gpu, set, size};
 
 #[test]
 fn the_solver_draws_each_group_as_its_own_model() {
@@ -134,4 +134,76 @@ fn an_obstacle_moved_by_a_transform_carries_the_body_on_it() {
     rig.edit(&[slab_at(30.0, 2.0)]);
     let fell = place(&mut rig, 120);
     assert!((fell[2] - 0.5).abs() < 0.03 && (fell[0] - scaled[0]).abs() < 0.05, "{fell:?}");
+}
+
+#[test]
+fn the_pile_of_the_docs_renders_once_a_camera_is_wired() {
+    let Some(gpu) = gpu() else { return };
+    let rows = "tx,ty,tz\n0,0,2\n0.2,0,3.5\n-0.1,0.1,5";
+    let ops = [
+        create("/t", "table.text", &[("text", rows.into()), ("format", "csv".into())]),
+        create("/box", "geo.primitive", &[]),
+        create("/b", "physics.bodies", &[]),
+        connect("/t", "/b", 0),
+        connect("/box", "/b", 1),
+        create("/r", "physics.rigid_bodies", &[]),
+        connect("/b", "/r", 0),
+        create("/render", "tex.render", &size()),
+        connect("/r", "/render", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    // Table, model, group, solver and render: without a camera the render has no picture.
+    rig.cook("/render");
+    let error = rig.cooker.status(rig.id("/render")).unwrap().error.unwrap();
+    assert!(error.contains("camera"), "{error}");
+    // The sixth node: a camera into `camera`.
+    rig.edit(&[create("/cam", "view.camera", &[]), connect("/cam", "/render", 3)]);
+    for _ in 0..180 {
+        rig.clock.advance(1);
+        rig.cook("/render");
+    }
+    for path in ["/render", "/r", "/b"] {
+        let s = rig.cooker.status(rig.id(path)).unwrap();
+        assert_eq!((s.error, s.warning), (None, None), "{path}");
+    }
+    // The three boxes lie in a pile at the origin, where the camera looks: the middle of the
+    // picture shows them, the corner does not.
+    let tex = rig.tex("/render").unwrap();
+    let px = rig.gpu.read(&tex).unwrap();
+    let (corner, middle) = (px.get(0, 0).unwrap(), px.get(W as u32 / 2, H as u32 / 2).unwrap());
+    assert_ne!(corner, middle, "the bodies do not show");
+}
+
+#[test]
+fn an_obstacle_flattened_by_its_transform_collides_where_it_is_drawn() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        // A slab squeezed to a sheet by a scale of 0 along z, 3 m aside and 2 m up.
+        create("/slab", "geo.primitive", &[("size", Value::Vec3([4.0, 4.0, 0.2]))]),
+        create(
+            "/slab_t",
+            "geo.transform",
+            &[("translate", Value::Vec3([3.0, 0.0, 2.0])), ("scale", Value::Vec3([1.0, 1.0, 0.0]))],
+        ),
+        connect("/slab", "/slab_t", 0),
+        create("/t0", "table.text", &[("text", "tx,tz\n3,4".into()), ("format", "csv".into())]),
+        create("/b0", "physics.bodies", &[("shape", "box".into())]),
+        connect("/t0", "/b0", 0),
+        create("/r", "physics.rigid_bodies", &[]),
+        connect("/b0", "/r", 0),
+        connect("/slab_t", "/r", penumbra_graph::MAX_RUN as u32),
+        create("/show", "geo.null", &[]),
+        connect("/r", "/show", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    for _ in 0..180 {
+        rig.clock.advance(1);
+        rig.cook("/show");
+    }
+    let s = rig.cooker.status(rig.id("/r")).unwrap();
+    assert_eq!((s.error, s.warning), (None, None));
+    let out = rig.cooker.output(Port { node: rig.id("/show"), output: 0 }).unwrap();
+    let world = out.get::<Geo>().unwrap().items[0].world;
+    let at = [world[0][3], world[1][3], world[2][3]];
+    assert!((at[2] - 2.5).abs() < 0.03 && (at[0] - 3.0).abs() < 0.05, "it rests on the sheet: {at:?}");
 }
