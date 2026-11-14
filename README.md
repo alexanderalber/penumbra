@@ -199,7 +199,8 @@ Each picture comes from a project that ships with penumbra.
 
 The [curl-noise](examples/curl-noise/README.md) example: 65 536 sticks moved through a
 curl-noise flow field, simulated in shaders and drawn instanced, coloured through the `magma`
-colormap. The screenshot at the top of this page shows its network.
+colormap. The screenshot at the top of this page shows its network. Inspired by the video
+["TouchDesigner _03 Curl Noise"](https://www.youtube.com/watch?v=DkSwEY-m9GA) by threedashes.
 
 ![The curl-noise example: sticks in purple, pink and pale yellow swirling in a flow field](assets/gallery/curl-noise.jpg)
 

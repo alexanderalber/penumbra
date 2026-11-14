@@ -27,3 +27,6 @@ Try:
 - `/box` `size` for thicker or longer sticks.
 - `/ini` `spread`: a smaller cloud leaves more of the background free, a larger one reaches the
   camera and fills the picture.
+
+Inspired by the video "TouchDesigner _03 Curl Noise" by threedashes:
+https://www.youtube.com/watch?v=DkSwEY-m9GA
