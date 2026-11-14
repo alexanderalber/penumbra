@@ -1,0 +1,227 @@
+//! Storage buffers: arrays of plain structs or scalars that compute programs read and write
+//! ([`crate::Compute::encode_with`]), such as particles, grid cells or accumulators of
+//! `atomic<i32>`, and uniforms of constants.
+//!
+//! A [`Buffer`] is bytes on the GPU, zero when made. The shader decides what they are: an
+//! `array<P>` of a struct, an `array<atomic<i32>>`, a single struct of constants. On the CPU
+//! the same bytes are a slice of any [`bytemuck::Pod`] type of the same layout ([`Buffer::write`],
+//! [`Buffer::read`]). Reading back waits for the GPU and is meant for tests and diagnostics, not
+//! for every frame.
+
+use std::sync::{Arc, mpsc};
+
+use bytemuck::Pod;
+use penumbra_core::Error;
+
+use crate::Gpu;
+use crate::readback::READ_TIMEOUT;
+
+struct Inner {
+    buffer: wgpu::Buffer,
+    bytes: u64,
+}
+
+/// Bytes on the GPU that compute programs bind as a storage buffer, or as a uniform when it is
+/// small enough. Cheap to clone; clones share the buffer.
+#[derive(Clone)]
+pub struct Buffer(Arc<Inner>);
+
+impl Buffer {
+    /// A buffer of `bytes` bytes, all zero. `Err` for 0 bytes, a size that is not a multiple of
+    /// 4, and one above [`Buffer::max_bytes`].
+    pub fn new(gpu: &Gpu, bytes: u64, label: &str) -> Result<Self, Error> {
+        check_bytes(gpu, bytes, label)?;
+        let mut usage =
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
+        // Small enough for a uniform: a program may bind it as one.
+        if bytes <= gpu.device().limits().max_uniform_buffer_binding_size {
+            usage |= wgpu::BufferUsages::UNIFORM;
+        }
+        let (buffer, error) = gpu.scoped(|| {
+            gpu.device().create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: bytes,
+                usage,
+                mapped_at_creation: false,
+            })
+        });
+        if let Some(e) = error {
+            return Err(Error::new(format!("cannot create the buffer `{label}` of {bytes} bytes: {e}")));
+        }
+        Ok(Self(Arc::new(Inner { buffer, bytes })))
+    }
+
+    /// A buffer of `len` elements of `T`, all zero: as [`Buffer::new`] with their bytes.
+    pub fn of<T: Pod>(gpu: &Gpu, len: u64, label: &str) -> Result<Self, Error> {
+        let bytes = len
+            .checked_mul(size_of::<T>() as u64)
+            .ok_or_else(|| Error::new(format!("the buffer `{label}` of {len} elements is too large")))?;
+        Self::new(gpu, bytes, label)
+    }
+
+    /// The largest buffer `gpu` binds: its storage binding limit, or its buffer size limit when
+    /// that is lower. wgpu's default is 128 MiB.
+    pub fn max_bytes(gpu: &Gpu) -> u64 {
+        let limits = gpu.device().limits();
+        limits.max_storage_buffer_binding_size.min(limits.max_buffer_size)
+    }
+
+    /// Bytes on the GPU.
+    pub fn bytes(&self) -> u64 {
+        self.0.bytes
+    }
+
+    /// How many elements of `T` the buffer holds, whole ones only.
+    pub fn len_of<T>(&self) -> u64 {
+        self.0.bytes.checked_div(size_of::<T>() as u64).unwrap_or(0)
+    }
+
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        &self.0.buffer
+    }
+
+    pub fn same(&self, other: &Buffer) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// Replaces elements `first..first + values.len()`, counted in elements of `T`, for the
+    /// dispatches recorded after this. `Err` when they reach past the end, or start or end off
+    /// a multiple of 4 bytes (wgpu copies whole words).
+    pub fn write<T: Pod>(&self, gpu: &Gpu, first: u64, values: &[T]) -> Result<(), Error> {
+        let data: &[u8] = bytemuck::cast_slice(values);
+        if data.is_empty() {
+            return Ok(());
+        }
+        let len = data.len() as u64;
+        let offset = first.saturating_mul(size_of::<T>() as u64);
+        if offset.checked_add(len).is_none_or(|end| end > self.0.bytes) {
+            return Err(Error::new(format!(
+                "{} values from element {first} do not fit a buffer of {} bytes",
+                values.len(),
+                self.0.bytes
+            )));
+        }
+        let align = wgpu::COPY_BUFFER_ALIGNMENT;
+        if !offset.is_multiple_of(align) || !len.is_multiple_of(align) {
+            return Err(Error::new(format!(
+                "a write into a buffer starts and ends on a multiple of {align} bytes, not at byte \
+                 {offset} with {len} bytes"
+            )));
+        }
+        let ((), error) = gpu.scoped(|| gpu.queue().write_buffer(&self.0.buffer, offset, data));
+        match error {
+            Some(e) => Err(Error::new(format!("cannot write the buffer: {e}"))),
+            None => Ok(()),
+        }
+    }
+
+    /// Sets every byte to zero, after the dispatches recorded before this.
+    pub fn clear(&self, gpu: &Gpu) -> Result<(), Error> {
+        let ((), error) = gpu.scoped(|| {
+            let mut encoder =
+                gpu.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("clear") });
+            encoder.clear_buffer(&self.0.buffer, 0, None);
+            gpu.submit([encoder.finish()]);
+        });
+        match error {
+            Some(e) => Err(Error::new(format!("cannot clear the buffer: {e}"))),
+            None => Ok(()),
+        }
+    }
+
+    /// Makes this handle a new buffer of `bytes` bytes that starts with as much of the old
+    /// content as fits, zero beyond it. Clones made before keep the old buffer. `Err` as for
+    /// [`Buffer::new`]; then this handle is unchanged.
+    pub fn resize(&mut self, gpu: &Gpu, bytes: u64, label: &str) -> Result<(), Error> {
+        if bytes == self.0.bytes {
+            return Ok(());
+        }
+        let new = Self::new(gpu, bytes, label)?;
+        let kept = bytes.min(self.0.bytes);
+        let ((), error) = gpu.scoped(|| {
+            let mut encoder = gpu
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("resize") });
+            encoder.copy_buffer_to_buffer(&self.0.buffer, 0, &new.0.buffer, 0, kept);
+            gpu.submit([encoder.finish()]);
+        });
+        if let Some(e) = error {
+            return Err(Error::new(format!("cannot copy the buffer into its new size: {e}")));
+        }
+        *self = new;
+        Ok(())
+    }
+
+    /// The whole buffer as elements of `T`, after the dispatches recorded before this. Waits for
+    /// the GPU: for tests and diagnostics. `Err` when the size is no whole number of `T`, or
+    /// the GPU does not deliver in time.
+    pub fn read<T: Pod>(&self, gpu: &Gpu) -> Result<Vec<T>, Error> {
+        let size = size_of::<T>() as u64;
+        if size == 0 || !self.0.bytes.is_multiple_of(size) {
+            return Err(Error::new(format!(
+                "a buffer of {} bytes is no whole number of elements of {size} bytes",
+                self.0.bytes
+            )));
+        }
+        let device = gpu.device();
+        let ((staging, index), error) = gpu.scoped(|| {
+            let staging = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("buffer readback"),
+                size: self.0.bytes,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut encoder = device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("buffer readback") });
+            encoder.copy_buffer_to_buffer(&self.0.buffer, 0, &staging, 0, self.0.bytes);
+            let index = gpu.submit([encoder.finish()]);
+            (staging, index)
+        });
+        if let Some(e) = error {
+            return Err(Error::new(format!("buffer readback failed: {e}")));
+        }
+        let (tx, rx) = mpsc::channel();
+        staging.map_async(wgpu::MapMode::Read, .., move |r| {
+            tx.send(r).ok();
+        });
+        device
+            .poll(wgpu::PollType::Wait { submission_index: Some(index), timeout: Some(READ_TIMEOUT) })
+            .map_err(|e| Error::new(format!("waiting for the GPU: {e}")))?;
+        match rx.recv_timeout(READ_TIMEOUT) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(Error::new(format!("cannot map the readback buffer: {e}"))),
+            Err(_) => return Err(Error::new("the GPU did not deliver the readback in time")),
+        }
+        let view = staging.get_mapped_range(..).map_err(|e| Error::new(format!("buffer readback: {e}")))?;
+        let out: Vec<T> = bytemuck::pod_collect_to_vec(&view);
+        drop(view);
+        staging.unmap();
+        Ok(out)
+    }
+}
+
+fn check_bytes(gpu: &Gpu, bytes: u64, label: &str) -> Result<(), Error> {
+    let max = Buffer::max_bytes(gpu);
+    if bytes == 0 || !bytes.is_multiple_of(4) {
+        return Err(Error::new(format!(
+            "the buffer `{label}` must have a positive multiple of 4 bytes, not {bytes}"
+        )));
+    }
+    if bytes > max {
+        return Err(Error::new(format!(
+            "the buffer `{label}` of {bytes} bytes is larger than the {max} bytes this GPU binds at most"
+        )));
+    }
+    Ok(())
+}
+
+/// The bytes of distinct buffers among `buffers`.
+pub fn unique_buffer_bytes<'a>(buffers: impl IntoIterator<Item = &'a Buffer>) -> u64 {
+    let mut seen: Vec<&Buffer> = Vec::new();
+    for b in buffers {
+        if !seen.iter().any(|s| s.same(b)) {
+            seen.push(b);
+        }
+    }
+    seen.iter().map(|b| b.bytes()).sum()
+}

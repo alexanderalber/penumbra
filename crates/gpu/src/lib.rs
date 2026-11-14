@@ -17,6 +17,7 @@
 //! [`Gpu::new`] replaces it with one that logs and counts ([`Gpu::errors`]).
 
 pub mod bc;
+pub mod buffer;
 pub mod canvas;
 pub mod compute;
 pub mod deferred;
@@ -44,9 +45,11 @@ use std::time::{Duration, Instant};
 
 use penumbra_core::{Error, lock};
 
+pub use buffer::Buffer;
 pub use canvas::{Canvas, Paint};
 pub use compute::{
-    Compute, DataBlock, Dispatch, Medium, MediumShape, Out, Step, Target, VOLUME_FORMAT, Volume, VolumeRing,
+    BufferSlot, Compute, DataBlock, Dispatch, Medium, MediumShape, Out, Step, Target, VOLUME_FORMAT, Volume,
+    VolumeRing,
 };
 pub use deferred::{Deferral, Done};
 pub use geo::{Geo, Mat};
