@@ -2668,7 +2668,7 @@ One group of rigid bodies for physics.rigid_bodies: a table places them, a model
 
 Inputs:
 
-- `table` (table): One row per body. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). With mode dynamic a change puts the bodies of this group back to their start. With driven and fixed the bodies follow the table, and the speed and spin columns do nothing
+- `table` (table): One row per body: row k is body k. The first row names the columns: tx ty tz to place, rx ry rz to turn (degrees), sx sy sz to scale, vx vy vz for a speed at the start (metres per second), wx wy wz for a spin (degrees per second). With mode dynamic a change puts the bodies of this group back to their start. With driven and fixed the bodies follow the table, and the speed and spin columns do nothing. A cell that is not a number counts as 0 (1 for a scale), and a driven or fixed body stays where it is while its row holds one
 - `model` (geo): What each body looks like, with its material, and what `shape` is taken from. A change to its form puts the bodies of this group back to their start
 - `forces` (table): A push per body, read on every frame: row k pushes body k of the table. The first row names the columns: fx fy fz for the speed the body gains per second along x, y and z (metres per second squared), mx my mz for the spin it gains per second about them (degrees per second squared). A heavy body gains as much as a light one. A change here never puts the bodies back to their start. Bodies without a row are not pushed. Only with mode dynamic
 - `targets` (table): A place per body that a spring pulls it to: row k pulls body k of the table. The first row names the columns tx ty tz, in metres. The bodies form the figure these places draw, and collide on their way. `pull` at 0 lets them go. A change here never puts the bodies back to their start. Bodies without a row are not pulled. Only with mode dynamic
@@ -2745,9 +2745,9 @@ Outputs:
 | `bounce` | float | `0` | 0 to 1 | How much of its speed a body keeps when it hits the floor or an obstacle: 0 lands dead, 1 bounces for ever. The larger of this and the group's `bounce` counts |
 | `damping` *(more)* | float | `0` | 0 to 5 (soft, held within 0 to 1000) | Slows every body down as thick air would: the share of its speed it loses per second |
 | `spin_damping` *(more)* | float | `0` | 0 to 5 (soft, held within 0 to 1000) | Slows every body's turning down: the share of its spin it loses per second |
-| `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion |
+| `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | How fast time runs for the bodies: 0 holds them still, 0.25 is slow motion. While they are held, a kick from a physics.force does nothing |
 | `substeps` *(more)* | int | `1` | 1 to 8 | Solver steps per frame: raise it when fast bodies pass through thin things or a tall stack wobbles. Each step costs the same again |
-| `jump` *(more)* | float | `0.5` | 0 to 5 m (soft, held within 0 to 1000000 m) | How far a driven body or an obstacle may move in one frame and still push what is in its way. Moved farther, it is put at its new place at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. 0: driven bodies and obstacles never push |
+| `jump` *(more)* | float | `0.5` | 0 to 5 m (soft, held within 0 to 1000000 m) | How far a driven body or an obstacle may move in one frame and still push what is in its way. Moved farther, it is put at its new place at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. A turn of more than 90 degrees in one frame counts as too far at any value. 0: driven bodies and obstacles never push |
 | `reset` | bool | `false` |  | Puts every body of every group back to its start, every frame while on |
 
 ## script
