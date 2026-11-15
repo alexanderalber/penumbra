@@ -62,11 +62,6 @@ fn run(name: &str, ops: &[Op], path: &str) -> Option<Pixels> {
     std::fs::write(dir.join("step.wgsl"), STEP).unwrap();
     std::fs::write(dir.join("count.wgsl"), COUNT).unwrap();
     let mut rig = Rig::new(gpu, Some(&dir), ops);
-    // A shader of a custom size draws with an empty in0 while the seed still compiles, and
-    // the first picture is the one read: the seed first.
-    if rig.net.resolve(&"/seed".parse().unwrap()).is_some() {
-        rig.pixels("/seed");
-    }
     Some(rig.pixels(path))
 }
 
@@ -128,6 +123,17 @@ fn with_custom_size_later_passes_read_the_output_size() {
     let Some(px) = run("iter_size_3", &ops(3), "/count") else { return };
     assert_eq!((px.width, px.height), (4, 2));
     assert_eq!(px.get(0, 0).map(|p| p[3]), Some(4.0));
+}
+
+/// A shader of a custom size whose in0 comes from a node that failed still draws, from the
+/// empty stand-in, which is 1 pixel wide.
+#[test]
+fn with_custom_size_a_failed_in0_reads_as_the_stand_in() {
+    let broken = create("/seed", "tex.shader", &[("file", Value::Text("missing.wgsl".into()))]);
+    let ops = [broken, count(Value::Int(1), Some((4, 2))), connect("/seed", "/count", 0)];
+    let Some(px) = run("iter_size_failed", &ops, "/count") else { return };
+    assert_eq!((px.width, px.height), (4, 2));
+    assert_eq!(px.get(0, 0).map(|p| p[3]), Some(1.0));
 }
 
 /// `iterations` is a number param like any other: a channel bound to it sets the passes per
