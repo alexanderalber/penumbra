@@ -120,8 +120,9 @@ lines up with what the bodies collide with. Example: [liquid-bodies](../../examp
 **One way only.** The bodies push the liquid, but the liquid does not push the bodies. A body
 falls through a pool as through air, keeps its speed and hits the floor below. The liquid
 between body and floor then spurts out sideways. The solver's `damping` slows the bodies, in the
-air as well. A `physics.field` of type wind that pushes up below the water's surface stands in
-for buoyancy: stronger than gravity, the bodies float. The liquid-bodies example does both.
+air as well: the liquid-bodies example uses 8, so bodies fall at most 1.2 m/s. To make bodies
+float, a `physics.field` of type wind that pushes up below the water's surface can stand in for
+buoyancy: stronger than gravity, the bodies rise.
 
 **Without `velocity`.** `tex.optical_flow` on the mask (times 60 at 60 fps) matches a body that
 slides, but not one that turns, one slower than about 0.05 heights per second, or one at rest
