@@ -3340,9 +3340,12 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </ul>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">tex</span>: The liquid in <code>color</code>, transparent around it, at width x height</li>
-<li><code>velocity</code> <span class="kind">tex</span>: The liquid's velocity at the grid's size: red x in widths, green y in heights, down positive, per second; 0 where there is no liquid</li>
+<li><code>out</code> <span class="kind">tex</span>: The liquid in <code>color</code> with foam, at width x height. Transparent around it, with an edge a pixel soft, ready to composite</li>
+<li><code>velocity</code> <span class="kind">tex</span>: The liquid's velocity at the grid's size: red x in widths, green y in heights, down positive, per second; blue the speed in heights per second; alpha how full the cell is. Goes on a few cells beyond the liquid and fades out there</li>
 <li><code>density</code> <span class="kind">tex</span>: How full each cell of the grid is, as grey on black at the grid's size: 1 where the liquid is at rest, less at its surface and in spray. Opaque</li>
+<li><code>foam</code> <span class="kind">tex</span>: Where the liquid foams after a splash or in fast spray: white over transparent, 0 to 1, at width x height. Fades in <code>foam_time</code></li>
+<li><code>grain</code> <span class="kind">tex</span>: A random grey per particle, averaged, on the liquid's alpha, at width x height. The pattern moves with the liquid: blur it and raise its contrast for a crust or a texture</li>
+<li><code>surface</code> <span class="kind">tex</span>: For shading downstream, at width x height, solids counted as liquid: red the distance into the liquid in pixels (negative outside), green the depth 0 to 1, blue and alpha the outward normal (x, y down)</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
@@ -3357,7 +3360,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>viscosity</code></td><td>float</td><td><code>0.000222</code></td><td>0 to 0.004 (soft, held within 0 to 0.01)</td><td>Thickness: honey instead of water. In picture heights squared per second: 0.0002 is water in a picture 3 m high, 0.001 honey, 0.003 mud. A thick liquid needs more substeps on a fine grid</td></tr>
 <tr><td><code>drag</code></td><td>float</td><td><code>0.5</code></td><td>0 to 5 (soft, held within 0 to 1000)</td><td>How fast the liquid calms: the share of its speed it loses per second. 0 sloshes for minutes</td></tr>
 <tr><td><code>friction</code></td><td>float</td><td><code>0</code></td><td>0 to 2 (soft, held within 0 to 10)</td><td>How much the liquid sticks to the obstacles and the picture's edges: 0 slides freely. At 1 a thin film on a slope slides about a sixth as far as without; deep liquid still runs down over it</td></tr>
-<tr><td><code>color</code></td><td>colour</td><td><code>[0.25, 0.55, 1, 1]</code></td><td></td><td>Colour of the liquid in <code>out</code>; transparent around it</td></tr>
+<tr><td><code>color</code></td><td>colour</td><td><code>[0.028, 0.275, 0.807, 1]</code></td><td></td><td>Colour of the liquid in <code>out</code> where it is thin. Deep liquid is drawn darker, the band under its surface lighter</td></tr>
+<tr><td><code>foam_strength</code></td><td>float</td><td><code>0.6</code></td><td>0 to 1</td><td>How white foam shows in <code>out</code>: 0 not at all, 1 fully white. The <code>foam</code> output stays the same</td></tr>
+<tr><td><code>foam_time</code></td><td>float</td><td><code>0.4</code></td><td>0.05 to 4 s (soft, held within 0.01 to 60 s)</td><td>How long foam lasts after a splash, in seconds: after this time a third of it is left. Slowed down by <code>speed</code> as the liquid is</td></tr>
 <tr><td><code>speed</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft, held within 0 to 16)</td><td>How fast the liquid moves against the show clock: 0 holds it, 0.25 is slow motion. Faster costs more substeps</td></tr>
 <tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>Starts over from the <code>fill</code> picture, every frame while on</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
@@ -3406,31 +3411,40 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table>
 <thead><tr><th><code>grid</code> (16:9 picture)</th><th><code>particles</code></th><th>substeps</th><th>GPU per frame</th></tr></thead>
 <tbody>
-<tr><td>256</td><td>16384</td><td>14</td><td>0.4 ms</td></tr>
-<tr><td>384 (default)</td><td>65536</td><td>21</td><td>1.7 ms</td></tr>
-<tr><td>512</td><td>131072</td><td>28</td><td>4.0 ms</td></tr>
+<tr><td>256</td><td>16384</td><td>14</td><td>0.6 ms</td></tr>
+<tr><td>384 (default)</td><td>65536</td><td>21</td><td>1.9 ms</td></tr>
+<tr><td>512</td><td>131072</td><td>28</td><td>5.2 ms</td></tr>
 </tbody>
 </table>
-<p>Obstacles cost about 0.35 ms more at the default grid in each frame where an input changes. With a still mask and still emitters they cost nothing after the first frame.</p>
+<p>Drawing <code>out</code> takes 0.35 ms of that at the default grid and 1.3 ms at grid 512, where the particles are drawn at the picture's full size. The other drawn outputs add less than 0.1 ms. Obstacles cost about 0.35 ms more at the default grid in each frame where an input changes. With a still mask and still emitters they cost nothing after the first frame.</p>
 <p>For the same amount of liquid, twice the cells across need four times the particles and twice the substeps: about eight times the cost. A show at 30 fps takes twice the substeps per frame. A thick liquid (<code>viscosity</code> above 0.001) or a fast pour adds substeps. A frame runs at most 128 substeps; beyond that the liquid moves slower than the show, and the node warns.</p>
 <h5 id="tex.liquid-time-and-state">Time and state</h5>
 <p>The liquid is kept from frame to frame and follows the show clock: a paused show stands still. A late frame is one longer step of at most 1/30 s, so a stall does not make the liquid jump. <code>speed</code> slows the liquid down or speeds it up. <code>reset</code>, <a class="ref" href="#node.reset"><code>node.reset</code></a> or R start over from the <code>fill</code> picture. A new <code>grid</code>, or a picture of another shape, starts over too. The liquid is not kept in the state snapshots: after a restart it starts from <code>fill</code>.</p>
+<h5 id="tex.liquid-drawing">Drawing</h5>
+<p><code>out</code> draws every particle as a small spot and blurs the spots into one surface with a clean edge. Where the liquid thins out, in streams and spray, the spots grow, so a stream stays whole instead of breaking into dots. Thin liquid shows in <code>color</code>, deep liquid darker, and a lighter band runs under the surface. Solids count as liquid for that band, so a pool on a shelf has no band along the shelf.</p>
+<p><strong>Foam</strong> starts where the liquid hits something hard and in fast, thin spray. It lasts <code>foam_time</code> (0.4 s by default), and <code>foam_strength</code> sets how white it shows in <code>out</code>. A whole block of water that lands at once foams all over; lower <code>foam_strength</code> if that is too much.</p>
+<p>The look stays the same at 30, 60 or 144 fps and at any <code>speed</code>.</p>
 <h5 id="tex.liquid-outputs">Outputs</h5>
 <ul>
-<li><strong>out</strong>: the liquid in <code>color</code>, transparent around it.
+<li><strong>out</strong>: the liquid in <code>color</code> with its foam, premultiplied. Transparent around it, with an edge about a pixel soft, so it goes straight into <a class="ref" href="#tex.composite"><code>tex.composite</code></a>.
 </li>
-<li><strong>velocity</strong>: the liquid's velocity per cell, as in <a class="ref" href="#tex.fluid"><code>tex.fluid</code></a>.
+<li><strong>velocity</strong>: the liquid's velocity per cell, as in <a class="ref" href="#tex.fluid"><code>tex.fluid</code></a>: red x in widths, green y in heights, per second. Blue is the speed in heights per second, alpha how full the cell is. The velocity goes on a few cells beyond the liquid and fades there, so a look coloured by speed has no step at the edge.
 </li>
 <li><strong>density</strong>: how full each cell is, 1 at rest.
 </li>
+<li><strong>foam</strong>: the foam as white over transparent, 0 to 1. Colour it or lay it over <code>out</code>.
+</li>
+<li><strong>grain</strong>: a random grey per particle, averaged, on the liquid's alpha. The pattern travels with the liquid. Blurred and with more contrast it makes a crust for lava or mud.
+</li>
+<li><strong>surface</strong>: for shading in a <a class="ref" href="#tex.shader"><code>tex.shader</code></a>. Red is the distance into the liquid in pixels (negative outside), green the depth from 0 at the surface to 1 deep inside, blue and alpha the outward normal (x, y down). Solids count as liquid.
+</li>
 </ul>
+<p><code>foam</code>, <code>grain</code>, <code>surface</code>, <code>velocity</code> and <code>density</code> cost nothing while nothing reads them.</p>
 <h5 id="tex.liquid-what-it-cannot-do-yet">What it cannot do yet</h5>
 <ul>
 <li>Bodies from <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a> as obstacles: wire a picture of them into <code>obstacles</code>, but their velocity has to come from somewhere else for now.
 </li>
 <li>One liquid: no sand, snow or a second liquid of another colour.
-</li>
-<li>Drawing: <code>out</code> is a plain outline of where the liquid is. Thin streams look banded or break up into dots.
 </li>
 <li>Forces from a picture or a table, as <a class="ref" href="#tex.fluid"><code>tex.fluid</code></a> takes them.
 </li>

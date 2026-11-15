@@ -5,6 +5,7 @@
 //! it along, friction holds liquid on a slope, an empty mask changes nothing.
 
 use penumbra_core::Value;
+use penumbra_core::scratch::ScratchDir;
 use penumbra_gpu::Pixels;
 use penumbra_graph::{MAX_RUN, Op};
 
@@ -71,6 +72,9 @@ fn run(rig: &mut Rig, frames: usize) -> (Pixels, Pixels, Pixels) {
 }
 
 fn read(rig: &mut Rig) -> (Pixels, Pixels, Pixels) {
+    if let Some(e) = rig.cooker.status(rig.id("/liquid")).and_then(|s| s.error) {
+        panic!("{e}");
+    }
     let px = |rig: &Rig, path: &str| rig.gpu.read(&rig.tex(path).unwrap()).unwrap();
     (px(rig, "/liquid"), px(rig, "/v"), px(rig, "/d"))
 }
@@ -710,12 +714,13 @@ fn hostile_obstacles_leave_the_liquid_finite() {
         wire("/bad", 0, "/liquid", OBSTACLE_VELOCITY),
     ];
     ops.extend(outputs());
+    ops.extend(drawn());
     let mut rig = Rig::new(gpu, Some(&dir), &ops);
     rig.pixels("/bad");
     rig.pixels("/block");
-    let (out, v, d) = run(&mut rig, 60);
-    assert!(finite(&out) && finite(&v) && finite(&d));
-    assert!(particles(&d) > 100.0, "{}", particles(&d));
+    let all = run_drawn(&mut rig, 60);
+    assert!(all.iter().all(finite));
+    assert!(particles(&all[2]) > 100.0, "{}", particles(&all[2]));
 }
 
 const HOSTILE: &str = "\
@@ -751,18 +756,194 @@ fn hostile_input_leaves_the_liquid_finite() {
         wire("/rows", 0, "/liquid", 0),
     ];
     ops.extend(outputs());
+    ops.extend(drawn());
     let mut rig = Rig::new(gpu, Some(&dir), &ops);
     rig.pixels("/bad");
-    let (out, v, d) = run(&mut rig, 30);
-    assert!(finite(&out) && finite(&v) && finite(&d));
-    assert!(particles(&d) > 100.0, "{}", particles(&d));
+    let all = run_drawn(&mut rig, 30);
+    assert!(all.iter().all(finite));
+    assert!(particles(&all[2]) > 100.0, "{}", particles(&all[2]));
+}
+
+/// The drawn outputs read through nulls: `/f` foam, `/g` grain, `/s` surface.
+fn drawn() -> [Op; 6] {
+    [
+        create("/f", "tex.null", &[]),
+        create("/g", "tex.null", &[]),
+        create("/s", "tex.null", &[]),
+        wire("/liquid", 3, "/f", 0),
+        wire("/liquid", 4, "/g", 0),
+        wire("/liquid", 5, "/s", 0),
+    ]
+}
+
+/// Moves the show on `frames` frames cooking the liquid and every null, and reads `/liquid`,
+/// `/v`, `/d`, `/f`, `/g` and `/s`.
+fn run_drawn(rig: &mut Rig, frames: usize) -> [Pixels; 6] {
+    let paths = ["/liquid", "/v", "/d", "/f", "/g", "/s"];
+    for f in 0..frames {
+        if f % 30 == 29 {
+            rig.gpu.wait(std::time::Duration::from_secs(120)).unwrap();
+        }
+        rig.clock.advance(1);
+        rig.gpu.poll();
+        let ids: Vec<_> = paths.iter().map(|p| rig.id(p)).collect();
+        rig.cooker.cook(&rig.net, rig.clock.now(), &ids, &[]);
+    }
+    if let Some(e) = rig.cooker.status(rig.id("/liquid")).and_then(|s| s.error) {
+        panic!("{e}");
+    }
+    paths.map(|p| rig.gpu.read(&rig.tex(p).unwrap()).unwrap())
+}
+
+/// Sum of the foam picture's alpha: how much foam there is, in pixels.
+fn foam(f: &Pixels) -> f64 {
+    f.data.iter().map(|c| f64::from(c[3])).sum()
+}
+
+/// Pixels the liquid covers in `out`.
+fn covered(out: &Pixels) -> f64 {
+    out.data.iter().map(|c| f64::from(c[3])).sum()
+}
+
+/// A pool in the lower half: every output at its size, in the format between nodes. `out` is
+/// transparent black away from the liquid and opaque inside the pool, also against the walls;
+/// foam and grain lie within it; the velocity's blue is its speed.
+#[test]
+fn the_drawing_has_every_output_at_its_size_and_a_clean_alpha() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-drawn");
+    let mut ops =
+        vec![liquid(&[]), mask("/pool", "pool.wgsl", &dir, "uv.y > 0.6"), wire("/pool", 0, "/liquid", FILL)];
+    ops.extend(outputs());
+    ops.extend(drawn());
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.pixels("/pool");
+    let [out, v, d, f, g, s] = run_drawn(&mut rig, 120);
+    for (name, px, size) in [
+        ("out", &out, (128, 96)),
+        ("velocity", &v, (64, 48)),
+        ("density", &d, (64, 48)),
+        ("foam", &f, (128, 96)),
+        ("grain", &g, (128, 96)),
+        ("surface", &s, (128, 96)),
+    ] {
+        assert_eq!((px.width, px.height), size, "{name}");
+        assert!(finite(px), "{name}");
+    }
+    for p in ["/liquid", "/f", "/g", "/s", "/v", "/d"] {
+        assert_eq!(rig.tex(p).unwrap().format(), penumbra_gpu::FORMAT, "{p}");
+    }
+    // Away from the pool: nothing at all. Its top settles at 0.6 of the height.
+    for j in 0..48 {
+        for i in 0..128 {
+            assert_eq!(out.get(i, j).unwrap(), [0.0; 4], "out at {i}, {j}");
+        }
+    }
+    // Inside, from wall to wall: opaque.
+    for j in 70..96 {
+        for i in 0..128 {
+            let a = out.get(i, j).unwrap()[3];
+            assert!(a > 0.999, "alpha {a} at {i}, {j}");
+        }
+    }
+    // The edge between is antialiased: a few pixels between 0 and 1 per column, not a band.
+    let soft =
+        (0..128).map(|i| (0..96).filter(|j| (0.02..0.98).contains(&out.get(i, *j).unwrap()[3])).count());
+    let most = soft.max().unwrap();
+    assert!(most <= 3, "{most} soft pixels in a column");
+    // Foam and grain lie within the liquid, at most as opaque as it.
+    for ((o, fo), gr) in out.data.iter().zip(&f.data).zip(&g.data) {
+        assert!(fo[3] <= o[3] + 1e-3 && gr[3] <= o[3] + 1e-3 && gr[0] <= gr[3] + 1e-3);
+    }
+    // The grain is a random grey: about half on average inside.
+    let inside: Vec<f64> = g.data.iter().filter(|c| c[3] > 0.999).map(|c| f64::from(c[0])).collect();
+    let mean = inside.iter().sum::<f64>() / inside.len() as f64;
+    assert!((mean - 0.5).abs() < 0.1, "grain {mean}");
+    // The velocity's blue is the speed, in heights per second; alpha how full the cell is.
+    for c in &v.data {
+        let speed = (f64::from(c[0]) * 4.0 / 3.0).hypot(f64::from(c[1]));
+        assert!((f64::from(c[2]) - speed).abs() < 0.01 + 0.01 * speed, "{c:?}");
+        assert!((0.0..=1.0).contains(&c[3]), "{c:?}");
+    }
+    // The surface: positive distance deep in the pool, negative above it.
+    assert!(s.get(64, 90).unwrap()[0] > 3.0 && s.get(64, 10).unwrap()[0] < -3.0);
+}
+
+/// A block of liquid that falls into a pool.
+fn splash(name: &str) -> (ScratchDir, Vec<Op>) {
+    let dir = scratch(name);
+    let mut ops = vec![
+        liquid(&[]),
+        mask(
+            "/block",
+            "block.wgsl",
+            &dir,
+            "(abs(uv.x - 0.5) < 0.1 && uv.y > 0.15 && uv.y < 0.45) || uv.y > 0.75",
+        ),
+        wire("/block", 0, "/liquid", FILL),
+    ];
+    ops.extend(outputs());
+    ops.extend(drawn());
+    (dir, ops)
+}
+
+/// Foam starts where a falling block lands in a pool, and is gone once the pool calmed down.
+#[test]
+fn foam_appears_in_a_splash_and_fades_in_a_calm_pool() {
+    let Some(gpu) = gpu() else { return };
+    let (dir, ops) = splash("liquid-foam");
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.pixels("/block");
+    let [first, _, _, f0, _, _] = run_drawn(&mut rig, 1);
+    let [_, _, _, landed, _, _] = run_drawn(&mut rig, 30);
+    let [_, _, _, calm, _, _] = run_drawn(&mut rig, 570);
+    let most = |f: &Pixels| f.data.iter().fold(0.0f32, |m, c| m.max(c[3]));
+    eprintln!(
+        "foam: {:.0} at the start, {:.0} (most {:.2}) as it lands, {:.1} (most {:.3}) after 10 s",
+        foam(&f0),
+        foam(&landed),
+        most(&landed),
+        foam(&calm),
+        most(&calm)
+    );
+    assert!(covered(&first) > 1000.0);
+    assert_eq!(foam(&f0), 0.0, "foam before anything moved");
+    assert!(foam(&landed) > 100.0 && most(&landed) > 0.5, "{}", foam(&landed));
+    assert!(most(&calm) < 0.05, "{}", most(&calm));
+}
+
+/// The same splash at 30, 60 and 144 frames per second: after the same show time the foam and
+/// the covered area are nearly the same. The smoothing and fading follow the time a substep
+/// stands for, not the number of frames. (At 30 and 60 the substeps happen to be the same, so
+/// those two agree exactly; 144 takes substeps of another length.)
+#[test]
+fn the_look_does_not_depend_on_the_frame_rate() {
+    let Some(gpu) = gpu() else { return };
+    let (dir, ops) = splash("liquid-rate");
+    let at = |fps: u32| {
+        let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+        rig.clock.set_rate(penumbra_core::Rate::new(fps, 1).unwrap());
+        rig.pixels("/block");
+        let [out_a, _, _, foam_a, _, _] = run_drawn(&mut rig, fps as usize / 2);
+        let [out_b, _, _, foam_b, _, _] = run_drawn(&mut rig, fps as usize);
+        [(covered(&out_a), foam(&foam_a)), (covered(&out_b), foam(&foam_b))]
+    };
+    let (thirty, sixty, fast) = (at(30), at(60), at(144));
+    eprintln!("30 fps: {thirty:?}; 60 fps: {sixty:?}; 144 fps: {fast:?} (area, foam at 0.5 s and 1.5 s)");
+    for other in [thirty, fast] {
+        for ((area, foam), (area_60, foam_60)) in other.into_iter().zip(sixty) {
+            assert!((area / area_60 - 1.0).abs() < 0.03, "area {area}, {area_60} at 60 fps");
+            assert!(foam_60 > 20.0, "{foam_60}");
+            assert!((foam / foam_60 - 1.0).abs() < 0.25, "foam {foam}, {foam_60} at 60 fps");
+        }
+    }
 }
 
 /// Times the node on the hardware GPU: at the defaults (1920 x 1080, grid 384, 65536 particles,
 /// most of them in a pool and a pour), and at the size of the compute fixture's timing (65536
 /// particles, 384 cells per picture height, 37 substeps). The defaults again with a still
-/// obstacle (flooded once) and with a moving one (flooded every frame). Prints the wall time per
-/// frame waited for, and per frame of frames cooked back to back.
+/// obstacle (flooded once) and with a moving one (flooded every frame), and with every output
+/// read. Prints the wall time per frame waited for, and per frame of frames cooked back to back.
 #[test]
 #[ignore = "times the liquid on the hardware GPU: cargo test -p penumbra-ops --release liquid_timing -- --ignored --nocapture"]
 fn liquid_timing() {
@@ -771,13 +952,14 @@ fn liquid_timing() {
     let dir = scratch("liquid-timing");
     let still = "abs(uv.x - 0.5) < 0.2 && abs(uv.y - 0.5) < 0.03";
     let shelf = "abs(uv.x - 0.5 - 0.2 * sin(t)) < 0.2 && abs(uv.y - 0.5) < 0.03";
-    for (name, width, height, grid, particles, inside, obstacle) in [
-        ("small", 1920, 1080, 256, 16384, "uv.y > 0.9", ""),
-        ("defaults", 1920, 1080, 384, 65536, "uv.y > 0.82", ""),
-        ("defaults, still obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", still),
-        ("defaults, moving obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", shelf),
-        ("large", 1920, 1080, 512, 131_072, "uv.y > 0.8", ""),
-        ("fixture size", 1440, 1080, 512, 65536, "uv.x < 0.25 && uv.y > 2.0 / 3.0", ""),
+    for (name, width, height, grid, particles, inside, obstacle, every) in [
+        ("small", 1920, 1080, 256, 16384, "uv.y > 0.9", "", false),
+        ("defaults", 1920, 1080, 384, 65536, "uv.y > 0.82", "", false),
+        ("defaults, every output", 1920, 1080, 384, 65536, "uv.y > 0.82", "", true),
+        ("defaults, still obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", still, false),
+        ("defaults, moving obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", shelf, false),
+        ("large", 1920, 1080, 512, 131_072, "uv.y > 0.8", "", false),
+        ("fixture size", 1440, 1080, 512, 65536, "uv.x < 0.25 && uv.y > 2.0 / 3.0", "", false),
     ] {
         std::fs::write(
             dir.join("fill.wgsl"),
@@ -829,19 +1011,28 @@ fn liquid_timing() {
             ));
             ops.push(wire("/obstacle", 0, "/liquid", OBSTACLES));
         }
+        if every {
+            ops.extend(outputs());
+            ops.extend(drawn());
+        }
         let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
         rig.pixels("/fill");
         if !obstacle.is_empty() {
             rig.pixels("/obstacle");
         }
         let id = rig.id("/liquid");
+        let ids: Vec<_> = if every {
+            ["/liquid", "/v", "/d", "/f", "/g", "/s"].iter().map(|p| rig.id(p)).collect()
+        } else {
+            vec![id]
+        };
         let frames = 300;
         let mut wall = Vec::new();
         for f in 0..frames {
             rig.clock.advance(1);
             rig.gpu.poll();
             let t0 = std::time::Instant::now();
-            rig.cooker.cook(&rig.net, rig.clock.now(), &[id], &[]);
+            rig.cooker.cook(&rig.net, rig.clock.now(), &ids, &[]);
             rig.gpu.wait(std::time::Duration::from_secs(10)).unwrap();
             if f >= 20 {
                 wall.push(t0.elapsed().as_secs_f64() * 1e3);
@@ -854,7 +1045,7 @@ fn liquid_timing() {
         for _ in 0..frames {
             rig.clock.advance(1);
             rig.gpu.poll();
-            rig.cooker.cook(&rig.net, rig.clock.now(), &[id], &[]);
+            rig.cooker.cook(&rig.net, rig.clock.now(), &ids, &[]);
         }
         rig.gpu.wait(std::time::Duration::from_secs(30)).unwrap();
         let throughput = t0.elapsed().as_secs_f64() * 1e3 / frames as f64;
