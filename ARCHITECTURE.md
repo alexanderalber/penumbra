@@ -121,8 +121,8 @@ from files, network and hardware is treated as hostile: bounded parsers, budgets
 image sizes, timeouts.
 
 `cargo xtask ci` is the gate before a commit: `fmt`, `clippy`, `test`, clippy for the Linux
-target, the layer check and the third-party notices. There is no hosted CI yet; the gate runs
-on the author's machine.
+target, the layer check and the third-party notices. Hosted CI builds, lints and tests every pull request
+on Windows, Linux and macOS.
 
 ## Threads, in one place
 

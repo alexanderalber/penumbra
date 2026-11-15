@@ -18,7 +18,7 @@ TouchDesigner Python API, its own node names.
 
 ![The penumbra window: the curl-noise example's network with its notes on the left, the selected shader's parameters and the rendered output on the right](assets/screenshot.png)
 
-**Status:** work in progress, used for its author's installations. There will be breaking
+**Status:** work in progress, used for real installations. There will be breaking
 changes before 1.0 ([scope](#scope)). The current version is on
 the [releases page](https://github.com/alexanderalber/penumbra/releases/latest). Windows 10
 and 11 only so far; Linux is planned but untested, macOS is not planned.
@@ -123,8 +123,8 @@ groups of rigid bodies. The
 ## Compared with TouchDesigner
 
 The node kinds map roughly onto TouchDesigner's families: `tex` onto TOPs, `chan` onto CHOPs,
-`table` onto DATs, `geo` onto SOPs, `mat` onto MATs, `comp` onto COMPs. penumbra was built for
-one person's installations and has far fewer nodes in each family.
+`table` onto DATs, `geo` onto SOPs, `mat` onto MATs, `comp` onto COMPs. penumbra is a
+small project and has far fewer nodes in each family.
 
 A TouchDesigner project does not open in penumbra; it is rebuilt. The
 [Claude Code skill](.claude/skills/port-from-touchdesigner/SKILL.md) for that walks a session
@@ -167,9 +167,9 @@ script in a script node does the same job, and Claude Code writes that script fa
 anyone wires the nodes.
 
 Not every planned feature is there yet. More will come over the first months. The feature list
-of TouchDesigner is not the goal. Hardware the author does not own, like depth cameras, stays
+of TouchDesigner is not the goal. Hardware nobody on the project owns, like depth cameras, stays
 out until someone who owns it contributes. Things that would make penumbra hard to maintain
-for one person stay out on purpose.
+for a small team stay out on purpose.
 
 There will be breaking changes before 1.0. A project is plain text and Claude Code can read
 it. So when an update breaks a project, Claude Code can usually fix the files. Release notes
@@ -178,8 +178,8 @@ list every rename.
 The goal is that a show runs more stably and faster in penumbra than in TouchDesigner. And
 that penumbra does some things TouchDesigner does not, like structured light scanning.
 
-The author used TouchDesigner for almost six years. Since penumbra 0.2 the author works only
-in penumbra. The plan is to maintain penumbra for a long time.
+The project's founder used TouchDesigner for almost six years and has worked only in penumbra
+since penumbra 0.2. The plan is to maintain penumbra for a long time.
 
 ## Projection onto objects and walls
 
@@ -221,20 +221,16 @@ two spot lights and an environment light, with a stained-glass panel, a cube and
 
 ![The projection-room example: a room with the projected title on the back wall, a stained-glass panel, a cube and a chrome ball; sun through a window in the side wall throws the panel's colours onto the back wall](assets/gallery/projection-room.jpg)
 
-The [fluid](examples/fluid/README.md) example: a 2D fluid pushed by optical flow and tracked
-blobs, here from wandering spots that stand in for a camera.
-
-![The fluid example: pink, yellow and cyan dye swirling over black](assets/gallery/fluid.jpg)
-
 The [liquid](examples/liquid/README.md) example: water poured over a word runs into a basin and
 drains, a gusty wind bends the streams, and sand heaps up on a shelf.
 
 ![The liquid example: three streams of water run over the grey word penumbra into a grey basin and drain through a gap in its floor; at the right, sand pours onto a shelf and slides off](assets/gallery/liquid.jpg)
 
 The [liquid-bodies](examples/liquid-bodies/README.md) example: boxes and balls from the rigid-body
-solver drop into a pool, push the water aside and float, while a turning bar stirs it.
+solver drop into a pool, push the water aside and sink to the floor, while a turning bar stirs
+it.
 
-![The liquid-bodies example: orange boxes and yellow balls float in a row on a blue pool between two grey walls, with splashes above them; a pale bar turns under the water at the right](assets/gallery/liquid-bodies.jpg)
+![The liquid-bodies example: orange boxes and yellow balls sink through a churned blue pool between two grey walls, with air pockets behind them and spray above the surface; a pale bar turns under the water at the right](assets/gallery/liquid-bodies.jpg)
 
 The [smoke](examples/smoke/README.md) example: smoke simulated in a box in space from three
 emitters. Hot smoke glows in colours of its own.
@@ -328,8 +324,8 @@ Linux is only checked by clippy so far.
 
 ## How this is built
 
-Most of the code is written by Claude Code. The author directs it, reviews what it wrote and
-tests the result on the projectors, the camera and real shows. Tooling enforces the rules: the
+Most of the code is written by Claude Code. The developers direct it, review what it wrote and
+test the result on projectors, cameras and real shows. Tooling enforces the rules: the
 workspace denies `unwrap`, `expect`, `panic`, `unreachable`, indexing that can panic and
 `unsafe` outside small delimited modules. A layer check runs on every dependency set. Renders
 are compared with golden images. File, network and hardware input is tested with hostile data.
@@ -371,7 +367,7 @@ penumbra is an independent project and not affiliated with the storytold team.
 
 ## Contributing
 
-Issues and pull requests are welcome. The best fit: support for hardware the author cannot
+Issues and pull requests are welcome. The best fit: support for hardware we cannot
 test, from someone who uses it. For example "I have a Kinect and want to use it in penumbra,
 here is a PR." For anything bigger than a fix, open an issue first, so we can agree on the
 scope before the work is done. Contributions are licensed as below.
