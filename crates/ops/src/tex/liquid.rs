@@ -140,7 +140,7 @@ const LIQUID: u32 = 1;
 const SAND: u32 = 2;
 const SNOW: u32 = 3;
 /// Stiffness of sand and snow as the speed of a shear-free wave would be without Poisson's
-/// ratio, picture heights per second (12 m/s in a room 3 m high, the spike's number): the
+/// ratio, picture heights per second (12 m/s in a room 3 m high): the
 /// Lame numbers follow from it and the ratio. Stiffer costs substeps and looks no different.
 const SAND_STIFFNESS: f64 = 4.0;
 const SAND_POISSON: f64 = 0.3;
