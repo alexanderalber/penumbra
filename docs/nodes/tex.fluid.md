@@ -31,4 +31,5 @@ fluid without dye.
 ## tex.fluid or tex.liquid
 
 Take `tex.liquid` instead for a liquid with a surface, such as water that is poured in, falls and
-pools at the bottom; `tex.fluid` fills the whole picture and suits smoke, ink and swirls.
+pools at the bottom; `tex.fluid` fills the whole picture and suits smoke, ink and swirls. Both
+take the same `force` picture and `splats` table, so one camera or tracker drives both.

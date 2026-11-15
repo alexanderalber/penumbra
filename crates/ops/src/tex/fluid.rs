@@ -388,6 +388,48 @@ fn splat_bytes(splats: &[Splat]) -> Vec<u8> {
     values.iter().flat_map(|v| f16::from_f32(*v).to_le_bytes()).collect()
 }
 
+/// How often a picture input brings a new frame: the time between its frames, smoothed. A
+/// motion picture such as `tex.optical_flow`'s holds motion per input frame, so this rate turns it
+/// into motion per second.
+#[derive(Default)]
+pub(crate) struct FrameGaps {
+    /// The input's last frame, and when it came.
+    frame: Option<Data>,
+    at: Option<Tick>,
+    interval: Option<f64>,
+}
+
+impl FrameGaps {
+    /// Takes the input's frame at `now`; `None` while the input is unwired forgets the last one.
+    pub(crate) fn count(&mut self, data: Option<&Data>, now: Tick) {
+        let Some(data) = data else {
+            self.frame = None;
+            self.at = None;
+            return;
+        };
+        if self.frame.as_ref().is_some_and(|f| f.same(data)) {
+            return;
+        }
+        if let Some(at) = self.at {
+            let gap = Tick(now.0.saturating_sub(at.0)).seconds();
+            if gap > 0.0 {
+                let gap = gap.clamp(1.0 / 480.0, 0.5);
+                self.interval = Some(match self.interval {
+                    Some(i) => i + (gap - i) * 0.25,
+                    None => gap,
+                });
+            }
+        }
+        self.frame = Some(data.clone());
+        self.at = Some(now);
+    }
+
+    /// New frames per second; one per show frame of `period` seconds until two have come.
+    pub(crate) fn rate(&self, period: f64) -> f64 {
+        1.0 / self.interval.unwrap_or(period).max(1e-3)
+    }
+}
+
 #[derive(Default)]
 struct Fluid {
     pass: PassCell,
@@ -406,10 +448,8 @@ struct Fluid {
     restored: Option<(Tex, Tex)>,
     /// The show time of the last step.
     last: Option<Tick>,
-    /// The force input's last frame, when it came, and the smoothed time between its frames.
-    force_frame: Option<Data>,
-    force_at: Option<Tick>,
-    interval: Option<f64>,
+    /// The force input's frames: how often a new one comes.
+    force_gaps: FrameGaps,
     /// The last velocity and density outputs, while they are read.
     velocity_out: Option<Tex>,
     density_out: Option<Tex>,
@@ -483,30 +523,6 @@ impl Fluid {
         self.dye = None;
         self.restored = None;
     }
-
-    /// Updates the smoothed time between the force input's frames with a new frame at `now`.
-    fn count_force_frame(&mut self, data: Option<&Data>, now: Tick) {
-        let Some(data) = data else {
-            self.force_frame = None;
-            self.force_at = None;
-            return;
-        };
-        if self.force_frame.as_ref().is_some_and(|f| f.same(data)) {
-            return;
-        }
-        if let Some(at) = self.force_at {
-            let gap = Tick(now.0.saturating_sub(at.0)).seconds();
-            if gap > 0.0 {
-                let gap = gap.clamp(1.0 / 480.0, 0.5);
-                self.interval = Some(match self.interval {
-                    Some(i) => i + (gap - i) * 0.25,
-                    None => gap,
-                });
-            }
-        }
-        self.force_frame = Some(data.clone());
-        self.force_at = Some(now);
-    }
 }
 
 impl Operator for Fluid {
@@ -544,7 +560,7 @@ impl Operator for Fluid {
         let want_density = cx.output_wanted(2);
         let dt = step(now.tick, self.last, period);
         let force_data = cx.input(0);
-        self.count_force_frame(force_data, now.tick);
+        self.force_gaps.count(force_data, now.tick);
         let sizes_kept = self.velocity.as_ref().is_some_and(|v| v.size() == (gw, gh))
             && self.dye.as_ref().is_some_and(|d| d.size() == (width, height));
         if dt == 0.0
@@ -599,7 +615,7 @@ impl Operator for Fluid {
             dt,
             aspect,
             h,
-            rate: 1.0 / self.interval.unwrap_or(period).max(1e-3),
+            rate: self.force_gaps.rate(period),
             force: cx.float("force")?,
             vel_fade: fade(dt, cx.float("velocity_fade")?),
             dye_fade: fade(dt, cx.float("dye_fade")?),

@@ -36,14 +36,14 @@
 
 use std::sync::Arc;
 
-use penumbra_core::{Curve, Error, ParamSpec, Tick, Unit, Value};
+use penumbra_core::{Curve, Error, ParamSpec, Table, Tick, Unit, Value};
 use penumbra_gpu::{Batch, Buffer, BufferRead, Compute, Dispatch, Gpu, Out, ReadState, Step, Tex, TexRing};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, MAX_RUN, NodeDef, NodeDesc, NodeTypes,
     Operator,
 };
 
-use super::fluid::{grid, step};
+use super::fluid::{FrameGaps, MAX_SPLATS, Splat, grid, splats as read_splats, step};
 use super::liquid_emitter::{self, Emitter, MATERIALS, MAX_EMITTERS};
 use super::{height_param, keep_size, side, width_param};
 use crate::on_gpu;
@@ -55,10 +55,13 @@ const SOLID_SOURCE: &str = include_str!("liquid_solid.wgsl");
 const DRAW_KIND: &str = "tex.liquid drawing";
 const DRAW_SOURCE: &str = include_str!("liquid_draw.wgsl");
 
-/// Input of the `fill` picture, after the run of emitters, then the obstacles and their velocity.
+/// Input of the `fill` picture, after the run of emitters, then the obstacles and their velocity,
+/// the force picture and the splats.
 const FILL: usize = MAX_RUN;
 const OBSTACLES: usize = MAX_RUN + 1;
 const OBSTACLE_VELOCITY: usize = MAX_RUN + 2;
+const FORCE: usize = MAX_RUN + 3;
+const SPLATS: usize = MAX_RUN + 4;
 
 /// Longest time step, in seconds: one frame a 60 fps show skipped is simulated in full, a longer
 /// stall is cut short, so a hitch costs at most twice the substeps of a frame.
@@ -109,17 +112,27 @@ const MASK_PER_CELL: f64 = 2.0;
 const MOST_OBSTACLE_SPEED: f64 = 30.0;
 /// Highest Coulomb friction coefficient `friction` takes.
 const MOST_FRICTION: f64 = 10.0;
+/// The strongest push the `force` picture and the splats give together, picture heights per
+/// second squared (15 times the earth's gravity in a picture 3 m high): a stronger one is cut down
+/// to this, so the substeps it needs stay within reach.
+const MOST_PUSH: f64 = 50.0;
+/// Largest value the `force` picture is read with, in widths or heights per input frame.
+const MOST_MOTION: f64 = 1.0e4;
 /// Bytes per particle (`P` in the shader).
 const PARTICLE_BYTES: u64 = 64;
-/// 32-bit words per emitter (`Em`) and in the frame's constants (`U`).
+/// 32-bit words per emitter (`Em`) and in the frame's constants (`U`). The splats follow the
+/// emitters in their buffer, one `Em` each.
 const EMITTER_WORDS: usize = 12;
-const UNIFORM_WORDS: usize = 64;
+const UNIFORM_WORDS: usize = 72;
 /// The counters the shader keeps (`counter`), and their places.
 const COUNTERS: usize = 8;
 const FREE_SEEN: usize = 0;
 const WRAPPED: usize = 2;
 const FILL_WANTED: usize = 3;
 const LIVE: usize = 4;
+/// The strongest push of the `force` picture where there is liquid, before the cut to
+/// [`MOST_PUSH`], as the bits of a float.
+const PEAK: usize = 5;
 /// Material numbers: 0 is a free place, then [`MATERIALS`] in their order.
 const LIQUID: u32 = 1;
 const SAND: u32 = 2;
@@ -213,6 +226,20 @@ fn desc() -> NodeDesc {
         "How the obstacles move, so they push the liquid: red x in widths, green y in heights, down positive, \
          per second, as the `velocity` output. Unwired, obstacles stand still",
     )
+    .input("force", DataKind::Tex)
+    .describe_input(
+        "force",
+        "Motion that pushes the liquid, sand and snow: tex.optical_flow's output as it is, as in tex.fluid. Red x \
+         in widths, green y in heights, down positive, per input frame. Per second, `force` times this motion's \
+         speed is added to the liquid's speed",
+    )
+    .input("splats", DataKind::Table)
+    .describe_input(
+        "splats",
+        "Pushes at points, one per row, at most 64: tex.blob_track's table as it is, as in tex.fluid. Columns x, \
+         y (0 to 1, from the top left); optional vx, vy (picture sizes per second) and radius (picture \
+         heights). Colour columns are left alone: only emitters and `fill` add liquid",
+    )
     .param(width_param())
     .param(height_param())
     .param(keep_size())
@@ -277,6 +304,30 @@ fn desc() -> NodeDesc {
                  thin film on a slope slides about a sixth as far as without; deep liquid still runs down over it. \
                  Sand and snow stick by their own friction; this adds to it where it is higher",
             ),
+    )
+    .param(
+        ParamSpec::float("force", 4.0).clamp(0.0, 1000.0).range(0.0, 20.0).curve(Curve::Power(2.0)).doc(
+            "How strongly the `force` picture and the splats push, as in tex.fluid. Per second, this many times \
+             the motion's speed is added to the liquid's speed. A push beyond 50 heights per second squared is \
+             cut to 50",
+        ),
+    )
+    .param(
+        ParamSpec::choice("splat_motion", &["push", "set"])
+            .doc("What a splat's vx and vy do to the liquid under it")
+            .choice_doc("push", "add to its speed every frame, times `force`: a stirring hand")
+            .choice_doc(
+                "set",
+                "become its speed, whatever `force` says: a paddle, or a still hand that holds the liquid back",
+            ),
+    )
+    .param(
+        ParamSpec::float("splat_radius", 0.05)
+            .clamp(0.0001, 10.0)
+            .range(0.005, 0.3)
+            .curve(Curve::Log)
+            .more()
+            .doc("Radius of a splat from a table without a radius column, in picture heights"),
     )
     .param(
         ParamSpec::choice("fill_material", &MATERIALS)
@@ -544,6 +595,9 @@ struct Counted {
     short: bool,
     /// Grid cells whose mass did not fit the fixed point.
     wrapped: u32,
+    /// The strongest push of the `force` picture where the liquid is, heights per second squared,
+    /// before the cut to [`MOST_PUSH`].
+    peak: f64,
 }
 
 /// Jump flooding steps over a mask of `across` x `down` cells: from half the larger side (as a
@@ -793,7 +847,11 @@ impl Sim {
             gf: Buffer::of::<[f32; 4]>(gpu, n, "tex.liquid grid")?,
             solid: Buffer::of::<[f32; 4]>(gpu, n, "tex.liquid solids")?,
             counter: Buffer::of::<u32>(gpu, COUNTERS as u64, "tex.liquid counters")?,
-            emitters: Buffer::of::<u32>(gpu, (MAX_EMITTERS * EMITTER_WORDS) as u64, "tex.liquid emitters")?,
+            emitters: Buffer::of::<u32>(
+                gpu,
+                ((MAX_EMITTERS + MAX_SPLATS) * EMITTER_WORDS) as u64,
+                "tex.liquid emitters and splats",
+            )?,
             obstacles: None,
             filled: false,
             recount: false,
@@ -865,11 +923,17 @@ fn emitter_words(sim: &mut Sim, emitters: &[Emitter], dt: f64) -> (Vec<u32>, u32
         let speed = e.velocity[0].hypot(e.velocity[1]);
         let dir = if speed > 1e-9 { [e.velocity[0] / speed, e.velocity[1] / speed] } else { [0.0, 1.0] };
         let cols = (e.width / spacing).round().clamp(1.0, 4096.0);
+        // `run` is the gap between the nozzle and the row poured nearest to it, which the substeps
+        // carried on since. The rows that fit the gap pour now; this frame's substeps then open
+        // the gap of the next frame. Rows that filled this frame's travel before its substeps
+        // would land on the last frame's rows whenever a frame is longer than the one before (a
+        // hitch, a project that starts) and burst apart.
         let mut rows = 0.0;
-        if e.on && speed > 1e-9 && dt > 0.0 {
-            *run += speed * dt;
+        let mut nearest = 0.0;
+        if e.on && speed > 1e-9 {
             rows = (*run / spacing).floor().clamp(0.0, 4096.0);
-            *run = (*run - rows * spacing).clamp(0.0, spacing);
+            nearest = (*run - rows * spacing).clamp(0.0, spacing);
+            *run = nearest + if dt > 0.0 { speed * dt } else { 0.0 };
         } else {
             *run = 0.0;
         }
@@ -883,7 +947,7 @@ fn emitter_words(sim: &mut Sim, emitters: &[Emitter], dt: f64) -> (Vec<u32>, u32
             f(dir[0]),
             f(dir[1]),
             f(speed),
-            f(*run),
+            f(nearest),
             f(spacing),
             0,
             cols as u32,
@@ -924,6 +988,22 @@ struct Frame {
     fill_material: u32,
     /// Whether sand or snow is in the liquid: the grid sums their friction then.
     granular_in_use: bool,
+    /// The pushes of the `force` picture and the splats.
+    push: Push,
+}
+
+/// What pushes the liquid besides gravity: the `force` picture and the splats.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Push {
+    /// Per second squared per motion of a height per input frame: `force` times the input's
+    /// frames per second; 0 while the picture is unwired.
+    picture: f64,
+    /// Per second: `force`, for the splats.
+    splats: f64,
+    /// Splats in the buffer after the emitters.
+    count: u32,
+    /// Whether the splats set the velocity instead of pushing.
+    set: bool,
 }
 
 /// The shares a substep of `sub` seconds moves the drawing's per-particle values on by: the
@@ -975,7 +1055,46 @@ fn uniform_words(sim: Layout, f: &Frame) -> Vec<u32> {
     for values in f.granular.table(f.viscosity) {
         w.extend(values.map(float));
     }
+    let p = &f.push;
+    w.extend([float(p.picture), float(p.splats), float(MOST_PUSH), float(MOST_MOTION)]);
+    w.extend([
+        u32::from(p.picture > 0.0),
+        p.count.min(MAX_SPLATS as u32),
+        u32::from(p.set),
+        MAX_EMITTERS as u32,
+    ]);
     w
+}
+
+/// The splats as the shader reads them, one `Em` each after the emitters: position in heights
+/// from the top left and velocity in heights per second, then the radius in heights.
+fn splat_words(splats: &[Splat], aspect: f64) -> Vec<u32> {
+    let f = |v: f64| (v as f32).to_bits();
+    let mut words = Vec::with_capacity(splats.len().min(MAX_SPLATS) * EMITTER_WORDS);
+    for s in splats.iter().take(MAX_SPLATS) {
+        words.extend([
+            f(f64::from(s.at[0]) * aspect),
+            f(f64::from(s.at[1])),
+            s.velocity[0].to_bits(),
+            s.velocity[1].to_bits(),
+            s.radius.to_bits(),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ]);
+    }
+    words
+}
+
+/// The fastest speed a push of `push` heights per second squared gives across a picture height:
+/// the substeps count it as they count a fall.
+fn pushed_speed(gravity: f64, push: f64) -> f64 {
+    let a = gravity.max(0.0) + push.clamp(0.0, MOST_PUSH);
+    if a.is_finite() { (2.0 * a).sqrt() } else { 0.0 }
 }
 
 /// Records the drawing of the particles in `parts` into `targets`: `out`, then `foam`, `grain`
@@ -1058,6 +1177,8 @@ struct Liquid {
     reading: Option<(BufferRead, u32)>,
     spare: Option<BufferRead>,
     counted: Counted,
+    /// How often the `force` picture brings a new frame.
+    force_gaps: FrameGaps,
 }
 
 impl Liquid {
@@ -1074,6 +1195,8 @@ impl Liquid {
                     self.counted.fill_wanted = at(FILL_WANTED);
                     self.counted.wrapped = at(WRAPPED);
                     self.counted.short = asked > 0 && at(FREE_SEEN) < asked;
+                    let peak = f64::from(f32::from_bits(at(PEAK)));
+                    self.counted.peak = if peak.is_finite() { peak.max(0.0) } else { MOST_PUSH * 2.0 };
                 }
                 self.spare = Some(read);
             }
@@ -1150,6 +1273,8 @@ impl Operator for Liquid {
         let dt = step(now.tick, self.last, period).min(MAX_DT) * speed;
         // Before the early return, so a bad table warns on a still show too.
         let emitters = liquid_emitter::from_run(cx, 0, "emitter");
+        let force_data = cx.input(FORCE);
+        self.force_gaps.count(force_data, now.tick);
         let want_velocity = cx.output_wanted(1);
         let want_density = cx.output_wanted(2);
         let (want_foam, want_grain, want_surface) =
@@ -1247,10 +1372,48 @@ impl Operator for Liquid {
             sim.used |= 1 << (LIQUID + e.material.min(MATERIALS.len() - 1) as u32);
         }
         let granular = Granular { angle: cx.float("sand_angle")?, wetness: cx.float("snow_wetness")? };
-        // The fastest flow: a fall across the picture, an emitter's stream, or a wave in sand or
-        // snow.
-        let fall = (2.0 * gravity[0].hypot(gravity[1])).sqrt();
+        // The pushes: the force picture's at its input's frame rate, the splats from their table.
+        let gain = cx.float("force")?;
+        let gain = if gain.is_finite() { gain.clamp(0.0, 1000.0) } else { 0.0 };
+        let force = force_data.and_then(|d| d.get::<Tex>()).filter(|_| gain > 0.0);
+        if force.is_none() {
+            self.counted.peak = 0.0;
+        }
+        let splats = match cx.input_as::<Table>(SPLATS) {
+            Some(t) => {
+                let radius = cx.float("splat_radius")?;
+                let radius = if radius.is_finite() { radius.clamp(1e-4, 10.0) } else { 0.05 };
+                match read_splats(t, aspect as f32, [0.0; 3], radius as f32) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        cx.warn(e);
+                        Vec::new()
+                    }
+                }
+            }
+            None => Vec::new(),
+        };
+        let push = Push {
+            picture: if force.is_some() { gain * self.force_gaps.rate(period) } else { 0.0 },
+            splats: gain,
+            count: splats.len().min(MAX_SPLATS) as u32,
+            set: cx.text("splat_motion")? == "set",
+        };
+        let splat_speed =
+            splats.iter().map(|s| f64::from(s.velocity[0].hypot(s.velocity[1]))).fold(0.0, f64::max);
+        let splat_push = if push.set { 0.0 } else { gain * splat_speed };
+        let pushing = self.counted.peak + splat_push;
+        if pushing > MOST_PUSH {
+            cx.warn(format!(
+                "`force` and the splats push with up to {pushing:.0} heights per second squared, more than \
+                 {MOST_PUSH:.0}: the push is cut to {MOST_PUSH:.0}. Lower `force`"
+            ));
+        }
+        // The fastest flow: a fall across the picture under gravity and the pushes, an emitter's
+        // stream or a splat that sets its speed, or a wave in sand or snow.
+        let fall = pushed_speed(gravity[0].hypot(gravity[1]), pushing);
         let pour = emitters.iter().map(|e| e.velocity[0].hypot(e.velocity[1])).fold(0.0, f64::max);
+        let pour = if push.set { pour.max(splat_speed) } else { pour };
         let fastest = MIN_FLOW.max(fall).max(pour).max(fastest_wave(sim.used));
         let (count, dt, needed) = substeps(dt, sim.dx, fastest, viscosity);
         if needed > count {
@@ -1269,6 +1432,13 @@ impl Operator for Liquid {
         let (emit_words, slots) = emitter_words(sim, &emitters, dt);
         if !emit_words.is_empty() {
             sim.emitters.write(gpu, 0, &emit_words)?;
+        }
+        if !splats.is_empty() {
+            sim.emitters.write(
+                gpu,
+                (MAX_EMITTERS * EMITTER_WORDS) as u64,
+                &splat_words(&splats, sim.aspect),
+            )?;
         }
         let color_of = |name: &str| match cx.param(name) {
             Some(Value::Vec4(c)) => c.map(|v| if v.is_finite() { v } else { 0.0 }),
@@ -1293,6 +1463,7 @@ impl Operator for Liquid {
             granular,
             fill_material,
             granular_in_use: sim.used & !(1 << LIQUID) != 0,
+            push,
         };
         let layout =
             Layout { nodes: sim.nodes, budget: sim.budget, dx: sim.dx, aspect: sim.aspect, frame: sim.frame };
@@ -1301,6 +1472,11 @@ impl Operator for Liquid {
         sim.counter.write(gpu, 0, &[0u32; 3])?;
         if sim.recount {
             sim.counter.write(gpu, LIVE as u64, &[0u32])?;
+        }
+        // The force picture is measured in the substeps only: a cook without them keeps the last
+        // measure.
+        if force.is_some() && count > 0 {
+            sim.counter.write(gpu, PEAK as u64, &[0u32])?;
         }
 
         let (cw, ch) = sim.cells;
@@ -1349,7 +1525,10 @@ impl Operator for Liquid {
         let plain = dispatch(&[], &zero);
         let fill_pictures = [fill];
         let filled_from = dispatch(&fill_pictures, &zero);
-        let substep_inputs: Vec<Dispatch<'_>> = params.iter().map(|p| dispatch(&[], p)).collect();
+        // The force picture is read in the substeps only.
+        let force_pictures = [force];
+        let pushed: &[Option<&Tex>] = if force.is_some() { &force_pictures } else { &[] };
+        let substep_inputs: Vec<Dispatch<'_>> = params.iter().map(|p| dispatch(pushed, p)).collect();
         let particles = Out::range(sim.budget);
         let nodes = Out::grid(sim.nodes.0, sim.nodes.1);
         let mut steps = Vec::with_capacity(3 * count + 8);
@@ -1546,7 +1725,7 @@ mod tests {
 
     #[test]
     fn the_constants_fill_the_shaders_struct() {
-        // Eight vectors of four words, then four materials of eight.
+        // Eight vectors of four words, four materials of eight, then two vectors of the pushes.
         let layout = Layout { nodes: (10, 8), budget: 1024, dx: 0.25, aspect: 1.5, frame: 3 };
         let frame = Frame {
             dt: 0.001,
@@ -1562,13 +1741,17 @@ mod tests {
             granular: Granular::default(),
             fill_material: SNOW,
             granular_in_use: true,
+            push: Push { picture: 240.0, splats: 4.0, count: 70, set: true },
         };
         let words = uniform_words(layout, &frame);
         assert_eq!(words.len(), UNIFORM_WORDS);
         // Open edges in bit 0, friction summed per cell in bit 1, the fill's material in bits 8
         // to 15.
         assert_eq!(words[3], 1 | 2 | (SNOW << 8));
-        assert_eq!(UNIFORM_WORDS, 8 * 4 + 4 * 8);
+        assert_eq!(UNIFORM_WORDS, 8 * 4 + 4 * 8 + 2 * 4);
+        // The pushes: the picture read, at most 64 splats, set, and the splats after the emitters.
+        assert_eq!(words[68..72], [1, MAX_SPLATS as u32, 1, MAX_EMITTERS as u32]);
+        assert_eq!(f32::from_bits(words[66]), MOST_PUSH as f32);
         // The struct in the shader: its members in this order, all vectors of four.
         let start = SOURCE.find("struct U {").unwrap();
         let body = &SOURCE[start..start + SOURCE[start..].find('}').unwrap()];
@@ -1581,7 +1764,10 @@ mod tests {
                 n
             })
             .collect();
-        assert_eq!(members, ["grid", "cell", "fixed", "wall", "force", "room", "emit", "draw", "mats"]);
+        assert_eq!(
+            members,
+            ["grid", "cell", "fixed", "wall", "force", "room", "emit", "draw", "mats", "push", "pushes"]
+        );
         let em = &SOURCE[SOURCE.find("struct Em {").unwrap()..];
         let em = &em[..em.find('}').unwrap()];
         assert_eq!(em.matches("vec4").count() * 4, EMITTER_WORDS);
@@ -1626,6 +1812,30 @@ mod tests {
         // Nothing breaks on a picture of one pixel.
         assert_eq!(draw_sizes((1, 1), 1.0, most), ((1, 1), (1, 1)));
         assert_eq!(draw_sizes((0, 0), f64::NAN, most).0, (1, 1));
+    }
+
+    #[test]
+    fn pushes_count_into_the_substeps_as_a_fall_and_stop_at_the_cut() {
+        // Nothing pushing: the fall under gravity alone, as before the pushes.
+        assert_eq!(pushed_speed(3.27, 0.0), (2.0f64 * 3.27).sqrt());
+        assert!(pushed_speed(3.27, 10.0) > pushed_speed(3.27, 1.0));
+        // Beyond the cut the speed grows no more, and bad numbers give no speed.
+        assert_eq!(pushed_speed(0.0, 1e9), pushed_speed(0.0, MOST_PUSH));
+        assert_eq!(pushed_speed(f64::INFINITY, 0.0), 0.0);
+        assert_eq!(pushed_speed(0.0, f64::NAN), 0.0);
+        // The strongest push takes the default grid to about 2.6 times the substeps.
+        let (frame, dx) = (1.0 / 60.0, 1.0 / 216.0);
+        let most = substeps(frame, dx, MIN_FLOW.max(pushed_speed(3.27, MOST_PUSH)), 0.000_222).0;
+        assert!(most > 21 && most < 64, "{most}");
+    }
+
+    #[test]
+    fn splats_go_after_the_emitters_in_heights() {
+        let s = Splat { at: [0.5, 0.25], velocity: [1.0, -2.0], color: [9.0; 3], radius: 0.1 };
+        let words = splat_words(&[s; 70], 2.0);
+        assert_eq!(words.len(), MAX_SPLATS * EMITTER_WORDS);
+        let f = |i: usize| f32::from_bits(words[i]);
+        assert_eq!([f(0), f(1), f(2), f(3), f(4)], [1.0, 0.25, 1.0, -2.0, 0.1]);
     }
 
     #[test]
