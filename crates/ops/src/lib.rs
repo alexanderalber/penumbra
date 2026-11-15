@@ -115,9 +115,15 @@ pub const TAGS: &[(&str, &[&str])] = &[
             "flex solver",
             "nvidia flex",
             "fluid 2d",
+            "sand",
+            "snow",
+            "granular",
         ],
     ),
-    ("tex.liquid_emitter", &["simulation", "water", "pour", "tap", "nozzle", "source", "flex"]),
+    (
+        "tex.liquid_emitter",
+        &["simulation", "water", "pour", "tap", "nozzle", "source", "flex", "sand", "snow"],
+    ),
     (
         "tex.mapper",
         &[

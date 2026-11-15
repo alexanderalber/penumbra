@@ -11,16 +11,35 @@
 // Beside the field the particles add weights for averages of their foam and grain. Sums are
 // fixed point in atomics: the same particles give the same pictures in any order.
 //
+// Sand and snow (material 2 and 3) add to the same field, so one edge goes round all of it.
+// Their grain is a random number from the particle's place in the buffer. Sand adds its grain
+// with a kernel smaller than a particle's spacing, so each grain shows; snow varies its kernel's
+// weight by its grain, so its edge is lumpy. While sand or snow is in the liquid, a second set of
+// sums gives each pixel its share of sand and of snow, and the shading mixes the materials'
+// colours by them.
+//
 // Shading: the coverage with the solids counted as filled, blurred twice: a little for the
 // distance to the surface (a light band under it), a lot at a low resolution for the depth
 // (the bulk darker). Foam lightens the liquid near its surface.
 //
 // Per frame: `splat` (per particle), `resolve` (sums to the shape picture, and back to 0),
 // `shape_x`, `shape_y`, `depth_down`, `depth_x`, `depth_y`, `surface_x`, `surface_y`, then
-// `shade` for `out` and `foam_out`, `grain_out` and `surface_out` for those outputs.
+// `shade` for `out` and `foam_out`, `grain_out` and `surface_out` for those outputs. With sand
+// or snow, `shares` after `resolve` turns the second sums into a picture that `surface_x` and
+// `surface_y` pass on to `shade`.
 
-// Particles of material 1 are liquid.
+// Particles of material 1 are liquid, 2 sand, 3 snow.
 const LIQUID: u32 = 1u;
+const SAND: u32 = 2u;
+const SNOW: u32 = 3u;
+// Sand's grain kernel, in particle spacings.
+const SAND_GRAIN: f32 = 0.75;
+// How much a snow particle's weight in the field varies with its grain: from 1 - this to 1 +
+// this.
+const SNOW_LUMPS: f32 = 0.6;
+// How far the shading looks for the materials' shares around a pixel no particle reaches, in
+// splat pixels.
+const SHARE_REACH: i32 = 3;
 // The smoothed density below which a particle's kernel grows, and the most it grows.
 const MOST_STRETCH: f32 = 4.0;
 // The kernel's radius in particle spacings, at least this many splat pixels.
@@ -42,10 +61,12 @@ const BAND: f32 = 0.55;
 struct D {
     splat: vec4u,  // splat picture width, height; particles in the buffer; 1 when obstacles are wired
     room: vec4f,   // splat pixels per picture height across, down; particle spacing in splat pixels; unused
-    kernel: vec4f, // fast speed (heights per second); unused; unused; fixed-point scale
+    kernel: vec4f, // fast speed (heights per second); 1 while sand or snow is in the liquid; unused; fixed-point scale
     blur: vec4f,   // sigma of the shape blur and of the surface blur (splat pixels), of the depth blur (depth pixels); unused
     look: vec4f,   // particle spacing in output pixels; foam strength; unused; unused
     color: vec4f,  // the liquid's colour, straight alpha
+    sand: vec4f,   // sand's colour
+    snow: vec4f,   // snow's colour
 }
 
 struct P {
@@ -65,6 +86,9 @@ struct P {
 @group(2) @binding(1) var<storage, read> parts: array<P>;
 // Per splat pixel: the field, the averages' weight, foam times weight, grain times weight.
 @group(2) @binding(2) var<storage, read_write> acc: array<atomic<u32>>;
+// Per splat pixel while sand or snow is in the liquid: the averages' weight of sand, of snow,
+// of all particles, unused.
+@group(2) @binding(3) var<storage, read_write> shares: array<atomic<u32>>;
 
 fn finite(v: vec2f) -> bool {
     return all(v == v) && all(abs(v) < vec2f(1e30));
@@ -74,6 +98,16 @@ fn fixed(v: f32) -> u32 {
     return u32(clamp(v * d.kernel.w + 0.5, 0.0, 4294967040.0));
 }
 
+fn hash(x: u32) -> u32 {
+    var h = x * 747796405u + 2891336453u;
+    h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+    return (h >> 22u) ^ h;
+}
+
+fn granular() -> bool {
+    return d.kernel.y > 0.5;
+}
+
 @compute @workgroup_size(64)
 fn splat(@builtin(global_invocation_id) id: vec3u) {
     let i = id.x;
@@ -81,14 +115,17 @@ fn splat(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     let p = parts[i];
-    if (p.mat != LIQUID || !finite(p.pos) || !finite(p.vel)) {
+    if (p.mat == 0u || p.mat > SNOW || !finite(p.pos) || !finite(p.vel)) {
         return;
     }
+    let liquid = p.mat == LIQUID;
     let size = vec2i(d.splat.xy);
     let c = p.pos * d.room.xy;
     let s = d.room.z;
     let rad = max(RADIUS * s, LEAST_RADIUS);
-    let thin = clamp(1.0 / max(p.f1.x, 1e-3), 1.0, MOST_STRETCH);
+    // Liquid keeps a smoothed density for this; sand and snow take the last one.
+    let ratio = select(p.rho / max(d.look.z, 1e-6), p.f1.x, liquid);
+    let thin = clamp(1.0 / max(ratio, 1e-3), 1.0, MOST_STRETCH);
     let speed = length(p.vel);
     var dir = vec2f(1.0, 0.0);
     var a = rad * sqrt(thin);
@@ -99,12 +136,23 @@ fn splat(@builtin(global_invocation_id) id: vec3u) {
         b = rad;
     }
     // Every particle adds s^2 * thin in all: about 1 per pixel inside the liquid at rest.
-    let norm = 3.0 * s * s / (3.14159265 * rad * rad);
+    var norm = 3.0 * s * s / (3.14159265 * rad * rad);
     let ra = max(AVERAGE * s, LEAST_RADIUS);
-    let foam = clamp(p.f1.y, 0.0, 1.0);
-    let grain = clamp(p.jp, 0.0, 1.0);
+    var foam = 0.0;
+    var grain = f32(hash(i ^ 0x5bd1e995u) >> 8u) / 16777216.0;
+    if (liquid) {
+        foam = clamp(p.f1.y, 0.0, 1.0);
+        grain = clamp(p.jp, 0.0, 1.0);
+    } else if (p.mat == SNOW) {
+        norm *= 1.0 + SNOW_LUMPS * (2.0 * grain - 1.0);
+    }
+    // Sand's grain goes into the averages with a kernel of its own, smaller than its spacing.
+    let rg = select(ra, max(SAND_GRAIN * s, 0.75), p.mat == SAND);
     let ext = vec2f(length(vec2f(a * dir.x, b * dir.y)), length(vec2f(a * dir.y, b * dir.x)));
     let reach = vec2i(ceil(min(max(ext, vec2f(ra)), vec2f(f32(MOST_REACH)))));
+    let mixed = granular();
+    let sand = select(0.0, 1.0, p.mat == SAND);
+    let snow = select(0.0, 1.0, p.mat == SNOW);
     let centre = vec2i(floor(c));
     let lo = max(centre - reach, vec2i(0));
     let hi = min(centre + reach, size - vec2i(1));
@@ -117,16 +165,47 @@ fn splat(@builtin(global_invocation_id) id: vec3u) {
             let r2 = dot(e, e) / (ra * ra);
             let k = 4u * (u32(y) * d.splat.x + u32(x));
             if (d2 < 1.0) {
-                atomicAdd(&acc[k], fixed(norm * (1.0 - d2) * (1.0 - d2)));
+                let f = norm * (1.0 - d2) * (1.0 - d2);
+                atomicAdd(&acc[k], fixed(f));
+                if (mixed) {
+                    // The shares weigh like the field, so wherever the field is the shares are.
+                    atomicAdd(&shares[k], fixed(f * sand));
+                    atomicAdd(&shares[k + 1u], fixed(f * snow));
+                    atomicAdd(&shares[k + 2u], fixed(f));
+                }
             }
             if (r2 < 1.0) {
                 let g = (1.0 - r2) * (1.0 - r2);
-                atomicAdd(&acc[k + 1u], fixed(g));
-                atomicAdd(&acc[k + 2u], fixed(g * foam));
-                atomicAdd(&acc[k + 3u], fixed(g * grain));
+                let q2 = dot(e, e) / (rg * rg);
+                if (q2 < 1.0) {
+                    let q = (1.0 - q2) * (1.0 - q2);
+                    atomicAdd(&acc[k + 1u], fixed(q));
+                    atomicAdd(&acc[k + 2u], fixed(q * foam));
+                    atomicAdd(&acc[k + 3u], fixed(q * grain));
+                }
             }
         }
     }
+}
+
+// The second sums to (sand share, snow share, 0, 0), and back to 0 for the next frame. A pixel
+// no particle reaches has a sand share of -1: the shading looks around it.
+@compute @workgroup_size(8, 8, 1)
+fn resolve_shares(@builtin(global_invocation_id) id: vec3u) {
+    if (any(id.xy >= pn.size.xy)) {
+        return;
+    }
+    let k = 4u * (id.y * d.splat.x + id.x);
+    let all = atomicLoad(&shares[k + 2u]);
+    var share = vec2f(-1.0, 0.0);
+    if (all > 0u) {
+        share = vec2f(f32(atomicLoad(&shares[k])), f32(atomicLoad(&shares[k + 1u]))) / f32(all);
+        share = clamp(share, vec2f(0.0), vec2f(1.0));
+    }
+    atomicStore(&shares[k], 0u);
+    atomicStore(&shares[k + 1u], 0u);
+    atomicStore(&shares[k + 2u], 0u);
+    textureStore(pic_out, id.xy, vec4f(share, 0.0, 0.0));
 }
 
 // The sums to (field, solid, foam, grain), and the sums back to 0 for the next frame. Solid
@@ -266,7 +345,8 @@ fn depth_y(@builtin(global_invocation_id) id: vec3u) {
     textureStore(pic_out, id.xy, vec4f(blur_red(vec2i(id.xy), vec2i(0, 1), d.blur.z), 0.0, 0.0, 1.0));
 }
 
-// The filled coverage of the shape picture (pic0), blurred along x.
+// The filled coverage of the shape picture (pic0), blurred along x; with sand or snow their
+// shares from pic1 beside it.
 @compute @workgroup_size(8, 8, 1)
 fn surface_x(@builtin(global_invocation_id) id: vec3u) {
     if (any(id.xy >= pn.size.xy)) {
@@ -282,11 +362,15 @@ fn surface_x(@builtin(global_invocation_id) id: vec3u) {
         sum += g * filled(load0(at + vec2i(i, 0)));
         total += g;
     }
-    textureStore(pic_out, id.xy, vec4f(sum / max(total, 1e-6), 0.0, 0.0, 1.0));
+    var share = vec2f(0.0);
+    if (granular()) {
+        share = textureLoad(pic1, at, 0).rg;
+    }
+    textureStore(pic_out, id.xy, vec4f(sum / max(total, 1e-6), 0.0, share));
 }
 
-// (blurred coverage, depth 0 to 1): the coverage blurred along y, the depth from the depth
-// picture (pic1).
+// (blurred coverage, depth 0 to 1, sand share, snow share): the coverage blurred along y, the
+// depth from the depth picture (pic1), the shares passed on.
 @compute @workgroup_size(8, 8, 1)
 fn surface_y(@builtin(global_invocation_id) id: vec3u) {
     if (any(id.xy >= pn.size.xy)) {
@@ -295,7 +379,11 @@ fn surface_y(@builtin(global_invocation_id) id: vec3u) {
     let b = blur_red(vec2i(id.xy), vec2i(0, 1), d.blur.y);
     let uv = (vec2f(id.xy) + vec2f(0.5)) / vec2f(pn.size.xy);
     let deep = smoothstep(0.5, 0.95, textureSampleLevel(pic1, pn_clamp, uv, 0.0).r);
-    textureStore(pic_out, id.xy, vec4f(b, deep, 0.0, 1.0));
+    var share = vec2f(0.0);
+    if (granular()) {
+        share = load0(vec2i(id.xy)).ba;
+    }
+    textureStore(pic_out, id.xy, vec4f(b, deep, share));
 }
 
 fn uv_of(id: vec3u) -> vec2f {
@@ -333,6 +421,27 @@ fn surface_at(id: vec3u) -> Surface {
     return s;
 }
 
+// The shares of sand and snow at a pixel of the output, from the surface picture (pic1): the
+// nearest splat pixel's, or the mean of those around it that particles reach.
+fn shares_at(id: vec3u) -> vec2f {
+    let size = vec2i(textureDimensions(pic1));
+    let at = vec2i(uv_of(id) * vec2f(size));
+    let here = textureLoad(pic1, clamp(at, vec2i(0), size - vec2i(1)), 0).ba;
+    if (here.x >= 0.0) {
+        return here;
+    }
+    var sum = vec3f(0.0);
+    for (var j = -SHARE_REACH; j <= SHARE_REACH; j++) {
+        for (var i = -SHARE_REACH; i <= SHARE_REACH; i++) {
+            let s = textureLoad(pic1, clamp(at + vec2i(i, j), vec2i(0), size - vec2i(1)), 0).ba;
+            if (s.x >= 0.0) {
+                sum += vec3f(s, 1.0);
+            }
+        }
+    }
+    return select(vec2f(0.0), sum.xy / sum.z, sum.z > 0.0);
+}
+
 // `out`: the liquid in its colour, lighter in thin parts and under the surface, darker deep
 // down, foam lighter still; premultiplied, transparent around it.
 @compute @workgroup_size(8, 8, 1)
@@ -356,6 +465,28 @@ fn shade(@builtin(global_invocation_id) id: vec3u) {
     c = mix(c, light, smoothstep(BAND_FROM * spacing, BAND_TO * spacing, s.inside) * BAND);
     let foam = smoothstep(0.25, 0.8, t.b) * (1.0 - 0.85 * s.deep) * clamp(d.look.y, 0.0, 1.0);
     c = mix(c, white, foam);
+    if (granular()) {
+        let solid_share = shares_at(id);
+        let share = clamp(solid_share, vec2f(0.0), vec2f(1.0));
+        let solid = share.x + share.y;
+        if (solid > 1e-4) {
+            let band = smoothstep(BAND_FROM * spacing, BAND_TO * spacing, s.inside);
+            let g = clamp(t.a, 0.0, 1.0);
+            // Sand: matte, each grain lighter or darker, darker deep in a heap, a little lighter on top.
+            let sand = max(d.sand.rgb, vec3f(0.0));
+            var cs = sand * (0.55 + 0.9 * g);
+            cs = mix(cs, cs * 0.55, s.deep);
+            cs = mix(cs, min(cs * 1.3, vec3f(1.0)), band * 0.4);
+            // Snow: lit at its surface, bluer and darker deep in a pile, a faint grain.
+            let snow = max(d.snow.rgb, vec3f(0.0));
+            var cn = snow * (0.93 + 0.14 * g);
+            cn = mix(cn, cn * vec3f(0.55, 0.66, 0.88), s.deep * 0.85);
+            cn = mix(cn, mix(snow, vec3f(1.0), 0.5), band * 0.6);
+            let k = min(solid, 1.0);
+            let both = (cs * share.x + cn * share.y) / solid;
+            c = mix(c, both, k);
+        }
+    }
     textureStore(pic_out, id.xy, vec4f(c * a, a));
 }
 

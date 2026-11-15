@@ -29,7 +29,7 @@ pub(crate) const MAX_WIDTH: f64 = 10.0;
 pub(crate) const MAX_SPEED: f64 = 100.0;
 
 /// The materials an emitter pours, by name; the index is the material's number in a table.
-pub(crate) const MATERIALS: [&str; 1] = ["liquid"];
+pub(crate) const MATERIALS: [&str; 3] = ["liquid", "sand", "snow"];
 
 /// The column names of an emitter table, as `tex.liquid_emitter` writes them.
 pub(crate) const COLUMNS: [&str; 7] = ["x", "y", "width", "vx", "vy", "on", "material"];
@@ -53,43 +53,42 @@ pub(crate) const DEFAULT: Emitter =
     Emitter { position: [0.3, 0.1], width: 0.04, velocity: [0.0, 0.5], on: true, material: 0 };
 
 fn desc() -> NodeDesc {
-    NodeDesc::new(KIND, "A place that pours liquid into tex.liquid: where, how wide, which way and how fast")
-        .param(ParamSpec::vec2("position", DEFAULT.position).range(0.0, 1.0).doc(
-            "Middle of the stream where it leaves the emitter, as shares of the picture: 0, 0 is the top left, \
+    NodeDesc::new(
+        KIND,
+        "A place that pours liquid, sand or snow into tex.liquid: where, how wide, which way and how fast",
+    )
+    .param(ParamSpec::vec2("position", DEFAULT.position).range(0.0, 1.0).doc(
+        "Middle of the stream where it leaves the emitter, as shares of the picture: 0, 0 is the top left, \
              1, 1 the bottom right",
-        ))
-        .param(
-            ParamSpec::float("width", DEFAULT.width)
-                .clamp(0.0, MAX_WIDTH)
-                .range(0.0, 0.3)
-                .curve(Curve::Power(2.0))
-                .doc("How wide the stream is, in picture heights. 0 pours a stream one particle wide"),
-        )
-        .param(ParamSpec::vec2("direction", [0.0, 1.0]).clamp(-1.0, 1.0).doc(
-            "The way the stream leaves: x right, y down, so 0, 1 pours straight down. Only its direction counts",
-        ))
-        .param(
-            ParamSpec::float("speed", 0.5)
-                .clamp(0.0, MAX_SPEED)
-                .range(0.0, 3.0)
-                .curve(Curve::Power(2.0))
-                .doc(
-                    "How fast the stream leaves, in picture heights per second. The amount follows: width times \
+    ))
+    .param(
+        ParamSpec::float("width", DEFAULT.width)
+            .clamp(0.0, MAX_WIDTH)
+            .range(0.0, 0.3)
+            .curve(Curve::Power(2.0))
+            .doc("How wide the stream is, in picture heights. 0 pours a stream one particle wide"),
+    )
+    .param(ParamSpec::vec2("direction", [0.0, 1.0]).clamp(-1.0, 1.0).doc(
+        "The way the stream leaves: x right, y down, so 0, 1 pours straight down. Only its direction counts",
+    ))
+    .param(ParamSpec::float("speed", 0.5).clamp(0.0, MAX_SPEED).range(0.0, 3.0).curve(Curve::Power(2.0)).doc(
+        "How fast the stream leaves, in picture heights per second. The amount follows: width times \
                      speed is the area of liquid poured per second. 0 pours nothing",
-                ),
-        )
-        .param(ParamSpec::bool("on", true).doc("Pours while on; bind it to a channel to switch the pour"))
-        .param(
-            ParamSpec::choice("material", &MATERIALS)
-                .doc("What the emitter pours")
-                .choice_doc("liquid", "water-like liquid that runs, splashes and pools"),
-        )
-        .output("out", DataKind::Table)
-        .describe_output(
-            "out",
-            "One row under a row of column names: x, y, width, vx, vy, on, material. x and y are shares of the \
+    ))
+    .param(ParamSpec::bool("on", true).doc("Pours while on; bind it to a channel to switch the pour"))
+    .param(
+        ParamSpec::choice("material", &MATERIALS)
+            .doc("What the emitter pours. One tex.liquid can hold all three at once")
+            .choice_doc("liquid", "water-like liquid that runs, splashes and pools")
+            .choice_doc("sand", "dry sand that pours and forms heaps")
+            .choice_doc("snow", "snow that clumps, piles up and breaks into lumps"),
+    )
+    .output("out", DataKind::Table)
+    .describe_output(
+        "out",
+        "One row under a row of column names: x, y, width, vx, vy, on, material. x and y are shares of the \
              picture, width is in picture heights, vx and vy in picture heights per second",
-        )
+    )
 }
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {

@@ -2,7 +2,9 @@
 //! height, emitters pour where and as much as they say, open edges drain, a full budget warns,
 //! reset, repeatability, a hitch, a squeeze and hostile input. Obstacles: a shelf holds a pool,
 //! an obstacle that appears in the liquid pushes it out, a moving one with its velocity pushes
-//! it along, friction holds liquid on a slope, an empty mask changes nothing.
+//! it along, friction holds liquid on a slope, an empty mask changes nothing. Sand and snow:
+//! poured sand heaps at its angle and rests, dropped snow keeps a pile, all three materials in
+//! one node, sand on a shelf and snow on a slope, hostile input.
 
 use penumbra_core::Value;
 use penumbra_core::scratch::ScratchDir;
@@ -58,8 +60,9 @@ fn outputs() -> [Op; 4] {
 /// Moves the show on `frames` frames, one cook each, and reads `/liquid`, `/v` and `/d`.
 fn run(rig: &mut Rig, frames: usize) -> (Pixels, Pixels, Pixels) {
     for f in 0..frames {
-        // Keeps the software adapter's queue short.
-        if f % 30 == 29 {
+        // Keeps the software adapter's queue short: the tests share it, and a long queue of
+        // sand or snow makes another test's read time out.
+        if f % 5 == 4 {
             rig.gpu.wait(std::time::Duration::from_secs(120)).unwrap();
         }
         rig.clock.advance(1);
@@ -781,7 +784,7 @@ fn drawn() -> [Op; 6] {
 fn run_drawn(rig: &mut Rig, frames: usize) -> [Pixels; 6] {
     let paths = ["/liquid", "/v", "/d", "/f", "/g", "/s"];
     for f in 0..frames {
-        if f % 30 == 29 {
+        if f % 5 == 4 {
             rig.gpu.wait(std::time::Duration::from_secs(120)).unwrap();
         }
         rig.clock.advance(1);
@@ -939,11 +942,290 @@ fn the_look_does_not_depend_on_the_frame_rate() {
     }
 }
 
+/// The top of the liquid in each column of the density picture, picture heights above the floor.
+fn profile(d: &Pixels) -> Vec<f64> {
+    (0..d.width).map(|i| depth(d, i)).collect()
+}
+
+/// The slopes of a heap's two flanks in degrees, from a `profile` with cells `dx` wide: lines
+/// fitted to the columns between a fifth and four fifths of the peak, either side of it.
+fn flanks(tops: &[f64], dx: f64) -> (f64, f64) {
+    let (peak_at, peak) =
+        tops.iter().enumerate().fold((0, 0.0f64), |m, (i, t)| if *t > m.1 { (i, *t) } else { m });
+    let fit = |range: &mut dyn Iterator<Item = usize>| {
+        let pts: Vec<(f64, f64)> = range
+            .filter(|i| tops[*i] > 0.2 * peak && tops[*i] < 0.8 * peak)
+            .map(|i| (i as f64 * dx, tops[i]))
+            .collect();
+        if pts.len() < 3 {
+            return f64::NAN;
+        }
+        let n = pts.len() as f64;
+        let (mx, my) = (pts.iter().map(|p| p.0).sum::<f64>() / n, pts.iter().map(|p| p.1).sum::<f64>() / n);
+        let sxy: f64 = pts.iter().map(|p| (p.0 - mx) * (p.1 - my)).sum();
+        let sxx: f64 = pts.iter().map(|p| (p.0 - mx) * (p.0 - mx)).sum();
+        (sxy / sxx).abs().atan().to_degrees()
+    };
+    (fit(&mut (0..peak_at)), fit(&mut (peak_at + 1..tops.len())))
+}
+
+/// Opaque pixels of `out` (premultiplied) in the default colours of sand, liquid and snow.
+fn kinds(out: &Pixels) -> [usize; 3] {
+    let mut n = [0; 3];
+    for c in &out.data {
+        if c[3] < 0.9 {
+            continue;
+        }
+        let (r, g, b) = (c[0], c[1], c[2]);
+        if r > 1.6 * b && r > 0.15 {
+            n[0] += 1;
+        } else if b > 2.0 * r {
+            n[1] += 1;
+        } else if r > 0.3 && g > 0.3 && b > 0.3 && (b - r).abs() < 0.3 {
+            n[2] += 1;
+        }
+    }
+    n
+}
+
+/// Sand poured for two seconds forms a heap whose flanks stand at about `sand_angle`, keeps
+/// the area its particles stand for, and then stays as it is.
+#[test]
+fn poured_sand_forms_a_heap_at_its_angle_and_stays_at_rest() {
+    let Some(gpu) = gpu() else { return };
+    let mut ops = vec![
+        liquid(&[("grid", Value::Int(64)), ("particles", Value::Int(4096))]),
+        create(
+            "/tap",
+            "tex.liquid_emitter",
+            &[
+                ("position", Value::Vec2([0.5, 0.1])),
+                ("width", Value::Float(0.04)),
+                ("speed", Value::Float(1.0)),
+                ("material", "sand".into()),
+            ],
+        ),
+        wire("/tap", 0, "/liquid", 0),
+    ];
+    ops.extend(outputs());
+    ops.extend(drawn());
+    let mut rig = Rig::new(gpu, None, &ops);
+    run_drawn(&mut rig, 120);
+    rig.edit(&[set("/tap.on", Value::Bool(false))]);
+    let [out, v, d, _, _, _] = run_drawn(&mut rig, 150);
+    let [later_out, later_v, later, _, _, _] = run_drawn(&mut rig, 60);
+    assert!([&out, &v, &d, &later_out, &later_v, &later].iter().all(|p| finite(p)));
+    let dx = 1.0 / f64::from(d.height);
+    let (tops, again) = (profile(&d), profile(&later));
+    let (left, right) = flanks(&tops, dx);
+    let peak = tops.iter().fold(0.0f64, |a, b| a.max(*b));
+    // How far the top moved, on average over the columns: a grain rolling down one column is no
+    // landslide.
+    let moved = tops.iter().zip(&again).map(|(a, b)| (a - b).abs()).sum::<f64>() / tops.len() as f64;
+    // The area the particles stand for against the area of the cells at least half full.
+    let held = particles(&later) / 4.0;
+    let covered = later.data.iter().filter(|c| c[0] >= 0.5).count() as f64;
+    let [sand, water, snow] = kinds(&later_out);
+    eprintln!(
+        "sand heap: peak {peak:.3}, flanks {left:.1} and {right:.1} degrees, moved {moved:.4} in 1 s, speed {:.4}; \
+         {held:.0} cells of particles cover {covered:.0}; pixels sand {sand} water {water} snow {snow}",
+        mean_speed(&later_v, &later)
+    );
+    // Two seconds at 0.04 x 1 heights^2 per second: 0.08. A pool of it would lie 0.06 deep.
+    assert!(peak > 0.15, "{peak}");
+    for flank in [left, right] {
+        assert!((28.0..42.0).contains(&flank), "flanks {left} {right}");
+    }
+    assert!(moved < 0.2 * dx, "the heap still moves: {moved}");
+    assert!(mean_speed(&later_v, &later) < 0.01);
+    // The sand is not pressed together: it covers about the cells its particles fill.
+    assert!(covered > 0.9 * held, "{covered} cells covered by {held} cells of particles");
+    assert!(sand > 500 && water == 0 && snow < sand / 10, "{sand} {water} {snow}");
+    assert_eq!(warning(&rig), None);
+}
+
+/// A block of snow dropped on the floor keeps a pile of lumps, far higher and narrower than the
+/// flat pool the same block of liquid makes.
+#[test]
+fn dropped_snow_keeps_a_pile() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-snow-drop");
+    let drop = |material: &str| {
+        let mut ops = vec![
+            liquid(&[("particles", Value::Int(4096)), ("fill_material", material.into())]),
+            mask("/block", "block.wgsl", &dir, "abs(uv.x - 0.5) < 0.1 && uv.y > 0.3 && uv.y < 0.6"),
+            wire("/block", 0, "/liquid", FILL),
+        ];
+        ops.extend(outputs());
+        ops.extend(drawn());
+        let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+        rig.pixels("/block");
+        let [out, v, d, _, _, _] = run_drawn(&mut rig, 120);
+        assert!(finite(&out) && finite(&v) && finite(&d));
+        let tops = profile(&d);
+        let peak = tops.iter().fold(0.0f64, |a, b| a.max(*b));
+        let wide = tops.iter().filter(|t| **t > 0.02).count() as f64 / f64::from(d.width);
+        (peak, wide, kinds(&out), warning(&rig))
+    };
+    let (snow_peak, snow_wide, snow_kinds, snow_warning) = drop("snow");
+    eprintln!("dropped: snow {snow_peak:.3} high over {snow_wide:.2} of the width ({snow_kinds:?})");
+    // The block as a flat pool would lie 0.06 deep over the whole floor (the dam test shows
+    // liquid does that).
+    assert!(snow_peak > 0.12, "{snow_peak}");
+    assert!(snow_wide < 0.8, "{snow_wide}");
+    assert!(snow_kinds[2] > 100 && snow_kinds[0] == 0 && snow_kinds[1] == 0, "{snow_kinds:?}");
+    assert_eq!(snow_warning, None);
+}
+
+/// A sand mound from the fill, water poured onto it and snow poured beside it: everything stays
+/// finite, and each material shows in `out` in its own colour, so the fill's and the emitters'
+/// materials reach the particles.
+#[test]
+fn water_sand_and_snow_in_one_node_stay_finite_and_all_show() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-water-sand");
+    let mut ops = vec![
+        liquid(&[("particles", Value::Int(8192)), ("fill_material", "sand".into())]),
+        mask("/mound", "mound.wgsl", &dir, "uv.y > 0.75 + abs(uv.x - 0.5)"),
+        wire("/mound", 0, "/liquid", FILL),
+        create(
+            "/tap",
+            "tex.liquid_emitter",
+            &[
+                ("position", Value::Vec2([0.55, 0.1])),
+                ("width", Value::Float(0.06)),
+                ("speed", Value::Float(1.0)),
+            ],
+        ),
+        create(
+            "/snow",
+            "tex.liquid_emitter",
+            &[
+                ("position", Value::Vec2([0.15, 0.1])),
+                ("width", Value::Float(0.06)),
+                ("material", "snow".into()),
+            ],
+        ),
+        wire("/tap", 0, "/liquid", 0),
+        wire("/snow", 0, "/liquid", 1),
+    ];
+    ops.extend(outputs());
+    ops.extend(drawn());
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.pixels("/mound");
+    let [first, ..] = run_drawn(&mut rig, 1);
+    let all = run_drawn(&mut rig, 100);
+    assert!(all.iter().all(finite));
+    let (before, after) = (kinds(&first), kinds(&all[0]));
+    eprintln!("water on sand: pixels (sand, water, snow) {before:?} at the start, {after:?} after 1.7 s");
+    assert!(before[0] > 300 && before[1] == 0 && before[2] == 0, "{before:?}");
+    assert!(after[0] > 200 && after[1] > 200 && after[2] > 50, "{after:?}");
+    assert_eq!(warning(&rig), None);
+}
+
+/// Sand poured onto a shelf heaps up there by its own friction, with `friction` at 0. Snow on a
+/// slope stays where liquid runs down.
+#[test]
+fn sand_stays_on_a_shelf_and_snow_on_a_slope() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-sand-shelf");
+    let mut ops = vec![
+        liquid(&[("particles", Value::Int(8192))]),
+        mask("/shelf", "shelf.wgsl", &dir, "abs(uv.x - 0.5) < 0.2 && uv.y > 0.5 && uv.y < 0.55"),
+        create(
+            "/tap",
+            "tex.liquid_emitter",
+            &[
+                ("position", Value::Vec2([0.5, 0.1])),
+                ("width", Value::Float(0.04)),
+                ("material", "sand".into()),
+            ],
+        ),
+        wire("/shelf", 0, "/liquid", OBSTACLES),
+        wire("/tap", 0, "/liquid", 0),
+    ];
+    ops.extend(outputs());
+    let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+    rig.pixels("/shelf");
+    let (_, _, d) = run(&mut rig, 120);
+    rig.edit(&[set("/tap.on", Value::Bool(false))]);
+    let (out, v, d_end) = run(&mut rig, 60);
+    assert!(finite(&out) && finite(&v) && finite(&d_end));
+    let poured = particles(&d);
+    let on = particles_where(&d_end, |_, y| y < 0.52);
+    let below = particles_where(&d_end, |_, y| y > 0.56);
+    eprintln!("sand shelf: {poured:.0} poured, {on:.0} on the shelf, {below:.0} below after 1 s more");
+    assert!(on > 0.8 * poured, "{on} of {poured} on the shelf");
+
+    let slide = |material: &str| {
+        let mut ops = vec![
+            liquid(&[("fill_material", material.into())]),
+            mask("/drop", "drop.wgsl", &dir, "uv.x > 0.05 && uv.x < 0.4 && uv.y > 0.22 + 0.6 * uv.x"),
+            mask("/slope", "slope.wgsl", &dir, "uv.y > 0.3 + 0.6 * uv.x"),
+            wire("/drop", 0, "/liquid", FILL),
+            wire("/slope", 0, "/liquid", OBSTACLES),
+        ];
+        ops.extend(outputs());
+        let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+        rig.pixels("/drop");
+        rig.pixels("/slope");
+        let (out, v, d) = run(&mut rig, 60);
+        assert!(finite(&out) && finite(&v) && finite(&d));
+        centre(&d)[0]
+    };
+    let (snow, water) = (slide("snow"), slide("liquid"));
+    eprintln!("slope after 1 s: centre x of snow {snow:.3}, of liquid {water:.3}");
+    // Both start with their centre at about 0.3 heights.
+    assert!(snow < 0.4 && water > snow + 0.2, "{snow} {water}");
+}
+
+/// Emitter tables with sand, snow and unknown materials, a hostile fill of sand, absurd material
+/// params, and sand and snow squeezed by three hundred times the earth's gravity: every output
+/// stays finite.
+#[test]
+fn hostile_input_leaves_sand_and_snow_finite() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-hostile-granular");
+    std::fs::write(dir.join("hostile.wgsl"), HOSTILE).unwrap();
+    let rows = "x,y,width,vx,vy,on,material\n0.3,0.1,0.1,0,1,1,sand\n0.6,0.1,0.1,0,1,1,2\n\
+                0.5,0.5,1e9,-1e9,1e9,1,snow\n0.5,0.1,0.1,0,1,1,lava\n0.5,0.1,0.1,0,1,1,7\n";
+    let mut ops = vec![
+        liquid(&[("grid", Value::Int(32)), ("fill_material", "sand".into())]),
+        create(
+            "/bad",
+            "tex.shader",
+            &[("file", "hostile.wgsl".into()), ("width", Value::Int(128)), ("height", Value::Int(96))],
+        ),
+        create("/rows", "table.text", &[("text", rows.into()), ("format", "csv".into())]),
+        wire("/bad", 0, "/liquid", FILL),
+        wire("/rows", 0, "/liquid", 0),
+    ];
+    ops.extend(outputs());
+    ops.extend(drawn());
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.pixels("/bad");
+    let all = run_drawn(&mut rig, 30);
+    assert!(all.iter().all(finite));
+    assert!(particles(&all[2]) > 100.0, "{}", particles(&all[2]));
+    rig.edit(&[
+        set("/liquid.gravity", Value::Vec2([0.0, 1000.0])),
+        set("/liquid.sand_angle", Value::Float(1e9)),
+        set("/liquid.snow_wetness", Value::Float(-1e9)),
+    ]);
+    let all = run_drawn(&mut rig, 30);
+    assert!(all.iter().all(finite));
+    rig.edit(&[set("/liquid.gravity", Value::Vec2([0.0, 3.27]))]);
+    let all = run_drawn(&mut rig, 60);
+    assert!(all.iter().all(finite));
+    assert!(particles(&all[2]) > 100.0, "{}", particles(&all[2]));
+}
+
 /// Times the node on the hardware GPU: at the defaults (1920 x 1080, grid 384, 65536 particles,
 /// most of them in a pool and a pour), and at the size of the compute fixture's timing (65536
 /// particles, 384 cells per picture height, 37 substeps). The defaults again with a still
 /// obstacle (flooded once) and with a moving one (flooded every frame), and with every output
-/// read. Prints the wall time per frame waited for, and per frame of frames cooked back to back.
+/// read; the defaults again with sand and with snow in place of the liquid. Prints the wall time
+/// per frame waited for, and per frame of frames cooked back to back.
 #[test]
 #[ignore = "times the liquid on the hardware GPU: cargo test -p penumbra-ops --release liquid_timing -- --ignored --nocapture"]
 fn liquid_timing() {
@@ -952,14 +1234,16 @@ fn liquid_timing() {
     let dir = scratch("liquid-timing");
     let still = "abs(uv.x - 0.5) < 0.2 && abs(uv.y - 0.5) < 0.03";
     let shelf = "abs(uv.x - 0.5 - 0.2 * sin(t)) < 0.2 && abs(uv.y - 0.5) < 0.03";
-    for (name, width, height, grid, particles, inside, obstacle, every) in [
-        ("small", 1920, 1080, 256, 16384, "uv.y > 0.9", "", false),
-        ("defaults", 1920, 1080, 384, 65536, "uv.y > 0.82", "", false),
-        ("defaults, every output", 1920, 1080, 384, 65536, "uv.y > 0.82", "", true),
-        ("defaults, still obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", still, false),
-        ("defaults, moving obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", shelf, false),
-        ("large", 1920, 1080, 512, 131_072, "uv.y > 0.8", "", false),
-        ("fixture size", 1440, 1080, 512, 65536, "uv.x < 0.25 && uv.y > 2.0 / 3.0", "", false),
+    for (name, width, height, grid, particles, inside, obstacle, every, material) in [
+        ("small", 1920, 1080, 256, 16384, "uv.y > 0.9", "", false, "liquid"),
+        ("defaults", 1920, 1080, 384, 65536, "uv.y > 0.82", "", false, "liquid"),
+        ("defaults, every output", 1920, 1080, 384, 65536, "uv.y > 0.82", "", true, "liquid"),
+        ("defaults, still obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", still, false, "liquid"),
+        ("defaults, moving obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", shelf, false, "liquid"),
+        ("large", 1920, 1080, 512, 131_072, "uv.y > 0.8", "", false, "liquid"),
+        ("fixture size", 1440, 1080, 512, 65536, "uv.x < 0.25 && uv.y > 2.0 / 3.0", "", false, "liquid"),
+        ("defaults, sand", 1920, 1080, 384, 65536, "uv.y > 0.82", "", false, "sand"),
+        ("defaults, snow", 1920, 1080, 384, 65536, "uv.y > 0.82", "", false, "snow"),
     ] {
         std::fs::write(
             dir.join("fill.wgsl"),
@@ -988,6 +1272,7 @@ fn liquid_timing() {
                     ("height", Value::Int(height)),
                     ("grid", Value::Int(grid)),
                     ("particles", Value::Int(particles)),
+                    ("fill_material", material.into()),
                 ],
             ),
             create(
@@ -996,7 +1281,7 @@ fn liquid_timing() {
                 &[("file", "fill.wgsl".into()), ("width", Value::Int(width)), ("height", Value::Int(height))],
             ),
             wire("/fill", 0, "/liquid", FILL),
-            create("/tap", "tex.liquid_emitter", &[]),
+            create("/tap", "tex.liquid_emitter", &[("material", material.into())]),
             wire("/tap", 0, "/liquid", 0),
         ];
         if !obstacle.is_empty() {

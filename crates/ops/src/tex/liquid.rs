@@ -23,6 +23,11 @@
 //! `speed`. Each frame takes as many substeps as the sound speed, the fastest flow and the
 //! viscosity need on the grid, at most [`MAX_SUBSTEPS`]. A new grid starts the liquid over.
 //!
+//! Sand and snow are materials of their own in the same particles and grid ([`MATERIALS`]): each
+//! emitter names its material, `fill_material` the fill's. They carry a deformation gradient,
+//! and stiff packed snow takes about twice the substeps of the liquid; the node takes them from
+//! the first frame a material is poured or filled in until it starts over.
+//!
 //! A third program (`liquid_draw.wgsl`) draws the particles: a kernel per particle that grows
 //! where the liquid thins out, blurred and thresholded to a clean edge, then shaded. Each liquid
 //! particle keeps a smoothed density and its foam for the drawing, in the places a solid keeps
@@ -39,7 +44,7 @@ use penumbra_graph::{
 };
 
 use super::fluid::{grid, step};
-use super::liquid_emitter::{self, Emitter, MAX_EMITTERS};
+use super::liquid_emitter::{self, Emitter, MATERIALS, MAX_EMITTERS};
 use super::{height_param, keep_size, side, width_param};
 use crate::on_gpu;
 
@@ -115,8 +120,44 @@ const FREE_SEEN: usize = 0;
 const WRAPPED: usize = 2;
 const FILL_WANTED: usize = 3;
 const LIVE: usize = 4;
-/// Material numbers: 0 is a free place.
+/// Material numbers: 0 is a free place, then [`MATERIALS`] in their order.
 const LIQUID: u32 = 1;
+const SAND: u32 = 2;
+const SNOW: u32 = 3;
+/// Stiffness of sand and snow as the speed of a shear-free wave would be without Poisson's
+/// ratio, picture heights per second (12 m/s in a room 3 m high, the spike's number): the
+/// Lame numbers follow from it and the ratio. Stiffer costs substeps and looks no different.
+const SAND_STIFFNESS: f64 = 4.0;
+const SAND_POISSON: f64 = 0.3;
+const SNOW_STIFFNESS: f64 = 4.0;
+const SNOW_POISSON: f64 = 0.2;
+/// Snow from powder over fresh to wet: critical compression, critical stretch, hardening. The
+/// most hardening, 4, doubles the wave speed.
+const SNOW_POWDER: [f64; 3] = [0.015, 0.003, 10.0];
+const SNOW_FRESH: [f64; 3] = [0.025, 0.0075, 10.0];
+const SNOW_WET: [f64; 3] = [0.05, 0.01, 5.0];
+const SNOW_MOST_HARDENING: f64 = 4.0;
+/// Snow's Coulomb friction on solids, from powder to wet.
+const SNOW_WALL: [f64; 2] = [0.6, 2.0];
+/// The angles of repose `sand_angle` takes, degrees.
+const MIN_ANGLE: f64 = 10.0;
+const MAX_ANGLE: f64 = 40.0;
+/// A poured heap stands flatter than the friction angle the plasticity is given: that angle is
+/// this many times the angle of repose wanted. Measured at the default grid: heaps of 20, 30,
+/// 35 and 40 degrees asked for stand at 21, 31, 35 and 38.
+const SAND_ANGLE_GAIN: f64 = 1.33;
+/// Sand's Coulomb friction on solids, in units of the tangent of its angle of repose: the grid
+/// holds about half the friction asked for (sand needed 0.8 to stay on a box of 20 degrees,
+/// where 0.36 should do).
+const SAND_WALL_GAIN: f64 = 2.0;
+/// Share of the difference between the volume the grid's density gives a sand particle and the
+/// volume its deformation holds that the deformation takes on per substep, where the sand is
+/// denser than at rest. Without it particles drift into clumps of up to 3.5 times the rest
+/// density, and a heap loses 8 to 28 % of its area as it settles.
+const SAND_SETTLE: f64 = 0.1;
+/// Colours of sand and snow, linear: #C9A26B and #EEF2F8.
+const SAND_COLOR: [f64; 4] = [0.584, 0.361, 0.147, 1.0];
+const SNOW_COLOR: [f64; 4] = [0.855, 0.888, 0.939, 1.0];
 /// Time over which a particle's density is smoothed for the drawing, seconds: the kernel's size
 /// follows it, and a noisy density would make the edge flicker.
 const DENSITY_TIME: f64 = 0.039;
@@ -142,7 +183,8 @@ const DRAW_FIXED: f64 = 2048.0;
 fn desc() -> NodeDesc {
     NodeDesc::new(
         KIND,
-        "A liquid seen from the side: it pours from emitters, falls, splashes and pools at the bottom of the picture or on obstacles",
+        "A liquid, sand or snow seen from the side: it pours from emitters, falls, and pools or heaps up at the \
+         bottom of the picture or on obstacles",
     )
     .stateful()
     .time_dependent()
@@ -150,14 +192,14 @@ fn desc() -> NodeDesc {
         "emitter",
         DataKind::Table,
         1,
-        "Where liquid pours in: tex.liquid_emitter, or any table whose first row names columns x, y and more \
+        "Where liquid, sand or snow pours in: tex.liquid_emitter, or any table whose first row names columns x, y and more \
          (see tex.liquid_emitter's output). 64 emitters in all at most",
     )
     .input("fill", DataKind::Tex)
     .describe_input(
         "fill",
-        "Liquid lies where this picture is brighter than half when the node starts or `reset` is on. A changed \
-         picture shows at the next reset",
+        "The `fill_material` lies where this picture is brighter than half when the node starts or `reset` is \
+         on. A changed picture shows at the next reset",
     )
     .input("obstacles", DataKind::Tex)
     .describe_input(
@@ -232,12 +274,45 @@ fn desc() -> NodeDesc {
             .range(0.0, 2.0)
             .doc(
                 "How much the liquid sticks to the obstacles and the picture's edges: 0 slides freely. At 1 a \
-                 thin film on a slope slides about a sixth as far as without; deep liquid still runs down over it",
+                 thin film on a slope slides about a sixth as far as without; deep liquid still runs down over it. \
+                 Sand and snow stick by their own friction; this adds to it where it is higher",
+            ),
+    )
+    .param(
+        ParamSpec::choice("fill_material", &MATERIALS)
+            .doc("What the `fill` picture is made of. Emitters choose their own material")
+            .choice_doc("liquid", "water-like liquid that runs, splashes and pools")
+            .choice_doc("sand", "dry sand that pours and forms heaps")
+            .choice_doc("snow", "snow that clumps, piles up and breaks into lumps"),
+    )
+    .param(
+        ParamSpec::float("sand_angle", 35.0)
+            .clamp(MIN_ANGLE, MAX_ANGLE)
+            .range(20.0, 50.0)
+            .unit(Unit::Degrees)
+            .doc(
+                "How steep a sand heap stands, in degrees: 30 to 35 is dry sand, 45 damp sand. Also how much sand \
+                 sticks to slopes",
+            ),
+    )
+    .param(
+        ParamSpec::float("snow_wetness", 0.5)
+            .clamp(0.0, 1.0)
+            .doc(
+                "0 is powder that crumbles and slides, 0.5 fresh snow, 1 wet snow that sticks together, packs and \
+                 holds on slopes",
             ),
     )
     .param(ParamSpec::color("color", [0.028, 0.275, 0.807, 1.0]).doc(
         "Colour of the liquid in `out` where it is thin. Deep liquid is drawn darker, the band under its surface lighter",
     ))
+    .param(ParamSpec::color("sand_color", SAND_COLOR).doc(
+        "Colour of sand in `out`. Each grain is drawn a little lighter or darker, sand deep in a heap darker",
+    ))
+    .param(
+        ParamSpec::color("snow_color", SNOW_COLOR)
+            .doc("Colour of snow in `out` where it is lit. Snow deep in a pile is drawn bluer and darker"),
+    )
     .param(
         ParamSpec::float("foam_strength", 0.6)
             .clamp(0.0, 1.0)
@@ -264,8 +339,8 @@ fn desc() -> NodeDesc {
     .output("out", DataKind::Tex)
     .describe_output(
         "out",
-        "The liquid in `color` with foam, at width x height. Transparent around it, with an edge a pixel soft, \
-         ready to composite",
+        "The liquid in `color` with foam, sand in `sand_color`, snow in `snow_color`, at width x height. \
+         Transparent around it, with an edge a pixel soft, ready to composite",
     )
     .output("velocity", DataKind::Tex)
     .describe_output(
@@ -293,7 +368,8 @@ fn desc() -> NodeDesc {
     .describe_output(
         "grain",
         "A random grey per particle, averaged, on the liquid's alpha, at width x height. The pattern moves with \
-         the liquid: blur it and raise its contrast for a crust or a texture",
+         the liquid: blur it and raise its contrast for a crust or a texture. On sand it changes from grain to \
+         grain",
     )
     .lazy_output("grain")
     .output("surface", DataKind::Tex)
@@ -368,6 +444,93 @@ pub(crate) fn substeps(dt: f64, dx: f64, fastest: f64, viscosity: f64) -> (usize
     } else {
         (needed, dt, needed)
     }
+}
+
+/// The Lame numbers over the density, mu and lambda, of a solid of `stiffness` (heights per
+/// second, squared is Young's modulus over the density) and Poisson's ratio `poisson`.
+fn lame(stiffness: f64, poisson: f64) -> (f64, f64) {
+    let e = stiffness * stiffness;
+    (e / (2.0 * (1.0 + poisson)), e * poisson / ((1.0 + poisson) * (1.0 - 2.0 * poisson)))
+}
+
+/// Speed of the pressure wave in a solid of `stiffness` and Poisson's ratio `poisson`.
+fn pressure_wave(stiffness: f64, poisson: f64) -> f64 {
+    stiffness * ((1.0 - poisson) / ((1.0 + poisson) * (1.0 - 2.0 * poisson))).sqrt()
+}
+
+/// Sand and snow as the node's params set them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Granular {
+    /// Sand's angle of repose, degrees.
+    angle: f64,
+    /// Snow from powder (0) over fresh (0.5) to wet (1).
+    wetness: f64,
+}
+
+impl Default for Granular {
+    fn default() -> Self {
+        Self { angle: 35.0, wetness: 0.5 }
+    }
+}
+
+impl Granular {
+    /// Sand's Drucker-Prager friction coefficient and its Coulomb friction on solids, for its
+    /// angle of repose.
+    fn sand_friction(&self) -> (f64, f64) {
+        let angle = if self.angle.is_finite() { self.angle.clamp(MIN_ANGLE, MAX_ANGLE) } else { 35.0 };
+        let sin = (angle * SAND_ANGLE_GAIN).min(80.0).to_radians().sin();
+        let alpha = (2.0f64 / 3.0).sqrt() * 2.0 * sin / (3.0 - sin);
+        (alpha, angle.to_radians().tan() * SAND_WALL_GAIN)
+    }
+
+    /// Snow's critical compression, critical stretch and hardening.
+    fn snow(&self) -> [f64; 3] {
+        let w = if self.wetness.is_finite() { self.wetness.clamp(0.0, 1.0) } else { 0.5 };
+        let (from, to, t) =
+            if w < 0.5 { (SNOW_POWDER, SNOW_FRESH, w * 2.0) } else { (SNOW_FRESH, SNOW_WET, w * 2.0 - 1.0) };
+        let [a0, a1, a2] = from;
+        let [b0, b1, b2] = to;
+        [a0 + (b0 - a0) * t, a1 + (b1 - a1) * t, a2 + (b2 - a2) * t]
+    }
+
+    /// Snow's Coulomb friction on solids: wet snow sticks.
+    fn snow_friction(&self) -> f64 {
+        let w = if self.wetness.is_finite() { self.wetness.clamp(0.0, 1.0) } else { 0.5 };
+        SNOW_WALL[0] + (SNOW_WALL[1] - SNOW_WALL[0]) * w
+    }
+
+    /// The shader's material table: liquid, sand, snow and a place unused, eight numbers each
+    /// as `Mat` lays them out.
+    fn table(&self, viscosity: f64) -> [[f64; 8]; 4] {
+        let c2g = SOUND * SOUND / GAMMA;
+        let (sand_mu, sand_la) = lame(SAND_STIFFNESS, SAND_POISSON);
+        let (snow_mu, snow_la) = lame(SNOW_STIFFNESS, SNOW_POISSON);
+        let (alpha, sand_wall) = self.sand_friction();
+        let [tc, ts, xi] = self.snow();
+        [
+            [0.0, 1.0, c2g, GAMMA, viscosity, 0.0, MAX_RATIO, 0.0],
+            [sand_wall, 1.0, sand_mu, sand_la, alpha, 0.0, SAND_SETTLE, 0.0],
+            [self.snow_friction(), 1.0, snow_mu, snow_la, tc, ts, xi, SNOW_MOST_HARDENING],
+            [0.0; 8],
+        ]
+    }
+}
+
+/// The fastest wave in the materials of `used` (bit n for material n), heights per second.
+fn fastest_wave(used: u32) -> f64 {
+    let mut wave = SOUND;
+    if used & (1 << SAND) != 0 {
+        wave = wave.max(pressure_wave(SAND_STIFFNESS, SAND_POISSON));
+    }
+    if used & (1 << SNOW) != 0 {
+        wave = wave.max(pressure_wave(SNOW_STIFFNESS, SNOW_POISSON) * SNOW_MOST_HARDENING.sqrt());
+    }
+    wave
+}
+
+/// The material number of a name in [`MATERIALS`]; liquid for any other name.
+fn material_number(name: &str) -> u32 {
+    LIQUID + MATERIALS.iter().position(|m| *m == name).unwrap_or(0) as u32
 }
 
 /// What the counters said when they last came back.
@@ -483,6 +646,10 @@ struct Drawing {
     surface: [Tex; 2],
     /// The filled coverage at the depth's size; blurred along x; along y.
     deep: [Tex; 3],
+    /// While sand or snow is in the liquid: the sums of the materials' shares and their picture.
+    /// Until then a buffer of one pixel stands in, which nothing reads.
+    shares: Buffer,
+    share_picture: Option<Tex>,
 }
 
 impl Drawing {
@@ -503,13 +670,29 @@ impl Drawing {
             shape: [t(splat)?, t(splat)?, t(splat)?],
             surface: [t(splat)?, t(splat)?],
             deep: [t(depth)?, t(depth)?, t(depth)?],
+            shares: Buffer::of::<[u32; 4]>(gpu, 1, "tex.liquid drawing shares")?,
+            share_picture: None,
         })
+    }
+
+    /// The shares' sums and picture at the splat picture's size, from the first frame with sand
+    /// or snow on.
+    fn with_shares(&mut self, gpu: &Gpu) -> Result<(), Error> {
+        if self.share_picture.is_none() {
+            let n = u64::from(self.splat.0) * u64::from(self.splat.1);
+            self.shares = Buffer::of::<[u32; 4]>(gpu, n, "tex.liquid drawing shares")?;
+            self.share_picture = Some(Tex::new_storage(gpu, self.splat.0, self.splat.1, DRAW_KIND)?);
+        }
+        Ok(())
     }
 
     fn bytes(&self) -> u64 {
         self.d.bytes()
             + self.acc.bytes()
-            + penumbra_gpu::unique_bytes(self.shape.iter().chain(&self.surface).chain(&self.deep))
+            + self.shares.bytes()
+            + penumbra_gpu::unique_bytes(
+                self.shape.iter().chain(&self.surface).chain(&self.deep).chain(&self.share_picture),
+            )
     }
 
     /// The constants, as `D` in `liquid_draw.wgsl` lays them out.
@@ -519,7 +702,7 @@ impl Drawing {
         obstacles: bool,
         aspect: f64,
         foam: f64,
-        color: [f64; 4],
+        colors: [[f64; 4]; 3],
     ) -> [u32; DRAW_WORDS] {
         let f = |v: f64| (v as f32).to_bits();
         let (sw, sh) = (f64::from(self.splat.0), f64::from(self.splat.1));
@@ -535,7 +718,7 @@ impl Drawing {
             f(s),
             0,
             f(FAST),
-            0,
+            f(if self.share_picture.is_some() { 1.0 } else { 0.0 }),
             0,
             f(DRAW_FIXED),
             f(SHAPE_BLUR * s),
@@ -544,18 +727,19 @@ impl Drawing {
             0,
             f(spacing * f64::from(self.out.1)),
             f(foam),
+            f(PER_CELL),
             0,
-            0,
-            f(color[0]),
-            f(color[1]),
-            f(color[2]),
-            f(color[3]),
         ]
+        .into_iter()
+        .chain(colors.into_iter().flatten().map(f))
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap_or([0; DRAW_WORDS])
     }
 }
 
 /// 32-bit words of the drawing's constants (`D` in `liquid_draw.wgsl`).
-const DRAW_WORDS: usize = 24;
+const DRAW_WORDS: usize = 32;
 
 /// The buffers of one grid.
 struct Sim {
@@ -585,6 +769,9 @@ struct Sim {
     runs: Vec<f64>,
     /// Frames simulated since the start, for the jitter of new particles.
     frame: u32,
+    /// The materials poured or filled in since the start, bit n for material n: the substeps
+    /// and the drawing follow them.
+    used: u32,
 }
 
 impl Sim {
@@ -602,7 +789,7 @@ impl Sim {
             open: None,
             u: Buffer::of::<u32>(gpu, UNIFORM_WORDS as u64, "tex.liquid constants")?,
             parts: Buffer::new(gpu, u64::from(budget) * PARTICLE_BYTES, "tex.liquid particles")?,
-            ga: Buffer::of::<[i32; 3]>(gpu, n, "tex.liquid grid sums")?,
+            ga: Buffer::of::<[i32; 4]>(gpu, n, "tex.liquid grid sums")?,
             gf: Buffer::of::<[f32; 4]>(gpu, n, "tex.liquid grid")?,
             solid: Buffer::of::<[f32; 4]>(gpu, n, "tex.liquid solids")?,
             counter: Buffer::of::<u32>(gpu, COUNTERS as u64, "tex.liquid counters")?,
@@ -612,6 +799,7 @@ impl Sim {
             recount: false,
             runs: Vec::new(),
             frame: 0,
+            used: 0,
         })
     }
 
@@ -631,6 +819,7 @@ impl Sim {
         self.recount = false;
         self.runs.clear();
         self.frame = 0;
+        self.used = 0;
         Ok(())
     }
 
@@ -730,6 +919,11 @@ struct Frame {
     slots: u32,
     /// How long foam lasts, seconds.
     foam_time: f64,
+    granular: Granular,
+    /// The material the `fill` picture places.
+    fill_material: u32,
+    /// Whether sand or snow is in the liquid: the grid sums their friction then.
+    granular_in_use: bool,
 }
 
 /// The shares a substep of `sub` seconds moves the drawing's per-particle values on by: the
@@ -751,7 +945,7 @@ fn uniform_words(sim: Layout, f: &Frame) -> Vec<u32> {
         sim.nodes.0,
         sim.nodes.1,
         sim.budget,
-        u32::from(f.open),
+        u32::from(f.open) | (u32::from(f.granular_in_use) << 1) | (f.fill_material.clamp(LIQUID, SNOW) << 8),
         float(sim.dx),
         float(1.0 / sim.dx),
         float(f.dt),
@@ -778,11 +972,7 @@ fn uniform_words(sim: Layout, f: &Frame) -> Vec<u32> {
         columns as u32,
     ];
     w.extend(look_shares(f.dt, f.foam_time).map(float));
-    // Materials: liquid first, the other three unused for now.
-    let c2g = SOUND * SOUND / GAMMA;
-    let liquid = [0.0, 1.0, c2g, GAMMA, f.viscosity, 0.0, MAX_RATIO, 0.0];
-    for m in 0..4 {
-        let values = if m == 0 { liquid } else { [0.0; 8] };
+    for values in f.granular.table(f.viscosity) {
         w.extend(values.map(float));
     }
     w
@@ -805,12 +995,13 @@ fn encode_drawing(
     let [s0, s1, s2] = &drawing.shape;
     let [f0, f1] = &drawing.surface;
     let [q0, q1, q2] = &drawing.deep;
+    let shares = drawing.share_picture.as_ref();
     let plain = input(&[]);
     let masked = [mask];
     let resolve = input(&masked);
     let p_s0 = [Some(s0)];
     let p_s1_s0 = [Some(s1), Some(s0)];
-    let p_s2 = [Some(s2)];
+    let p_s2 = [Some(s2), shares];
     let p_q0 = [Some(q0)];
     let p_q1 = [Some(q1)];
     let p_f0_q2 = [Some(f0), Some(q2)];
@@ -822,6 +1013,11 @@ fn encode_drawing(
     let mut steps = vec![
         Step { entry: "splat", out: Out::range(budget), input: &plain },
         Step { entry: "resolve", out: Out::Picture(s0), input: &resolve },
+    ];
+    if let Some(m) = shares {
+        steps.push(Step { entry: "resolve_shares", out: Out::Picture(m), input: &plain });
+    }
+    steps.extend([
         Step { entry: "shape_x", out: Out::Picture(s1), input: &shape_x },
         Step { entry: "shape_y", out: Out::Picture(s2), input: &shape_y },
         Step { entry: "depth_down", out: Out::Picture(q0), input: &from_shape },
@@ -829,7 +1025,7 @@ fn encode_drawing(
         Step { entry: "depth_y", out: Out::Picture(q2), input: &depth_y },
         Step { entry: "surface_x", out: Out::Picture(f0), input: &from_shape },
         Step { entry: "surface_y", out: Out::Picture(f1), input: &surface_y },
-    ];
+    ]);
     let [out, foam, grain, surface] = targets;
     for (entry, target, input) in [
         ("shade", out, &shaded),
@@ -841,7 +1037,7 @@ fn encode_drawing(
             steps.push(Step { entry, out: Out::Picture(t), input });
         }
     }
-    program.encode_with(batch, &[&drawing.d, parts, &drawing.acc], &steps)
+    program.encode_with(batch, &[&drawing.d, parts, &drawing.acc, &drawing.shares], &steps)
 }
 
 #[derive(Default)]
@@ -1039,15 +1235,29 @@ impl Operator for Liquid {
         let drag = if drag.is_finite() { drag.max(0.0) } else { 0.0 };
         let friction = cx.float("friction")?;
         let friction = if friction.is_finite() { friction.clamp(0.0, MOST_FRICTION) } else { 0.0 };
-        // The fastest flow: a fall across the picture, or an emitter's stream.
+        let fill = cx.input_as::<Tex>(FILL);
+        let filling = !sim.filled && fill.is_some();
+        let fill_material = material_number(cx.text("fill_material")?);
+        // The materials in the liquid from now on: what the fill places and what the emitters
+        // pour. Kept until a start over, as their particles may be.
+        if filling {
+            sim.used |= 1 << fill_material;
+        }
+        for e in emitters.iter().filter(|e| e.on && e.velocity[0].hypot(e.velocity[1]) > 1e-9) {
+            sim.used |= 1 << (LIQUID + e.material.min(MATERIALS.len() - 1) as u32);
+        }
+        let granular = Granular { angle: cx.float("sand_angle")?, wetness: cx.float("snow_wetness")? };
+        // The fastest flow: a fall across the picture, an emitter's stream, or a wave in sand or
+        // snow.
         let fall = (2.0 * gravity[0].hypot(gravity[1])).sqrt();
         let pour = emitters.iter().map(|e| e.velocity[0].hypot(e.velocity[1])).fold(0.0, f64::max);
-        let fastest = MIN_FLOW.max(fall).max(pour);
+        let fastest = MIN_FLOW.max(fall).max(pour).max(fastest_wave(sim.used));
         let (count, dt, needed) = substeps(dt, sim.dx, fastest, viscosity);
         if needed > count {
+            let stiff = if sim.used & !(1 << LIQUID) != 0 { ", or use less sand and snow" } else { "" };
             cx.warn(format!(
                 "a frame needs {needed} substeps, at most {MAX_SUBSTEPS} run: the liquid moves slower than the show. \
-                 Lower `grid`, `viscosity` or `speed`"
+                 Lower `grid`, `viscosity` or `speed`{stiff}"
             ));
         }
         let sub = if count > 0 { dt / count as f64 } else { 0.0 };
@@ -1060,10 +1270,11 @@ impl Operator for Liquid {
         if !emit_words.is_empty() {
             sim.emitters.write(gpu, 0, &emit_words)?;
         }
-        let color = match cx.param("color") {
+        let color_of = |name: &str| match cx.param(name) {
             Some(Value::Vec4(c)) => c.map(|v| if v.is_finite() { v } else { 0.0 }),
             _ => [0.0, 0.0, 0.0, 1.0],
         };
+        let colors = [color_of("color"), color_of("sand_color"), color_of("snow_color")];
         let foam_strength = cx.float("foam_strength")?;
         let foam_strength = if foam_strength.is_finite() { foam_strength.clamp(0.0, 1.0) } else { 0.0 };
         let foam_time = cx.float("foam_time")?;
@@ -1079,6 +1290,9 @@ impl Operator for Liquid {
             emitters: emitters.len().min(MAX_EMITTERS) as u32,
             slots,
             foam_time,
+            granular,
+            fill_material,
+            granular_in_use: sim.used & !(1 << LIQUID) != 0,
         };
         let layout =
             Layout { nodes: sim.nodes, budget: sim.budget, dx: sim.dx, aspect: sim.aspect, frame: sim.frame };
@@ -1089,8 +1303,6 @@ impl Operator for Liquid {
             sim.counter.write(gpu, LIVE as u64, &[0u32])?;
         }
 
-        let fill = cx.input_as::<Tex>(FILL);
-        let filling = !sim.filled && fill.is_some();
         let (cw, ch) = sim.cells;
         let out = self.out_ring.next_storage(gpu, width, height, KIND)?;
         let velocity_out =
@@ -1115,13 +1327,17 @@ impl Operator for Liquid {
             self.drawing = None;
             self.drawing = Some(Drawing::new(gpu, (width, height), sim.dx)?);
         }
-        let Some(drawing) = self.drawing.as_ref() else {
+        let Some(drawing) = self.drawing.as_mut() else {
             return Err(CookError::failed("the liquid has no drawing"));
         };
+        if sim.used & !(1 << LIQUID) != 0 {
+            drawing.with_shares(gpu)?;
+        }
+        let drawing = &*drawing;
         drawing.d.write(
             gpu,
             0,
-            &drawing.words(sim.budget, mask.is_some(), sim.aspect, foam_strength, color),
+            &drawing.words(sim.budget, mask.is_some(), sim.aspect, foam_strength, colors),
         )?;
 
         let times: Vec<f64> = (0..count).map(|k| k as f64 * sub).collect();
@@ -1279,6 +1495,48 @@ mod tests {
     }
 
     #[test]
+    fn sand_and_snow_take_more_substeps_and_liquid_alone_keeps_its_count() {
+        let (frame, dx) = (1.0 / 60.0, 1.0 / 216.0);
+        let at = |used: u32| substeps(frame, dx, MIN_FLOW.max(fastest_wave(used)), 0.000_222).0;
+        assert_eq!(fastest_wave(0), SOUND);
+        assert_eq!(fastest_wave(1 << LIQUID), SOUND);
+        assert_eq!(at(1 << LIQUID), 21);
+        assert_eq!(at(1 << LIQUID | 1 << SAND), 24);
+        assert_eq!(at(1 << SNOW), 44);
+        assert_eq!(at(1 << LIQUID | 1 << SAND | 1 << SNOW), 44);
+        // Snow on the finest grid at 30 fps hits the cap; liquid there does not.
+        assert!(substeps(1.0 / 30.0, 1.0 / 576.0, SOUND, 0.0).0 < MAX_SUBSTEPS);
+        let (n, _, needed) = substeps(1.0 / 30.0, 1.0 / 576.0, fastest_wave(1 << SNOW), 0.0);
+        assert!(n == MAX_SUBSTEPS && needed > MAX_SUBSTEPS, "{n} {needed}");
+    }
+
+    #[test]
+    fn the_material_table_follows_the_params_and_survives_bad_numbers() {
+        let base = Granular::default().table(0.000_222);
+        // The liquid's row is what it was before sand and snow.
+        let c2g = SOUND * SOUND / GAMMA;
+        assert_eq!(base[0], [0.0, 1.0, c2g, GAMMA, 0.000_222, 0.0, MAX_RATIO, 0.0]);
+        // A steeper angle of repose: more internal friction and more friction on solids.
+        let steep = Granular { angle: 40.0, ..Granular::default() }.table(0.0);
+        assert!(steep[1][4] > base[1][4] && steep[1][0] > base[1][0]);
+        // Wet snow yields later, hardens less and sticks more than powder.
+        let powder = Granular { wetness: 0.0, ..Granular::default() }.table(0.0);
+        let wet = Granular { wetness: 1.0, ..Granular::default() }.table(0.0);
+        assert_eq!([powder[2][4], powder[2][5], powder[2][6]], SNOW_POWDER);
+        assert_eq!([wet[2][4], wet[2][5], wet[2][6]], SNOW_WET);
+        assert_eq!([base[2][4], base[2][5], base[2][6]], SNOW_FRESH);
+        assert!(wet[2][0] > powder[2][0]);
+        for bad in [f64::NAN, f64::INFINITY, -1e30] {
+            let t = Granular { angle: bad, wetness: bad }.table(0.0);
+            assert!(t.iter().flatten().all(|v| v.is_finite()), "{bad}: {t:?}");
+        }
+        // Every material is named, and a name the node does not know is liquid.
+        assert_eq!(material_number("sand"), SAND);
+        assert_eq!(material_number("snow"), SNOW);
+        assert_eq!(material_number("lava"), LIQUID);
+    }
+
+    #[test]
     fn the_grid_has_square_cells_and_stays_bounded() {
         assert_eq!(cells(1920, 1080, 384), (384, 216));
         assert_eq!(cells(1080, 1920, 1024), (576, 1024));
@@ -1301,9 +1559,15 @@ mod tests {
             emitters: 0,
             slots: 0,
             foam_time: 0.4,
+            granular: Granular::default(),
+            fill_material: SNOW,
+            granular_in_use: true,
         };
         let words = uniform_words(layout, &frame);
         assert_eq!(words.len(), UNIFORM_WORDS);
+        // Open edges in bit 0, friction summed per cell in bit 1, the fill's material in bits 8
+        // to 15.
+        assert_eq!(words[3], 1 | 2 | (SNOW << 8));
         assert_eq!(UNIFORM_WORDS, 8 * 4 + 4 * 8);
         // The struct in the shader: its members in this order, all vectors of four.
         let start = SOURCE.find("struct U {").unwrap();
