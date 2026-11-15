@@ -6,6 +6,9 @@ is the area of liquid poured per second. A stream 0.04 wide at 0.5 picture heigh
 pours 0.02 square picture heights per second, about 3700 particles a second at the default
 grid of `tex.liquid`.
 
+`material` sets what pours: liquid, sand or snow. Emitters of different materials can feed one
+`tex.liquid`, so sand can pour into a pool of water.
+
 Turning `on` off stops the pour at once. Bind `on` to a channel to switch it, or bind
 `position` to move the stream.
 
@@ -20,7 +23,7 @@ columns. `x` and `y` are required, every other column is optional:
 | `width` | how wide the stream is, in picture heights | 0.04 |
 | `vx`, `vy` | which way and how fast it pours, picture heights per second, y down | 0 and 0.5 |
 | `on` | 1 pours, 0 stops; 0.5 and above counts as on | 1 |
-| `material` | `liquid`, or its number 0 | `liquid` |
+| `material` | `liquid`, `sand` or `snow`, or their numbers 0, 1, 2 | `liquid` |
 
 The node's params become `vx` and `vy` as `direction` scaled to `speed`. A table names the
 velocity directly, as a tracker's table does.

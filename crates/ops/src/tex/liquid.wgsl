@@ -12,16 +12,35 @@
 // and `velocity`. `recount` counts the particles in use after the buffer changed size. The
 // liquid is drawn by a program of its own (`liquid_draw.wgsl`) from the particles.
 //
-// A particle's `mat` is 0 while it is free (a buffer of zeros is all free), 1 to 4 a material.
-// Only material 1, liquid, is simulated. A liquid needs no deformation gradient, so its places
-// (f0, f1) and `jp` hold what the drawing needs: the velocity smoothed over a frame or so, the
-// density smoothed the same way, the foam, and a random number of the particle's own.
+// A particle's `mat` is 0 while it is free (a buffer of zeros is all free), else its material:
+// 1 liquid, 2 sand, 3 snow. A liquid needs no deformation gradient, so its places (f0, f1) and
+// `jp` hold what the drawing needs: the velocity smoothed over a frame or so, the density
+// smoothed the same way, the foam, and a random number of the particle's own. Sand and snow
+// carry their deformation gradient there, and in `jp` sand its volume gained by loosening
+// (log), snow its plastic volume (1 at rest).
+//
+// Sand is Drucker-Prager plasticity on a Hencky (log strain) elastic law: it holds a heap up to
+// its angle of repose, pours, and comes apart without pulling back. Snow is Stomakhin's model:
+// fixed corotated elasticity whose stretch beyond a limit becomes permanent and hardens the snow
+// where it is pressed together. Each material brings its own friction on solids; the grid keeps
+// a node's share of it beside the mass, so water beside sand slides as freely as before.
 
 const PAD: f32 = 3.0;
 const FREE: u32 = 0u;
 const MATERIALS: u32 = 4u;
+const LIQUID: u32 = 1u;
+const SAND: u32 = 2u;
+const SNOW: u32 = 3u;
+// A material's friction on solids is summed per node in units of this, so the sum stays within
+// the node's mass in the fixed point.
+const MOST_FRICTION: f32 = 10.0;
+// Most density ratio sand's volume correction aims for.
+const MAX_CROWD: f32 = 4.0;
 // How far friction reaches out from a solid's surface, in cells.
 const FRICTION_REACH: f32 = 1.0;
+// Particles nearer a solid than this many cells add their material's friction to the grid: the
+// nodes within FRICTION_REACH of it take their mass from no farther.
+const FRICTION_NEAR: f32 = 4.0;
 // Foam starts where a particle's acceleration beyond gravity rises from the first to the second
 // value (an impact), in picture heights per second squared: 40 to 140 m/s^2 in a picture 3 m high.
 const IMPACT_FROM: f32 = 13.333;
@@ -43,15 +62,19 @@ const FILL_WANTED: u32 = 3u; // particles the last fill asked for
 const LIVE: u32 = 4u;        // particles in use
 
 struct Mat {
-    // kind (0 liquid), mass of a particle, sound speed squared over gamma, gamma.
+    // Friction on solids (Coulomb), mass of a particle, then liquid: sound speed squared over
+    // gamma, gamma; sand and snow: the Lame numbers mu and lambda over the density.
     a: vec4f,
-    // viscosity, bulk viscosity, largest density ratio, most negative pressure (share of a.z).
+    // Liquid: viscosity, bulk viscosity, largest density ratio, most negative pressure (share
+    // of a.z). Sand: friction coefficient alpha, cohesion (log strain), volume correction
+    // (sound speed squared over gamma, 0 for none), unused. Snow: critical compression,
+    // critical stretch, hardening, most hardening.
     b: vec4f,
 }
 
 // Constants of the frame, written by the CPU.
 struct U {
-    grid: vec4u,  // nodes across, nodes down, particles in the buffer, flags (bit 0: open edges)
+    grid: vec4u,  // nodes across, nodes down, particles in the buffer, flags (bit 0: open edges; bit 1: the grid sums friction; bits 8 to 15: the fill's material)
     cell: vec4f,  // dx, 1 / dx, the substep's dt, rest mass per cell
     fixed: vec4f, // fixed point: mass scale, momentum scale; fastest speed on the grid; push out of solids
     wall: vec4f,  // friction rate, Coulomb friction, boundary band in cells, ghost density of solids
@@ -71,7 +94,7 @@ struct P {
     f1: vec2f, //   and (smoothed density over the rest density, foam 0 to 1)
     rho: f32,  // density at the last gather
     sd: f32,   // signed distance to the nearest solid at the last gather
-    jp: f32,   // liquid: a random number of its own, 0 to 1, for `grain`
+    jp: f32,   // liquid: a random number of its own, 0 to 1, for `grain`. Sand: volume gained (log). Snow: plastic volume
     mat: u32,
 }
 
@@ -84,7 +107,9 @@ struct Em {
 
 @group(2) @binding(0) var<uniform> u: U;
 @group(2) @binding(1) var<storage, read_write> parts: array<P>;
-// Per cell: mass, momentum x, momentum y, as fixed point.
+// Per cell: mass, momentum x, momentum y, as fixed point; while sand or snow is in the liquid
+// also the materials' friction on solids times their mass (over MOST_FRICTION). A liquid alone
+// keeps three numbers per cell: the fourth would cost it a few percent.
 @group(2) @binding(2) var<storage, read_write> ga: array<atomic<i32>>;
 // Per cell: velocity, mass, signed distance to the nearest solid at this substep.
 @group(2) @binding(3) var<storage, read_write> gf: array<vec4f>;
@@ -99,6 +124,11 @@ fn weights(fx: vec2f) -> array<vec2f, 3> {
     let b = fx - vec2f(1.0);
     let c = fx - vec2f(0.5);
     return array<vec2f, 3>(0.5 * a * a, vec2f(0.75) - b * b, 0.5 * c * c);
+}
+
+// Numbers per cell in `ga`.
+fn sums() -> u32 {
+    return select(3u, 4u, (u.grid.w & 2u) != 0u);
 }
 
 fn nodes() -> vec2i {
@@ -155,6 +185,60 @@ fn liquid(m: Mat, rho: f32, div: f32) -> vec2f {
     return vec2f(p, m.b.x / r);
 }
 
+fn rot(t: f32) -> mat2x2f {
+    let c = cos(t);
+    let s = sin(t);
+    return mat2x2f(vec2f(c, s), vec2f(-s, c));
+}
+
+struct Svd {
+    phi: f32,
+    sig: vec2f,
+    theta: f32,
+}
+
+// m = rot(phi) * diag(sig) * rot(theta), closed form for 2 x 2.
+fn svd(m: mat2x2f) -> Svd {
+    let e = 0.5 * (m[0].x + m[1].y);
+    let f = 0.5 * (m[0].x - m[1].y);
+    let g = 0.5 * (m[0].y + m[1].x);
+    let h = 0.5 * (m[0].y - m[1].x);
+    let q = sqrt(e * e + h * h);
+    let r = sqrt(f * f + g * g);
+    var a1 = 0.0;
+    var a2 = 0.0;
+    if (r > 1e-12) {
+        a1 = atan2(g, f);
+    }
+    if (q > 1e-12) {
+        a2 = atan2(h, e);
+    }
+    return Svd(0.5 * (a2 + a1), vec2f(q + r, q - r), 0.5 * (a2 - a1));
+}
+
+// Kirchhoff stress over the rest density of a sand or snow particle.
+fn solid_stress(m: Mat, p: P) -> mat2x2f {
+    let f = mat2x2f(p.f0, p.f1);
+    var mu = m.a.z;
+    var la = m.a.w;
+    if (p.mat == SAND) {
+        // Hencky strain in the principal frame.
+        let s = svd(f);
+        let e = log(max(abs(s.sig), vec2f(1e-4)));
+        let t = 2.0 * mu * e + vec2f(la * (e.x + e.y));
+        let uu = rot(s.phi);
+        return uu * mat2x2f(vec2f(t.x, 0.0), vec2f(0.0, t.y)) * transpose(uu);
+    }
+    // Snow: stiffer where pressed together, softer where stretched.
+    let h = clamp(exp(m.b.z * (1.0 - p.jp)), 0.05, m.b.w);
+    mu *= h;
+    la *= h;
+    let r = rot(atan2(f[0].y - f[1].x, f[0].x + f[1].y));
+    let j = determinant(f);
+    let k = la * (j - 1.0) * j;
+    return 2.0 * mu * (f - r) * transpose(f) + mat2x2f(vec2f(k, 0.0), vec2f(0.0, k));
+}
+
 @compute @workgroup_size(64)
 fn p2g(@builtin(global_invocation_id) id: vec3u) {
     let i = id.x;
@@ -179,11 +263,23 @@ fn p2g(@builtin(global_invocation_id) id: vec3u) {
     let fx = xg - vec2f(base);
     let w = weights(fx);
     let k = u.cell.z * 4.0 * u.cell.y * u.cell.y;
-    // The density of the last gather, carried along.
-    let s = liquid(m, p.rho, p.c0.x + p.c1.y);
     // Momentum the particle's stress gives a node at offset d: k * (st * d).
-    let cc = mat2x2f(p.c0, p.c1);
-    let st = mat2x2f(vec2f(s.x, 0.0), vec2f(0.0, s.x)) - s.y * (cc + transpose(cc));
+    var st: mat2x2f;
+    if (p.mat == LIQUID) {
+        // The density of the last gather, carried along.
+        let s = liquid(m, p.rho, p.c0.x + p.c1.y);
+        let cc = mat2x2f(p.c0, p.c1);
+        st = mat2x2f(vec2f(s.x, 0.0), vec2f(0.0, s.x)) - s.y * (cc + transpose(cc));
+    } else {
+        st = -1.0 * solid_stress(m, p);
+    }
+    // The material's friction on solids, as a share of the most there is: only near a solid,
+    // where it acts (a particle moves less than a cell a substep).
+    let stride = sums();
+    var rub = 0.0;
+    if (stride == 4u && p.sd < FRICTION_NEAR * dx) {
+        rub = clamp(m.a.x / MOST_FRICTION, 0.0, 1.0);
+    }
     // A particle adds at most this much momentum to a node, per unit weight: a squeeze that
     // drives the pressure up cannot push a node's sum past what the fixed point holds.
     let most = u.force.w * u.fixed.z * mass * u.fixed.y;
@@ -193,10 +289,13 @@ fn p2g(@builtin(global_invocation_id) id: vec3u) {
             let d = (vec2f(f32(gx), f32(gy)) - fx) * dx;
             var mv = (p.vel + p.c0 * d.x + p.c1 * d.y + k * (st * d)) * mass * u.fixed.y;
             mv = clamp(mv, vec2f(-most), vec2f(most)) * wgt;
-            let c = 3u * cell(base, gx, gy);
+            let c = stride * cell(base, gx, gy);
             atomicAdd(&ga[c], i32(round(wgt * mass * u.fixed.x)));
             atomicAdd(&ga[c + 1u], i32(round(mv.x)));
             atomicAdd(&ga[c + 2u], i32(round(mv.y)));
+            if (rub > 0.0) {
+                atomicAdd(&ga[c + 3u], i32(round(wgt * mass * rub * u.fixed.x)));
+            }
         }
     }
 }
@@ -207,15 +306,25 @@ fn grid_update(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     let idx = id.y * u.grid.x + id.x;
-    let k = 3u * idx;
+    let stride = sums();
+    let k = stride * idx;
     let mi = atomicLoad(&ga[k]);
     let mx = atomicLoad(&ga[k + 1u]);
     let my = atomicLoad(&ga[k + 2u]);
+    var mr = 0;
+    if (stride == 4u) {
+        mr = atomicLoad(&ga[k + 3u]);
+    }
     let dt = u.cell.z;
     var v = vec2f(0.0);
     var m = 0.0;
+    // Coulomb friction on solids: the node's, or more where its sand or snow asks for more.
+    var coulomb = u.wall.y;
     if (mi > 0) {
         m = f32(mi) / u.fixed.x;
+        if (mr > 0) {
+            coulomb = max(coulomb, f32(mr) / f32(mi) * MOST_FRICTION);
+        }
         v = vec2f(f32(mx), f32(my)) / (u.fixed.y * m);
         v += u.force.xy * dt;
         v *= max(1.0 - u.force.z * dt, 0.0);
@@ -224,10 +333,13 @@ fn grid_update(@builtin(global_invocation_id) id: vec3u) {
         // still, so nothing takes a wrong velocity from it.
         atomicAdd(&counter[WRAPPED], 1u);
     }
-    if (mi != 0 || mx != 0 || my != 0) {
+    if (mi != 0 || mx != 0 || my != 0 || mr != 0) {
         atomicStore(&ga[k], 0);
         atomicStore(&ga[k + 1u], 0);
         atomicStore(&ga[k + 2u], 0);
+        if (stride == 4u) {
+            atomicStore(&ga[k + 3u], 0);
+        }
     }
 
     // The solid field is `params.t` seconds old: a moving solid is looked up where it came from.
@@ -251,7 +363,7 @@ fn grid_update(@builtin(global_invocation_id) id: vec3u) {
         let band = u.wall.z * dx;
         // Friction reaches a cell beyond the band: the nodes beside a surface carry a film
         // along it, and a film held only at the band slides on over it.
-        let reach = select(band, max(band, FRICTION_REACH * dx), u.wall.y > 0.0);
+        let reach = select(band, max(band, FRICTION_REACH * dx), coulomb > 0.0);
         if (s < reach) {
             let c = vec2i(round(at));
             let g = vec2f(
@@ -272,7 +384,7 @@ fn grid_update(@builtin(global_invocation_id) id: vec3u) {
                     // Coulomb: what presses on the solid is held by up to that much.
                     let t = length(vt);
                     if (t > 1e-9) {
-                        kept = vt * max(1.0 - u.wall.y * so.w * (-vn) / t, 0.0);
+                        kept = vt * max(1.0 - coulomb * so.w * (-vn) / t, 0.0);
                     }
                     if (s < band) {
                         vr = kept;
@@ -382,10 +494,71 @@ fn g2p(@builtin(global_invocation_id) id: vec3u) {
     p.c1 = c1;
     // The density where the particle is going: this gather's, carried by the divergence.
     p.rho = rho * (1.0 - dt * (c0.x + c1.y));
-    if (p.mat == 1u) {
+    if (p.mat == LIQUID) {
         look(&p);
+    } else if (p.mat <= MATERIALS) {
+        deform(&p, mat2x2f(c0, c1) * dt);
     }
     parts[i] = p;
+}
+
+// Sand and snow carry their deformation on by the velocity gradient times the substep (`dc`),
+// and what goes beyond the material's limits becomes permanent.
+fn deform(p: ptr<function, P>, dc: mat2x2f) {
+    let m = material((*p).mat);
+    var f = (mat2x2f(vec2f(1.0, 0.0), vec2f(0.0, 1.0)) + dc) * mat2x2f((*p).f0, (*p).f1);
+    if ((*p).mat == SAND && m.b.z > 0.0) {
+        // Grains closer together than the deformation says (the grid lets particles drift
+        // into clumps): the deformation takes a share of the difference in volume each
+        // substep, so the sand pushes back elastically, within its friction, and keeps its
+        // volume at rest.
+        let r = clamp((*p).rho / (u.cell.w * m.a.y), 0.0, MAX_CROWD);
+        let j = determinant(f);
+        if (r > 1.0 && j * r > 1.0) {
+            f *= pow(1.0 / (j * r), 0.5 * m.b.z);
+        }
+    }
+    let sv = svd(f);
+    if ((*p).mat == SAND) {
+        // Back onto the Drucker-Prager cone, in log strain.
+        let sig = max(abs(sv.sig), vec2f(1e-4));
+        let e = log(sig);
+        let tr = e.x + e.y + (*p).jp - 2.0 * m.b.y;
+        var ns = sig;
+        if (tr >= 0.0) {
+            // Pulled apart: no stress, and the volume gained is kept to give back first.
+            ns = vec2f(exp(m.b.y));
+            (*p).jp = clamp(tr, 0.0, 10.0);
+        } else {
+            (*p).jp = 0.0;
+            let eh = e - vec2f(0.5 * (e.x + e.y));
+            let el = length(eh);
+            let dg = el + (m.a.w + m.a.z) / m.a.z * tr * m.b.x;
+            if (dg > 0.0 && el > 1e-9) {
+                ns = exp(e - dg / el * eh);
+            }
+        }
+        f = rot(sv.phi) * mat2x2f(vec2f(ns.x, 0.0), vec2f(0.0, ns.y)) * rot(sv.theta);
+    } else {
+        // Snow: stretch beyond the limits becomes permanent and moves the hardening.
+        let most = 1.0 + m.b.y;
+        var ns = clamp(sv.sig, vec2f(1.0 - m.b.x), vec2f(most));
+        var jp = (*p).jp * (sv.sig.x * sv.sig.y) / max(ns.x * ns.y, 1e-6);
+        // Packed until the hardening reaches its most: pressed further, snow stays elastic.
+        // Without this a dropped block squashes flat like a piston.
+        let packed = 1.0 - log(max(m.b.w, 1.0)) / max(m.b.z, 1e-3);
+        if (!(jp >= packed)) {
+            ns = clamp(sv.sig, vec2f(0.3), vec2f(most));
+            jp = (*p).jp * (sv.sig.x * sv.sig.y) / max(ns.x * ns.y, 1e-6);
+        }
+        (*p).jp = clamp(select(1.0, jp, jp == jp), 0.3, 3.0);
+        f = rot(sv.phi) * mat2x2f(vec2f(ns.x, 0.0), vec2f(0.0, ns.y)) * rot(sv.theta);
+    }
+    if (!finite(f[0]) || !finite(f[1])) {
+        f = mat2x2f(vec2f(1.0, 0.0), vec2f(0.0, 1.0));
+    }
+    (*p).f0 = f[0];
+    (*p).f1 = f[1];
 }
 
 // What the drawing keeps per liquid particle, moved on by one substep. Every share comes from a
@@ -431,15 +604,16 @@ fn fresh(mat: u32, pos: vec2f, vel: vec2f, key: u32) -> P {
     p.rho = u.cell.w * material(mat).a.y;
     p.sd = 1.0;
     p.mat = mat;
-    if (mat == 1u) {
+    if (mat == LIQUID) {
         // At rest, calm, and its grain.
         p.f0 = vel;
         p.f1 = vec2f(1.0, 0.0);
         p.jp = f32(hash(key ^ 0x9e3779b9u) >> 8u) / 16777216.0;
     } else {
+        // Undeformed; snow with its full volume.
         p.f0 = vec2f(1.0, 0.0);
         p.f1 = vec2f(0.0, 1.0);
-        p.jp = 0.0;
+        p.jp = select(0.0, 1.0, mat == SNOW);
     }
     return p;
 }
@@ -473,7 +647,7 @@ fn emit(@builtin(global_invocation_id) id: vec3u) {
     let sp = em.b.z;
     let pos = em.a.xy + across * (f32(col) - 0.5 * f32(cols - 1u) + j.x) * sp
         + dir * (em.b.y + (f32(row) + j.y) * sp);
-    parts[i] = fresh(max(em.c.z, 1u), pos, dir * em.b.x, slot + u.emit.z * 7919u);
+    parts[i] = fresh(clamp(em.c.z, LIQUID, SNOW), pos, dir * em.b.x, slot + u.emit.z * 7919u);
     atomicAdd(&counter[LIVE], 1u);
 }
 
@@ -498,7 +672,8 @@ fn fill(@builtin(global_invocation_id) id: vec3u) {
     if (k >= u.grid.z) {
         return;
     }
-    parts[k] = fresh(1u, pos, vec2f(0.0), id.y * u.emit.w + id.x);
+    let mat = clamp((u.grid.w >> 8u) & 255u, LIQUID, SNOW);
+    parts[k] = fresh(mat, pos, vec2f(0.0), id.y * u.emit.w + id.x);
     atomicAdd(&counter[LIVE], 1u);
 }
 

@@ -3327,24 +3327,24 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.liquid"><summary><code class="name">tex.liquid</code><span class="sum">A liquid seen from the side: it pours from emitters, falls, splashes and pools at the bottom of the picture or on obstacles</span></summary>
+<details class="entry node" id="tex.liquid"><summary><code class="name">tex.liquid</code><span class="sum">A liquid, sand or snow seen from the side: it pours from emitters, falls, and pools or heaps up at the bottom of the picture or on obstacles</span></summary>
 <div class="body">
-<p>A liquid seen from the side: it pours from emitters, falls, splashes and pools at the bottom of the picture or on obstacles</p>
+<p>A liquid, sand or snow seen from the side: it pours from emitters, falls, and pools or heaps up at the bottom of the picture or on obstacles</p>
 <p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>emitter0 .. emitter63</code> <span class="kind">table</span>: Where liquid pours in: tex.liquid_emitter, or any table whose first row names columns x, y and more (see tex.liquid_emitter's output). 64 emitters in all at most Any number, up to 64: each one wired adds a free slot below it.</li>
-<li><code>fill</code> <span class="kind">tex</span>: Liquid lies where this picture is brighter than half when the node starts or <code>reset</code> is on. A changed picture shows at the next reset</li>
+<li><code>emitter0 .. emitter63</code> <span class="kind">table</span>: Where liquid, sand or snow pours in: tex.liquid_emitter, or any table whose first row names columns x, y and more (see tex.liquid_emitter's output). 64 emitters in all at most Any number, up to 64: each one wired adds a free slot below it.</li>
+<li><code>fill</code> <span class="kind">tex</span>: The <code>fill_material</code> lies where this picture is brighter than half when the node starts or <code>reset</code> is on. A changed picture shows at the next reset</li>
 <li><code>obstacles</code> <span class="kind">tex</span>: Solid where brighter than half: the liquid lands on it, pools on it and flows around it. May change every frame</li>
 <li><code>obstacle_velocity</code> <span class="kind">tex</span>: How the obstacles move, so they push the liquid: red x in widths, green y in heights, down positive, per second, as the <code>velocity</code> output. Unwired, obstacles stand still</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">tex</span>: The liquid in <code>color</code> with foam, at width x height. Transparent around it, with an edge a pixel soft, ready to composite</li>
+<li><code>out</code> <span class="kind">tex</span>: The liquid in <code>color</code> with foam, sand in <code>sand_color</code>, snow in <code>snow_color</code>, at width x height. Transparent around it, with an edge a pixel soft, ready to composite</li>
 <li><code>velocity</code> <span class="kind">tex</span>: The liquid's velocity at the grid's size: red x in widths, green y in heights, down positive, per second; blue the speed in heights per second; alpha how full the cell is. Goes on a few cells beyond the liquid and fades out there</li>
 <li><code>density</code> <span class="kind">tex</span>: How full each cell of the grid is, as grey on black at the grid's size: 1 where the liquid is at rest, less at its surface and in spray. Opaque</li>
 <li><code>foam</code> <span class="kind">tex</span>: Where the liquid foams after a splash or in fast spray: white over transparent, 0 to 1, at width x height. Fades in <code>foam_time</code></li>
-<li><code>grain</code> <span class="kind">tex</span>: A random grey per particle, averaged, on the liquid's alpha, at width x height. The pattern moves with the liquid: blur it and raise its contrast for a crust or a texture</li>
+<li><code>grain</code> <span class="kind">tex</span>: A random grey per particle, averaged, on the liquid's alpha, at width x height. The pattern moves with the liquid: blur it and raise its contrast for a crust or a texture. On sand it changes from grain to grain</li>
 <li><code>surface</code> <span class="kind">tex</span>: For shading downstream, at width x height, solids counted as liquid: red the distance into the liquid in pixels (negative outside), green the depth 0 to 1, blue and alpha the outward normal (x, y down)</li>
 </ul>
 <h4>Params</h4>
@@ -3359,8 +3359,13 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>edges</code></td><td>walls | open</td><td><code>&quot;walls&quot;</code></td><td></td><td>What the picture's edges are to the liquid<ul><li><code>walls</code>: the liquid stays in the picture and pools at the bottom</li><li><code>open</code>: the liquid flows out and is gone, and its particles pour again from the emitters</li></ul></td></tr>
 <tr><td><code>viscosity</code></td><td>float</td><td><code>0.000222</code></td><td>0 to 0.004 (soft, held within 0 to 0.01)</td><td>Thickness: honey instead of water. In picture heights squared per second: 0.0002 is water in a picture 3 m high, 0.001 honey, 0.003 mud. A thick liquid needs more substeps on a fine grid</td></tr>
 <tr><td><code>drag</code></td><td>float</td><td><code>0.5</code></td><td>0 to 5 (soft, held within 0 to 1000)</td><td>How fast the liquid calms: the share of its speed it loses per second. 0 sloshes for minutes</td></tr>
-<tr><td><code>friction</code></td><td>float</td><td><code>0</code></td><td>0 to 2 (soft, held within 0 to 10)</td><td>How much the liquid sticks to the obstacles and the picture's edges: 0 slides freely. At 1 a thin film on a slope slides about a sixth as far as without; deep liquid still runs down over it</td></tr>
+<tr><td><code>friction</code></td><td>float</td><td><code>0</code></td><td>0 to 2 (soft, held within 0 to 10)</td><td>How much the liquid sticks to the obstacles and the picture's edges: 0 slides freely. At 1 a thin film on a slope slides about a sixth as far as without; deep liquid still runs down over it. Sand and snow stick by their own friction; this adds to it where it is higher</td></tr>
+<tr><td><code>fill_material</code></td><td>liquid | sand | snow</td><td><code>&quot;liquid&quot;</code></td><td></td><td>What the <code>fill</code> picture is made of. Emitters choose their own material<ul><li><code>liquid</code>: water-like liquid that runs, splashes and pools</li><li><code>sand</code>: dry sand that pours and forms heaps</li><li><code>snow</code>: snow that clumps, piles up and breaks into lumps</li></ul></td></tr>
+<tr><td><code>sand_angle</code></td><td>float</td><td><code>35</code></td><td>20 to 50° (soft, held within 10 to 40°)</td><td>How steep a sand heap stands, in degrees: 30 to 35 is dry sand, 45 damp sand. Also how much sand sticks to slopes</td></tr>
+<tr><td><code>snow_wetness</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1</td><td>0 is powder that crumbles and slides, 0.5 fresh snow, 1 wet snow that sticks together, packs and holds on slopes</td></tr>
 <tr><td><code>color</code></td><td>colour</td><td><code>[0.028, 0.275, 0.807, 1]</code></td><td></td><td>Colour of the liquid in <code>out</code> where it is thin. Deep liquid is drawn darker, the band under its surface lighter</td></tr>
+<tr><td><code>sand_color</code></td><td>colour</td><td><code>[0.584, 0.361, 0.147, 1]</code></td><td></td><td>Colour of sand in <code>out</code>. Each grain is drawn a little lighter or darker, sand deep in a heap darker</td></tr>
+<tr><td><code>snow_color</code></td><td>colour</td><td><code>[0.855, 0.888, 0.939, 1]</code></td><td></td><td>Colour of snow in <code>out</code> where it is lit. Snow deep in a pile is drawn bluer and darker</td></tr>
 <tr><td><code>foam_strength</code></td><td>float</td><td><code>0.6</code></td><td>0 to 1</td><td>How white foam shows in <code>out</code>: 0 not at all, 1 fully white. The <code>foam</code> output stays the same</td></tr>
 <tr><td><code>foam_time</code></td><td>float</td><td><code>0.4</code></td><td>0.05 to 4 s (soft, held within 0.01 to 60 s)</td><td>How long foam lasts after a splash, in seconds: after this time a third of it is left. Slowed down by <code>speed</code> as the liquid is</td></tr>
 <tr><td><code>speed</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft, held within 0 to 16)</td><td>How fast the liquid moves against the show clock: 0 holds it, 0.25 is slow motion. Faster costs more substeps</td></tr>
@@ -3371,7 +3376,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <div class="more">
 <h5 id="tex.liquid-what-it-is-for">What it is for</h5>
-<p><a class="ref" href="#tex.liquid"><code>tex.liquid</code></a> shows a liquid from the side, in the picture's plane. Liquid pours in from emitters or starts as a shape, falls, splashes, pools at the bottom and runs over the edges when they are open. Take it for water poured over a projection, text that melts into a pool, or a level that fills up.</p>
+<p><a class="ref" href="#tex.liquid"><code>tex.liquid</code></a> shows a liquid from the side, in the picture's plane. Liquid pours in from emitters or starts as a shape, falls, splashes, pools at the bottom and runs over the edges when they are open. Take it for water poured over a projection, text that melts into a pool, or a level that fills up. The same node also simulates sand and snow, alone or together with the liquid.</p>
 <p><a class="ref" href="#tex.fluid"><code>tex.fluid</code></a> is the other fluid: smoke or ink that fills the whole picture and swirls. Take <a class="ref" href="#tex.liquid"><code>tex.liquid</code></a> when there is a surface, so the liquid has a top, falls and comes to rest.</p>
 <h5 id="tex.liquid-a-first-network">A first network</h5>
 <ol>
@@ -3392,7 +3397,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <ul>
 <li><strong>emitter0, emitter1, ...</strong>: tables from <a class="ref" href="#tex.liquid_emitter"><code>tex.liquid_emitter</code></a>, or any table with its columns (see there). 64 emitters in all at most. Emitters add liquid while there are free particles.
 </li>
-<li><strong>fill</strong>: liquid lies wherever this picture is brighter than half, when the node starts or <code>reset</code> is on. A picture wired later fills once. A change to the picture shows at the next reset. No liquid starts inside an obstacle.
+<li><strong>fill</strong>: liquid lies wherever this picture is brighter than half, when the node starts or <code>reset</code> is on. <code>fill_material</code> says whether it is liquid, sand or snow. A picture wired later fills once. A change to the picture shows at the next reset. No liquid starts inside an obstacle.
 </li>
 <li><strong>obstacles</strong>: solid wherever this picture is brighter than half, as in <a class="ref" href="#tex.fluid"><code>tex.fluid</code></a>. The liquid lands on obstacles, pools on them and flows around them. The picture may change every frame: a camera mask, text, a shape that moves. Liquid that an obstacle appears over is pushed out to its nearest edge, at 0.1 heights per second plus the obstacle's own speed.
 </li>
@@ -3404,6 +3409,20 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p><strong>Thin shapes.</strong> A line half a grid cell thick still holds a gentle pour. Liquid that hits a line that thin fast may pass it; thicken such lines with <a class="ref" href="#tex.dilate"><code>tex.dilate</code></a>.</p>
 <p><strong>Moving obstacles.</strong> A mask that moves without <code>obstacle_velocity</code> pushes the liquid only by taking its place. A slow paddle moves a pool almost as well that way. A fast paddle leaves bubbles behind it and makes smaller waves than with its velocity. The liquid moves at most about 5 heights per second at the default grid and 60 fps, so a faster obstacle is not followed in full.</p>
 <p><strong>friction</strong> sets how much the liquid sticks to obstacles and to the picture's edges. 0 slides freely. At 1 a thin film on a slope of 24 degrees slides about a sixth as far as without friction. Deep liquid still runs down over the film.</p>
+<h5 id="tex.liquid-sand-and-snow">Sand and snow</h5>
+<p>Each emitter has a <code>material</code>: liquid, sand or snow. The <code>fill</code> picture takes <code>fill_material</code>. One node holds all three at once, so water can pour onto a sand heap.</p>
+<p><strong>Sand</strong> pours, slides and forms heaps. <code>sand_angle</code> sets how steep a heap stands: 35 degrees by default, 20 to 38 work. A heap poured at 35 stands at 34 to 36 degrees and then stays still. A column of sand that collapses at once runs out flatter, at about 20 degrees, as real sand does. Values above 38 give no steeper heap. In <code>out</code>, sand shows in <code>sand_color</code> with a lighter or darker shade per grain.</p>
+<p><strong>Snow</strong> clumps. Dropped, a block breaks into lumps and stays a lumpy pile. Poured, it builds up where it lands, also on slopes. <code>snow_wetness</code> goes from 0 (powder that crumbles and slides) over 0.5 (fresh snow) to 1 (wet snow that packs and sticks). In <code>out</code>, snow shows in <code>snow_color</code>, bluer and darker deep in a pile, with a soft lumpy edge.</p>
+<p><strong>Friction on obstacles.</strong> Sand and snow hold on to obstacles and the picture's edges by their own friction: a sand heap stays on a shelf with <code>friction</code> at 0. A higher <code>friction</code> adds to it. Water next to sand slides as freely as before.</p>
+<p><strong>Limits.</strong></p>
+<ul>
+<li>Sand does not sink in water. Grains that a pour washes into water hang in it as specks.
+</li>
+<li>Water does not wet sand: a heap dams water, and water flows over it.
+</li>
+<li>Snow does not melt, and sand and snow do not mix into one material.
+</li>
+</ul>
 <h5 id="tex.liquid-particles-grid-and-cost">Particles, grid and cost</h5>
 <p>Four particles fill one cell of the grid. <code>grid</code> sets the cells across the picture, so it sets the smallest drop and the thinnest stream. <code>particles</code> sets how much liquid can exist: at the default grid, 65536 particles fill about a fifth of a 16:9 picture.</p>
 <p>When all particles are in use, the emitters stop adding and the node warns. Open <code>edges</code> free the particles that leave the picture, so a pour into open edges runs for hours at a constant count.</p>
@@ -3414,19 +3433,22 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td>256</td><td>16384</td><td>14</td><td>0.6 ms</td></tr>
 <tr><td>384 (default)</td><td>65536</td><td>21</td><td>1.9 ms</td></tr>
 <tr><td>512</td><td>131072</td><td>28</td><td>5.2 ms</td></tr>
+<tr><td>384 (default), sand</td><td>65536</td><td>24</td><td>2.1 ms</td></tr>
+<tr><td>384 (default), snow</td><td>65536</td><td>44</td><td>3.4 ms</td></tr>
 </tbody>
 </table>
 <p>Drawing <code>out</code> takes 0.35 ms of that at the default grid and 1.3 ms at grid 512, where the particles are drawn at the picture's full size. The other drawn outputs add less than 0.1 ms. Obstacles cost about 0.35 ms more at the default grid in each frame where an input changes. With a still mask and still emitters they cost nothing after the first frame.</p>
-<p>For the same amount of liquid, twice the cells across need four times the particles and twice the substeps: about eight times the cost. A show at 30 fps takes twice the substeps per frame. A thick liquid (<code>viscosity</code> above 0.001) or a fast pour adds substeps. A frame runs at most 128 substeps; beyond that the liquid moves slower than the show, and the node warns.</p>
+<p>For the same amount of liquid, twice the cells across need four times the particles and twice the substeps: about eight times the cost. A show at 30 fps takes twice the substeps per frame. A thick liquid (<code>viscosity</code> above 0.001) or a fast pour adds substeps. Sand adds a few, snow doubles them: snow is stiff when it is packed. The node keeps the larger count from the first frame with sand or snow until it starts over. A frame runs at most 128 substeps; beyond that the liquid moves slower than the show, and the node warns.</p>
 <h5 id="tex.liquid-time-and-state">Time and state</h5>
 <p>The liquid is kept from frame to frame and follows the show clock: a paused show stands still. A late frame is one longer step of at most 1/30 s, so a stall does not make the liquid jump. <code>speed</code> slows the liquid down or speeds it up. <code>reset</code>, <a class="ref" href="#node.reset"><code>node.reset</code></a> or R start over from the <code>fill</code> picture. A new <code>grid</code>, or a picture of another shape, starts over too. The liquid is not kept in the state snapshots: after a restart it starts from <code>fill</code>.</p>
 <h5 id="tex.liquid-drawing">Drawing</h5>
 <p><code>out</code> draws every particle as a small spot and blurs the spots into one surface with a clean edge. Where the liquid thins out, in streams and spray, the spots grow, so a stream stays whole instead of breaking into dots. Thin liquid shows in <code>color</code>, deep liquid darker, and a lighter band runs under the surface. Solids count as liquid for that band, so a pool on a shelf has no band along the shelf.</p>
 <p><strong>Foam</strong> starts where the liquid hits something hard and in fast, thin spray. It lasts <code>foam_time</code> (0.4 s by default), and <code>foam_strength</code> sets how white it shows in <code>out</code>. A whole block of water that lands at once foams all over; lower <code>foam_strength</code> if that is too much.</p>
+<p><strong>Sand and snow</strong> go into the same surface, so water on a heap has one edge around both. Each pixel takes the colours of the materials there, mixed by their share. Foam is only on the liquid.</p>
 <p>The look stays the same at 30, 60 or 144 fps and at any <code>speed</code>.</p>
 <h5 id="tex.liquid-outputs">Outputs</h5>
 <ul>
-<li><strong>out</strong>: the liquid in <code>color</code> with its foam, premultiplied. Transparent around it, with an edge about a pixel soft, so it goes straight into <a class="ref" href="#tex.composite"><code>tex.composite</code></a>.
+<li><strong>out</strong>: the liquid in <code>color</code> with its foam, sand in <code>sand_color</code>, snow in <code>snow_color</code>, premultiplied. Transparent around it, with an edge about a pixel soft, so it goes straight into <a class="ref" href="#tex.composite"><code>tex.composite</code></a>.
 </li>
 <li><strong>velocity</strong>: the liquid's velocity per cell, as in <a class="ref" href="#tex.fluid"><code>tex.fluid</code></a>: red x in widths, green y in heights, per second. Blue is the speed in heights per second, alpha how full the cell is. The velocity goes on a few cells beyond the liquid and fades there, so a look coloured by speed has no step at the edge.
 </li>
@@ -3434,7 +3456,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </li>
 <li><strong>foam</strong>: the foam as white over transparent, 0 to 1. Colour it or lay it over <code>out</code>.
 </li>
-<li><strong>grain</strong>: a random grey per particle, averaged, on the liquid's alpha. The pattern travels with the liquid. Blurred and with more contrast it makes a crust for lava or mud.
+<li><strong>grain</strong>: a random grey per particle, averaged, on the liquid's alpha. The pattern travels with the liquid. Blurred and with more contrast it makes a crust for lava or mud. On sand the grey changes from grain to grain.
 </li>
 <li><strong>surface</strong>: for shading in a <a class="ref" href="#tex.shader"><code>tex.shader</code></a>. Red is the distance into the liquid in pixels (negative outside), green the depth from 0 at the surface to 1 deep inside, blue and alpha the outward normal (x, y down). Solids count as liquid.
 </li>
@@ -3444,16 +3466,16 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <ul>
 <li>Bodies from <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a> as obstacles: wire a picture of them into <code>obstacles</code>, but their velocity has to come from somewhere else for now.
 </li>
-<li>One liquid: no sand, snow or a second liquid of another colour.
+<li>A second liquid of another colour, or sand that sinks in water.
 </li>
 <li>Forces from a picture or a table, as <a class="ref" href="#tex.fluid"><code>tex.fluid</code></a> takes them.
 </li>
 </ul>
 </div>
 </div></details>
-<details class="entry node" id="tex.liquid_emitter"><summary><code class="name">tex.liquid_emitter</code><span class="sum">A place that pours liquid into tex.liquid: where, how wide, which way and how fast</span></summary>
+<details class="entry node" id="tex.liquid_emitter"><summary><code class="name">tex.liquid_emitter</code><span class="sum">A place that pours liquid, sand or snow into tex.liquid: where, how wide, which way and how fast</span></summary>
 <div class="body">
-<p>A place that pours liquid into tex.liquid: where, how wide, which way and how fast</p>
+<p>A place that pours liquid, sand or snow into tex.liquid: where, how wide, which way and how fast</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -3469,12 +3491,13 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>direction</code></td><td>vec2</td><td><code>[0, 1]</code></td><td>-1 to 1</td><td>The way the stream leaves: x right, y down, so 0, 1 pours straight down. Only its direction counts</td></tr>
 <tr><td><code>speed</code></td><td>float</td><td><code>0.5</code></td><td>0 to 3 (soft, held within 0 to 100)</td><td>How fast the stream leaves, in picture heights per second. The amount follows: width times speed is the area of liquid poured per second. 0 pours nothing</td></tr>
 <tr><td><code>on</code></td><td>bool</td><td><code>true</code></td><td></td><td>Pours while on; bind it to a channel to switch the pour</td></tr>
-<tr><td><code>material</code></td><td>liquid</td><td><code>&quot;liquid&quot;</code></td><td></td><td>What the emitter pours<ul><li><code>liquid</code>: water-like liquid that runs, splashes and pools</li></ul></td></tr>
+<tr><td><code>material</code></td><td>liquid | sand | snow</td><td><code>&quot;liquid&quot;</code></td><td></td><td>What the emitter pours. One tex.liquid can hold all three at once<ul><li><code>liquid</code>: water-like liquid that runs, splashes and pools</li><li><code>sand</code>: dry sand that pours and forms heaps</li><li><code>snow</code>: snow that clumps, piles up and breaks into lumps</li></ul></td></tr>
 </tbody>
 </table>
 <div class="more">
 <h5 id="tex.liquid_emitter-how-it-pours">How it pours</h5>
 <p>The emitter is a short line of nozzles across its direction, <code>width</code> picture heights wide. It pours rows of particles along <code>direction</code> at <code>speed</code>. The amount follows: <code>width</code> times <code>speed</code> is the area of liquid poured per second. A stream 0.04 wide at 0.5 picture heights per second pours 0.02 square picture heights per second, about 3700 particles a second at the default grid of <a class="ref" href="#tex.liquid"><code>tex.liquid</code></a>.</p>
+<p><code>material</code> sets what pours: liquid, sand or snow. Emitters of different materials can feed one <a class="ref" href="#tex.liquid"><code>tex.liquid</code></a>, so sand can pour into a pool of water.</p>
 <p>Turning <code>on</code> off stops the pour at once. Bind <code>on</code> to a channel to switch it, or bind <code>position</code> to move the stream.</p>
 <h5 id="tex.liquid_emitter-emitters-from-a-table">Emitters from a table</h5>
 <p>Any table can be an <code>emitter</code> input of <a class="ref" href="#tex.liquid"><code>tex.liquid</code></a>, one emitter per row. Its first row names the columns. <code>x</code> and <code>y</code> are required, every other column is optional:</p>
@@ -3485,7 +3508,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>width</code></td><td>how wide the stream is, in picture heights</td><td>0.04</td></tr>
 <tr><td><code>vx</code>, <code>vy</code></td><td>which way and how fast it pours, picture heights per second, y down</td><td>0 and 0.5</td></tr>
 <tr><td><code>on</code></td><td>1 pours, 0 stops; 0.5 and above counts as on</td><td>1</td></tr>
-<tr><td><code>material</code></td><td><code>liquid</code>, or its number 0</td><td><code>liquid</code></td></tr>
+<tr><td><code>material</code></td><td><code>liquid</code>, <code>sand</code> or <code>snow</code>, or their numbers 0, 1, 2</td><td><code>liquid</code></td></tr>
 </tbody>
 </table>
 <p>The node's params become <code>vx</code> and <code>vy</code> as <code>direction</code> scaled to <code>speed</code>. A table names the velocity directly, as a tracker's table does.</p>

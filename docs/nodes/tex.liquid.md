@@ -3,7 +3,7 @@
 `tex.liquid` shows a liquid from the side, in the picture's plane. Liquid pours in from emitters
 or starts as a shape, falls, splashes, pools at the bottom and runs over the edges when they are
 open. Take it for water poured over a projection, text that melts into a pool, or a level that
-fills up.
+fills up. The same node also simulates sand and snow, alone or together with the liquid.
 
 `tex.fluid` is the other fluid: smoke or ink that fills the whole picture and swirls. Take
 `tex.liquid` when there is a surface, so the liquid has a top, falls and comes to rest.
@@ -30,8 +30,9 @@ picture of a glass 30 cm high, 32.7 makes the liquid move like water in that gla
 - **emitter0, emitter1, ...**: tables from `tex.liquid_emitter`, or any table with its columns
   (see there). 64 emitters in all at most. Emitters add liquid while there are free particles.
 - **fill**: liquid lies wherever this picture is brighter than half, when the node starts or
-  `reset` is on. A picture wired later fills once. A change to the picture shows at the next
-  reset. No liquid starts inside an obstacle.
+  `reset` is on. `fill_material` says whether it is liquid, sand or snow. A picture wired later
+  fills once. A change to the picture shows at the next reset. No liquid starts inside an
+  obstacle.
 - **obstacles**: solid wherever this picture is brighter than half, as in `tex.fluid`. The
   liquid lands on obstacles, pools on them and flows around them. The picture may change every
   frame: a camera mask, text, a shape that moves. Liquid that an obstacle appears over is pushed
@@ -60,6 +61,31 @@ full.
 freely. At 1 a thin film on a slope of 24 degrees slides about a sixth as far as without
 friction. Deep liquid still runs down over the film.
 
+## Sand and snow
+
+Each emitter has a `material`: liquid, sand or snow. The `fill` picture takes `fill_material`.
+One node holds all three at once, so water can pour onto a sand heap.
+
+**Sand** pours, slides and forms heaps. `sand_angle` sets how steep a heap stands: 35 degrees by
+default, 20 to 38 work. A heap poured at 35 stands at 34 to 36 degrees and then stays still. A
+column of sand that collapses at once runs out flatter, at about 20 degrees, as real sand does.
+Values above 38 give no steeper heap. In `out`, sand shows in `sand_color` with a lighter or
+darker shade per grain.
+
+**Snow** clumps. Dropped, a block breaks into lumps and stays a lumpy pile. Poured, it builds
+up where it lands, also on slopes. `snow_wetness` goes from 0 (powder that crumbles and slides)
+over 0.5 (fresh snow) to 1 (wet snow that packs and sticks). In `out`, snow shows in
+`snow_color`, bluer and darker deep in a pile, with a soft lumpy edge.
+
+**Friction on obstacles.** Sand and snow hold on to obstacles and the picture's edges by their
+own friction: a sand heap stays on a shelf with `friction` at 0. A higher `friction` adds to it.
+Water next to sand slides as freely as before.
+
+**Limits.**
+- Sand does not sink in water. Grains that a pour washes into water hang in it as specks.
+- Water does not wet sand: a heap dams water, and water flows over it.
+- Snow does not melt, and sand and snow do not mix into one material.
+
 ## Particles, grid and cost
 
 Four particles fill one cell of the grid. `grid` sets the cells across the picture, so it sets
@@ -78,6 +104,8 @@ with all particles in use:
 | 256 | 16384 | 14 | 0.6 ms |
 | 384 (default) | 65536 | 21 | 1.9 ms |
 | 512 | 131072 | 28 | 5.2 ms |
+| 384 (default), sand | 65536 | 24 | 2.1 ms |
+| 384 (default), snow | 65536 | 44 | 3.4 ms |
 
 Drawing `out` takes 0.35 ms of that at the default grid and 1.3 ms at grid 512, where the
 particles are drawn at the picture's full size. The other drawn outputs add less than 0.1 ms.
@@ -86,7 +114,9 @@ a still mask and still emitters they cost nothing after the first frame.
 
 For the same amount of liquid, twice the cells across need four times the particles and twice
 the substeps: about eight times the cost. A show at 30 fps takes twice the substeps per frame.
-A thick liquid (`viscosity` above 0.001) or a fast pour adds substeps. A frame runs at most 128 substeps; beyond that the liquid moves slower
+A thick liquid (`viscosity` above 0.001) or a fast pour adds substeps. Sand adds a few, snow
+doubles them: snow is stiff when it is packed. The node keeps the larger count from the first
+frame with sand or snow until it starts over. A frame runs at most 128 substeps; beyond that the liquid moves slower
 than the show, and the node warns.
 
 ## Time and state
@@ -109,11 +139,16 @@ band along the shelf.
 `foam_time` (0.4 s by default), and `foam_strength` sets how white it shows in `out`. A whole
 block of water that lands at once foams all over; lower `foam_strength` if that is too much.
 
+**Sand and snow** go into the same surface, so water on a heap has one edge around both. Each
+pixel takes the colours of the materials there, mixed by their share. Foam is only on the
+liquid.
+
 The look stays the same at 30, 60 or 144 fps and at any `speed`.
 
 ## Outputs
 
-- **out**: the liquid in `color` with its foam, premultiplied. Transparent around it, with an edge
+- **out**: the liquid in `color` with its foam, sand in `sand_color`, snow in `snow_color`,
+  premultiplied. Transparent around it, with an edge
   about a pixel soft, so it goes straight into `tex.composite`.
 - **velocity**: the liquid's velocity per cell, as in `tex.fluid`: red x in widths, green y in
   heights, per second. Blue is the speed in heights per second, alpha how full the cell is. The
@@ -122,7 +157,8 @@ The look stays the same at 30, 60 or 144 fps and at any `speed`.
 - **density**: how full each cell is, 1 at rest.
 - **foam**: the foam as white over transparent, 0 to 1. Colour it or lay it over `out`.
 - **grain**: a random grey per particle, averaged, on the liquid's alpha. The pattern travels
-  with the liquid. Blurred and with more contrast it makes a crust for lava or mud.
+  with the liquid. Blurred and with more contrast it makes a crust for lava or mud. On sand the
+  grey changes from grain to grain.
 - **surface**: for shading in a `tex.shader`. Red is the distance into the liquid in pixels
   (negative outside), green the depth from 0 at the surface to 1 deep inside, blue and alpha the
   outward normal (x, y down). Solids count as liquid.
@@ -133,5 +169,5 @@ The look stays the same at 30, 60 or 144 fps and at any `speed`.
 
 - Bodies from `physics.rigid_bodies` as obstacles: wire a picture of them into `obstacles`, but
   their velocity has to come from somewhere else for now.
-- One liquid: no sand, snow or a second liquid of another colour.
+- A second liquid of another colour, or sand that sinks in water.
 - Forces from a picture or a table, as `tex.fluid` takes them.

@@ -536,24 +536,24 @@ Outputs: `out` (tex).
 
 ### tex.liquid
 
-A liquid seen from the side: it pours from emitters, falls, splashes and pools at the bottom of the picture or on obstacles
+A liquid, sand or snow seen from the side: it pours from emitters, falls, and pools or heaps up at the bottom of the picture or on obstacles
 
 Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
-- `emitter0 .. emitter63` (table): Where liquid pours in: tex.liquid_emitter, or any table whose first row names columns x, y and more (see tex.liquid_emitter's output). 64 emitters in all at most. Any number, up to 64: each one wired adds a free slot below it
-- `fill` (tex): Liquid lies where this picture is brighter than half when the node starts or `reset` is on. A changed picture shows at the next reset
+- `emitter0 .. emitter63` (table): Where liquid, sand or snow pours in: tex.liquid_emitter, or any table whose first row names columns x, y and more (see tex.liquid_emitter's output). 64 emitters in all at most. Any number, up to 64: each one wired adds a free slot below it
+- `fill` (tex): The `fill_material` lies where this picture is brighter than half when the node starts or `reset` is on. A changed picture shows at the next reset
 - `obstacles` (tex): Solid where brighter than half: the liquid lands on it, pools on it and flows around it. May change every frame
 - `obstacle_velocity` (tex): How the obstacles move, so they push the liquid: red x in widths, green y in heights, down positive, per second, as the `velocity` output. Unwired, obstacles stand still
 
 Outputs:
 
-- `out` (tex): The liquid in `color` with foam, at width x height. Transparent around it, with an edge a pixel soft, ready to composite
+- `out` (tex): The liquid in `color` with foam, sand in `sand_color`, snow in `snow_color`, at width x height. Transparent around it, with an edge a pixel soft, ready to composite
 - `velocity` (tex): The liquid's velocity at the grid's size: red x in widths, green y in heights, down positive, per second; blue the speed in heights per second; alpha how full the cell is. Goes on a few cells beyond the liquid and fades out there
 - `density` (tex): How full each cell of the grid is, as grey on black at the grid's size: 1 where the liquid is at rest, less at its surface and in spray. Opaque
 - `foam` (tex): Where the liquid foams after a splash or in fast spray: white over transparent, 0 to 1, at width x height. Fades in `foam_time`
-- `grain` (tex): A random grey per particle, averaged, on the liquid's alpha, at width x height. The pattern moves with the liquid: blur it and raise its contrast for a crust or a texture
+- `grain` (tex): A random grey per particle, averaged, on the liquid's alpha, at width x height. The pattern moves with the liquid: blur it and raise its contrast for a crust or a texture. On sand it changes from grain to grain
 - `surface` (tex): For shading downstream, at width x height, solids counted as liquid: red the distance into the liquid in pixels (negative outside), green the depth 0 to 1, blue and alpha the outward normal (x, y down)
 
 | param | type | default | range | meaning |
@@ -567,8 +567,13 @@ Outputs:
 | `edges` | walls \| open | `"walls"` |  | What the picture's edges are to the liquid; walls: the liquid stays in the picture and pools at the bottom; open: the liquid flows out and is gone, and its particles pour again from the emitters |
 | `viscosity` | float | `0.000222` | 0 to 0.004 (soft, held within 0 to 0.01) | Thickness: honey instead of water. In picture heights squared per second: 0.0002 is water in a picture 3 m high, 0.001 honey, 0.003 mud. A thick liquid needs more substeps on a fine grid |
 | `drag` | float | `0.5` | 0 to 5 (soft, held within 0 to 1000) | How fast the liquid calms: the share of its speed it loses per second. 0 sloshes for minutes |
-| `friction` | float | `0` | 0 to 2 (soft, held within 0 to 10) | How much the liquid sticks to the obstacles and the picture's edges: 0 slides freely. At 1 a thin film on a slope slides about a sixth as far as without; deep liquid still runs down over it |
+| `friction` | float | `0` | 0 to 2 (soft, held within 0 to 10) | How much the liquid sticks to the obstacles and the picture's edges: 0 slides freely. At 1 a thin film on a slope slides about a sixth as far as without; deep liquid still runs down over it. Sand and snow stick by their own friction; this adds to it where it is higher |
+| `fill_material` | liquid \| sand \| snow | `"liquid"` |  | What the `fill` picture is made of. Emitters choose their own material; liquid: water-like liquid that runs, splashes and pools; sand: dry sand that pours and forms heaps; snow: snow that clumps, piles up and breaks into lumps |
+| `sand_angle` | float | `35` | 20 to 50° (soft, held within 10 to 40°) | How steep a sand heap stands, in degrees: 30 to 35 is dry sand, 45 damp sand. Also how much sand sticks to slopes |
+| `snow_wetness` | float | `0.5` | 0 to 1 | 0 is powder that crumbles and slides, 0.5 fresh snow, 1 wet snow that sticks together, packs and holds on slopes |
 | `color` | colour | `[0.028, 0.275, 0.807, 1]` |  | Colour of the liquid in `out` where it is thin. Deep liquid is drawn darker, the band under its surface lighter |
+| `sand_color` | colour | `[0.584, 0.361, 0.147, 1]` |  | Colour of sand in `out`. Each grain is drawn a little lighter or darker, sand deep in a heap darker |
+| `snow_color` | colour | `[0.855, 0.888, 0.939, 1]` |  | Colour of snow in `out` where it is lit. Snow deep in a pile is drawn bluer and darker |
 | `foam_strength` | float | `0.6` | 0 to 1 | How white foam shows in `out`: 0 not at all, 1 fully white. The `foam` output stays the same |
 | `foam_time` | float | `0.4` | 0.05 to 4 s (soft, held within 0.01 to 60 s) | How long foam lasts after a splash, in seconds: after this time a third of it is left. Slowed down by `speed` as the liquid is |
 | `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | How fast the liquid moves against the show clock: 0 holds it, 0.25 is slow motion. Faster costs more substeps |
@@ -576,7 +581,7 @@ Outputs:
 
 ### tex.liquid_emitter
 
-A place that pours liquid into tex.liquid: where, how wide, which way and how fast
+A place that pours liquid, sand or snow into tex.liquid: where, how wide, which way and how fast
 
 Inputs: none.
 
@@ -591,7 +596,7 @@ Outputs:
 | `direction` | vec2 | `[0, 1]` | -1 to 1 | The way the stream leaves: x right, y down, so 0, 1 pours straight down. Only its direction counts |
 | `speed` | float | `0.5` | 0 to 3 (soft, held within 0 to 100) | How fast the stream leaves, in picture heights per second. The amount follows: width times speed is the area of liquid poured per second. 0 pours nothing |
 | `on` | bool | `true` |  | Pours while on; bind it to a channel to switch the pour |
-| `material` | liquid | `"liquid"` |  | What the emitter pours; liquid: water-like liquid that runs, splashes and pools |
+| `material` | liquid \| sand \| snow | `"liquid"` |  | What the emitter pours. One tex.liquid can hold all three at once; liquid: water-like liquid that runs, splashes and pools; sand: dry sand that pours and forms heaps; snow: snow that clumps, piles up and breaks into lumps |
 
 ### tex.lookup
 
