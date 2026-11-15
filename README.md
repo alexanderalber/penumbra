@@ -32,7 +32,8 @@ groups of rigid bodies. The
 
 - **Pictures:** noise, ramps, text, shapes, images, PSD layers, video (a channel can scrub it
   like tape). Level, HSV, blur, edge, displace, lookup, threshold, chroma key, matte, composite.
-  Feedback loops, frame cache, per-pixel time machine, 2D fluid. Shaders in WGSL. Named
+  Feedback loops, frame cache, per-pixel time machine, 2D fluid, 2D water, sand and snow
+  ([liquid](examples/liquid/README.md) example). Shaders in WGSL. Named
   [palettes and colormaps](docs/concepts.md#palettes). Image files read as data (maps, positions,
   normals).
 - **Volumes:** 3D smoke with burning fuel in a box (`vol.smoke`), up to 64 emitters, drawn by
@@ -224,6 +225,11 @@ The [fluid](examples/fluid/README.md) example: a 2D fluid pushed by optical flow
 blobs, here from wandering spots that stand in for a camera.
 
 ![The fluid example: pink, yellow and cyan dye swirling over black](assets/gallery/fluid.jpg)
+
+The [liquid](examples/liquid/README.md) example: water poured over a word runs into a basin and
+drains, a gusty wind bends the streams, and sand heaps up on a shelf.
+
+![The liquid example: three streams of water run over the grey word penumbra into a grey basin and drain through a gap in its floor; at the right, sand pours onto a shelf and slides off](assets/gallery/liquid.jpg)
 
 The [smoke](examples/smoke/README.md) example: smoke simulated in a box in space from three
 emitters. Hot smoke glows in colours of its own.
