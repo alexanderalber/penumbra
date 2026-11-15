@@ -231,6 +231,11 @@ drains, a gusty wind bends the streams, and sand heaps up on a shelf.
 
 ![The liquid example: three streams of water run over the grey word penumbra into a grey basin and drain through a gap in its floor; at the right, sand pours onto a shelf and slides off](assets/gallery/liquid.jpg)
 
+The [liquid-bodies](examples/liquid-bodies/README.md) example: boxes and balls from the rigid-body
+solver drop into a pool, push the water aside and float, while a turning bar stirs it.
+
+![The liquid-bodies example: orange boxes and yellow balls float in a row on a blue pool between two grey walls, with splashes above them; a pale bar turns under the water at the right](assets/gallery/liquid-bodies.jpg)
+
 The [smoke](examples/smoke/README.md) example: smoke simulated in a box in space from three
 emitters. Hot smoke glows in colours of its own.
 

@@ -44,6 +44,8 @@ SHOWCASE = [
     # 25 s: after the first drop, with the blocks, the sun and the display on.
     ("music-synthwave", EXAMPLES / "music-synthwave", "/out", 25),
     ("fluid", EXAMPLES / "fluid", "/view", 25),
+    # 6 s: the bodies have dropped into the pool and float.
+    ("liquid-bodies", EXAMPLES / "liquid-bodies", "/out", 6),
     ("smoke", EXAMPLES / "smoke", "/out", 25),
     # 20 s: the beat tracker has locked on and the picture is moving with it.
     ("raymarch", EXAMPLES / "raymarch", "/out", 20),
