@@ -20,8 +20,7 @@ TouchDesigner Python API, its own node names.
 
 **Status:** work in progress, used for real installations. There will be breaking
 changes before 1.0 ([scope](#scope)). The current version is on
-the [releases page](https://github.com/alexanderalber/penumbra/releases/latest). Windows 10
-and 11 only so far; Linux is planned but untested, macOS is not planned.
+the [releases page](https://github.com/alexanderalber/penumbra/releases/latest).
 
 ## Features
 
