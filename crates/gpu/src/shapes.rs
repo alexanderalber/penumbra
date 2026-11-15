@@ -11,7 +11,7 @@ use crate::{FORMAT, Gpu, Tex};
 const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("shapes.wgsl"));
 
 const UNIFORM_SIZE: u64 = 32;
-const POLY_SIZE: usize = 48;
+const POLY_SIZE: usize = 80;
 
 /// What a pixel shows.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -30,15 +30,27 @@ pub enum ShapeMode {
     /// point, clockwise on screen when the points are; alpha: the signed distance to its edge in
     /// pixels (negative inside).
     Id,
+    /// How fast each place of a shape moves, from its `motion`: red and green the velocity, alpha
+    /// the coverage as in the mask (straight, not premultiplied). The velocity is the full value
+    /// on the edge and reaches `margin` pixels beyond it at alpha 0, so a reader that samples
+    /// between pixels at the edge does not see it fall off. Where shapes overlap, the later one
+    /// counts. Elsewhere all 0.
+    Velocity { margin: f32 },
 }
 
 /// One shape: its outline in target pixels (closed; the last point is not repeated), its
-/// colour for outlines (linear, straight alpha) and its id for ids.
+/// colour for outlines (linear, straight alpha), its id for ids and its motion for velocities.
 pub struct ShapePoly<'a> {
     pub points: &'a [[f32; 2]],
     pub color: [f32; 4],
     pub id: u32,
+    /// The velocity at the pixel centre (x, y), as two rows `[a, b, c]`: `a + b x + c y`. A
+    /// motion of a rigid shape in the picture's plane is exactly this.
+    pub motion: [[f32; 3]; 2],
 }
+
+/// No motion.
+pub const STILL: [[f32; 3]; 2] = [[0.0; 3]; 2];
 
 /// A value in 0..1 that looks random and depends only on `id` (lowbias32 by Chris Wellons).
 pub fn shape_random(id: u32) -> f32 {
@@ -150,6 +162,13 @@ impl Shapes {
             for v in poly.color {
                 records.extend_from_slice(&v.to_le_bytes());
             }
+            for row in poly.motion {
+                // Not finite: no motion.
+                let row = if row.iter().all(|v| v.is_finite()) { row } else { [0.0; 3] };
+                for v in [row[0], row[1], row[2], 0.0] {
+                    records.extend_from_slice(&v.to_le_bytes());
+                }
+            }
             first = first.saturating_add(n32);
             count += 1;
         }
@@ -165,6 +184,9 @@ impl Shapes {
             ShapeMode::Sdf { unit } => (1, 0.0, unit),
             ShapeMode::Outline { width } => (2, width, 0.0),
             ShapeMode::Id => (3, 0.0, 0.0),
+            ShapeMode::Velocity { margin } => {
+                (4, if margin.is_finite() { margin.max(0.0) } else { 0.0 }, 0.0)
+            }
         };
         let mut u = Vec::with_capacity(UNIFORM_SIZE as usize);
         for v in [target.width() as f32, target.height() as f32] {
@@ -261,7 +283,7 @@ mod tests {
         let Some(gpu) = gpu() else { return };
         let target = Tex::new(&gpu, 40, 20, "shapes").unwrap();
         let square = [[10.0, 5.0], [20.0, 5.0], [20.0, 15.0], [10.0, 15.0]];
-        let polys = [ShapePoly { points: &square, color: [1.0, 0.5, 0.0, 1.0], id: 0 }];
+        let polys = [ShapePoly { points: &square, color: [1.0, 0.5, 0.0, 1.0], id: 0, motion: STILL }];
         let mut drawer = Shapes::new();
 
         drawer.render(&gpu, &target, &polys, ShapeMode::Mask).unwrap();
@@ -298,8 +320,8 @@ mod tests {
         let a = [[2.0, 2.0], [18.0, 2.0], [18.0, 18.0], [2.0, 18.0]];
         let b = [[14.0, 6.0], [30.0, 6.0], [30.0, 14.0], [14.0, 14.0]];
         let polys = [
-            ShapePoly { points: &a, color: [1.0; 4], id: 7 },
-            ShapePoly { points: &b, color: [1.0; 4], id: 9 },
+            ShapePoly { points: &a, color: [1.0; 4], id: 7, motion: STILL },
+            ShapePoly { points: &b, color: [1.0; 4], id: 9, motion: STILL },
         ];
         Shapes::new().render(&gpu, &target, &polys, ShapeMode::Id).unwrap();
         let px = gpu.read(&target).unwrap();
@@ -317,6 +339,38 @@ mod tests {
         // No shapes: no id.
         Shapes::new().render(&gpu, &target, &[], ShapeMode::Id).unwrap();
         assert_eq!(gpu.read(&target).unwrap().get(5, 10).unwrap()[0], -1.0);
+    }
+
+    #[test]
+    fn velocities_follow_each_shapes_motion_to_its_edge_and_a_little_beyond() {
+        let Some(gpu) = gpu() else { return };
+        let target = Tex::new(&gpu, 40, 20, "shapes").unwrap();
+        let a = [[2.0, 2.0], [18.0, 2.0], [18.0, 18.0], [2.0, 18.0]];
+        let b = [[24.0, 4.0], [36.0, 4.0], [36.0, 16.0], [24.0, 16.0]];
+        // a slides right at 3; b turns about (30, 10) at 0.5 a pixel: v = 0.5 (-(y - 10), x - 30).
+        let polys = [
+            ShapePoly { points: &a, color: [1.0; 4], id: 0, motion: [[3.0, 0.0, 0.0], [0.0; 3]] },
+            ShapePoly { points: &b, color: [1.0; 4], id: 1, motion: [[5.0, 0.0, -0.5], [-15.0, 0.5, 0.0]] },
+        ];
+        Shapes::new().render(&gpu, &target, &polys, ShapeMode::Velocity { margin: 2.0 }).unwrap();
+        let px = gpu.read(&target).unwrap();
+        assert_eq!(px.get(10, 10).unwrap(), [3.0, 0.0, 0.0, 1.0]);
+        // Pixel (33, 5) has its centre at (33.5, 5.5): 0.5 (4.5, 3.5).
+        let v = px.get(33, 5).unwrap();
+        assert!((v[0] - 2.25).abs() < 1e-3 && (v[1] - 1.75).abs() < 1e-3 && v[3] == 1.0, "{v:?}");
+        // The last pixel inside a's right edge is covered; one 1.5 beyond it still moves, at
+        // alpha 0.
+        let v = px.get(17, 10).unwrap();
+        assert!(v[0] == 3.0 && (v[3] - 1.0).abs() < 1e-3, "{v:?}");
+        let v = px.get(19, 10).unwrap();
+        assert!(v[0] == 3.0 && v[3] == 0.0, "{v:?}");
+        // Farther than the margin: nothing.
+        assert_eq!(px.get(21, 10).unwrap(), [0.0; 4]);
+        // A motion that is not a number: none.
+        let bad =
+            [ShapePoly { points: &a, color: [1.0; 4], id: 0, motion: [[f32::NAN, 0.0, 0.0], [0.0; 3]] }];
+        Shapes::new().render(&gpu, &target, &bad, ShapeMode::Velocity { margin: 2.0 }).unwrap();
+        assert_eq!(gpu.read(&target).unwrap().get(10, 10).unwrap(), [0.0, 0.0, 0.0, 1.0]);
     }
 
     #[test]

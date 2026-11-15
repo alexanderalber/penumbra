@@ -20,7 +20,9 @@ use std::time::{Duration, Instant};
 
 use half::f16;
 use penumbra_core::{Curve, Error, ParamSpec, Unit};
-use penumbra_gpu::{PendingRead, ReadPool, ReadState, ShapeMode, ShapePoly, Shapes as Drawer, Tex, TexRing};
+use penumbra_gpu::{
+    PendingRead, ReadPool, ReadState, STILL, ShapeMode, ShapePoly, Shapes as Drawer, Tex, TexRing,
+};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, Job, JobStatus, NodeDef, NodeDesc, NodeTypes,
     Operator,
@@ -352,7 +354,10 @@ fn trace_read(read: &PendingRead, settings: &TraceSettings) -> Result<TraceDone,
 type Drawn = (Vec<[f32; 2]>, [f32; 4], u32);
 
 fn as_drawn(polys: &[Drawn]) -> Vec<ShapePoly<'_>> {
-    polys.iter().map(|(points, color, id)| ShapePoly { points, color: *color, id: *id }).collect()
+    polys
+        .iter()
+        .map(|(points, color, id)| ShapePoly { points, color: *color, id: *id, motion: STILL })
+        .collect()
 }
 
 /// An outline in target pixels, clockwise on screen (y down), so that runs along outlines

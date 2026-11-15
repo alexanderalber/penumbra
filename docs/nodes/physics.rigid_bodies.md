@@ -63,6 +63,19 @@ of its model.
 With one group, `table` goes straight into `geo.instance`. With several groups `geo.instance`
 would draw one model for all of them: use `out` instead.
 
+- **`mask`** is a picture: white where a body is, seen through the camera on `camera`.
+- **`velocity`** is a picture of how fast each place of each body moves: red to the right in
+  picture widths per second, green down in picture heights per second. A spinning body moves
+  faster at its rim. Alpha is the mask.
+
+Both pictures are for `tex.liquid` (`obstacles` and `obstacle_velocity`), and are made only
+while something reads them. `width` and `height` under "pictures" set their size. Each body is
+drawn as the outline of what it collides as: its box, ball or hull, seen flat through the camera.
+The velocities come from the solver, so they hold for a body that turns or stops. They are exact
+for an orthographic camera that looks along the `plane`'s normal. Wire the camera that the
+`tex.render` of `out` uses, and the pictures line up with the drawing. Without a camera the
+pictures stay empty, and the solver warns. See [tex.liquid](tex.liquid.md#rigid-bodies).
+
 ## Obstacles
 
 Wire any geometry into `obstacles`: a model from `geo.file`, primitives placed by `geo.transform`,

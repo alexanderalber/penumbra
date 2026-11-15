@@ -40,7 +40,8 @@ picture of a glass 30 cm high, 32.7 makes the liquid move like water in that gla
 - **obstacle_velocity**: how the obstacles move, so they push the liquid along instead of only
   squeezing it aside. Red is x in widths per second, green y in heights per second, down
   positive: the same as the `velocity` output and `tex.fluid`'s. Each place of an obstacle takes
-  the velocity this picture has there. Unwired, obstacles stand still.
+  the velocity this picture has there. Unwired, obstacles stand still. The `velocity` output of
+  `physics.rigid_bodies` goes in as it is (see [Rigid bodies](#rigid-bodies)).
 - **force**: motion that pushes the liquid, sand and snow, as in `tex.fluid`.
   `tex.optical_flow`'s output goes in as it is.
 - **splats**: pushes at points from a table, as in `tex.fluid`. `tex.blob_track`'s table goes in
@@ -84,13 +85,47 @@ line that thin fast may pass it; thicken such lines with `tex.dilate`.
 
 **Moving obstacles.** A mask that moves without `obstacle_velocity` pushes the liquid only by
 taking its place. A slow paddle moves a pool almost as well that way. A fast paddle leaves
-bubbles behind it and makes smaller waves than with its velocity. The liquid moves at most about
-5 heights per second at the default grid and 60 fps, so a faster obstacle is not followed in
-full.
+bubbles behind it and makes smaller waves than with its velocity. The `obstacles` picture of a
+frame counts as where the obstacles are at the end of that frame, as every picture made for the
+frame shows them. With `obstacle_velocity` the node moves them there over the frame's substeps.
+
+**Fast obstacles.** The node takes more substeps for an obstacle faster than about 5 heights per
+second at the default grid. It measures the fastest obstacle in `obstacle_velocity`, and that
+measure arrives a frame or two late. `obstacle_velocity` counts up to 30 heights per second; a
+faster obstacle moves the liquid at 30.
 
 **friction** sets how much the liquid sticks to obstacles and to the picture's edges. 0 slides
 freely. At 1 a thin film on a slope of 24 degrees slides about a sixth as far as without
 friction. Deep liquid still runs down over the film.
+
+## Rigid bodies
+
+Bodies from `physics.rigid_bodies` push the liquid as moving obstacles. The solver draws them as
+two pictures through a camera: `mask` and `velocity`.
+
+1. Set `plane` on the solver to `xz`, so the bodies stay on a wall facing the camera.
+2. Add a `view.camera` at y = -10 that looks along +y, with `projection` orthographic. Its
+   `size` is the height in metres the picture shows. Wire it into `camera` of the solver, and
+   into the `tex.render` that draws the bodies.
+3. Set the solver's `width` and `height` to the liquid's.
+4. Wire the solver's `mask` into `obstacles` and its `velocity` into `obstacle_velocity`.
+5. Set the liquid's `gravity` to 9.81 over the camera's `size`: 3.27 for 3 m.
+
+**Static obstacles too.** Put the solver's `mask` and the static mask together in a
+`tex.composite` with `op` maximum, and wire that into `obstacles`. The bodies' `velocity` goes
+into `obstacle_velocity` alone: it is 0 outside the bodies, so the static obstacles stand still.
+A `tex.render` of the static geometry in white through the same camera makes a static mask that
+lines up with what the bodies collide with. Example: [liquid-bodies](../../examples/liquid-bodies/).
+
+**One way only.** The bodies push the liquid, but the liquid does not push the bodies. A body
+falls through a pool as through air, keeps its speed and hits the floor below. The liquid
+between body and floor then spurts out sideways. The solver's `damping` slows the bodies, in the
+air as well. A `physics.field` of type wind that pushes up below the water's surface stands in
+for buoyancy: stronger than gravity, the bodies float. The liquid-bodies example does both.
+
+**Without `velocity`.** `tex.optical_flow` on the mask (times 60 at 60 fps) matches a body that
+slides, but not one that turns, one slower than about 0.05 heights per second, or one at rest
+after landing. Use the solver's `velocity`.
 
 ## Sand and snow
 
@@ -200,6 +235,6 @@ The look stays the same at 30, 60 or 144 fps and at any `speed`.
 
 ## What it cannot do yet
 
-- Bodies from `physics.rigid_bodies` as obstacles: wire a picture of them into `obstacles`, but
-  their velocity has to come from somewhere else for now.
+- A push back on rigid bodies: bodies from `physics.rigid_bodies` push the liquid, but they do
+  not float, sink slower or get carried along.
 - A second liquid of another colour, or sand that sinks in water.

@@ -23,6 +23,9 @@ struct Poly {
     id: u32,
     random: f32,
     color: vec4f,
+    // The velocity at pixel centre p: (dot(mx.xyz, (1, p)), dot(my.xyz, (1, p))).
+    mx: vec4f,
+    my: vec4f,
 }
 
 @group(0) @binding(0) var<uniform> u: U;
@@ -33,6 +36,7 @@ const MODE_MASK: u32 = 0u;
 const MODE_SDF: u32 = 1u;
 const MODE_OUTLINE: u32 = 2u;
 const MODE_ID: u32 = 3u;
+const MODE_VELOCITY: u32 = 4u;
 const FAR: f32 = 1e9;
 // Largest |distance| written, in the SDF's unit (16-bit float textures end at 65504).
 const SDF_LIMIT: f32 = 1000.0;
@@ -61,13 +65,14 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     var owner_d = FAR;
     var owner_along = 0.0;
     var owner_random = 0.0;
+    var owner_motion = vec2f(0.0);
     for (var i = 0u; i < u.count; i++) {
         let poly = polys[i];
         let lo = poly.bounds.xy;
         let hi = poly.bounds.zw;
         let outside = max(max(lo - p, p - hi), vec2f(0.0));
         let lower = length(outside);
-        let bound = select(best, near, u.mode == MODE_OUTLINE || u.mode == MODE_ID);
+        let bound = select(best, near, u.mode >= MODE_OUTLINE);
         if (lower > 0.0 && lower >= bound) {
             continue;
         }
@@ -112,6 +117,8 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
             owner_d = d;
             owner_along = select(0.0, at / walked, walked > 0.0);
             owner_random = poly.random;
+            let q = vec3f(1.0, p);
+            owner_motion = vec2f(dot(poly.mx.xyz, q), dot(poly.my.xyz, q));
         }
         if (d < near) {
             near = d;
@@ -134,6 +141,13 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
         case MODE_ID: {
             let sd = select(owner_d, -owner_d, owner_inside);
             return vec4f(f32(owner), owner_random, owner_along, clamp(sd, -ID_LIMIT, ID_LIMIT));
+        }
+        case MODE_VELOCITY: {
+            if (owner < 0 || (!owner_inside && owner_d > u.width)) {
+                return vec4f(0.0);
+            }
+            let sd = select(owner_d, -owner_d, owner_inside);
+            return vec4f(owner_motion, 0.0, clamp(0.5 - sd, 0.0, 1.0));
         }
         case MODE_OUTLINE: {
             let a = clamp(u.width * 0.5 + 0.5 - near, 0.0, 1.0) * near_color.a;

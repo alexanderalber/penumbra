@@ -133,6 +133,8 @@ const LIVE: usize = 4;
 /// The strongest push of the `force` picture where there is liquid, before the cut to
 /// [`MOST_PUSH`], as the bits of a float.
 const PEAK: usize = 5;
+/// The fastest obstacle, picture heights per second, as the bits of a float.
+const MOVING: usize = 6;
 /// Material numbers: 0 is a free place, then [`MATERIALS`] in their order.
 const LIQUID: u32 = 1;
 const SAND: u32 = 2;
@@ -598,6 +600,8 @@ struct Counted {
     /// The strongest push of the `force` picture where the liquid is, heights per second squared,
     /// before the cut to [`MOST_PUSH`].
     peak: f64,
+    /// The fastest obstacle, heights per second, as `obstacle_velocity` says.
+    moving: f64,
 }
 
 /// Jump flooding steps over a mask of `across` x `down` cells: from half the larger side (as a
@@ -1197,6 +1201,12 @@ impl Liquid {
                     self.counted.short = asked > 0 && at(FREE_SEEN) < asked;
                     let peak = f64::from(f32::from_bits(at(PEAK)));
                     self.counted.peak = if peak.is_finite() { peak.max(0.0) } else { MOST_PUSH * 2.0 };
+                    let moving = f64::from(f32::from_bits(at(MOVING)));
+                    self.counted.moving = if moving.is_finite() {
+                        moving.clamp(0.0, MOST_OBSTACLE_SPEED)
+                    } else {
+                        MOST_OBSTACLE_SPEED
+                    };
                 }
                 self.spare = Some(read);
             }
@@ -1313,6 +1323,9 @@ impl Operator for Liquid {
         // changing emitter table floods again too.
         let mask = cx.input_as::<Tex>(OBSTACLES);
         let mask_velocity = mask.and(cx.input_as::<Tex>(OBSTACLE_VELOCITY));
+        if mask_velocity.is_none() {
+            self.counted.moving = 0.0;
+        }
         let flood = match mask {
             Some(_) => {
                 if sim.obstacles.is_none() {
@@ -1410,14 +1423,20 @@ impl Operator for Liquid {
             ));
         }
         // The fastest flow: a fall across the picture under gravity and the pushes, an emitter's
-        // stream or a splat that sets its speed, or a wave in sand or snow.
+        // stream or a splat that sets its speed, a wave in sand or snow, or an obstacle that
+        // moves (the GPU measures it a frame or two late).
         let fall = pushed_speed(gravity[0].hypot(gravity[1]), pushing);
         let pour = emitters.iter().map(|e| e.velocity[0].hypot(e.velocity[1])).fold(0.0, f64::max);
         let pour = if push.set { pour.max(splat_speed) } else { pour };
-        let fastest = MIN_FLOW.max(fall).max(pour).max(fastest_wave(sim.used));
+        let fastest = MIN_FLOW.max(fall).max(pour).max(fastest_wave(sim.used)).max(self.counted.moving);
         let (count, dt, needed) = substeps(dt, sim.dx, fastest, viscosity);
         if needed > count {
             let stiff = if sim.used & !(1 << LIQUID) != 0 { ", or use less sand and snow" } else { "" };
+            let stiff = if self.counted.moving > fall.max(pour) {
+                format!("{stiff}, or let the obstacles move slower")
+            } else {
+                stiff.to_string()
+            };
             cx.warn(format!(
                 "a frame needs {needed} substeps, at most {MAX_SUBSTEPS} run: the liquid moves slower than the show. \
                  Lower `grid`, `viscosity` or `speed`{stiff}"
@@ -1478,6 +1497,10 @@ impl Operator for Liquid {
         if force.is_some() && count > 0 {
             sim.counter.write(gpu, PEAK as u64, &[0u32])?;
         }
+        // So are the obstacles' speeds, once there is a new field to measure.
+        if flood && count > 0 {
+            sim.counter.write(gpu, MOVING as u64, &[0u32])?;
+        }
 
         let (cw, ch) = sim.cells;
         let out = self.out_ring.next_storage(gpu, width, height, KIND)?;
@@ -1516,7 +1539,10 @@ impl Operator for Liquid {
             &drawing.words(sim.budget, mask.is_some(), sim.aspect, foam_strength, colors),
         )?;
 
-        let times: Vec<f64> = (0..count).map(|k| k as f64 * sub).collect();
+        // The obstacles' picture shows them at the end of the frame, as every picture cooked for
+        // this frame does: substep k sees them where they are at its own end, `t` seconds
+        // before that (0 in the last substep).
+        let times: Vec<f64> = (0..count).map(|k| (k as f64 + 1.0 - count as f64) * sub).collect();
         let params: Vec<_> =
             times.iter().map(|t| move |n: &str| (n == "t").then_some(Value::Float(*t))).collect();
         let zero = |n: &str| (n == "t").then_some(Value::Float(0.0));

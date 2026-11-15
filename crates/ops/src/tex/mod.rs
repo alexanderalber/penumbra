@@ -690,7 +690,7 @@ fn inputs<'a>(cx: &'a CookContext<'_>) -> Vec<Option<&'a Tex>> {
     (0..cx.def().inputs.len().min(penumbra_gpu::pass::INPUTS)).map(|i| cx.input_as::<Tex>(i)).collect()
 }
 
-fn side(cx: &CookContext<'_>, name: &str) -> Result<u32, CookError> {
+pub(crate) fn side(cx: &CookContext<'_>, name: &str) -> Result<u32, CookError> {
     u32::try_from(cx.int(name)?).map_err(|_| CookError::failed(format!("`{name}` must be positive")))
 }
 

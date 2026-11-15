@@ -3406,7 +3406,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </li>
 <li><strong>obstacles</strong>: solid wherever this picture is brighter than half, as in <a class="ref" href="#tex.fluid"><code>tex.fluid</code></a>. The liquid lands on obstacles, pools on them and flows around them. The picture may change every frame: a camera mask, text, a shape that moves. Liquid that an obstacle appears over is pushed out to its nearest edge, at 0.1 heights per second plus the obstacle's own speed.
 </li>
-<li><strong>obstacle_velocity</strong>: how the obstacles move, so they push the liquid along instead of only squeezing it aside. Red is x in widths per second, green y in heights per second, down positive: the same as the <code>velocity</code> output and <a class="ref" href="#tex.fluid"><code>tex.fluid</code></a>'s. Each place of an obstacle takes the velocity this picture has there. Unwired, obstacles stand still.
+<li><strong>obstacle_velocity</strong>: how the obstacles move, so they push the liquid along instead of only squeezing it aside. Red is x in widths per second, green y in heights per second, down positive: the same as the <code>velocity</code> output and <a class="ref" href="#tex.fluid"><code>tex.fluid</code></a>'s. Each place of an obstacle takes the velocity this picture has there. Unwired, obstacles stand still. The <code>velocity</code> output of <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a> goes in as it is (see <a href="#tex.liquid-rigid-bodies">Rigid bodies</a>).
 </li>
 <li><strong>force</strong>: motion that pushes the liquid, sand and snow, as in <a class="ref" href="#tex.fluid"><code>tex.fluid</code></a>. <a class="ref" href="#tex.optical_flow"><code>tex.optical_flow</code></a>'s output goes in as it is.
 </li>
@@ -3421,8 +3421,26 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="tex.liquid-obstacles">Obstacles</h5>
 <p>The node turns the <code>obstacles</code> picture into distances to the nearest solid edge, on a lattice twice as fine as the grid. It does that again when <code>edges</code> or any input of the node changes: the mask, its velocity, but also an emitter whose table moves, a force picture that changes or splats that move.</p>
 <p><strong>Thin shapes.</strong> A line half a grid cell thick still holds a gentle pour. Liquid that hits a line that thin fast may pass it; thicken such lines with <a class="ref" href="#tex.dilate"><code>tex.dilate</code></a>.</p>
-<p><strong>Moving obstacles.</strong> A mask that moves without <code>obstacle_velocity</code> pushes the liquid only by taking its place. A slow paddle moves a pool almost as well that way. A fast paddle leaves bubbles behind it and makes smaller waves than with its velocity. The liquid moves at most about 5 heights per second at the default grid and 60 fps, so a faster obstacle is not followed in full.</p>
+<p><strong>Moving obstacles.</strong> A mask that moves without <code>obstacle_velocity</code> pushes the liquid only by taking its place. A slow paddle moves a pool almost as well that way. A fast paddle leaves bubbles behind it and makes smaller waves than with its velocity. The <code>obstacles</code> picture of a frame counts as where the obstacles are at the end of that frame, as every picture made for the frame shows them. With <code>obstacle_velocity</code> the node moves them there over the frame's substeps.</p>
+<p><strong>Fast obstacles.</strong> The node takes more substeps for an obstacle faster than about 5 heights per second at the default grid. It measures the fastest obstacle in <code>obstacle_velocity</code>, and that measure arrives a frame or two late. <code>obstacle_velocity</code> counts up to 30 heights per second; a faster obstacle moves the liquid at 30.</p>
 <p><strong>friction</strong> sets how much the liquid sticks to obstacles and to the picture's edges. 0 slides freely. At 1 a thin film on a slope of 24 degrees slides about a sixth as far as without friction. Deep liquid still runs down over the film.</p>
+<h5 id="tex.liquid-rigid-bodies">Rigid bodies</h5>
+<p>Bodies from <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a> push the liquid as moving obstacles. The solver draws them as two pictures through a camera: <code>mask</code> and <code>velocity</code>.</p>
+<ol>
+<li>Set <code>plane</code> on the solver to <code>xz</code>, so the bodies stay on a wall facing the camera.
+</li>
+<li>Add a <a class="ref" href="#view.camera"><code>view.camera</code></a> at y = -10 that looks along +y, with <code>projection</code> orthographic. Its <code>size</code> is the height in metres the picture shows. Wire it into <code>camera</code> of the solver, and into the <a class="ref" href="#tex.render"><code>tex.render</code></a> that draws the bodies.
+</li>
+<li>Set the solver's <code>width</code> and <code>height</code> to the liquid's.
+</li>
+<li>Wire the solver's <code>mask</code> into <code>obstacles</code> and its <code>velocity</code> into <code>obstacle_velocity</code>.
+</li>
+<li>Set the liquid's <code>gravity</code> to 9.81 over the camera's <code>size</code>: 3.27 for 3 m.
+</li>
+</ol>
+<p><strong>Static obstacles too.</strong> Put the solver's <code>mask</code> and the static mask together in a <a class="ref" href="#tex.composite"><code>tex.composite</code></a> with <code>op</code> maximum, and wire that into <code>obstacles</code>. The bodies' <code>velocity</code> goes into <code>obstacle_velocity</code> alone: it is 0 outside the bodies, so the static obstacles stand still. A <a class="ref" href="#tex.render"><code>tex.render</code></a> of the static geometry in white through the same camera makes a static mask that lines up with what the bodies collide with. Example: <a href="../examples/liquid-bodies/">liquid-bodies</a>.</p>
+<p><strong>One way only.</strong> The bodies push the liquid, but the liquid does not push the bodies. A body falls through a pool as through air, keeps its speed and hits the floor below. The liquid between body and floor then spurts out sideways. The solver's <code>damping</code> slows the bodies, in the air as well. A <a class="ref" href="#physics.field"><code>physics.field</code></a> of type wind that pushes up below the water's surface stands in for buoyancy: stronger than gravity, the bodies float. The liquid-bodies example does both.</p>
+<p><strong>Without <code>velocity</code>.</strong> <a class="ref" href="#tex.optical_flow"><code>tex.optical_flow</code></a> on the mask (times 60 at 60 fps) matches a body that slides, but not one that turns, one slower than about 0.05 heights per second, or one at rest after landing. Use the solver's <code>velocity</code>.</p>
 <h5 id="tex.liquid-sand-and-snow">Sand and snow</h5>
 <p>Each emitter has a <code>material</code>: liquid, sand or snow. The <code>fill</code> picture takes <code>fill_material</code>. One node holds all three at once, so water can pour onto a sand heap.</p>
 <p><strong>Sand</strong> pours, slides and forms heaps. <code>sand_angle</code> sets how steep a heap stands: 35 degrees by default, 20 to 38 work. A heap poured at 35 stands at 34 to 36 degrees and then stays still. A column of sand that collapses at once runs out flatter, at about 20 degrees, as real sand does. Values above 38 give no steeper heap. In <code>out</code>, sand shows in <code>sand_color</code> with a lighter or darker shade per grain.</p>
@@ -3480,7 +3498,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p><code>foam</code>, <code>grain</code>, <code>surface</code>, <code>velocity</code> and <code>density</code> cost nothing while nothing reads them.</p>
 <h5 id="tex.liquid-what-it-cannot-do-yet">What it cannot do yet</h5>
 <ul>
-<li>Bodies from <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a> as obstacles: wire a picture of them into <code>obstacles</code>, but their velocity has to come from somewhere else for now.
+<li>A push back on rigid bodies: bodies from <a class="ref" href="#physics.rigid_bodies"><code>physics.rigid_bodies</code></a> push the liquid, but they do not float, sink slower or get carried along.
 </li>
 <li>A second liquid of another colour, or sand that sinks in water.
 </li>
@@ -6812,11 +6830,14 @@ def cook(cx):
 <li><code>bodies0 .. bodies63</code> <span class="kind">bodies</span>: A group of bodies from physics.bodies. The groups of all these inputs collide with each other, 4000 bodies in all at most. A dynamic group whose table or shape changes starts over; the others go on. A driven or fixed group follows its table Any number, up to 64: each one wired adds a free slot below it.</li>
 <li><code>obstacles</code> <span class="kind">geo</span>: Geometry that the bodies land on and bounce off, hollows and all. An obstacle that is moved or turned, by a geo.transform with a bound param for one, carries along the bodies on it and pushes those in its way. One that changes its size or its mesh jumps and pushes nothing</li>
 <li><code>field0 .. field63</code> <span class="kind">table</span>: A field from physics.field: a pull to a point, a wind or a whirl that speeds up the dynamic bodies of every group, and a kick on a trigger. A table with the same columns works as well and may hold a field per row: type, strength, tx, ty, tz, dx, dy, dz, radius, falloff, kick, trigger. 64 fields in all at most Any number, up to 64: each one wired adds a free slot below it.</li>
+<li><code>camera</code> <span class="kind">view</span>: A view.camera that the <code>mask</code> and <code>velocity</code> pictures see the bodies through. Wire the camera that a tex.render draws the bodies with, and the pictures line up with the drawing. An orthographic camera that looks straight at the <code>plane</code> gives exact velocities</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
 <li><code>out</code> <span class="kind">geo</span>: Every body where it is now, drawn as the model of its group. A group without a model shows boxes of 1 m</li>
 <li><code>table</code> <span class="kind">table</span>: One row per body, group after group in the order of the inputs: tx ty tz rx ry rz sx sy sz, the columns geo.instance reads, and <code>group</code>, the number of the <code>bodies</code> input (0 for <code>bodies0</code>)</li>
+<li><code>mask</code> <span class="kind">tex</span>: White where a body is, seen through <code>camera</code>, on transparent black. Each body is the outline of what it collides as. For <code>obstacles</code> of tex.liquid</li>
+<li><code>velocity</code> <span class="kind">tex</span>: How fast each place of each body moves, seen through <code>camera</code>. Red is the speed to the right in picture widths per second, green the speed down in picture heights per second. A spinning body moves faster at its rim. Alpha is the mask. For <code>obstacle_velocity</code> of tex.liquid</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
@@ -6835,6 +6856,9 @@ def cook(cx):
 <tr><td><code>spin_damping</code></td><td>float</td><td><code>0</code></td><td>0 to 5 (soft, held within 0 to 1000)</td><td>Slows every body's turning down: the share of its spin it loses per second</td></tr>
 <tr><td><code>substeps</code></td><td>int</td><td><code>1</code></td><td>1 to 8</td><td>Solver steps per frame: raise it when fast bodies pass through thin things or a tall stack wobbles. Each step costs the same again</td></tr>
 <tr><td><code>jump</code></td><td>float</td><td><code>0.5</code></td><td>0 to 5 m (soft, held within 0 to 1000000 m)</td><td>How far a driven body or an obstacle may move in one frame and still push what is in its way. Moved farther, it is put at its new place at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. A turn of more than 90 degrees in one frame counts as too far at any value. 0: driven bodies and obstacles never push</td></tr>
+<tr class="section"><th colspan="5">pictures</th></tr>
+<tr><td><code>width</code></td><td>int</td><td><code>1920</code></td><td>1 to 16384 px</td><td>Width of the <code>mask</code> and <code>velocity</code> pictures, in pixels. Give them the shape of the picture they go into, such as the tex.liquid's</td></tr>
+<tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>1 to 16384 px</td><td>Height of the <code>mask</code> and <code>velocity</code> pictures, in pixels</td></tr>
 </tbody>
 </table>
 <div class="more">
@@ -6875,6 +6899,13 @@ def cook(cx):
 </li>
 </ul>
 <p>With one group, <code>table</code> goes straight into <a class="ref" href="#geo.instance"><code>geo.instance</code></a>. With several groups <a class="ref" href="#geo.instance"><code>geo.instance</code></a> would draw one model for all of them: use <code>out</code> instead.</p>
+<ul>
+<li><strong><code>mask</code></strong> is a picture: white where a body is, seen through the camera on <code>camera</code>.
+</li>
+<li><strong><code>velocity</code></strong> is a picture of how fast each place of each body moves: red to the right in picture widths per second, green down in picture heights per second. A spinning body moves faster at its rim. Alpha is the mask.
+</li>
+</ul>
+<p>Both pictures are for <a class="ref" href="#tex.liquid"><code>tex.liquid</code></a> (<code>obstacles</code> and <code>obstacle_velocity</code>), and are made only while something reads them. <code>width</code> and <code>height</code> under &quot;pictures&quot; set their size. Each body is drawn as the outline of what it collides as: its box, ball or hull, seen flat through the camera. The velocities come from the solver, so they hold for a body that turns or stops. They are exact for an orthographic camera that looks along the <code>plane</code>'s normal. Wire the camera that the <a class="ref" href="#tex.render"><code>tex.render</code></a> of <code>out</code> uses, and the pictures line up with the drawing. Without a camera the pictures stay empty, and the solver warns. See <a href="nodes/tex.liquid.md">tex.liquid</a>.</p>
 <h5 id="physics.rigid_bodies-obstacles">Obstacles</h5>
 <p>Wire any geometry into <code>obstacles</code>: a model from <a class="ref" href="#geo.file"><code>geo.file</code></a>, primitives placed by <a class="ref" href="#geo.transform"><code>geo.transform</code></a>, several joined by <a class="ref" href="#geo.merge"><code>geo.merge</code></a>. Bodies collide with its triangles, so they fall into a bowl and roll down a ramp. An obstacle is a thin shell with nothing inside. A fast or small body can pass through it: raise <code>substeps</code>, or make the bodies larger or slower.</p>
 <p>Obstacles may change while the bodies move, and bodies that rested on one fall on when it goes.</p>
