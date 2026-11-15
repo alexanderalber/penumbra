@@ -41,12 +41,43 @@ picture of a glass 30 cm high, 32.7 makes the liquid move like water in that gla
   squeezing it aside. Red is x in widths per second, green y in heights per second, down
   positive: the same as the `velocity` output and `tex.fluid`'s. Each place of an obstacle takes
   the velocity this picture has there. Unwired, obstacles stand still.
+- **force**: motion that pushes the liquid, sand and snow, as in `tex.fluid`.
+  `tex.optical_flow`'s output goes in as it is.
+- **splats**: pushes at points from a table, as in `tex.fluid`. `tex.blob_track`'s table goes in
+  as it is.
+
+## Pushes
+
+`force` and `splats` take the same pictures and tables as in `tex.fluid`, so one camera or
+tracker can drive both nodes.
+
+**The force picture** holds motion: red is x in widths, green y in heights, per frame of the
+input, down positive. Per second, `force` times the motion's speed is added to the liquid's
+speed. A camera's optical flow of a hand moving one picture height per second, at the default
+`force` 4, pushes with 4 heights per second squared: a little more than gravity. A picture that
+stays the same counts one frame per show frame. So a red of 0.01 in a 16:9 picture at 60 fps
+pushes with 0.01 x 1.78 x 60 x 4 = 4.3 heights per second squared to the right. A noise with
+`offset` 0 and a small `amplitude` makes gusty wind.
+
+**Splats** are rows with columns `x`, `y` (0 to 1 from the top left), and optionally `vx`, `vy`
+(picture sizes per second) and `radius` (picture heights; `splat_radius` without the column).
+At most 64 rows. With `splat_motion` `push`, each splat adds `force` times its velocity per
+second to the liquid within its radius. With `set`, the liquid there takes on the splat's
+velocity: a paddle, or a still hand that holds the liquid back. Colour columns do nothing here:
+only emitters and `fill` add liquid.
+
+**Limits.** The force picture and the splats together push with at most 50 heights per second
+squared; the node cuts a stronger push and warns. A stronger push makes the liquid faster, and
+the node takes more substeps for it: up to about 2.6 times as many at the push's limit. The node
+measures the force picture where the liquid is, and that measure arrives a frame or two late.
+The push also acts on spray and on liquid in the air.
 
 ## Obstacles
 
 The node turns the `obstacles` picture into distances to the nearest solid edge, on a lattice
 twice as fine as the grid. It does that again when `edges` or any input of the node changes:
-the mask, its velocity, but also an emitter whose table moves.
+the mask, its velocity, but also an emitter whose table moves, a force picture that changes or
+splats that move.
 
 **Thin shapes.** A line half a grid cell thick still holds a gentle pour. Liquid that hits a
 line that thin fast may pass it; thicken such lines with `tex.dilate`.
@@ -106,6 +137,8 @@ with all particles in use:
 | 512 | 131072 | 28 | 5.2 ms |
 | 384 (default), sand | 65536 | 24 | 2.1 ms |
 | 384 (default), snow | 65536 | 44 | 3.4 ms |
+| 384 (default), a noise as `force` | 65536 | 21 | 2.0 ms |
+| 384 (default), 8 splats | 65536 | 24 | 2.5 ms |
 
 Drawing `out` takes 0.35 ms of that at the default grid and 1.3 ms at grid 512, where the
 particles are drawn at the picture's full size. The other drawn outputs add less than 0.1 ms.
@@ -170,4 +203,3 @@ The look stays the same at 30, 60 or 144 fps and at any `speed`.
 - Bodies from `physics.rigid_bodies` as obstacles: wire a picture of them into `obstacles`, but
   their velocity has to come from somewhere else for now.
 - A second liquid of another colour, or sand that sinks in water.
-- Forces from a picture or a table, as `tex.fluid` takes them.

@@ -8,8 +8,8 @@
 // density is `u.cell.w` masses per cell.
 //
 // Per frame: `fill` (after a start), `emit` (when an emitter pours), then per substep `p2g`
-// (particles to grid), `grid_update`, `g2p` (grid to particles); last the pictures `density`
-// and `velocity`. `recount` counts the particles in use after the buffer changed size. The
+// (particles to grid), `grid_update` (gravity, the `force` picture in pic0, the splats, drag and
+// the solids), `g2p` (grid to particles); last the pictures `density` and `velocity`. `recount` counts the particles in use after the buffer changed size. The
 // liquid is drawn by a program of its own (`liquid_draw.wgsl`) from the particles.
 //
 // A particle's `mat` is 0 while it is free (a buffer of zeros is all free), else its material:
@@ -60,6 +60,9 @@ const DRAINED: u32 = 1u;     // particles freed this frame
 const WRAPPED: u32 = 2u;     // grid cells whose mass did not fit this frame
 const FILL_WANTED: u32 = 3u; // particles the last fill asked for
 const LIVE: u32 = 4u;        // particles in use
+const PEAK: u32 = 5u;        // the force picture's strongest push where there is liquid, as float bits
+// Most splats after the emitters in their buffer.
+const MAX_SPLATS: u32 = 64u;
 
 struct Mat {
     // Friction on solids (Coulomb), mass of a particle, then liquid: sound speed squared over
@@ -83,6 +86,8 @@ struct U {
     emit: vec4u,  // emitters, particles they ask for, seed, fill lattice columns
     draw: vec4f,  // per substep: share the smoothed density moves, share of the foam kept, share the smoothed velocity moves; 1 / its time
     mats: array<Mat, 4>,
+    push: vec4f,   // the force picture's gain (per second squared per height per input frame), the splats' (per second), the most push (heights per second squared), the most motion read
+    pushes: vec4u, // the force picture read (pic0), splats, splats set the velocity, the first splat in `emitters`
 }
 
 struct P {
@@ -98,10 +103,12 @@ struct P {
     mat: u32,
 }
 
-// One emitter: a row of `cols` nozzles across `dir`, pouring `rows` rows this frame.
+// One emitter: a row of `cols` nozzles across `dir`, pouring `rows` rows this frame. A splat
+// after the emitters keeps its position and velocity in `a` (heights, heights per second) and its
+// radius in `b.x`.
 struct Em {
     a: vec4f, // x, y in heights; dir x, y (unit)
-    b: vec4f, // speed, distance the newest row has travelled, spacing, unused
+    b: vec4f, // speed, distance of the row poured nearest the nozzle, spacing, unused
     c: vec4u, // cols, first slot, material, rows
 }
 
@@ -300,6 +307,55 @@ fn p2g(@builtin(global_invocation_id) id: vec3u) {
     }
 }
 
+// The velocity `v` of node `node` after a substep of `dt` under the `force` picture and the
+// splats. Their push together is cut to `u.push.z`; a splat that sets the velocity does so after.
+fn pushed(node: vec2u, v: vec2f, dt: f32) -> vec2f {
+    let pos = (vec2f(node) - vec2f(PAD)) * u.cell.x;
+    var a = vec2f(0.0);
+    if (u.pushes.x != 0u) {
+        // Motion in widths and heights per input frame, as tex.optical_flow gives it.
+        var f = textureSampleLevel(pic0, pn_clamp, pos / u.room.xy, 0.0).xy;
+        if (!finite(f)) {
+            f = vec2f(0.0);
+        }
+        f = clamp(f, vec2f(-u.push.w), vec2f(u.push.w));
+        a = vec2f(f.x * u.room.x, f.y) * u.push.x;
+        // The strongest push, before the cut, for the substeps of the frames to come. Float bits
+        // of numbers not below 0 order as the numbers do.
+        let strength = min(length(a), 1e30);
+        if (params.t == 0.0 && strength > bitcast<f32>(atomicLoad(&counter[PEAK]))) {
+            atomicMax(&counter[PEAK], bitcast<u32>(strength));
+        }
+    }
+    let n = min(u.pushes.y, MAX_SPLATS);
+    if (u.pushes.z == 0u) {
+        for (var k = 0u; k < n; k++) {
+            let s = emitters[u.pushes.w + k];
+            let d = pos - s.a.xy;
+            let r = max(s.b.x, 1e-4);
+            a += s.a.zw * exp(-dot(d, d) / (r * r)) * u.push.y;
+        }
+    }
+    let strength = length(a);
+    if (strength > u.push.z) {
+        a *= u.push.z / strength;
+    }
+    var out = v;
+    if (finite(a)) {
+        out += a * dt;
+    }
+    if (u.pushes.z != 0u) {
+        // A nozzle or a hand: the liquid inside the splat takes on its velocity.
+        for (var k = 0u; k < n; k++) {
+            let s = emitters[u.pushes.w + k];
+            let d = pos - s.a.xy;
+            let r = max(s.b.x, 1e-4);
+            out = mix(out, s.a.zw, clamp(exp(-dot(d, d) / (r * r)), 0.0, 1.0));
+        }
+    }
+    return out;
+}
+
 @compute @workgroup_size(8, 4)
 fn grid_update(@builtin(global_invocation_id) id: vec3u) {
     if (any(id.xy >= pn.size.xy)) {
@@ -327,6 +383,9 @@ fn grid_update(@builtin(global_invocation_id) id: vec3u) {
         }
         v = vec2f(f32(mx), f32(my)) / (u.fixed.y * m);
         v += u.force.xy * dt;
+        if (u.pushes.x != 0u || u.pushes.y != 0u) {
+            v = pushed(id.xy, v, dt);
+        }
         v *= max(1.0 - u.force.z * dt, 0.0);
     } else if (mi < 0) {
         // More mass than the fixed point holds: the sum wrapped. The cell counts as empty and

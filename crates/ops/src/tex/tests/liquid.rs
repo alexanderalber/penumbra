@@ -4,7 +4,9 @@
 //! an obstacle that appears in the liquid pushes it out, a moving one with its velocity pushes
 //! it along, friction holds liquid on a slope, an empty mask changes nothing. Sand and snow:
 //! poured sand heaps at its angle and rests, dropped snow keeps a pile, all three materials in
-//! one node, sand on a shelf and snow on a slope, hostile input.
+//! one node, sand on a shelf and snow on a slope, hostile input. Pushes: a force picture moves a
+//! pool and falling sand and snow, a splat stirs a pool where it is, a zero force and an empty
+//! table change nothing, hostile pushes.
 
 use penumbra_core::Value;
 use penumbra_core::scratch::ScratchDir;
@@ -17,6 +19,8 @@ use super::{Rig, create, gpu, scratch, set};
 const FILL: u32 = MAX_RUN as u32;
 const OBSTACLES: u32 = FILL + 1;
 const OBSTACLE_VELOCITY: u32 = FILL + 2;
+const FORCE: u32 = FILL + 3;
+const SPLATS: u32 = FILL + 4;
 
 /// A liquid in a 4:3 picture of 128 x 96 pixels.
 fn liquid(params: &[(&str, Value)]) -> Op {
@@ -358,6 +362,51 @@ fn two_runs_are_identical() {
     assert!(a.0.data == b.0.data, "out differs");
     assert!(a.1.data == b.1.data, "velocity differs");
     assert!(a.2.data == b.2.data, "density differs");
+}
+
+/// A second cook at the same show time (another set of outputs wanted, as thumbnails ask) leaves
+/// a pour as it is: the stream stays as narrow as with one cook a frame.
+#[test]
+fn a_second_cook_at_the_same_time_does_not_burst_a_pour() {
+    let Some(gpu) = gpu() else { return };
+    let once = |twice: bool| {
+        let mut ops = vec![
+            liquid(&[]),
+            create(
+                "/tap",
+                "tex.liquid_emitter",
+                &[("position", Value::Vec2([0.5, 0.1])), ("width", Value::Float(0.04))],
+            ),
+            wire("/tap", 0, "/liquid", 0),
+        ];
+        ops.extend(outputs());
+        ops.extend(drawn());
+        let mut rig = Rig::new(gpu.clone(), None, &ops);
+        let (single, all): (Vec<_>, Vec<_>) = (
+            ["/liquid", "/d"].iter().map(|p| rig.id(p)).collect(),
+            ["/liquid", "/d", "/f"].iter().map(|p| rig.id(p)).collect(),
+        );
+        for f in 0..40 {
+            if f % 5 == 4 {
+                rig.gpu.wait(std::time::Duration::from_secs(120)).unwrap();
+            }
+            rig.clock.advance(1);
+            rig.gpu.poll();
+            rig.cooker.cook(&rig.net, rig.clock.now(), &single, &[]);
+            if twice {
+                rig.cooker.cook(&rig.net, rig.clock.now(), &all, &[]);
+            }
+        }
+        let d = rig.gpu.read(&rig.tex("/d").unwrap()).unwrap();
+        let x0 = 0.5 * 4.0 / 3.0;
+        let wide = particles_where(&d, |x, y| y < 0.8 && (x - x0).abs() > 0.06);
+        let all = particles_where(&d, |_, y| y < 0.8);
+        (wide, all)
+    };
+    let ((wide1, all1), (wide2, all2)) = (once(false), once(true));
+    eprintln!("pour cooked once a frame: {wide1:.0} of {all1:.0} stray; twice: {wide2:.0} of {all2:.0}");
+    assert!(all2 > 0.8 * all1, "{all1} {all2}");
+    assert!(wide2 <= wide1 + 0.05 * all1, "{wide1} {wide2} of {all1}");
 }
 
 /// A stall of ten seconds is one step of at most 1/30 s: nothing flies apart, no particle is
@@ -1220,12 +1269,229 @@ fn hostile_input_leaves_sand_and_snow_finite() {
     assert!(particles(&all[2]) > 100.0, "{}", particles(&all[2]));
 }
 
+/// A picture of 128 x 96 in one colour: a force of `red` widths and `green` heights per frame.
+fn motion(path: &str, red: f64, green: f64) -> Op {
+    create(
+        path,
+        "tex.constant",
+        &[
+            ("color", Value::Vec4([red, green, 0.0, 1.0])),
+            ("width", Value::Int(128)),
+            ("height", Value::Int(96)),
+        ],
+    )
+}
+
+/// A table from CSV text.
+fn csv(path: &str, text: &str) -> Op {
+    create(path, "table.text", &[("text", text.into()), ("format", "csv".into())])
+}
+
+/// Mean speed, picture heights per second, of the cells with liquid where `inside(x, y)` holds
+/// (picture heights from the top left).
+fn speed_where(v: &Pixels, d: &Pixels, inside: impl Fn(f64, f64) -> bool) -> f64 {
+    let aspect = f64::from(v.width) / f64::from(v.height);
+    let dx = 1.0 / f64::from(v.height);
+    let (mut sum, mut n) = (0.0, 0.0);
+    for j in 0..v.height {
+        for i in 0..v.width {
+            let (x, y) = ((f64::from(i) + 0.5) * dx, (f64::from(j) + 0.5) * dx);
+            let (c, m) = (v.get(i, j).unwrap(), d.get(i, j).unwrap());
+            if m[0] > 0.5 && inside(x, y) {
+                sum += (f64::from(c[0]) * aspect).hypot(f64::from(c[1]));
+                n += 1.0;
+            }
+        }
+    }
+    if n > 0.0 { sum / n } else { 0.0 }
+}
+
+/// A force picture to the right tilts a pool: its centre moves right. 0.02 widths per frame at
+/// 60 fps and `force` 1 push with 1.6 heights per second squared, half the gravity.
+#[test]
+fn a_force_to_the_right_moves_a_pool_to_the_right() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-force");
+    let once = |wired: bool| {
+        let mut ops = vec![
+            liquid(&[("force", Value::Float(1.0))]),
+            mask("/pool", "pool.wgsl", &dir, "uv.y > 0.75"),
+            motion("/push", 0.02, 0.0),
+            wire("/pool", 0, "/liquid", FILL),
+        ];
+        if wired {
+            ops.push(wire("/push", 0, "/liquid", FORCE));
+        }
+        ops.extend(outputs());
+        let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+        rig.pixels("/pool");
+        let (out, v, d) = run(&mut rig, 90);
+        assert!(finite(&out) && finite(&v) && finite(&d));
+        assert_eq!(warning(&rig), None);
+        (centre(&d), particles(&d))
+    };
+    let ((still, n0), (pushed, n1)) = (once(false), once(true));
+    eprintln!("force: centre {still:?} without, {pushed:?} with, particles {n0:.0} and {n1:.0}");
+    assert!(pushed[0] > still[0] + 0.05, "{still:?} {pushed:?}");
+    assert!((n0 - n1).abs() < 0.02 * n0, "{n0} {n1}");
+}
+
+/// The force acts on sand and snow too: a block of each, dropped under a push to the right,
+/// lands further right than without.
+#[test]
+fn a_force_pushes_falling_sand_and_snow() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-force-granular");
+    for material in ["sand", "snow"] {
+        let once = |wired: bool| {
+            let mut ops = vec![
+                liquid(&[("fill_material", material.into()), ("force", Value::Float(2.0))]),
+                mask("/block", "block.wgsl", &dir, "abs(uv.x - 0.3) < 0.1 && uv.y > 0.2 && uv.y < 0.4"),
+                motion("/push", 0.02, 0.0),
+                wire("/block", 0, "/liquid", FILL),
+            ];
+            if wired {
+                ops.push(wire("/push", 0, "/liquid", FORCE));
+            }
+            ops.extend(outputs());
+            let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+            rig.pixels("/block");
+            let (out, v, d) = run(&mut rig, 30);
+            assert!(finite(&out) && finite(&v) && finite(&d));
+            centre(&d)
+        };
+        let (still, pushed) = (once(false), once(true));
+        eprintln!("{material} under a force: centre {still:?} without, {pushed:?} with");
+        // 3.2 heights per second squared for half a second: about 0.4 heights, less the floor's
+        // friction after landing.
+        assert!(pushed[0] > still[0] + 0.1, "{material}: {still:?} {pushed:?}");
+    }
+}
+
+/// A splat in a calm pool pushes the liquid within its radius, and the liquid far away moves
+/// hardly more than without it.
+#[test]
+fn a_splat_stirs_a_pool_where_it_is() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-splat");
+    let at = [0.25 * 4.0 / 3.0, 0.8];
+    let once = |vx: &str| {
+        let mut ops = vec![
+            liquid(&[("particles", Value::Int(8192))]),
+            mask("/pool", "pool.wgsl", &dir, "uv.y > 0.6"),
+            wire("/pool", 0, "/liquid", FILL),
+            csv("/hand", "x,y,vx,vy,radius\n0.25,0.8,0,0,0.06\n"),
+            wire("/hand", 0, "/liquid", SPLATS),
+        ];
+        ops.extend(outputs());
+        let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+        rig.pixels("/pool");
+        // The pool settles under a still splat, then the splat pushes to the right.
+        run(&mut rig, 120);
+        rig.edit(&[set("/hand.text", format!("x,y,vx,vy,radius\n0.25,0.8,{vx},0,0.06\n").into())]);
+        let (out, v, d) = run(&mut rig, 12);
+        assert!(finite(&out) && finite(&v) && finite(&d));
+        assert_eq!(warning(&rig), None);
+        let near = speed_where(&v, &d, |x, y| (x - at[0]).hypot(y - at[1]) < 0.06);
+        let far = speed_where(&v, &d, |x, _| x > 1.0);
+        (near, far)
+    };
+    let ((near0, far0), (near, far)) = (once("0"), once("1"));
+    eprintln!("splat: {near:.3} heights/s at it, {far:.3} far away; without a push {near0:.3} and {far0:.3}");
+    assert!(near > 0.1 && near > 4.0 * near0, "{near} {near0}");
+    assert!(far - far0 < 0.2 * (near - near0), "{near} {far} {near0} {far0}");
+}
+
+/// A force picture of zeros and a splats table without rows give the very same liquid as no
+/// pushes at all.
+#[test]
+fn a_zero_force_and_no_splats_change_nothing() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-no-push");
+    let once = |wired: bool| {
+        let mut ops = vec![
+            liquid(&[]),
+            mask("/block", "block.wgsl", &dir, "uv.x < 0.4 && uv.y > 0.3"),
+            motion("/push", 0.0, 0.0),
+            csv("/none", "x,y,vx,vy\n"),
+            wire("/block", 0, "/liquid", FILL),
+        ];
+        if wired {
+            ops.push(wire("/push", 0, "/liquid", FORCE));
+            ops.push(wire("/none", 0, "/liquid", SPLATS));
+        }
+        ops.extend(outputs());
+        let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+        rig.pixels("/block");
+        run(&mut rig, 60)
+    };
+    let (a, b) = (once(false), once(true));
+    assert!(a.0.data == b.0.data && a.1.data == b.1.data && a.2.data == b.2.data, "the pictures differ");
+}
+
+const HOSTILE_FORCE: &str = "\
+@fragment
+fn main(v: PnVertex) -> @location(0) vec4f {
+    let zero = v.uv.x - v.uv.x;
+    let p = vec2i(v.pos.xy);
+    if ((p.x + p.y) % 3 == 0) {
+        return vec4f(zero / zero, 1.0 / zero, -1.0 / zero, zero / zero);
+    }
+    if (v.uv.x > 0.5) {
+        return vec4f(1e30, -1e30, 0.0, 1.0);
+    }
+    return vec4f(-60000.0, 60000.0, 0.0, 1.0);
+}
+";
+
+/// NaN, infinity and huge numbers in the force picture, splats with absurd numbers and a huge
+/// `force` leave every output finite, cut the push and warn; liquid, sand and snow stay.
+#[test]
+fn hostile_pushes_leave_the_liquid_finite() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-hostile-push");
+    std::fs::write(dir.join("hostile.wgsl"), HOSTILE_FORCE).unwrap();
+    let rows = "x,y,vx,vy,radius\n1e300,-1e300,1e300,nan,1e30\n0.5,0.5,-1e9,1e9,-5\n0.2,0.2,inf,0,0.1\n\
+                0.5,0.5,3,3,1e-30\n";
+    let taps = "x,y,width,vx,vy,on,material\n0.3,0.1,0.1,0,1,1,sand\n0.6,0.1,0.1,0,1,1,snow\n";
+    let mut ops = vec![
+        liquid(&[("grid", Value::Int(32)), ("force", Value::Float(1000.0))]),
+        create(
+            "/bad",
+            "tex.shader",
+            &[("file", "hostile.wgsl".into()), ("width", Value::Int(128)), ("height", Value::Int(96))],
+        ),
+        mask("/block", "block.wgsl", &dir, "uv.y > 0.6"),
+        csv("/rows", rows),
+        csv("/taps", taps),
+        wire("/block", 0, "/liquid", FILL),
+        wire("/taps", 0, "/liquid", 0),
+        wire("/bad", 0, "/liquid", FORCE),
+        wire("/rows", 0, "/liquid", SPLATS),
+    ];
+    ops.extend(outputs());
+    ops.extend(drawn());
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.pixels("/bad");
+    rig.pixels("/block");
+    let all = run_drawn(&mut rig, 60);
+    assert!(all.iter().all(finite));
+    assert!(particles(&all[2]) > 100.0, "{}", particles(&all[2]));
+    let warned = warning(&rig).unwrap_or_default();
+    assert!(warned.contains("is cut to 50"), "{warned}");
+    rig.edit(&[set("/liquid.splat_motion", "set".into()), set("/liquid.splat_radius", Value::Float(1e30))]);
+    let all = run_drawn(&mut rig, 30);
+    assert!(all.iter().all(finite));
+    assert!(particles(&all[2]) > 100.0, "{}", particles(&all[2]));
+}
+
 /// Times the node on the hardware GPU: at the defaults (1920 x 1080, grid 384, 65536 particles,
 /// most of them in a pool and a pour), and at the size of the compute fixture's timing (65536
 /// particles, 384 cells per picture height, 37 substeps). The defaults again with a still
 /// obstacle (flooded once) and with a moving one (flooded every frame), and with every output
-/// read; the defaults again with sand and with snow in place of the liquid. Prints the wall time
-/// per frame waited for, and per frame of frames cooked back to back.
+/// read; the defaults again with sand and with snow in place of the liquid; the defaults with a
+/// changing noise as `force` and with eight splats. Prints the wall time per frame waited for,
+/// and per frame of frames cooked back to back.
 #[test]
 #[ignore = "times the liquid on the hardware GPU: cargo test -p penumbra-ops --release liquid_timing -- --ignored --nocapture"]
 fn liquid_timing() {
@@ -1234,16 +1500,18 @@ fn liquid_timing() {
     let dir = scratch("liquid-timing");
     let still = "abs(uv.x - 0.5) < 0.2 && abs(uv.y - 0.5) < 0.03";
     let shelf = "abs(uv.x - 0.5 - 0.2 * sin(t)) < 0.2 && abs(uv.y - 0.5) < 0.03";
-    for (name, width, height, grid, particles, inside, obstacle, every, material) in [
-        ("small", 1920, 1080, 256, 16384, "uv.y > 0.9", "", false, "liquid"),
-        ("defaults", 1920, 1080, 384, 65536, "uv.y > 0.82", "", false, "liquid"),
-        ("defaults, every output", 1920, 1080, 384, 65536, "uv.y > 0.82", "", true, "liquid"),
-        ("defaults, still obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", still, false, "liquid"),
-        ("defaults, moving obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", shelf, false, "liquid"),
-        ("large", 1920, 1080, 512, 131_072, "uv.y > 0.8", "", false, "liquid"),
-        ("fixture size", 1440, 1080, 512, 65536, "uv.x < 0.25 && uv.y > 2.0 / 3.0", "", false, "liquid"),
-        ("defaults, sand", 1920, 1080, 384, 65536, "uv.y > 0.82", "", false, "sand"),
-        ("defaults, snow", 1920, 1080, 384, 65536, "uv.y > 0.82", "", false, "snow"),
+    for (name, width, height, grid, particles, inside, obstacle, every, material, push) in [
+        ("small", 1920, 1080, 256, 16384, "uv.y > 0.9", "", false, "liquid", ""),
+        ("defaults", 1920, 1080, 384, 65536, "uv.y > 0.82", "", false, "liquid", ""),
+        ("defaults, every output", 1920, 1080, 384, 65536, "uv.y > 0.82", "", true, "liquid", ""),
+        ("defaults, still obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", still, false, "liquid", ""),
+        ("defaults, moving obstacle", 1920, 1080, 384, 65536, "uv.y > 0.82", shelf, false, "liquid", ""),
+        ("large", 1920, 1080, 512, 131_072, "uv.y > 0.8", "", false, "liquid", ""),
+        ("fixture size", 1440, 1080, 512, 65536, "uv.x < 0.25 && uv.y > 2.0 / 3.0", "", false, "liquid", ""),
+        ("defaults, sand", 1920, 1080, 384, 65536, "uv.y > 0.82", "", false, "sand", ""),
+        ("defaults, snow", 1920, 1080, 384, 65536, "uv.y > 0.82", "", false, "snow", ""),
+        ("defaults, force", 1920, 1080, 384, 65536, "uv.y > 0.82", "", false, "liquid", "force"),
+        ("defaults, splats", 1920, 1080, 384, 65536, "uv.y > 0.82", "", false, "liquid", "splats"),
     ] {
         std::fs::write(
             dir.join("fill.wgsl"),
@@ -1300,6 +1568,27 @@ fn liquid_timing() {
             ops.extend(outputs());
             ops.extend(drawn());
         }
+        if push == "force" {
+            ops.push(create(
+                "/wind",
+                "tex.noise",
+                &[
+                    ("color", Value::Bool(true)),
+                    ("amplitude", Value::Float(0.004)),
+                    ("offset", Value::Float(0.0)),
+                    ("speed", Value::Float(0.5)),
+                    ("width", Value::Int(64)),
+                    ("height", Value::Int(36)),
+                ],
+            ));
+            ops.push(wire("/wind", 0, "/liquid", FORCE));
+        }
+        if push == "splats" {
+            let rows: String =
+                (0..8).map(|k| format!("{},0.9,1,0,0.05\n", 0.1 + 0.1 * f64::from(k))).collect();
+            ops.push(csv("/hands", &format!("x,y,vx,vy,radius\n{rows}")));
+            ops.push(wire("/hands", 0, "/liquid", SPLATS));
+        }
         let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
         rig.pixels("/fill");
         if !obstacle.is_empty() {
@@ -1343,4 +1632,40 @@ fn liquid_timing() {
             status.warning
         );
     }
+}
+
+/// A frame longer than the one before (a project that opens, a hitch) pours no rows onto the
+/// rows poured last: nothing bursts up out of the stream. Before, every row of the longer frame
+/// beyond the last frame's travel landed on the last frame's rows.
+#[test]
+fn a_longer_frame_does_not_burst_a_pour() {
+    let Some(gpu) = gpu() else { return };
+    let ops = vec![
+        create("/liquid", "tex.liquid", &[("width", Value::Int(1280)), ("height", Value::Int(720))]),
+        create(
+            "/tap",
+            "tex.liquid_emitter",
+            &[("position", Value::Vec2([0.3, 0.05])), ("speed", Value::Float(0.45))],
+        ),
+        wire("/tap", 0, "/liquid", 0),
+        create("/v", "tex.null", &[]),
+        create("/d", "tex.null", &[]),
+        wire("/liquid", 1, "/v", 0),
+        wire("/liquid", 2, "/d", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    // One frame, then a stall of 49 frames (a step of 1/30 s), then frames as usual.
+    for gap in [1u64, 49, 1, 1, 1, 1, 1, 1, 1, 1] {
+        rig.clock.advance(gap);
+        rig.gpu.poll();
+        let ids = [rig.id("/liquid"), rig.id("/v"), rig.id("/d")];
+        rig.cooker.cook(&rig.net, rig.clock.now(), &ids, &[]);
+        rig.gpu.wait(std::time::Duration::from_secs(120)).unwrap();
+    }
+    let (out, v, d) = read(&mut rig);
+    assert!(finite(&out) && finite(&v) && finite(&d));
+    let up = v.data.iter().map(|c| c[1]).fold(0.0f32, f32::min);
+    let above = particles_where(&d, |_, y| y < 0.04);
+    eprintln!("longer frame: fastest up {up} heights/s, {above:.1} particles above the nozzle");
+    assert!(up > -0.01 && above < 1.0, "{up} {above}");
 }

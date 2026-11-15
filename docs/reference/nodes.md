@@ -546,6 +546,8 @@ Inputs:
 - `fill` (tex): The `fill_material` lies where this picture is brighter than half when the node starts or `reset` is on. A changed picture shows at the next reset
 - `obstacles` (tex): Solid where brighter than half: the liquid lands on it, pools on it and flows around it. May change every frame
 - `obstacle_velocity` (tex): How the obstacles move, so they push the liquid: red x in widths, green y in heights, down positive, per second, as the `velocity` output. Unwired, obstacles stand still
+- `force` (tex): Motion that pushes the liquid, sand and snow: tex.optical_flow's output as it is, as in tex.fluid. Red x in widths, green y in heights, down positive, per input frame. Per second, `force` times this motion's speed is added to the liquid's speed
+- `splats` (table): Pushes at points, one per row, at most 64: tex.blob_track's table as it is, as in tex.fluid. Columns x, y (0 to 1, from the top left); optional vx, vy (picture sizes per second) and radius (picture heights). Colour columns are left alone: only emitters and `fill` add liquid
 
 Outputs:
 
@@ -568,6 +570,9 @@ Outputs:
 | `viscosity` | float | `0.000222` | 0 to 0.004 (soft, held within 0 to 0.01) | Thickness: honey instead of water. In picture heights squared per second: 0.0002 is water in a picture 3 m high, 0.001 honey, 0.003 mud. A thick liquid needs more substeps on a fine grid |
 | `drag` | float | `0.5` | 0 to 5 (soft, held within 0 to 1000) | How fast the liquid calms: the share of its speed it loses per second. 0 sloshes for minutes |
 | `friction` | float | `0` | 0 to 2 (soft, held within 0 to 10) | How much the liquid sticks to the obstacles and the picture's edges: 0 slides freely. At 1 a thin film on a slope slides about a sixth as far as without; deep liquid still runs down over it. Sand and snow stick by their own friction; this adds to it where it is higher |
+| `force` | float | `4` | 0 to 20 (soft, held within 0 to 1000) | How strongly the `force` picture and the splats push, as in tex.fluid. Per second, this many times the motion's speed is added to the liquid's speed. A push beyond 50 heights per second squared is cut to 50 |
+| `splat_motion` | push \| set | `"push"` |  | What a splat's vx and vy do to the liquid under it; push: add to its speed every frame, times `force`: a stirring hand; set: become its speed, whatever `force` says: a paddle, or a still hand that holds the liquid back |
+| `splat_radius` *(more)* | float | `0.05` | 0.005 to 0.3 (soft, held within 0.0001 to 10) | Radius of a splat from a table without a radius column, in picture heights |
 | `fill_material` | liquid \| sand \| snow | `"liquid"` |  | What the `fill` picture is made of. Emitters choose their own material; liquid: water-like liquid that runs, splashes and pools; sand: dry sand that pours and forms heaps; snow: snow that clumps, piles up and breaks into lumps |
 | `sand_angle` | float | `35` | 20 to 50° (soft, held within 10 to 40°) | How steep a sand heap stands, in degrees: 30 to 35 is dry sand, 45 damp sand. Also how much sand sticks to slopes |
 | `snow_wetness` | float | `0.5` | 0 to 1 | 0 is powder that crumbles and slides, 0.5 fresh snow, 1 wet snow that sticks together, packs and holds on slopes |
