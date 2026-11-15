@@ -549,9 +549,12 @@ Inputs:
 
 Outputs:
 
-- `out` (tex): The liquid in `color`, transparent around it, at width x height
-- `velocity` (tex): The liquid's velocity at the grid's size: red x in widths, green y in heights, down positive, per second; 0 where there is no liquid
+- `out` (tex): The liquid in `color` with foam, at width x height. Transparent around it, with an edge a pixel soft, ready to composite
+- `velocity` (tex): The liquid's velocity at the grid's size: red x in widths, green y in heights, down positive, per second; blue the speed in heights per second; alpha how full the cell is. Goes on a few cells beyond the liquid and fades out there
 - `density` (tex): How full each cell of the grid is, as grey on black at the grid's size: 1 where the liquid is at rest, less at its surface and in spray. Opaque
+- `foam` (tex): Where the liquid foams after a splash or in fast spray: white over transparent, 0 to 1, at width x height. Fades in `foam_time`
+- `grain` (tex): A random grey per particle, averaged, on the liquid's alpha, at width x height. The pattern moves with the liquid: blur it and raise its contrast for a crust or a texture
+- `surface` (tex): For shading downstream, at width x height, solids counted as liquid: red the distance into the liquid in pixels (negative outside), green the depth 0 to 1, blue and alpha the outward normal (x, y down)
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -565,7 +568,9 @@ Outputs:
 | `viscosity` | float | `0.000222` | 0 to 0.004 (soft, held within 0 to 0.01) | Thickness: honey instead of water. In picture heights squared per second: 0.0002 is water in a picture 3 m high, 0.001 honey, 0.003 mud. A thick liquid needs more substeps on a fine grid |
 | `drag` | float | `0.5` | 0 to 5 (soft, held within 0 to 1000) | How fast the liquid calms: the share of its speed it loses per second. 0 sloshes for minutes |
 | `friction` | float | `0` | 0 to 2 (soft, held within 0 to 10) | How much the liquid sticks to the obstacles and the picture's edges: 0 slides freely. At 1 a thin film on a slope slides about a sixth as far as without; deep liquid still runs down over it |
-| `color` | colour | `[0.25, 0.55, 1, 1]` |  | Colour of the liquid in `out`; transparent around it |
+| `color` | colour | `[0.028, 0.275, 0.807, 1]` |  | Colour of the liquid in `out` where it is thin. Deep liquid is drawn darker, the band under its surface lighter |
+| `foam_strength` | float | `0.6` | 0 to 1 | How white foam shows in `out`: 0 not at all, 1 fully white. The `foam` output stays the same |
+| `foam_time` | float | `0.4` | 0.05 to 4 s (soft, held within 0.01 to 60 s) | How long foam lasts after a splash, in seconds: after this time a third of it is left. Slowed down by `speed` as the liquid is |
 | `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | How fast the liquid moves against the show clock: 0 holds it, 0.25 is slow motion. Faster costs more substeps |
 | `reset` | bool | `false` |  | Starts over from the `fill` picture, every frame while on |
 

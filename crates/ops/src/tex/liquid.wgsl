@@ -8,17 +8,32 @@
 // density is `u.cell.w` masses per cell.
 //
 // Per frame: `fill` (after a start), `emit` (when an emitter pours), then per substep `p2g`
-// (particles to grid), `grid_update`, `g2p` (grid to particles); last the pictures `draw`,
-// `density` and `velocity`. `recount` counts the particles in use after the buffer changed size.
+// (particles to grid), `grid_update`, `g2p` (grid to particles); last the pictures `density`
+// and `velocity`. `recount` counts the particles in use after the buffer changed size. The
+// liquid is drawn by a program of its own (`liquid_draw.wgsl`) from the particles.
 //
 // A particle's `mat` is 0 while it is free (a buffer of zeros is all free), 1 to 4 a material.
-// Only material 1, liquid, is simulated; the deformation gradient (f0, f1) waits for solids.
+// Only material 1, liquid, is simulated. A liquid needs no deformation gradient, so its places
+// (f0, f1) and `jp` hold what the drawing needs: the velocity smoothed over a frame or so, the
+// density smoothed the same way, the foam, and a random number of the particle's own.
 
 const PAD: f32 = 3.0;
 const FREE: u32 = 0u;
 const MATERIALS: u32 = 4u;
 // How far friction reaches out from a solid's surface, in cells.
 const FRICTION_REACH: f32 = 1.0;
+// Foam starts where a particle's acceleration beyond gravity rises from the first to the second
+// value (an impact), in picture heights per second squared: 40 to 140 m/s^2 in a picture 3 m high.
+const IMPACT_FROM: f32 = 13.333;
+const IMPACT_TO: f32 = 46.667;
+// Foam also starts in fast spray: faster than the first to the second speed (2 to 4 m/s), in
+// heights per second, and thinner than the first to the second share of the rest density.
+const SPRAY_FROM: f32 = 0.6667;
+const SPRAY_TO: f32 = 1.3333;
+const SPRAY_THICK: f32 = 0.25;
+const SPRAY_THIN: f32 = 0.1;
+// How much foam spray makes, against an impact.
+const SPRAY_FOAM: f32 = 0.6;
 
 // The counters, `counter[...]`.
 const FREE_SEEN: u32 = 0u;   // free particles the emit pass saw this frame
@@ -43,7 +58,7 @@ struct U {
     force: vec4f, // gravity x, y; drag per second; largest momentum a particle adds, in vmax
     room: vec4f,  // the picture's width and height in heights; jitter of new particles; fill spacing
     emit: vec4u,  // emitters, particles they ask for, seed, fill lattice columns
-    look: vec4f,  // the colour of `out`, straight alpha
+    draw: vec4f,  // per substep: share the smoothed density moves, share of the foam kept, share the smoothed velocity moves; 1 / its time
     mats: array<Mat, 4>,
 }
 
@@ -52,11 +67,11 @@ struct P {
     vel: vec2f,
     c0: vec2f, // the affine velocity, columns
     c1: vec2f,
-    f0: vec2f, // the deformation gradient, columns (solids)
-    f1: vec2f,
+    f0: vec2f, // solids: the deformation gradient, columns. Liquid: the smoothed velocity
+    f1: vec2f, //   and (smoothed density over the rest density, foam 0 to 1)
     rho: f32,  // density at the last gather
     sd: f32,   // signed distance to the nearest solid at the last gather
-    jp: f32,   // liquid: age in seconds
+    jp: f32,   // liquid: a random number of its own, 0 to 1, for `grain`
     mat: u32,
 }
 
@@ -367,8 +382,31 @@ fn g2p(@builtin(global_invocation_id) id: vec3u) {
     p.c1 = c1;
     // The density where the particle is going: this gather's, carried by the divergence.
     p.rho = rho * (1.0 - dt * (c0.x + c1.y));
-    p.jp += dt;
+    if (p.mat == 1u) {
+        look(&p);
+    }
     parts[i] = p;
+}
+
+// What the drawing keeps per liquid particle, moved on by one substep. Every share comes from a
+// time constant and the substep's length, so the look is the same at any frame rate and `speed`.
+fn look(p: ptr<function, P>) {
+    let v = (*p).vel;
+    // The velocity smoothed over u.draw.w seconds lags behind the velocity by the acceleration
+    // times that time: what is left beyond gravity is an impact or a sudden turn.
+    let vs = (*p).f0 + (v - (*p).f0) * u.draw.z;
+    let acc = length((v - vs) * u.draw.w - u.force.xy);
+    let ratio = (*p).rho / max(u.cell.w, 1e-6);
+    let impact = smoothstep(IMPACT_FROM, IMPACT_TO, acc);
+    let spray = smoothstep(SPRAY_FROM, SPRAY_TO, length(v)) * (1.0 - smoothstep(SPRAY_THIN, SPRAY_THICK, ratio));
+    let foam = max((*p).f1.y * u.draw.y, max(impact, SPRAY_FOAM * spray));
+    let calm = (*p).f1.x + (ratio - (*p).f1.x) * u.draw.x;
+    var f1 = vec2f(clamp(calm, 0.0, 1000.0), clamp(foam, 0.0, 1.0));
+    if (!finite(f1)) {
+        f1 = vec2f(1.0, 0.0);
+    }
+    (*p).f0 = select(v, vs, finite(vs));
+    (*p).f1 = f1;
 }
 
 fn hash(x: u32) -> u32 {
@@ -383,18 +421,26 @@ fn jitter(key: u32) -> vec2f {
     return vec2f(f32(h & 0xffffu), f32(h >> 16u)) / 65535.0 - vec2f(0.5);
 }
 
-fn fresh(mat: u32, pos: vec2f, vel: vec2f) -> P {
+// A new particle; `key` picks its random number.
+fn fresh(mat: u32, pos: vec2f, vel: vec2f, key: u32) -> P {
     var p: P;
     p.pos = pos;
     p.vel = vel;
     p.c0 = vec2f(0.0);
     p.c1 = vec2f(0.0);
-    p.f0 = vec2f(1.0, 0.0);
-    p.f1 = vec2f(0.0, 1.0);
     p.rho = u.cell.w * material(mat).a.y;
     p.sd = 1.0;
-    p.jp = 0.0;
     p.mat = mat;
+    if (mat == 1u) {
+        // At rest, calm, and its grain.
+        p.f0 = vel;
+        p.f1 = vec2f(1.0, 0.0);
+        p.jp = f32(hash(key ^ 0x9e3779b9u) >> 8u) / 16777216.0;
+    } else {
+        p.f0 = vec2f(1.0, 0.0);
+        p.f1 = vec2f(0.0, 1.0);
+        p.jp = 0.0;
+    }
     return p;
 }
 
@@ -427,7 +473,7 @@ fn emit(@builtin(global_invocation_id) id: vec3u) {
     let sp = em.b.z;
     let pos = em.a.xy + across * (f32(col) - 0.5 * f32(cols - 1u) + j.x) * sp
         + dir * (em.b.y + (f32(row) + j.y) * sp);
-    parts[i] = fresh(max(em.c.z, 1u), pos, dir * em.b.x);
+    parts[i] = fresh(max(em.c.z, 1u), pos, dir * em.b.x, slot + u.emit.z * 7919u);
     atomicAdd(&counter[LIVE], 1u);
 }
 
@@ -452,7 +498,7 @@ fn fill(@builtin(global_invocation_id) id: vec3u) {
     if (k >= u.grid.z) {
         return;
     }
-    parts[k] = fresh(1u, pos, vec2f(0.0));
+    parts[k] = fresh(1u, pos, vec2f(0.0), id.y * u.emit.w + id.x);
     atomicAdd(&counter[LIVE], 1u);
 }
 
@@ -489,20 +535,6 @@ fn velocity_at(at: vec2f) -> vec2f {
     return mix(mix(v00, v10, t.x), mix(v01, v11, t.x), t.y);
 }
 
-// `out`: the grid's mass, upsampled and thresholded, in one colour. A stand-in for a drawing of
-// the particles.
-@compute @workgroup_size(8, 8, 1)
-fn draw(@builtin(global_invocation_id) id: vec3u) {
-    if (any(id.xy >= pn.size.xy)) {
-        return;
-    }
-    let uv = (vec2f(id.xy) + vec2f(0.5)) / vec2f(pn.size.xy);
-    let full = fullness(grid_of(uv * u.room.xy));
-    let a = smoothstep(0.2, 0.45, full) * clamp(u.look.a, 0.0, 1.0);
-    let rgb = max(u.look.rgb, vec3f(0.0));
-    textureStore(pic_out, id.xy, vec4f(rgb * a, a));
-}
-
 // `density`: how full each cell is, 1 at rest, as opaque grey at the grid's size.
 @compute @workgroup_size(8, 8, 1)
 fn density(@builtin(global_invocation_id) id: vec3u) {
@@ -514,13 +546,58 @@ fn density(@builtin(global_invocation_id) id: vec3u) {
     textureStore(pic_out, id.xy, vec4f(vec3f(full), 1.0));
 }
 
-// `velocity`: red x in widths per second, green y in heights per second, at the grid's size.
+// How far the `velocity` picture reaches beyond the liquid, in cells, and the width of its
+// fall-off there.
+const REACH: i32 = 4;
+const REACH_SIGMA: f32 = 1.5;
+
+// `velocity`: red x in widths per second, green y in heights per second, blue the speed in
+// heights per second, alpha how full the cell is (0 to 1), at the grid's size. Beyond the liquid
+// the velocity of the liquid nearby goes on for a few cells and fades, so a look coloured by
+// speed has no step at the liquid's edge.
 @compute @workgroup_size(8, 8, 1)
 fn velocity(@builtin(global_invocation_id) id: vec3u) {
     if (any(id.xy >= pn.size.xy)) {
         return;
     }
     let pos = (vec2f(id.xy) + vec2f(0.5)) / vec2f(pn.size.xy) * u.room.xy;
-    let v = clamp(velocity_at(grid_of(pos)), vec2f(-60000.0), vec2f(60000.0));
-    textureStore(pic_out, id.xy, vec4f(v.x / u.room.x, v.y, 0.0, 1.0));
+    let at = grid_of(pos);
+    let full = fullness(at);
+    // Inside: the nodes' velocities weighed by their mass, so empty nodes pull nothing to 0.
+    let f = floor(at);
+    let t = at - f;
+    let c = vec2i(f);
+    var near = vec3f(0.0);
+    for (var k = 0; k < 4; k++) {
+        let o = vec2i(k & 1, k >> 1u);
+        let g = gf[node_at(c + o)];
+        let w = select(1.0 - t.x, t.x, o.x == 1) * select(1.0 - t.y, t.y, o.y == 1) * max(g.z, 0.0);
+        near += vec3f(g.xy * w, w);
+    }
+    // Around: the same over a few cells, weighed by distance too.
+    var far = vec3f(0.0);
+    let centre = vec2i(round(at));
+    for (var j = -REACH; j <= REACH; j++) {
+        for (var i = -REACH; i <= REACH; i++) {
+            let q = centre + vec2i(i, j);
+            let g = gf[node_at(q)];
+            let d = vec2f(q) - at;
+            let w = exp(-dot(d, d) / (2.0 * REACH_SIGMA * REACH_SIGMA)) * max(g.z, 0.0);
+            far += vec3f(g.xy * w, w);
+        }
+    }
+    // Fades out where little liquid is near, so the reach has no edge of its own.
+    var v = vec2f(0.0);
+    if (far.z > 1e-6) {
+        v = far.xy / far.z * clamp(far.z / u.cell.w, 0.0, 1.0);
+    }
+    if (near.z > 1e-6) {
+        v = mix(v, near.xy / near.z, clamp(4.0 * full, 0.0, 1.0));
+    }
+    v = clamp(v, vec2f(-60000.0), vec2f(60000.0));
+    if (!finite(v)) {
+        v = vec2f(0.0);
+    }
+    let speed = min(length(v), 60000.0);
+    textureStore(pic_out, id.xy, vec4f(v.x / u.room.x, v.y, speed, clamp(full, 0.0, 1.0)));
 }

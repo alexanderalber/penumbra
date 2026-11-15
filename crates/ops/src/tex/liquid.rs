@@ -22,10 +22,16 @@
 //! Time steps follow the show clock as `tex.fluid`'s do, at most [`MAX_DT`] long and scaled by
 //! `speed`. Each frame takes as many substeps as the sound speed, the fastest flow and the
 //! viscosity need on the grid, at most [`MAX_SUBSTEPS`]. A new grid starts the liquid over.
+//!
+//! A third program (`liquid_draw.wgsl`) draws the particles: a kernel per particle that grows
+//! where the liquid thins out, blurred and thresholded to a clean edge, then shaded. Each liquid
+//! particle keeps a smoothed density and its foam for the drawing, in the places a solid keeps
+//! its deformation gradient; the substeps move them on with time constants, so the look does not
+//! depend on the frame rate.
 
 use std::sync::Arc;
 
-use penumbra_core::{Curve, Error, ParamSpec, Tick, Value};
+use penumbra_core::{Curve, Error, ParamSpec, Tick, Unit, Value};
 use penumbra_gpu::{Batch, Buffer, BufferRead, Compute, Dispatch, Gpu, Out, ReadState, Step, Tex, TexRing};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, MAX_RUN, NodeDef, NodeDesc, NodeTypes,
@@ -41,6 +47,8 @@ pub(crate) const KIND: &str = "tex.liquid";
 const SOURCE: &str = include_str!("liquid.wgsl");
 const SOLID_KIND: &str = "tex.liquid obstacles";
 const SOLID_SOURCE: &str = include_str!("liquid_solid.wgsl");
+const DRAW_KIND: &str = "tex.liquid drawing";
+const DRAW_SOURCE: &str = include_str!("liquid_draw.wgsl");
 
 /// Input of the `fill` picture, after the run of emitters, then the obstacles and their velocity.
 const FILL: usize = MAX_RUN;
@@ -109,6 +117,27 @@ const FILL_WANTED: usize = 3;
 const LIVE: usize = 4;
 /// Material numbers: 0 is a free place.
 const LIQUID: u32 = 1;
+/// Time over which a particle's density is smoothed for the drawing, seconds: the kernel's size
+/// follows it, and a noisy density would make the edge flicker.
+const DENSITY_TIME: f64 = 0.039;
+/// Time over which a particle's velocity is smoothed to tell an impact, seconds: a frame at
+/// 60 fps, where the foam's numbers were found.
+const IMPACT_TIME: f64 = 1.0 / 60.0;
+/// Particles faster than this, picture heights per second (0.3 m/s), draw as ellipses along
+/// their velocity.
+const FAST: f64 = 0.1;
+/// Particle spacing aimed at in the picture the particles are drawn into, in its pixels: the
+/// drawing's resolution follows from it.
+const SPLAT_SPACING: f64 = 1.4;
+/// Blurs of the drawing, in particle spacings: the shape's and the surface's.
+const SHAPE_BLUR: f64 = 1.8;
+const SURFACE_BLUR: f64 = 1.4;
+/// Rows of the picture the depth is blurred in, and the blur, in picture heights (16 pixels at
+/// 1080).
+const DEPTH_ROWS: u32 = 270;
+const DEPTH_BLUR: f64 = 16.0 / 1080.0;
+/// Fixed point of the drawing's sums: 2^20 particles at their largest weight still fit 32 bits.
+const DRAW_FIXED: f64 = 2048.0;
 
 fn desc() -> NodeDesc {
     NodeDesc::new(
@@ -206,7 +235,25 @@ fn desc() -> NodeDesc {
                  thin film on a slope slides about a sixth as far as without; deep liquid still runs down over it",
             ),
     )
-    .param(ParamSpec::color("color", [0.25, 0.55, 1.0, 1.0]).doc("Colour of the liquid in `out`; transparent around it"))
+    .param(ParamSpec::color("color", [0.028, 0.275, 0.807, 1.0]).doc(
+        "Colour of the liquid in `out` where it is thin. Deep liquid is drawn darker, the band under its surface lighter",
+    ))
+    .param(
+        ParamSpec::float("foam_strength", 0.6)
+            .clamp(0.0, 1.0)
+            .doc("How white foam shows in `out`: 0 not at all, 1 fully white. The `foam` output stays the same"),
+    )
+    .param(
+        ParamSpec::float("foam_time", 0.4)
+            .clamp(0.01, 60.0)
+            .range(0.05, 4.0)
+            .curve(Curve::Log)
+            .unit(Unit::Seconds)
+            .doc(
+                "How long foam lasts after a splash, in seconds: after this time a third of it is left. \
+                 Slowed down by `speed` as the liquid is",
+            ),
+    )
     .param(
         ParamSpec::float("speed", 1.0)
             .clamp(0.0, 16.0)
@@ -215,12 +262,17 @@ fn desc() -> NodeDesc {
     )
     .param(ParamSpec::bool("reset", false).doc("Starts over from the `fill` picture, every frame while on"))
     .output("out", DataKind::Tex)
-    .describe_output("out", "The liquid in `color`, transparent around it, at width x height")
+    .describe_output(
+        "out",
+        "The liquid in `color` with foam, at width x height. Transparent around it, with an edge a pixel soft, \
+         ready to composite",
+    )
     .output("velocity", DataKind::Tex)
     .describe_output(
         "velocity",
         "The liquid's velocity at the grid's size: red x in widths, green y in heights, down positive, per \
-         second; 0 where there is no liquid",
+         second; blue the speed in heights per second; alpha how full the cell is. Goes on a few cells beyond the \
+         liquid and fades out there",
     )
     .lazy_output("velocity")
     .output("density", DataKind::Tex)
@@ -230,6 +282,27 @@ fn desc() -> NodeDesc {
          less at its surface and in spray. Opaque",
     )
     .lazy_output("density")
+    .output("foam", DataKind::Tex)
+    .describe_output(
+        "foam",
+        "Where the liquid foams after a splash or in fast spray: white over transparent, 0 to 1, at width x \
+         height. Fades in `foam_time`",
+    )
+    .lazy_output("foam")
+    .output("grain", DataKind::Tex)
+    .describe_output(
+        "grain",
+        "A random grey per particle, averaged, on the liquid's alpha, at width x height. The pattern moves with \
+         the liquid: blur it and raise its contrast for a crust or a texture",
+    )
+    .lazy_output("grain")
+    .output("surface", DataKind::Tex)
+    .describe_output(
+        "surface",
+        "For shading downstream, at width x height, solids counted as liquid: red the distance into the liquid in \
+         pixels (negative outside), green the depth 0 to 1, blue and alpha the outward normal (x, y down)",
+    )
+    .lazy_output("surface")
 }
 
 fn program_params() -> Vec<ParamSpec> {
@@ -248,11 +321,16 @@ fn solid_program(gpu: &Gpu) -> Result<Arc<Compute>, Error> {
     gpu.cached_compute(SOLID_KIND, SOLID_SOURCE, &solid_params())
 }
 
+fn draw_program(gpu: &Gpu) -> Result<Arc<Compute>, Error> {
+    gpu.cached_compute(DRAW_KIND, DRAW_SOURCE, &[])
+}
+
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    types.register(
-        FnNodeType::new(desc(), || Box::new(Liquid::default()) as Box<dyn Operator>)
-            .warm_up(on_gpu(|gpu| program(gpu).and_then(|_| solid_program(gpu)).map(|_| ()))),
-    )?;
+    types.register(FnNodeType::new(desc(), || Box::new(Liquid::default()) as Box<dyn Operator>).warm_up(
+        on_gpu(|gpu| {
+            program(gpu).and_then(|_| solid_program(gpu)).and_then(|_| draw_program(gpu)).map(|_| ())
+        }),
+    ))?;
     liquid_emitter::register(types)
 }
 
@@ -370,6 +448,114 @@ impl Obstacles {
         ]
     }
 }
+
+/// Sizes of the drawing for an output of `out` pixels and cells `dx` picture heights high: the
+/// picture the particles are drawn into, at about [`SPLAT_SPACING`] pixels between particles
+/// and with its sums within `most_bytes`, and the picture the depth is blurred in.
+fn draw_sizes(out: (u32, u32), dx: f64, most_bytes: u64) -> ((u32, u32), (u32, u32)) {
+    let (w, h) = (out.0.max(1), out.1.max(1));
+    let spacing = dx / PER_CELL.sqrt() * f64::from(h);
+    let k = (spacing / SPLAT_SPACING).round();
+    let mut k = if k.is_finite() { k.clamp(1.0, f64::from(u32::MAX)) as u32 } else { 1 }.max(1);
+    let splat = loop {
+        let s = (w.div_ceil(k), h.div_ceil(k));
+        if u64::from(s.0) * u64::from(s.1) * 16 <= most_bytes || s == (1, 1) {
+            break s;
+        }
+        k = k.saturating_add(1);
+    };
+    let rows = h.min(DEPTH_ROWS);
+    let across = ((f64::from(rows) * f64::from(w) / f64::from(h)).round() as u32).clamp(1, w);
+    (splat, (across, rows))
+}
+
+/// The drawing's buffers and its pictures between passes, for one output size and grid.
+struct Drawing {
+    out: (u32, u32),
+    dx: f64,
+    splat: (u32, u32),
+    depth: (u32, u32),
+    d: Buffer,
+    acc: Buffer,
+    /// The sums as (field, solid, foam, grain); blurred along x; along y.
+    shape: [Tex; 3],
+    /// The filled coverage blurred along x; along y with the depth beside it.
+    surface: [Tex; 2],
+    /// The filled coverage at the depth's size; blurred along x; along y.
+    deep: [Tex; 3],
+}
+
+impl Drawing {
+    fn new(gpu: &Gpu, out: (u32, u32), dx: f64) -> Result<Self, Error> {
+        let (splat, depth) = draw_sizes(out, dx, Buffer::max_bytes(gpu));
+        let t = |size: (u32, u32)| Tex::new_storage(gpu, size.0, size.1, DRAW_KIND);
+        Ok(Self {
+            out,
+            dx,
+            splat,
+            depth,
+            d: Buffer::of::<u32>(gpu, DRAW_WORDS as u64, "tex.liquid drawing constants")?,
+            acc: Buffer::of::<[u32; 4]>(
+                gpu,
+                u64::from(splat.0) * u64::from(splat.1),
+                "tex.liquid drawing sums",
+            )?,
+            shape: [t(splat)?, t(splat)?, t(splat)?],
+            surface: [t(splat)?, t(splat)?],
+            deep: [t(depth)?, t(depth)?, t(depth)?],
+        })
+    }
+
+    fn bytes(&self) -> u64 {
+        self.d.bytes()
+            + self.acc.bytes()
+            + penumbra_gpu::unique_bytes(self.shape.iter().chain(&self.surface).chain(&self.deep))
+    }
+
+    /// The constants, as `D` in `liquid_draw.wgsl` lays them out.
+    fn words(
+        &self,
+        budget: u32,
+        obstacles: bool,
+        aspect: f64,
+        foam: f64,
+        color: [f64; 4],
+    ) -> [u32; DRAW_WORDS] {
+        let f = |v: f64| (v as f32).to_bits();
+        let (sw, sh) = (f64::from(self.splat.0), f64::from(self.splat.1));
+        let spacing = self.dx / PER_CELL.sqrt();
+        let s = spacing * sh;
+        [
+            self.splat.0,
+            self.splat.1,
+            budget,
+            u32::from(obstacles),
+            f(sw / aspect.max(1e-9)),
+            f(sh),
+            f(s),
+            0,
+            f(FAST),
+            0,
+            0,
+            f(DRAW_FIXED),
+            f(SHAPE_BLUR * s),
+            f(SURFACE_BLUR * s),
+            f(DEPTH_BLUR * f64::from(self.depth.1)),
+            0,
+            f(spacing * f64::from(self.out.1)),
+            f(foam),
+            0,
+            0,
+            f(color[0]),
+            f(color[1]),
+            f(color[2]),
+            f(color[3]),
+        ]
+    }
+}
+
+/// 32-bit words of the drawing's constants (`D` in `liquid_draw.wgsl`).
+const DRAW_WORDS: usize = 24;
 
 /// The buffers of one grid.
 struct Sim {
@@ -542,7 +728,15 @@ struct Frame {
     open: bool,
     emitters: u32,
     slots: u32,
-    color: [f64; 4],
+    /// How long foam lasts, seconds.
+    foam_time: f64,
+}
+
+/// The shares a substep of `sub` seconds moves the drawing's per-particle values on by: the
+/// smoothed density, the foam kept, the smoothed velocity; and one over the velocity's time.
+fn look_shares(sub: f64, foam_time: f64) -> [f64; 4] {
+    let toward = |time: f64| 1.0 - (-sub / time).exp();
+    [toward(DENSITY_TIME), (-sub / foam_time.max(1e-3)).exp(), toward(IMPACT_TIME), 1.0 / IMPACT_TIME]
 }
 
 fn uniform_words(sim: Layout, f: &Frame) -> Vec<u32> {
@@ -582,11 +776,8 @@ fn uniform_words(sim: Layout, f: &Frame) -> Vec<u32> {
         f.slots,
         sim.frame,
         columns as u32,
-        float(f.color[0]),
-        float(f.color[1]),
-        float(f.color[2]),
-        float(f.color[3]),
     ];
+    w.extend(look_shares(f.dt, f.foam_time).map(float));
     // Materials: liquid first, the other three unused for now.
     let c2g = SOUND * SOUND / GAMMA;
     let liquid = [0.0, 1.0, c2g, GAMMA, f.viscosity, 0.0, MAX_RATIO, 0.0];
@@ -597,14 +788,75 @@ fn uniform_words(sim: Layout, f: &Frame) -> Vec<u32> {
     w
 }
 
+/// Records the drawing of the particles in `parts` into `targets`: `out`, then `foam`, `grain`
+/// and `surface` where given. `mask` is the `obstacles` picture.
+fn encode_drawing(
+    program: &Compute,
+    batch: &mut Batch<'_>,
+    drawing: &Drawing,
+    parts: &Buffer,
+    budget: u32,
+    mask: Option<&Tex>,
+    targets: [Option<&Tex>; 4],
+) -> Result<(), Error> {
+    let none = |_: &str| None;
+    let input =
+        |pictures| Dispatch { volumes: &[], pictures, data: None, seconds: 0.0, frame: 0, param: &none };
+    let [s0, s1, s2] = &drawing.shape;
+    let [f0, f1] = &drawing.surface;
+    let [q0, q1, q2] = &drawing.deep;
+    let plain = input(&[]);
+    let masked = [mask];
+    let resolve = input(&masked);
+    let p_s0 = [Some(s0)];
+    let p_s1_s0 = [Some(s1), Some(s0)];
+    let p_s2 = [Some(s2)];
+    let p_q0 = [Some(q0)];
+    let p_q1 = [Some(q1)];
+    let p_f0_q2 = [Some(f0), Some(q2)];
+    let p_s2_f1 = [Some(s2), Some(f1)];
+    let (shape_x, shape_y) = (input(&p_s0), input(&p_s1_s0));
+    let (from_shape, depth_x, depth_y) = (input(&p_s2), input(&p_q0), input(&p_q1));
+    let surface_y = input(&p_f0_q2);
+    let shaded = input(&p_s2_f1);
+    let mut steps = vec![
+        Step { entry: "splat", out: Out::range(budget), input: &plain },
+        Step { entry: "resolve", out: Out::Picture(s0), input: &resolve },
+        Step { entry: "shape_x", out: Out::Picture(s1), input: &shape_x },
+        Step { entry: "shape_y", out: Out::Picture(s2), input: &shape_y },
+        Step { entry: "depth_down", out: Out::Picture(q0), input: &from_shape },
+        Step { entry: "depth_x", out: Out::Picture(q1), input: &depth_x },
+        Step { entry: "depth_y", out: Out::Picture(q2), input: &depth_y },
+        Step { entry: "surface_x", out: Out::Picture(f0), input: &from_shape },
+        Step { entry: "surface_y", out: Out::Picture(f1), input: &surface_y },
+    ];
+    let [out, foam, grain, surface] = targets;
+    for (entry, target, input) in [
+        ("shade", out, &shaded),
+        ("foam_out", foam, &from_shape),
+        ("grain_out", grain, &from_shape),
+        ("surface_out", surface, &shaded),
+    ] {
+        if let Some(t) = target {
+            steps.push(Step { entry, out: Out::Picture(t), input });
+        }
+    }
+    program.encode_with(batch, &[&drawing.d, parts, &drawing.acc], &steps)
+}
+
 #[derive(Default)]
 struct Liquid {
     program: Option<Arc<Compute>>,
     solid_program: Option<Arc<Compute>>,
+    draw_program: Option<Arc<Compute>>,
     sim: Option<Sim>,
+    drawing: Option<Drawing>,
     out_ring: TexRing,
     velocity_ring: TexRing,
     density_ring: TexRing,
+    foam_ring: TexRing,
+    grain_ring: TexRing,
+    surface_ring: TexRing,
     last: Option<Tick>,
     /// The counters on their way back, with the particles the emitters asked for in that frame.
     reading: Option<(BufferRead, u32)>,
@@ -659,9 +911,17 @@ impl Liquid {
 
 impl Operator for Liquid {
     fn gpu_bytes(&self) -> u64 {
-        let rings = [&self.out_ring, &self.velocity_ring, &self.density_ring];
+        let rings = [
+            &self.out_ring,
+            &self.velocity_ring,
+            &self.density_ring,
+            &self.foam_ring,
+            &self.grain_ring,
+            &self.surface_ring,
+        ];
         penumbra_gpu::unique_bytes(rings.into_iter().flat_map(TexRing::iter))
             + self.sim.as_ref().map_or(0, Sim::bytes)
+            + self.drawing.as_ref().map_or(0, Drawing::bytes)
             + self.reading.as_ref().map_or(0, |(r, _)| r.bytes())
             + self.spare.as_ref().map_or(0, BufferRead::bytes)
     }
@@ -696,6 +956,8 @@ impl Operator for Liquid {
         let emitters = liquid_emitter::from_run(cx, 0, "emitter");
         let want_velocity = cx.output_wanted(1);
         let want_density = cx.output_wanted(2);
+        let (want_foam, want_grain, want_surface) =
+            (cx.output_wanted(3), cx.output_wanted(4), cx.output_wanted(5));
         self.take_reading();
         self.warn_counted(cx);
         let kept = self.sim.as_ref().is_some_and(|s| s.cells == cells && s.aspect == aspect);
@@ -802,6 +1064,10 @@ impl Operator for Liquid {
             Some(Value::Vec4(c)) => c.map(|v| if v.is_finite() { v } else { 0.0 }),
             _ => [0.0, 0.0, 0.0, 1.0],
         };
+        let foam_strength = cx.float("foam_strength")?;
+        let foam_strength = if foam_strength.is_finite() { foam_strength.clamp(0.0, 1.0) } else { 0.0 };
+        let foam_time = cx.float("foam_time")?;
+        let foam_time = if foam_time.is_finite() { foam_time.clamp(0.01, 60.0) } else { 0.4 };
         let frame = Frame {
             dt: sub,
             vmax,
@@ -812,7 +1078,7 @@ impl Operator for Liquid {
             open,
             emitters: emitters.len().min(MAX_EMITTERS) as u32,
             slots,
-            color,
+            foam_time,
         };
         let layout =
             Layout { nodes: sim.nodes, budget: sim.budget, dx: sim.dx, aspect: sim.aspect, frame: sim.frame };
@@ -831,6 +1097,32 @@ impl Operator for Liquid {
             if want_velocity { Some(self.velocity_ring.next_storage(gpu, cw, ch, KIND)?) } else { None };
         let density_out =
             if want_density { Some(self.density_ring.next_storage(gpu, cw, ch, KIND)?) } else { None };
+        let foam_out =
+            if want_foam { Some(self.foam_ring.next_storage(gpu, width, height, KIND)?) } else { None };
+        let grain_out =
+            if want_grain { Some(self.grain_ring.next_storage(gpu, width, height, KIND)?) } else { None };
+        let surface_out =
+            if want_surface { Some(self.surface_ring.next_storage(gpu, width, height, KIND)?) } else { None };
+        let draw_program = match &self.draw_program {
+            Some(p) => p.clone(),
+            None => {
+                let p = draw_program(gpu)?;
+                self.draw_program = Some(p.clone());
+                p
+            }
+        };
+        if !self.drawing.as_ref().is_some_and(|d| d.out == (width, height) && d.dx == sim.dx) {
+            self.drawing = None;
+            self.drawing = Some(Drawing::new(gpu, (width, height), sim.dx)?);
+        }
+        let Some(drawing) = self.drawing.as_ref() else {
+            return Err(CookError::failed("the liquid has no drawing"));
+        };
+        drawing.d.write(
+            gpu,
+            0,
+            &drawing.words(sim.budget, mask.is_some(), sim.aspect, foam_strength, color),
+        )?;
 
         let times: Vec<f64> = (0..count).map(|k| k as f64 * sub).collect();
         let params: Vec<_> =
@@ -866,7 +1158,6 @@ impl Operator for Liquid {
             steps.push(Step { entry: "grid_update", out: nodes, input });
             steps.push(Step { entry: "g2p", out: particles, input });
         }
-        steps.push(Step { entry: "draw", out: Out::Picture(&out), input: &plain });
         if let Some(t) = &velocity_out {
             steps.push(Step { entry: "velocity", out: Out::Picture(t), input: &plain });
         }
@@ -915,6 +1206,15 @@ impl Operator for Liquid {
             solid.encode_with(&mut batch, &[&o.j, &o.sa, &o.sb, &sim.solid], &flood)?;
         }
         program.encode_with(&mut batch, &buffers, &steps)?;
+        encode_drawing(
+            &draw_program,
+            &mut batch,
+            drawing,
+            &sim.parts,
+            sim.budget,
+            mask,
+            [Some(&out), foam_out.as_ref(), grain_out.as_ref(), surface_out.as_ref()],
+        )?;
         batch.submit();
         drop(steps);
         if flood && let Some(o) = sim.obstacles.as_mut() {
@@ -937,7 +1237,14 @@ impl Operator for Liquid {
             Some(t) => Data::new(DataKind::Tex, t),
             None => Data::skipped(DataKind::Tex),
         };
-        Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, out), lazy(velocity_out), lazy(density_out)]))
+        Ok(Cooked::Outputs(vec![
+            Data::new(DataKind::Tex, out),
+            lazy(velocity_out),
+            lazy(density_out),
+            lazy(foam_out),
+            lazy(grain_out),
+            lazy(surface_out),
+        ]))
     }
 
     fn sets_size(&self, _def: &NodeDef, _desc: &NodeDesc) -> bool {
@@ -993,7 +1300,7 @@ mod tests {
             open: true,
             emitters: 0,
             slots: 0,
-            color: [1.0; 4],
+            foam_time: 0.4,
         };
         let words = uniform_words(layout, &frame);
         assert_eq!(words.len(), UNIFORM_WORDS);
@@ -1010,9 +1317,68 @@ mod tests {
                 n
             })
             .collect();
-        assert_eq!(members, ["grid", "cell", "fixed", "wall", "force", "room", "emit", "look", "mats"]);
+        assert_eq!(members, ["grid", "cell", "fixed", "wall", "force", "room", "emit", "draw", "mats"]);
         let em = &SOURCE[SOURCE.find("struct Em {").unwrap()..];
         let em = &em[..em.find('}').unwrap()];
         assert_eq!(em.matches("vec4").count() * 4, EMITTER_WORDS);
+    }
+
+    /// The members of `struct name` in `source`, without comments.
+    fn members(source: &str, name: &str) -> Vec<String> {
+        let start = source.find(&format!("struct {name} {{")).unwrap();
+        let body = &source[start..start + source[start..].find('}').unwrap()];
+        body.lines()
+            .skip(1)
+            .map(|l| l.split("//").next().unwrap().trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn the_drawing_reads_the_particles_and_its_constants_as_laid_out() {
+        // The drawing's particle is the simulation's.
+        assert_eq!(members(DRAW_SOURCE, "P"), members(SOURCE, "P"));
+        let d = members(DRAW_SOURCE, "D");
+        assert!(d.iter().all(|m| m.ends_with("vec4u,") || m.ends_with("vec4f,")), "{d:?}");
+        assert_eq!(d.len() * 4, DRAW_WORDS);
+    }
+
+    #[test]
+    fn the_drawing_puts_particles_about_one_and_a_half_pixels_apart() {
+        let most = 1u64 << 30;
+        // The default: 2.5 pixels between particles at 1080, so half the size.
+        let dx = 1.0 / 216.0;
+        assert_eq!(draw_sizes((1920, 1080), dx, most), ((960, 540), (480, 270)));
+        // A fine grid on a small picture: the picture's own size.
+        assert_eq!(draw_sizes((128, 96), 1.0 / 48.0, most).0, (128, 96));
+        // A coarse grid on a large picture: much smaller, and the depth at most 270 rows.
+        let ((w, h), depth) = draw_sizes((16384, 16384), 1.0 / 16.0, most);
+        let spacing = f64::from(h) / 32.0;
+        assert!(w == h && spacing > 1.0 && spacing < 2.2, "{w} {h} {spacing}");
+        assert_eq!(depth, (270, 270));
+        // Sums that would not fit a buffer take a coarser picture.
+        let ((w, h), _) = draw_sizes((8192, 8192), 1.0 / 4096.0, 1 << 20);
+        assert!(u64::from(w) * u64::from(h) * 16 <= 1 << 20, "{w} {h}");
+        // Nothing breaks on a picture of one pixel.
+        assert_eq!(draw_sizes((1, 1), 1.0, most), ((1, 1), (1, 1)));
+        assert_eq!(draw_sizes((0, 0), f64::NAN, most).0, (1, 1));
+    }
+
+    #[test]
+    fn the_looks_shares_do_not_depend_on_the_substeps() {
+        // A frame of 1/60 s in 21 or in 5 substeps keeps the same share of the foam and moves
+        // the smoothed density as far.
+        let frame = 1.0 / 60.0;
+        for n in [1, 5, 21, 128] {
+            let [rho, foam, vel, inv] = look_shares(frame / n as f64, 0.4);
+            let kept = |share: f64| (1.0 - share).powi(n);
+            assert!((foam.powi(n) - (-frame / 0.4f64).exp()).abs() < 1e-12, "{n}");
+            assert!((kept(rho) - (-frame / DENSITY_TIME).exp()).abs() < 1e-12, "{n}");
+            assert!((kept(vel) - (-frame / IMPACT_TIME).exp()).abs() < 1e-12, "{n}");
+            assert_eq!(inv, 60.0);
+        }
+        // No time keeps everything.
+        let [rho, foam, vel, _] = look_shares(0.0, 0.4);
+        assert_eq!((rho, foam, vel), (0.0, 1.0, 0.0));
     }
 }

@@ -75,10 +75,12 @@ with all particles in use:
 
 | `grid` (16:9 picture) | `particles` | substeps | GPU per frame |
 |---|---|---|---|
-| 256 | 16384 | 14 | 0.4 ms |
-| 384 (default) | 65536 | 21 | 1.7 ms |
-| 512 | 131072 | 28 | 4.0 ms |
+| 256 | 16384 | 14 | 0.6 ms |
+| 384 (default) | 65536 | 21 | 1.9 ms |
+| 512 | 131072 | 28 | 5.2 ms |
 
+Drawing `out` takes 0.35 ms of that at the default grid and 1.3 ms at grid 512, where the
+particles are drawn at the picture's full size. The other drawn outputs add less than 0.1 ms.
 Obstacles cost about 0.35 ms more at the default grid in each frame where an input changes. With
 a still mask and still emitters they cost nothing after the first frame.
 
@@ -95,17 +97,41 @@ A late frame is one longer step of at most 1/30 s, so a stall does not make the 
 `fill` picture. A new `grid`, or a picture of another shape, starts over too. The liquid is not
 kept in the state snapshots: after a restart it starts from `fill`.
 
+## Drawing
+
+`out` draws every particle as a small spot and blurs the spots into one surface with a clean
+edge. Where the liquid thins out, in streams and spray, the spots grow, so a stream stays whole
+instead of breaking into dots. Thin liquid shows in `color`, deep liquid darker, and a lighter
+band runs under the surface. Solids count as liquid for that band, so a pool on a shelf has no
+band along the shelf.
+
+**Foam** starts where the liquid hits something hard and in fast, thin spray. It lasts
+`foam_time` (0.4 s by default), and `foam_strength` sets how white it shows in `out`. A whole
+block of water that lands at once foams all over; lower `foam_strength` if that is too much.
+
+The look stays the same at 30, 60 or 144 fps and at any `speed`.
+
 ## Outputs
 
-- **out**: the liquid in `color`, transparent around it.
-- **velocity**: the liquid's velocity per cell, as in `tex.fluid`.
+- **out**: the liquid in `color` with its foam, premultiplied. Transparent around it, with an edge
+  about a pixel soft, so it goes straight into `tex.composite`.
+- **velocity**: the liquid's velocity per cell, as in `tex.fluid`: red x in widths, green y in
+  heights, per second. Blue is the speed in heights per second, alpha how full the cell is. The
+  velocity goes on a few cells beyond the liquid and fades there, so a look coloured by speed
+  has no step at the edge.
 - **density**: how full each cell is, 1 at rest.
+- **foam**: the foam as white over transparent, 0 to 1. Colour it or lay it over `out`.
+- **grain**: a random grey per particle, averaged, on the liquid's alpha. The pattern travels
+  with the liquid. Blurred and with more contrast it makes a crust for lava or mud.
+- **surface**: for shading in a `tex.shader`. Red is the distance into the liquid in pixels
+  (negative outside), green the depth from 0 at the surface to 1 deep inside, blue and alpha the
+  outward normal (x, y down). Solids count as liquid.
+
+`foam`, `grain`, `surface`, `velocity` and `density` cost nothing while nothing reads them.
 
 ## What it cannot do yet
 
 - Bodies from `physics.rigid_bodies` as obstacles: wire a picture of them into `obstacles`, but
   their velocity has to come from somewhere else for now.
 - One liquid: no sand, snow or a second liquid of another colour.
-- Drawing: `out` is a plain outline of where the liquid is. Thin streams look banded or break up
-  into dots.
 - Forces from a picture or a table, as `tex.fluid` takes them.
