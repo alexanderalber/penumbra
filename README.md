@@ -146,7 +146,7 @@ Not in penumbra, as of now. Some of this is planned, some stays out, see [Scope]
   curl-noise example. Rigid bodies have no joints.
 - Network I/O beyond OSC, Art-Net, sACN, DDP, NDI and incoming HTTP and WebSocket: no raw TCP,
   UDP or serial nodes, no outgoing web requests, no streaming (RTMP, SRT, WebRTC).
-- GLSL (shaders are WGSL), a C++ plugin API, macOS and Syphon.
+- GLSL (shaders are WGSL), a C++ plugin API.
 
 Different by design:
 
@@ -280,7 +280,7 @@ moves. Ctrl+Z undoes the layout.
 
 ## Download (Windows)
 
-You need Windows 10 or 11 (64-bit) and a graphics card with DirectX 12 or Vulkan.
+You need a graphics card with DirectX 12 or Vulkan.
 
 1. Download the zip from the [latest release](https://github.com/alexanderalber/penumbra/releases/latest)
    (under "Assets", `penumbra-...-windows-x64.zip`).
@@ -319,7 +319,6 @@ egui) and the third-party notices. `cargo xtask slow` runs the tests of `chan.be
 need the beat network; they take minutes, so only a release needs them. `cargo xtask docs`
 regenerates the reference from the node types and commands, `cargo xtask bless` rewrites the
 golden images after an intended change of a render, `cargo xtask dist` builds the release zip.
-Linux is only checked by clippy so far.
 
 ## How this is built
 
