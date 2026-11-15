@@ -201,11 +201,25 @@ impl Operator for Shader {
 
         let inputs = super::inputs(cx);
         let from_input = cx.text("resolution")? == "input";
-        let in0_connected = cx.def().inputs.first().is_some_and(Option::is_some);
+        let wired = |i: usize| cx.def().inputs.get(i).is_some_and(Option::is_some);
+        // A wired input whose node has no picture yet but will have one (a shader still
+        // compiling, a file still loading): wait, rather than show a frame drawn from the empty
+        // stand-in. An input whose node failed reads as the stand-in, so the shader keeps
+        // running. With resolution input, in0 sets the size, so the shader waits for it even
+        // when the shader does not read it.
+        let waiting = |i: usize| {
+            inputs.get(i).is_some_and(Option::is_none)
+                && wired(i)
+                && !cx.input_stuck(i)
+                && (current.pass.uses_input(i) || (i == 0 && from_input))
+        };
+        if (0..inputs.len()).any(waiting) {
+            return Err(CookError::Pending);
+        }
         let (w, h) = match inputs.first().copied().flatten() {
             Some(t) if from_input => t.size(),
-            // Connected, but upstream has nothing yet: wait rather than flash the custom size.
-            None if from_input && in0_connected => return Err(CookError::Pending),
+            // in0's node failed: no size to take, and none of its own to make up.
+            None if from_input && wired(0) => return Err(CookError::Pending),
             _ => (super::side(cx, "width")?, super::side(cx, "height")?),
         };
         let (seconds, frame) = if current.pass.uses_time() {
