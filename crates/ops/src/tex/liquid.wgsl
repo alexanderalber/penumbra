@@ -61,6 +61,7 @@ const WRAPPED: u32 = 2u;     // grid cells whose mass did not fit this frame
 const FILL_WANTED: u32 = 3u; // particles the last fill asked for
 const LIVE: u32 = 4u;        // particles in use
 const PEAK: u32 = 5u;        // the force picture's strongest push where there is liquid, as float bits
+const MOVING: u32 = 6u;      // the fastest obstacle, heights per second, as float bits
 // Most splats after the emitters in their buffer.
 const MAX_SPLATS: u32 = 64u;
 
@@ -401,10 +402,18 @@ fn grid_update(@builtin(global_invocation_id) id: vec3u) {
         }
     }
 
-    // The solid field is `params.t` seconds old: a moving solid is looked up where it came from.
+    // The solid field shows the solids at the end of the frame, `-params.t` seconds from now: a
+    // moving solid is looked up where it goes.
     let so = solid[idx];
     var s = so.x;
     let vs = so.yz;
+    if (params.t == 0.0 && (vs.x != 0.0 || vs.y != 0.0)) {
+        // The fastest obstacle, for the substeps of the frames to come.
+        let speed = min(length(vs), 1e30);
+        if (speed > bitcast<f32>(atomicLoad(&counter[MOVING]))) {
+            atomicMax(&counter[MOVING], bitcast<u32>(speed));
+        }
+    }
     var at = vec2f(id.xy);
     let dx = u.cell.x;
     if (s < 3.0 * dx) {

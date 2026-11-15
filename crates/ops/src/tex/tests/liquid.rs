@@ -11,7 +11,7 @@
 use penumbra_core::Value;
 use penumbra_core::scratch::ScratchDir;
 use penumbra_gpu::Pixels;
-use penumbra_graph::{MAX_RUN, Op};
+use penumbra_graph::{MAX_RUN, Op, Port};
 
 use super::{Rig, create, gpu, scratch, set};
 
@@ -1668,4 +1668,295 @@ fn a_longer_frame_does_not_burst_a_pour() {
     let above = particles_where(&d, |_, y| y < 0.04);
     eprintln!("longer frame: fastest up {up} heights/s, {above:.1} particles above the nozzle");
     assert!(up > -0.01 && above < 1.0, "{up} {above}");
+}
+
+/// Inputs of `physics.rigid_bodies`: `bodies0`, then `camera` after `obstacles` and the run of
+/// `field` inputs. Its outputs `table`, `mask` and `velocity`.
+const CAMERA: u32 = 2 * MAX_RUN as u32 + 1;
+const BODY_TABLE: u32 = 1;
+const BODY_MASK: u32 = 2;
+const BODY_VELOCITY: u32 = 3;
+
+/// A 2D world of rigid bodies seen as the liquid's picture: the solver `/solver` in the plane xz
+/// with one group from `rows` (CSV), an orthographic camera at y = -10 looking along +y, 3 m
+/// high: the picture of 128 x 96 shows x from -2 to 2 and z from 0 to 3, so a point (x, z) lies at
+/// ((x + 2) / 3, (3 - z) / 3) in picture heights from the top left, and 1 m/s is a third of a
+/// height per second. `params` go to the solver.
+fn bodies(rows: &str, params: &[(&str, Value)]) -> Vec<Op> {
+    let mut solver: Vec<(&str, Value)> =
+        vec![("plane", "xz".into()), ("width", Value::Int(128)), ("height", Value::Int(96))];
+    solver.extend(params.iter().cloned());
+    vec![
+        create(
+            "/camera",
+            "view.camera",
+            &[
+                ("position", Value::Vec3([0.0, -10.0, 1.5])),
+                ("target", Value::Vec3([0.0, 0.0, 1.5])),
+                ("projection", "orthographic".into()),
+                ("size", Value::Float(3.0)),
+            ],
+        ),
+        csv("/rows", rows),
+        create("/group", "physics.bodies", &[("shape", "box".into())]),
+        create("/solver", "physics.rigid_bodies", &solver),
+        wire("/rows", 0, "/group", 0),
+        wire("/group", 0, "/solver", 0),
+        wire("/camera", 0, "/solver", CAMERA),
+    ]
+}
+
+/// How the liquid learns how the bodies move.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Told {
+    /// The mask alone.
+    Nothing,
+    /// tex.optical_flow on the mask, per input frame times 60.
+    Flow,
+    /// The solver's `velocity`.
+    Velocity,
+}
+
+/// The solver's pictures wired into `/liquid` as `told` says.
+fn obstacles_from_bodies(told: Told) -> Vec<Op> {
+    let mut ops = vec![wire("/solver", BODY_MASK, "/liquid", OBSTACLES)];
+    match told {
+        Told::Nothing => {}
+        Told::Velocity => ops.push(wire("/solver", BODY_VELOCITY, "/liquid", OBSTACLE_VELOCITY)),
+        Told::Flow => ops.extend([
+            create("/flow", "tex.optical_flow", &[]),
+            create(
+                "/per_second",
+                "tex.channel_mix",
+                &[
+                    ("red", Value::Vec4([60.0, 0.0, 0.0, 0.0])),
+                    ("green", Value::Vec4([0.0, 60.0, 0.0, 0.0])),
+                    ("blue", Value::Vec4([0.0; 4])),
+                ],
+            ),
+            wire("/solver", BODY_MASK, "/flow", 0),
+            wire("/flow", 0, "/per_second", 0),
+            wire("/per_second", 0, "/liquid", OBSTACLE_VELOCITY),
+        ]),
+    }
+    ops
+}
+
+/// A box 0.2 m wide and 1.2 m tall that slides right at 1.5 m/s (half a height per second)
+/// through a pool 0.9 m deep, without gravity on it, pushes the liquid ahead of it when the
+/// liquid has its velocity. With the mask alone it only takes the liquid's place, and less of
+/// the liquid ends up ahead. Optical flow on the mask, measured as well, is printed.
+#[test]
+fn a_body_moving_through_a_pool_pushes_the_liquid_ahead_with_its_velocity() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-bodies-push");
+    let push = |told: Told| {
+        let mut ops = bodies(
+            "tx,tz,sx,sy,sz,vx\n-1.4,0.6,0.2,0.5,1.2,1.5",
+            &[("gravity", Value::Vec3([0.0; 3])), ("floor", false.into())],
+        );
+        ops.extend([
+            liquid(&[("particles", Value::Int(16384))]),
+            mask("/pool", "pool.wgsl", &dir, "uv.y > 0.7"),
+            wire("/pool", 0, "/liquid", FILL),
+        ]);
+        ops.extend(obstacles_from_bodies(told));
+        ops.extend(outputs());
+        let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+        rig.pixels("/pool");
+        let (_, _, d) = run(&mut rig, 1);
+        let start = particles(&d);
+        let (out, v, d) = run(&mut rig, 80);
+        assert!(finite(&out) && finite(&v) && finite(&d));
+        // After 80 frames (79 steps: the first shows the start) the box is at x 0.575 m, 0.858
+        // heights, its front at 0.892 heights.
+        let ahead = particles_where(&d, |x, _| x > 0.892 + 0.035);
+        // The box less a cell (1/48 heights) all round, where the grid cannot tell.
+        let inside = particles_where(&d, |x, y| (x - 0.858).abs() < 0.033 - 0.021 && y > 0.6 + 0.021);
+        (start, ahead, inside, particles(&d))
+    };
+    let (start, ahead, inside, total) = push(Told::Velocity);
+    let (_, ahead_still, inside_still, _) = push(Told::Nothing);
+    let (_, ahead_flow, inside_flow, _) = push(Told::Flow);
+    eprintln!(
+        "bodies push: {start:.0} particles; with the velocity {ahead:.0} ahead, {inside:.1} inside, {total:.0} in all; \
+         mask alone {ahead_still:.0} ahead, {inside_still:.1} inside; optical flow {ahead_flow:.0} ahead, \
+         {inside_flow:.1} inside"
+    );
+    // At the start 30 % of the pool lies beyond 0.935 heights.
+    assert!(ahead > 0.45 * start, "{ahead} of {start} ahead");
+    assert!(ahead > ahead_still + 0.05 * start, "{ahead} with velocity, {ahead_still} without");
+    assert!(inside < 0.005 * start, "{inside} inside the box");
+    // Liquid pressed against the box draws a little thin.
+    assert!((total / start - 1.0).abs() < 0.02, "{total} of {start}");
+}
+
+/// The velocity picture says what the solver says: a box that slides at (1.2, -0.6) m/s moves
+/// 0.3 widths right and 0.2 heights down per second everywhere; a box that turns at 90 degrees
+/// a second about y moves at the turn times the way from its centre, square to it. Both without
+/// gravity, read after 30 frames where the bodies are now (the solver's table).
+#[test]
+fn the_velocity_picture_of_a_sliding_and_a_turning_body_is_what_the_solver_says() {
+    let Some(gpu) = gpu() else { return };
+    let mut ops = bodies(
+        "tx,tz,sx,sy,sz,vx,vz,wy\n-1,1.5,0.6,0.6,0.6,1.2,-0.6,0\n1,1.5,0.8,0.8,0.8,0,0,90",
+        &[("gravity", Value::Vec3([0.0; 3])), ("floor", false.into())],
+    );
+    ops.extend([
+        create("/velocity", "tex.null", &[]),
+        create("/mask", "tex.null", &[]),
+        create("/places", "table.null", &[]),
+        wire("/solver", BODY_VELOCITY, "/velocity", 0),
+        wire("/solver", BODY_MASK, "/mask", 0),
+        wire("/solver", BODY_TABLE, "/places", 0),
+    ]);
+    let mut rig = Rig::new(gpu, None, &ops);
+    for _ in 0..30 {
+        rig.clock.advance(1);
+        let ids = [rig.id("/velocity"), rig.id("/mask"), rig.id("/places")];
+        rig.cooker.cook(&rig.net, rig.clock.now(), &ids, &[]);
+    }
+    assert_eq!(rig.cooker.status(rig.id("/solver")).unwrap().warning, None);
+    let v = rig.gpu.read(&rig.tex("/velocity").unwrap()).unwrap();
+    let m = rig.gpu.read(&rig.tex("/mask").unwrap()).unwrap();
+    let table = rig.cooker.output(Port { node: rig.id("/places"), output: 0 }).unwrap();
+    let table = table.get::<penumbra_core::Table>().unwrap().clone();
+    let place = |row: usize| -> [f64; 2] {
+        let at = |col: usize| table.cell(row, col).parse::<f64>().unwrap();
+        // In pixels: 32 a metre, from the top left.
+        [(at(0) + 2.0) * 32.0, (3.0 - at(2)) * 32.0]
+    };
+    let [sx, sy] = place(1);
+    assert!((sx - (-1.0 + 1.2 * 29.0 / 60.0 + 2.0) * 32.0).abs() < 0.5, "the sliding box at {sx}");
+    let px = |x: f64, y: f64| v.get(x.floor() as u32, y.floor() as u32).unwrap();
+    for (dx, dy) in [(0.0, 0.0), (-6.0, 5.0), (7.0, -6.0)] {
+        let c = px(sx + dx, sy + dy);
+        assert!(
+            (c[0] - 0.3).abs() < 2e-3 && (c[1] - 0.2).abs() < 2e-3 && c[3] == 1.0,
+            "slide {dx} {dy}: {c:?}"
+        );
+    }
+    // The turning box: a pixel centre (dx, dy) pixels from the box's centre is (dx, -dy) / 32 m
+    // away in x and z; turning about y at w it moves (w z, -w x) m/s in x and z: w dz / 4
+    // widths right and w dx / 3 heights down per second.
+    let [tx, ty] = place(2);
+    let w = std::f64::consts::FRAC_PI_2;
+    let mut worst = 0.0f64;
+    for (i, j) in [(-8i32, 0i32), (8, 0), (0, -8), (0, 8), (6, 6), (-5, 7)] {
+        let (x, y) = ((tx + f64::from(i)).floor() + 0.5, (ty + f64::from(j)).floor() + 0.5);
+        let (ddx, ddz) = ((x - tx) / 32.0, -(y - ty) / 32.0);
+        let want = [w * ddz / 4.0, w * ddx / 3.0];
+        let c = px(x, y);
+        worst = worst.max((f64::from(c[0]) - want[0]).abs()).max((f64::from(c[1]) - want[1]).abs());
+    }
+    eprintln!("turning box: worst velocity off by {worst:.5} picture units per second");
+    assert!(worst < 2e-3, "{worst}");
+    // The mask: white inside both, nothing between them.
+    assert_eq!(m.get(sx as u32, sy as u32).unwrap(), [1.0; 4]);
+    assert_eq!(m.get(64, 48).unwrap(), [0.0; 4]);
+    assert_eq!(v.get(64, 48).unwrap(), [0.0; 4]);
+}
+
+/// A box dropped into a pool comes to rest on the floor with no liquid inside it, and no liquid
+/// is lost.
+#[test]
+fn no_liquid_ends_up_inside_a_body_at_rest() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-bodies-rest");
+    let mut ops = bodies("tx,tz,sx,sy,sz\n0,2.0,0.8,0.8,0.8", &[]);
+    ops.extend([
+        liquid(&[("particles", Value::Int(16384))]),
+        mask("/pool", "pool.wgsl", &dir, "uv.y > 0.6"),
+        wire("/pool", 0, "/liquid", FILL),
+    ]);
+    ops.extend(obstacles_from_bodies(Told::Velocity));
+    ops.extend(outputs());
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.pixels("/pool");
+    let (_, _, d) = run(&mut rig, 1);
+    let start = particles(&d);
+    let (out, v, d) = run(&mut rig, 240);
+    assert!(finite(&out) && finite(&v) && finite(&d));
+    // At rest the box stands on the floor: x from -0.4 to 0.4 m, z up to 0.8 m. A cell (1/48
+    // heights) less all round.
+    let inside = |x: f64, y: f64| (x - 2.0 / 3.0).abs() < 0.4 / 3.0 - 0.021 && y > (3.0 - 0.8) / 3.0 + 0.021;
+    let left = particles_where(&d, inside);
+    let total = particles(&d);
+    eprintln!("bodies at rest: {start:.0} particles, {total:.0} after 4 s, {left:.1} inside the box");
+    assert!(left < 0.002 * start, "{left} particles inside the box");
+    assert!((total / start - 1.0).abs() < 0.01, "{total} of {start}");
+}
+
+/// Bodies far away, flying at absurd speeds and spins, with a cell that is not a number, then
+/// no camera: the pictures and the liquid stay finite, and the missing camera is named.
+#[test]
+fn hostile_bodies_leave_the_liquid_finite() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-bodies-hostile");
+    let rows = "tx,tz,sx,sy,sz,vx,vz,wy\n0,1,0.5,0.5,0.5,1e30,-1e30,1e30\n1e30,1,1,1,1,0,0,0\n\
+                0,x,1e-30,1,1e30,0,0,0\n-1,0.5,0.4,0.4,0.4,3e8,0,-3e8";
+    let mut ops = bodies(rows, &[]);
+    ops.extend([
+        liquid(&[("particles", Value::Int(8192))]),
+        mask("/pool", "pool.wgsl", &dir, "uv.y > 0.6"),
+        wire("/pool", 0, "/liquid", FILL),
+        create("/velocity", "tex.null", &[]),
+        wire("/solver", BODY_VELOCITY, "/velocity", 0),
+    ]);
+    ops.extend(obstacles_from_bodies(Told::Velocity));
+    ops.extend(outputs());
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.pixels("/pool");
+    let (out, v, d) = run(&mut rig, 30);
+    assert!(finite(&out) && finite(&v) && finite(&d));
+    rig.cook("/velocity");
+    let velocity = rig.gpu.read(&rig.tex("/velocity").unwrap()).unwrap();
+    assert!(finite(&velocity));
+    // Without a camera there are no pictures to make, and the solver says so.
+    rig.edit(&[Op::Disconnect { to: "/solver".parse().unwrap(), input: CAMERA }]);
+    let (out, v, d) = run(&mut rig, 5);
+    assert!(finite(&out) && finite(&v) && finite(&d));
+    let status = rig.cooker.status(rig.id("/solver")).unwrap();
+    let warning = status.warning.clone().unwrap_or_default();
+    assert!(warning.contains("`camera`"), "{status:?}");
+}
+
+/// A box that crosses the pool at 20 m/s, 6.7 heights per second: faster than the substeps the
+/// liquid takes for itself let it follow (about 5 at this grid). The node counts the obstacle's
+/// speed into the substeps, a frame or two late, so the liquid moves out of the box's way. Without
+/// that, about 500 particles' worth of liquid stood inside the box at its worst.
+#[test]
+fn a_fast_body_takes_more_substeps_and_the_liquid_stays_out_of_it() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-bodies-fast");
+    let speed = 20.0;
+    let mut ops = bodies(
+        &format!(
+            "tx,tz,sx,sy,sz,vx
+-1.9,0.6,0.3,0.5,1.2,{speed}"
+        ),
+        &[("gravity", Value::Vec3([0.0; 3])), ("floor", false.into())],
+    );
+    ops.extend([
+        liquid(&[("particles", Value::Int(16384))]),
+        mask("/pool", "pool.wgsl", &dir, "uv.y > 0.7"),
+        wire("/pool", 0, "/liquid", FILL),
+    ]);
+    ops.extend(obstacles_from_bodies(Told::Velocity));
+    ops.extend(outputs());
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.pixels("/pool");
+    let (_, _, d) = run(&mut rig, 1);
+    let start = particles(&d);
+    let mut worst: f64 = 0.0;
+    for f in 1..10 {
+        let (out, v, d) = run(&mut rig, 1);
+        assert!(finite(&out) && finite(&v) && finite(&d));
+        // The box, in picture heights, less a cell all round.
+        let x = (-1.9 + speed * f64::from(f) / 60.0 + 2.0) / 3.0;
+        worst = worst.max(particles_where(&d, |px, py| (px - x).abs() < 0.05 - 0.021 && py > 0.6 + 0.021));
+    }
+    eprintln!("fast body: {start:.0} particles, at worst {worst:.1} inside the box");
+    assert!(worst < 60.0, "{worst} particles inside the box");
+    assert_eq!(warning(&rig), None);
 }

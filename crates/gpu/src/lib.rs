@@ -58,7 +58,7 @@ pub use projection::{MeshVertex, Projection};
 pub use readback::{PendingRead, Pixels, ReadPool, ReadState, RowsError, encode_png_rgba8};
 pub use render::Lights;
 pub use scatter::{Scatter, ScatterDead, ScatterEdge, ScatterSettings, ScatterUnits};
-pub use shapes::{ShapeMode, ShapePoly, Shapes, shape_random};
+pub use shapes::{STILL, ShapeMode, ShapePoly, Shapes, shape_random};
 pub use stack::Stack;
 pub use tex::{Tex, TexRing, texture_bytes, unique_bytes, view_bytes};
 pub use vram::Vram;

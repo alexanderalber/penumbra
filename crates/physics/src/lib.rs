@@ -447,6 +447,28 @@ pub struct Placement {
     pub scale: [f32; 3],
 }
 
+/// How a body moves now. A point `p` of the body moves at `velocity + spin x (p - center)`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Motion {
+    /// Metres per second, of the point `center`.
+    pub velocity: [f32; 3],
+    /// Radians per second about x, y and z, through `center`.
+    pub spin: [f32; 3],
+    /// The body's centre of mass, in the world.
+    pub center: [f64; 3],
+}
+
+impl Motion {
+    /// How fast the point `p` of the body moves, in metres per second.
+    pub fn at(&self, p: [f64; 3]) -> [f64; 3] {
+        let ([px, py, pz], [cx, cy, cz]) = (p, self.center);
+        let (rx, ry, rz) = (px - cx, py - cy, pz - cz);
+        let [wx, wy, wz] = self.spin.map(f64::from);
+        let [vx, vy, vz] = self.velocity.map(f64::from);
+        [vx + wy * rz - wz * ry, vy + wz * rx - wx * rz, vz + wx * ry - wy * rx]
+    }
+}
+
 /// Where something stands and how it is turned, without a change of size.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Place {
@@ -1007,6 +1029,27 @@ impl World {
                     rotate_degrees: degrees_of(q),
                     scale: b.scale,
                 }
+            })
+            .collect()
+    }
+
+    /// How every body of `group` moves, in the order they were added. A driven body moves as it
+    /// travelled in the last solver step; a fixed body, a sleeping one and one put at its place
+    /// at once stand still. A number that is not finite counts as 0.
+    pub fn motions(&self, group: usize) -> Vec<Motion> {
+        let Some(g) = self.group(group) else { return Vec::new() };
+        let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+        g.bodies
+            .iter()
+            .map(|b| {
+                let Some(r) = self.world.bodies.get(b.body) else { return Motion::default() };
+                let c = r.center_of_mass();
+                let center = [c.x, c.y, c.z].map(|v| f64::from(finite(v)));
+                if r.is_fixed() || r.is_sleeping() || !r.is_enabled() {
+                    return Motion { center, ..Motion::default() };
+                }
+                let (v, w) = (r.linvel(), r.angvel());
+                Motion { velocity: [v.x, v.y, v.z].map(finite), spin: [w.x, w.y, w.z].map(finite), center }
             })
             .collect()
     }
@@ -3260,6 +3303,57 @@ mod tests {
             world.add(2, &Start { translate: [side, 0.0, 0.0], ..Start::default() }).unwrap();
         }
         world
+    }
+
+    #[test]
+    fn motions_say_how_fast_each_point_of_a_body_moves() {
+        // A box in free fall, spinning about y, no floor: its speed grows by g each second.
+        let settings = Settings { floor: None, ..Settings::default() };
+        let mut world = world_of(Shape::Box { center: [0.2, 0.0, 0.0], half: [0.5; 3] }, settings);
+        let spin = 90.0f32;
+        world
+            .add(
+                0,
+                &Start {
+                    translate: [0.0, 0.0, 5.0],
+                    velocity: [1.0, 0.0, 0.0],
+                    spin: [0.0, spin, 0.0],
+                    ..Start::default()
+                },
+            )
+            .unwrap();
+        for _ in 0..30 {
+            world.step(DT, 1);
+        }
+        let m = world.motions(0)[0];
+        let place = world.placements(0)[0].translate;
+        assert!((m.velocity[0] - 1.0).abs() < 1e-3, "{m:?}");
+        assert!((m.velocity[2] + 9.81 * 0.5).abs() < 0.05, "{m:?}");
+        assert!((m.spin[1] - spin.to_radians()).abs() < 1e-3, "{m:?}");
+        // The centre of mass is the shape's middle, 0.2 m from the body's origin, wherever the
+        // body has turned it.
+        let off = [0, 1, 2].map(|i| m.center[i] - place[i]);
+        assert!(((off[0] * off[0] + off[2] * off[2]).sqrt() - 0.2).abs() < 1e-4, "{off:?}");
+        // A point 1 m above the centre: the spin about y adds 1 m times pi / 2 per second in x.
+        let top = m.at([m.center[0], m.center[1], m.center[2] + 1.0]);
+        assert!((top[0] - (1.0 + std::f64::consts::FRAC_PI_2)).abs() < 1e-3, "{top:?}");
+        // A driven box moves as it travelled: 3 m in a second along x.
+        let mut world = box_at_rest_and(Mode::Driven);
+        let row = |x: f32| Start { translate: [x, 3.0, 0.5], ..Start::default() };
+        world.place(1, &[row(0.0)], NEVER).unwrap();
+        world.step(DT, 2);
+        for k in 1..=10 {
+            world.place(1, &[row(3.0 * DT * k as f32)], NEVER).unwrap();
+            world.step(DT, 2);
+        }
+        let m = world.motions(1)[0];
+        assert!((m.velocity[0] - 3.0).abs() < 1e-2 && m.spin == [0.0; 3], "{m:?}");
+        // Put elsewhere at once, it stands; so does the box asleep on the floor.
+        world.place(1, &[row(20.0)], 0.5).unwrap();
+        world.step(DT, 2);
+        assert_eq!(world.motions(1)[0].velocity, [0.0; 3]);
+        assert_eq!(world.motions(0)[0].velocity, [0.0; 3]);
+        assert!(world.motions(7).is_empty());
     }
 
     #[test]

@@ -17,27 +17,34 @@
 //! Each `field` input takes a table of fields ([`field`], made by `physics.field`): a
 //! pull to a point, a wind, a whirl. The fields speed up the dynamic bodies on every frame, and
 //! give them a kick when their trigger turns on.
+//!
+//! Two more outputs draw the bodies as pictures through the camera on `camera` ([`picture`]):
+//! where they are, and how fast each place of them moves. They are what `tex.liquid` takes as
+//! moving obstacles.
 
 use std::sync::Arc;
 
-use penumbra_core::{Error, ParamSpec, Table, Tick, Unit, Value};
+use penumbra_core::{Curve, Error, ParamSpec, Table, Tick, Unit, Value};
 use penumbra_gpu::geo::{Item, Mat4, Model, mul};
 use penumbra_gpu::render::MAX_DRAWS;
-use penumbra_gpu::{Geo, Gpu};
+use penumbra_gpu::{Geo, Gpu, ShapeMode, ShapePoly, Shapes, Tex, TexRing};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, MAX_RUN, NodeDesc, NodeTypes, Operator,
 };
 use penumbra_mesh::Mesh;
 use penumbra_physics::{
-    Field, MAX_BODIES, MAX_FIELDS, MAX_GROUPS, MAX_SUBSTEPS, MIN_STEP, Mode, Obstacle, Place, Placement,
-    Plane, Settings, World,
+    Field, MAX_BODIES, MAX_FIELDS, MAX_GROUPS, MAX_SUBSTEPS, MIN_STEP, Mode, Motion, Obstacle, Place,
+    Placement, Plane, Settings, World,
 };
 
 use crate::geo::trs;
 use crate::tex::fluid::step;
+use crate::tex::{MAX_SIDE, side};
+use crate::view::Viewpoint;
 
 pub mod field;
 pub mod group;
+pub mod picture;
 
 use group::Bodies;
 
@@ -56,9 +63,18 @@ const OBSTACLES: usize = MAX_RUN;
 /// The run of `field` inputs, after `obstacles`.
 const FIELDS: usize = OBSTACLES + 1;
 
+/// The `camera` input, after the run of `field` inputs.
+const CAMERA: usize = FIELDS + MAX_RUN;
+
 /// The outputs, by index.
 const GEO_OUT: usize = 0;
 const TABLE_OUT: usize = 1;
+const MASK_OUT: usize = 2;
+const VELOCITY_OUT: usize = 3;
+
+/// How far the velocity picture reaches beyond a body's edge, in pixels: a reader that samples
+/// between pixels on the edge still finds the full velocity there.
+const VELOCITY_MARGIN: f32 = 2.0;
 
 // Every `bodies` input is a group of its own in the world.
 const _: () = assert!(MAX_RUN <= MAX_GROUPS);
@@ -138,6 +154,22 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("How far a driven body or an obstacle may move in one frame and still push what is in its way. Moved farther, it is put at its new place at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. A turn of more than 90 degrees in one frame counts as too far at any value. 0: driven bodies and obstacles never push"),
         )
         .param(ParamSpec::bool("reset", false).doc("Puts every body of every group back to its start, every frame while on"))
+        .param(
+            ParamSpec::int("width", 1920)
+                .clamp(1.0, MAX_SIDE)
+                .curve(Curve::Log)
+                .unit(Unit::Pixels)
+                .group("pictures")
+                .doc("Width of the `mask` and `velocity` pictures, in pixels. Give them the shape of the picture they go into, such as the tex.liquid's"),
+        )
+        .param(
+            ParamSpec::int("height", 1080)
+                .clamp(1.0, MAX_SIDE)
+                .curve(Curve::Log)
+                .unit(Unit::Pixels)
+                .group("pictures")
+                .doc("Height of the `mask` and `velocity` pictures, in pixels"),
+        )
         .input_run(
             "bodies",
             DataKind::Bodies,
@@ -155,12 +187,23 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             1,
             "A field from physics.field: a pull to a point, a wind or a whirl that speeds up the dynamic bodies of every group, and a kick on a trigger. A table with the same columns works as well and may hold a field per row: type, strength, tx, ty, tz, dx, dy, dz, radius, falloff, kick, trigger. 64 fields in all at most",
         )
+        .input("camera", DataKind::View)
+        .describe_input(
+            "camera",
+            "A view.camera that the `mask` and `velocity` pictures see the bodies through. Wire the camera that a tex.render draws the bodies with, and the pictures line up with the drawing. An orthographic camera that looks straight at the `plane` gives exact velocities",
+        )
         .output("out", DataKind::Geo)
         .describe_output("out", "Every body where it is now, drawn as the model of its group. A group without a model shows boxes of 1 m")
         .lazy_output("out")
         .output("table", DataKind::Table)
         .describe_output("table", "One row per body, group after group in the order of the inputs: tx ty tz rx ry rz sx sy sz, the columns geo.instance reads, and `group`, the number of the `bodies` input (0 for `bodies0`)")
         .lazy_output("table")
+        .output("mask", DataKind::Tex)
+        .describe_output("mask", "White where a body is, seen through `camera`, on transparent black. Each body is the outline of what it collides as. For `obstacles` of tex.liquid")
+        .lazy_output("mask")
+        .output("velocity", DataKind::Tex)
+        .describe_output("velocity", "How fast each place of each body moves, seen through `camera`. Red is the speed to the right in picture widths per second, green the speed down in picture heights per second. A spinning body moves faster at its rim. Alpha is the mask. For `obstacle_velocity` of tex.liquid")
+        .lazy_output("velocity")
         .stateful()
         .time_dependent(),
         || Box::new(RigidBodies::default()) as Box<dyn Operator>,
@@ -200,11 +243,22 @@ struct RigidBodies {
     /// the number of its `field` input and of its row there, so a field that comes or goes
     /// elsewhere does not pass its trigger on to another.
     triggers: Vec<((usize, usize), bool)>,
+    /// The `mask` and `velocity` pictures.
+    rings: [TexRing; 2],
+    drawer: Option<Shapes>,
+    /// What drawing the pictures found, said again on every cook while it holds.
+    picture_note: Option<String>,
 }
 
 impl Operator for RigidBodies {
     fn gpu_bytes(&self) -> u64 {
-        self.unit.as_ref().map_or(0, |m| m.bytes())
+        self.unit.as_ref().map_or(0, |m| m.bytes()) + self.rings.iter().map(TexRing::bytes).sum::<u64>()
+    }
+
+    fn trim(&mut self) {
+        for ring in &mut self.rings {
+            ring.trim();
+        }
     }
 
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
@@ -395,8 +449,12 @@ impl Operator for RigidBodies {
             changed = true;
         }
 
-        let still =
-            !moving && !changed && !cx.params_changed() && !cx.first_cook() && !cx.outputs_wanted_changed();
+        let still = !moving
+            && !changed
+            && !cx.params_changed()
+            && !cx.inputs_changed()
+            && !cx.first_cook()
+            && !cx.outputs_wanted_changed();
         let outputs = if still {
             None
         } else {
@@ -419,7 +477,21 @@ impl Operator for RigidBodies {
             } else {
                 Data::skipped(DataKind::Table)
             };
-            Some(vec![geo, table])
+            let wanted = [cx.output_wanted(MASK_OUT), cx.output_wanted(VELOCITY_OUT)];
+            let pictures = if wanted.contains(&true) {
+                let moves: Vec<(&Bodies, Vec<Placement>, Vec<Motion>)> = placed
+                    .into_iter()
+                    .map(|(i, bodies, places)| (bodies, places, world.motions(i)))
+                    .collect();
+                let (pictures, note) = pictures((&mut self.rings, &mut self.drawer), cx, &moves, wanted)?;
+                self.picture_note = note;
+                pictures
+            } else {
+                self.picture_note = None;
+                [Data::skipped(DataKind::Tex), Data::skipped(DataKind::Tex)]
+            };
+            let [mask, velocity] = pictures;
+            Some(vec![geo, table, mask, velocity])
         };
         let notes: Vec<&str> = slots
             .iter()
@@ -430,6 +502,7 @@ impl Operator for RigidBodies {
             .chain(&disabled_note)
             .chain(&instanced_note)
             .chain(&self.draw_note)
+            .chain(&self.picture_note)
             .chain(&input_note)
             .chain(&field_notes)
             .map(String::as_str)
@@ -439,6 +512,53 @@ impl Operator for RigidBodies {
         }
         Ok(outputs.map_or(Cooked::Unchanged, Cooked::Outputs))
     }
+}
+
+/// The `mask` and `velocity` pictures of the bodies `moves`, those in `wanted`, drawn with
+/// `rings` and `drawer`; also what kept them empty, if anything did.
+fn pictures(
+    (rings, drawer): (&mut [TexRing; 2], &mut Option<Shapes>),
+    cx: &CookContext<'_>,
+    moves: &[(&Bodies, Vec<Placement>, Vec<Motion>)],
+    wanted: [bool; 2],
+) -> Result<([Data; 2], Option<String>), CookError> {
+    let skipped = [Data::skipped(DataKind::Tex), Data::skipped(DataKind::Tex)];
+    // The bodies move on without the pictures.
+    let Ok(gpu) = crate::gpu(cx) else {
+        return Ok((
+            skipped,
+            Some("there is no GPU to draw the `mask` and `velocity` pictures on".to_string()),
+        ));
+    };
+    let size = (side(cx, "width")?, side(cx, "height")?);
+    let camera = cx.input_as::<Viewpoint>(CAMERA);
+    let clip = camera.and_then(|c| c.clip_from_world(size, |m| cx.warn(m)));
+    let note = match (camera, clip) {
+        (None, _) => Some(
+            "connect a view.camera to `camera`: without it the `mask` and `velocity` pictures stay empty",
+        ),
+        (Some(_), None) => {
+            Some("the camera on `camera` cannot see: the `mask` and `velocity` pictures stay empty")
+        }
+        _ => None,
+    };
+    let drawn = clip.map(|c| picture::drawn(moves, &picture::Seen::new(c, size))).unwrap_or_default();
+    let polys: Vec<ShapePoly<'_>> = drawn
+        .iter()
+        .zip(0u32..)
+        .map(|(d, id)| ShapePoly { points: &d.outline, color: [1.0; 4], id, motion: d.motion })
+        .collect();
+    let drawer = drawer.get_or_insert_with(Shapes::new);
+    let modes = [ShapeMode::Mask, ShapeMode::Velocity { margin: VELOCITY_MARGIN }];
+    let mut out = skipped;
+    for (((slot, ring), mode), wanted) in out.iter_mut().zip(rings.iter_mut()).zip(modes).zip(wanted) {
+        if wanted {
+            let target: Tex = ring.next(gpu, size.0, size.1, KIND)?;
+            drawer.render(gpu, &target, &polys, mode)?;
+            *slot = Data::new(DataKind::Tex, target);
+        }
+    }
+    Ok((out, note.map(str::to_string)))
 }
 
 /// Whether the bodies of `new` may go on from where those of `old` are: the same collision
@@ -790,6 +910,16 @@ mod tests {
         let id = rig.net.resolve(&"/r".parse().unwrap()).unwrap();
         let geo = rig.cooker.output(Port { node: id, output: GEO_OUT as u32 }).unwrap();
         assert!(geo.get::<Geo>().unwrap().items.is_empty());
+    }
+
+    #[test]
+    fn pictures_without_a_gpu_are_named_and_the_bodies_move_on() {
+        let mut rig = Rig::new(&["tz
+3"]);
+        rig.shown = vec![TABLE_OUT, MASK_OUT, VELOCITY_OUT];
+        let (out, warning) = rig.run(30);
+        assert!(number(&out, 1, 2) < 2.9, "the body falls");
+        assert!(warning.is_some_and(|w| w.contains("no GPU")));
     }
 
     #[test]

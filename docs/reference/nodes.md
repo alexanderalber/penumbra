@@ -2799,11 +2799,14 @@ Inputs:
 - `bodies0 .. bodies63` (bodies): A group of bodies from physics.bodies. The groups of all these inputs collide with each other, 4000 bodies in all at most. A dynamic group whose table or shape changes starts over; the others go on. A driven or fixed group follows its table. Any number, up to 64: each one wired adds a free slot below it
 - `obstacles` (geo): Geometry that the bodies land on and bounce off, hollows and all. An obstacle that is moved or turned, by a geo.transform with a bound param for one, carries along the bodies on it and pushes those in its way. One that changes its size or its mesh jumps and pushes nothing
 - `field0 .. field63` (table): A field from physics.field: a pull to a point, a wind or a whirl that speeds up the dynamic bodies of every group, and a kick on a trigger. A table with the same columns works as well and may hold a field per row: type, strength, tx, ty, tz, dx, dy, dz, radius, falloff, kick, trigger. 64 fields in all at most. Any number, up to 64: each one wired adds a free slot below it
+- `camera` (view): A view.camera that the `mask` and `velocity` pictures see the bodies through. Wire the camera that a tex.render draws the bodies with, and the pictures line up with the drawing. An orthographic camera that looks straight at the `plane` gives exact velocities
 
 Outputs:
 
 - `out` (geo): Every body where it is now, drawn as the model of its group. A group without a model shows boxes of 1 m
 - `table` (table): One row per body, group after group in the order of the inputs: tx ty tz rx ry rz sx sy sz, the columns geo.instance reads, and `group`, the number of the `bodies` input (0 for `bodies0`)
+- `mask` (tex): White where a body is, seen through `camera`, on transparent black. Each body is the outline of what it collides as. For `obstacles` of tex.liquid
+- `velocity` (tex): How fast each place of each body moves, seen through `camera`. Red is the speed to the right in picture widths per second, green the speed down in picture heights per second. A spinning body moves faster at its rim. Alpha is the mask. For `obstacle_velocity` of tex.liquid
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -2819,6 +2822,8 @@ Outputs:
 | `substeps` *(more)* | int | `1` | 1 to 8 | Solver steps per frame: raise it when fast bodies pass through thin things or a tall stack wobbles. Each step costs the same again |
 | `jump` *(more)* | float | `0.5` | 0 to 5 m (soft, held within 0 to 1000000 m) | How far a driven body or an obstacle may move in one frame and still push what is in its way. Moved farther, it is put at its new place at once and pushes nothing. This keeps a tracker that loses a blob and finds it elsewhere from sweeping the scene. A turn of more than 90 degrees in one frame counts as too far at any value. 0: driven bodies and obstacles never push |
 | `reset` | bool | `false` |  | Puts every body of every group back to its start, every frame while on |
+| `width` *(pictures)* | int | `1920` | 1 to 16384 px | Width of the `mask` and `velocity` pictures, in pixels. Give them the shape of the picture they go into, such as the tex.liquid's |
+| `height` *(pictures)* | int | `1080` | 1 to 16384 px | Height of the `mask` and `velocity` pictures, in pixels |
 
 ## script
 
