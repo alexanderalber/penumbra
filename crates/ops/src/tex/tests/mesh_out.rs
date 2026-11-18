@@ -182,3 +182,35 @@ fn copies_from_tex_instance_are_expanded_or_skipped() {
     assert!(error.contains("more than a file may hold") && error.contains("1048576 copies"), "{error}");
     assert!(!dir.join("many.glb").exists());
 }
+
+/// Points whose number is on the GPU (after `pts.delete`) drawn as copies: only the copies of
+/// the points left go into the file.
+#[test]
+fn copies_of_deleted_points_stay_out_of_the_file() {
+    let dir = scratch("mesh-out-deleted");
+    let ops = vec![
+        create(
+            "/line",
+            "pts.generate",
+            &[("shape", "line".into()), ("count", Value::Int(4)), ("size", Value::Vec3([3.0, 0.0, 0.0]))],
+        ),
+        create(
+            "/del",
+            "pts.delete",
+            &[("by", "index".into()), ("first", Value::Int(1)), ("last", Value::Int(2))],
+        ),
+        connect("/line", "/del", 0),
+        create("/stick", "geo.primitive", &[("size", Value::Vec3([0.2, 0.2, 0.2]))]),
+        create("/copies", "geo.from_pts", &[("mode", "copies".into())]),
+        connect("/del", "/copies", 0),
+        connect("/stick", "/copies", 1),
+        create("/w", "out.mesh", &[("file", "kept.glb".into())]),
+        connect("/copies", "/w", 0),
+    ];
+    let Some((mut rig, outs)) = rig_with_outs(&ops, dir.path()) else { return };
+    rig.types.get("pts.delete").unwrap().warm_up(&rig.gpu).unwrap();
+    let m = written(&mut rig, &outs, &dir.join("kept.glb"), &[]);
+    assert_eq!(outs.status(rig.id("/w")).unwrap().copies, 2, "the two points left of four");
+    let b = Bounds::of(m.vertices.iter().map(|v| v.position)).unwrap();
+    assert!(close(b.min, [-1.6, -0.1, -0.1]) && close(b.max, [1.6, 0.1, 0.1]), "the ends only: {b:?}");
+}

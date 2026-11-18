@@ -210,6 +210,9 @@ struct InstanceTextures {
     scale: Option<usize>,
     /// How many copies: the first this many texels.
     count: u32,
+    /// The number of copies is kept on the GPU (points after a delete, particles): a copy whose
+    /// position texel is transparent is past it, and is left out.
+    live: bool,
     /// Multiplies every copy's scale.
     size: f64,
 }
@@ -467,6 +470,9 @@ fn assemble(pieces: &[Piece], textures: &[Texels]) -> Result<(Mesh, Counts), Str
             [0.0, 0.0, 0.0, 1.0],
         ];
         for i in 0..count {
+            if inst.live && position.get(i).is_none_or(|t| t[3] == 0.0) {
+                continue;
+            }
             let m = mul(&piece.world, &mul(&instance_matrix(i, position, aim, scale), &size));
             if !m.iter().flatten().all(|x| x.is_finite()) {
                 counts.left_out += 1;
@@ -633,6 +639,7 @@ impl MeshOut {
                     aim: inst.aim.as_ref().filter(|_| !inst.face_camera).map(&mut index),
                     scale: inst.scale.as_ref().map(&mut index),
                     count: inst.count(),
+                    live: inst.live.is_some(),
                     size: if inst.size.is_finite() { f64::from(inst.size) } else { 1.0 },
                 }),
             })

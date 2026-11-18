@@ -415,7 +415,8 @@ pub struct Item {
 }
 
 impl Item {
-    /// How often it is drawn.
+    /// How often it is drawn at most. Where the number of copies is kept on the GPU
+    /// ([`Instances::live`]) fewer may be drawn; this counts every one there may be.
     pub fn copies(&self) -> usize {
         self.instances.as_ref().map_or(1, |i| i.count() as usize)
     }
@@ -690,7 +691,7 @@ impl Geo {
         names
     }
 
-    /// Every copy's.
+    /// Every copy's, counting every copy there may be where their number is on the GPU.
     pub fn triangle_count(&self) -> usize {
         self.items.iter().map(|i| i.model.mesh.triangle_count() * i.copies()).sum()
     }
