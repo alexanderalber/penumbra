@@ -9,7 +9,7 @@ use penumbra_gpu::Points;
 use penumbra_graph::{NodeStatus, Port};
 
 use super::geo::{render, rig};
-use super::pts::{coverage, drawn, points, read};
+use super::pts::{compiled, coverage, drawn, points, read};
 use super::{Rig, connect, create, gpu, scratch, set};
 
 fn grid(rows: i64, cols: i64) -> penumbra_graph::Op {
@@ -32,9 +32,7 @@ fn settled(rig: &mut Rig, path: &str, done: impl Fn(&NodeStatus) -> bool) -> (No
         rig.clock.advance(1);
         rig.cook(path);
         let s = rig.cooker.status(rig.id(path)).unwrap();
-        let finished =
-            matches!(s.job, Some(penumbra_graph::JobStatus::Done | penumbra_graph::JobStatus::Failed { .. }));
-        if finished && done(&s) {
+        if compiled(&s) && done(&s) {
             return (s, output(rig, path));
         }
         assert!(Instant::now() < deadline, "{path} did not settle: {s:?}");
@@ -243,10 +241,9 @@ fn transform_moves_turns_and_scales_about_a_pivot() {
         connect("/s", "/t", 0),
         set("/t.attribute", "scale".into()),
     ]);
-    rig.clock.advance(1);
-    rig.cook("/t");
-    let s = rig.cooker.status(rig.id("/t")).unwrap();
-    assert!(s.error.as_deref().is_some_and(|e| e.contains("three numbers")), "{s:?}");
+    // pts.random may still compile its program for a scale: wait for the refusal.
+    let e = first_error(&mut rig, "/t");
+    assert!(e.contains("three numbers"), "{e}");
 }
 
 #[test]
@@ -547,4 +544,29 @@ fn math_names_values_results_and_parts_without_surprises() {
     // A part of a number that has one only.
     refused(&mut rig, "scale.x", "holds one number");
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
+
+#[test]
+fn a_new_program_of_a_built_in_compiles_off_the_cook_thread() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [grid(2, 2), create("/noise", "pts.noise", &[]), connect("/grid", "/noise", 0)];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let before = points(&mut rig, "/noise");
+    // A name no other test uses: its program cannot be compiled yet.
+    rig.edit(&[set("/noise.attribute", "off_thread_probe".into())]);
+    rig.clock.advance(1);
+    rig.cook("/noise");
+    let s = rig.cooker.status(rig.id("/noise")).unwrap();
+    assert!(
+        matches!(s.job, Some(penumbra_graph::JobStatus::Queued | penumbra_graph::JobStatus::Running { .. })),
+        "the compile runs as a job: {s:?}"
+    );
+    // Meanwhile the last program keeps running, without a box it cannot vouch for.
+    let meanwhile = output(&rig, "/noise").unwrap();
+    assert!(meanwhile.attr("off_thread_probe").is_none() && meanwhile.bounds().is_none());
+    assert!(before.bounds().is_some());
+    let after = clean(&mut rig, "/noise");
+    assert!(after.attr("off_thread_probe").is_some());
+    assert_eq!(read(&rig, &after, "position"), fresh(&mut rig, "/grid", "position"), "position passes on");
+    assert!(after.bounds().is_some());
 }
