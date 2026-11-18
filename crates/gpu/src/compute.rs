@@ -62,7 +62,7 @@ pub const BUFFER_GROUP: u32 = 2;
 
 /// Storage buffers the prelude binds itself (`pn_data`), counted against the device's limit of
 /// storage buffers per shader stage.
-const PRELUDE_STORAGE_BUFFERS: u32 = 1;
+pub const PRELUDE_STORAGE_BUFFERS: u32 = 1;
 
 /// Uniforms the prelude binds itself (`pn`, `pn_time`, `params`).
 const PRELUDE_UNIFORMS: u32 = 3;
@@ -423,6 +423,9 @@ pub struct Compute {
     buffers: Vec<BufferSlot>,
     /// The layout of `@group(2)`, for a program that has buffers.
     buffer_layout: Option<wgpu::BindGroupLayout>,
+    /// Per function and entry point: the globals it reads or writes, also through the
+    /// functions it calls.
+    uses: HashMap<String, Vec<String>>,
 }
 
 impl Compute {
@@ -434,11 +437,12 @@ impl Compute {
         let full = format!("{source}\n{PRELUDE}{SHARED}{}", pass::params_wgsl(params));
         let module = naga::front::wgsl::parse_str(&full)
             .map_err(|e| Error::new(pass::ascii_frame(&e.emit_to_string_with_path(&full, label))))?;
-        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), Default::default())
+        let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), Default::default())
             .validate(&module)
             .map_err(|e| Error::new(pass::ascii_frame(&e.emit_to_string_with_path(&full, label))))?;
         let (fields, uniform_size) = pass::layout(&module, params)?;
         let buffers = buffer_slots(gpu, &module, &full, label)?;
+        let uses = global_uses(&module, &info);
         let layouts = gpu.compute_layouts();
         let limits = gpu.device().limits();
         let most = [
@@ -493,7 +497,22 @@ impl Compute {
         if let Some(e) = error {
             return Err(Error::new(format!("{label}: {e}")));
         }
-        Ok(Self { label: label.to_string(), entries, fields, uniform_size, layouts, buffers, buffer_layout })
+        Ok(Self {
+            label: label.to_string(),
+            entries,
+            fields,
+            uniform_size,
+            layouts,
+            buffers,
+            buffer_layout,
+            uses,
+        })
+    }
+
+    /// Whether function or entry point `function` reads or writes the global `global`, itself or
+    /// through a function it calls. False for names the program does not have.
+    pub fn uses(&self, function: &str, global: &str) -> bool {
+        self.uses.get(function).is_some_and(|g| g.iter().any(|n| n == global))
     }
 
     /// The names of the entry points and what each writes.
@@ -702,6 +721,28 @@ impl Compute {
             None => Ok(Some(group)),
         }
     }
+}
+
+/// The globals each function and entry point of `module` uses, by name.
+fn global_uses(module: &naga::Module, info: &naga::valid::ModuleInfo) -> HashMap<String, Vec<String>> {
+    let names = |f: &naga::valid::FunctionInfo| -> Vec<String> {
+        module
+            .global_variables
+            .iter()
+            .filter(|(h, _)| !f[*h].is_empty())
+            .filter_map(|(_, g)| g.name.clone())
+            .collect()
+    };
+    let mut out = HashMap::new();
+    for (h, f) in module.functions.iter() {
+        if let Some(name) = &f.name {
+            out.insert(name.clone(), names(&info[h]));
+        }
+    }
+    for (i, e) in module.entry_points.iter().enumerate() {
+        out.insert(e.name.clone(), names(info.get_entry_point(i)));
+    }
+    out
 }
 
 /// The program's own buffers, from the bindings `module` declares in `@group(2)`. `Err`, naming
