@@ -374,3 +374,31 @@ fn sprites_cast_the_shadow_of_a_disc_facing_the_light() {
     assert!((0.5..1.2).contains(&ratio), "{shadow} shadow pixels for {sprites} sprite pixels");
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
+
+#[test]
+fn sprites_let_go_of_the_model_copies_were_made_of() {
+    let Some(gpu) = gpu() else { return };
+    let ops = vec![
+        create("/grid", "pts.generate", &[("rows", Value::Int(2)), ("cols", Value::Int(2))]),
+        // A heavy model with a placement of its own, so the copies bake one of their own.
+        create("/ball", "geo.primitive", &[("shape", "sphere".into()), ("segments", Value::Int(256))]),
+        create("/ball_at", "geo.transform", &[("translate", Value::Vec3([0.0, 0.0, 0.5]))]),
+        connect("/ball", "/ball_at", 0),
+        create("/copies", "geo.from_pts", &[("mode", "copies".into())]),
+        connect("/grid", "/copies", 0),
+        connect("/ball_at", "/copies", 1),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let bytes = |rig: &mut Rig| {
+        rig.clock.advance(1);
+        rig.cook("/copies");
+        let s = rig.cooker.status(rig.id("/copies")).unwrap();
+        assert!(s.has_output && s.error.is_none(), "{s:?}");
+        s.gpu_bytes
+    };
+    let copies = bytes(&mut rig);
+    assert!(copies > 1 << 20, "{copies}");
+    rig.edit(&[set("/copies.mode", "sprites".into())]);
+    let sprites = bytes(&mut rig);
+    assert!(sprites < copies / 10, "{sprites} bytes after {copies}");
+}
