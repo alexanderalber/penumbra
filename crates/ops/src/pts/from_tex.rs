@@ -12,7 +12,7 @@ use penumbra_gpu::Gpu;
 use penumbra_gpu::points::Points;
 use penumbra_gpu::points::program::{self, Decl, Program, Shape, Spec};
 use penumbra_graph::{
-    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
+    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, JobStatus, NodeDesc, NodeTypes, Operator,
 };
 use penumbra_mesh::Bounds;
 
@@ -257,6 +257,10 @@ impl Operator for FromTex {
         self.own.trim();
     }
 
+    fn job_status(&self) -> Option<JobStatus> {
+        Some(self.own.status())
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let tex = picture(cx, 0, "in")?;
@@ -296,7 +300,7 @@ impl Operator for FromTex {
         } else {
             None
         };
-        let out = out.with_bounds(bounds).with_dims(Some([rows, cols, 1]));
+        let out = out.with_bounds(self.own.bounds(bounds)).with_dims(Some([rows, cols, 1]));
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out)]))
     }
 }

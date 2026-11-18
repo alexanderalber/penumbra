@@ -1,6 +1,6 @@
 //! What the `pts` nodes that run a program over points share: the input, the time a program
-//! sees, a node's own program compiled once per process, a program that changes compiled off
-//! the cook thread, and the WGSL that combines a value with an attribute.
+//! sees, a node's own program and a program that changes (both compiled off the cook thread),
+//! and the WGSL that combines a value with an attribute.
 //!
 //! A built-in node is a WGSL `fn main()`, the attributes it uses and its params
 //! ([`penumbra_gpu::points::program::Spec`]); [`Own::run`] does the rest.
@@ -12,6 +12,7 @@ use penumbra_gpu::points::program::{self, Generated, Outputs, Program, Run, Shap
 use penumbra_gpu::points::{AttrType, Points};
 use penumbra_gpu::{Gpu, Tex};
 use penumbra_graph::{AsyncSlot, CookContext, CookError, JobStatus};
+use penumbra_mesh::Bounds;
 
 /// The attributes the points of `pts.generate` usually have: the input a node's program is
 /// compiled for before its first cook.
@@ -56,12 +57,21 @@ pub(crate) fn time(cx: &CookContext<'_>, timed: bool) -> (f64, i64, f64) {
     (t.seconds(), t.frame, dt)
 }
 
-/// A built-in node's program: compiled once per process for each set of input attributes it
-/// meets, and the buffers it writes.
+/// A built-in node's program and the buffers it writes. Each program is compiled once per
+/// process, for each set of input attributes and params it meets ([`Program::cached`]), off the
+/// cook thread: a param that asks for a new program does not stall the picture. While it
+/// compiles the last program keeps running; before the first one has compiled the node waits
+/// (`Pending`). Nodes warm up their usual program, so it is there at the first cook.
 #[derive(Default)]
 pub(crate) struct Own {
-    program: Option<Program>,
+    /// The program the last cook ran.
+    program: Option<Arc<Program>>,
+    slot: AsyncSlot<Arc<Program>>,
+    /// What the job in flight, or the last one, compiles.
+    asked: Option<Generated>,
     outputs: Outputs,
+    /// Whether the last cook ran an older program than the params ask for.
+    stale: bool,
 }
 
 impl Own {
@@ -78,16 +88,68 @@ impl Own {
         param: &dyn Fn(&str) -> Option<Value>,
         pictures: &[Option<&Tex>],
     ) -> Result<Points, CookError> {
+        self.slot.poll();
         let generated = program::generate(spec, &Shape::of(input), program::storage_budget(gpu))?;
-        let program = match self.program.take() {
-            Some(p) if *p.generated() == generated => p,
-            _ => Program::cached(gpu, generated)?,
+        let found = self
+            .program
+            .clone()
+            .filter(|p| *p.generated() == generated)
+            .or_else(|| self.slot.latest().filter(|p| *p.generated() == generated).cloned())
+            .or_else(|| Program::compiled(gpu, &generated).map(Arc::new));
+        let program = match found {
+            Some(p) => {
+                self.stale = false;
+                p
+            }
+            None => {
+                let failed = if self.asked.as_ref() == Some(&generated) {
+                    self.slot.error().filter(|_| !self.slot.busy()).map(str::to_string)
+                } else {
+                    self.start(cx, gpu, generated);
+                    None
+                };
+                let last = self.program.clone().filter(|p| p.generated().fits(input));
+                match (last, failed) {
+                    (Some(p), failed) => {
+                        if let Some(e) = failed {
+                            cx.warn(format!("{e}\n(running the last program that compiled)"));
+                        }
+                        self.stale = true;
+                        p
+                    }
+                    (None, Some(e)) => return Err(CookError::failed(e)),
+                    (None, None) => return Err(CookError::Pending),
+                }
+            }
         };
         let (seconds, frame, dt) = time(cx, timed);
         let run = Run { seconds, frame, dt, param, pictures };
         let out = program.run(gpu, input, &mut self.outputs, &run);
         self.program = Some(program);
         Ok(out?)
+    }
+
+    /// Compiles `generated` off the cook thread, into the process's cache.
+    fn start(&mut self, cx: &CookContext<'_>, gpu: &Gpu, generated: Generated) {
+        self.asked = Some(generated.clone());
+        let gpu = gpu.clone();
+        self.slot
+            .start(cx.spawn(move |_job| Program::cached(&gpu, generated).map(Arc::new).map_err(|e| e.0)));
+    }
+
+    /// `bounds`, unless the last cook ran an older program than the params ask for: what that
+    /// one did is not what the node's bounds describe.
+    pub(crate) fn bounds(&self, bounds: Option<Bounds>) -> Option<Bounds> {
+        if self.stale { None } else { bounds }
+    }
+
+    /// The compile's state. A program that compiled but has not run yet still counts as
+    /// running: the node shows what it asks for only at its next cook.
+    pub(crate) fn status(&self) -> JobStatus {
+        match self.slot.status() {
+            JobStatus::Done | JobStatus::Idle if self.stale => JobStatus::Running { progress: None },
+            s => s,
+        }
     }
 
     pub(crate) fn bytes(&self) -> u64 {
@@ -144,8 +206,15 @@ impl Compiling {
         self.slot.error()
     }
 
+    /// The compile's state. A program that compiled but is not taken yet ([`Compiling::poll`])
+    /// still counts as running.
     pub(crate) fn status(&self) -> JobStatus {
-        self.slot.status()
+        match self.slot.status() {
+            JobStatus::Done if self.current.as_ref().map(|p| p.generated()) != self.asked.as_ref() => {
+                JobStatus::Running { progress: None }
+            }
+            s => s,
+        }
     }
 
     /// Runs `program` over `input` into this node's buffers.

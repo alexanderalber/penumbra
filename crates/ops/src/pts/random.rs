@@ -7,7 +7,7 @@ use penumbra_gpu::Gpu;
 use penumbra_gpu::points::AttrType;
 use penumbra_gpu::points::program::{self, Decl, Program, Spec};
 use penumbra_graph::{
-    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
+    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, JobStatus, NodeDesc, NodeTypes, Operator,
 };
 use penumbra_mesh::Bounds;
 
@@ -184,6 +184,10 @@ impl Operator for Random {
         self.own.trim();
     }
 
+    fn job_status(&self) -> Option<JobStatus> {
+        Some(self.own.status())
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let points = input(cx)?;
@@ -222,6 +226,6 @@ impl Operator for Random {
             }),
             _ => None,
         };
-        Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out.with_bounds(bounds))]))
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out.with_bounds(self.own.bounds(bounds)))]))
     }
 }

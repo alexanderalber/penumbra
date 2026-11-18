@@ -10,7 +10,7 @@ use penumbra_gpu::Gpu;
 use penumbra_gpu::points::program::{self, Decl, Program, Spec};
 use penumbra_gpu::points::{AttrType, Points};
 use penumbra_graph::{
-    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
+    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, JobStatus, NodeDesc, NodeTypes, Operator,
 };
 use penumbra_mesh::Bounds;
 
@@ -268,6 +268,10 @@ impl Operator for LookupTex {
         self.own.trim();
     }
 
+    fn job_status(&self) -> Option<JobStatus> {
+        Some(self.own.status())
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let points: &Points = input(cx)?;
@@ -318,6 +322,6 @@ impl Operator for LookupTex {
         };
         let out = self.own.run(cx, gpu, &spec, points, false, &param, &[Some(tex)])?;
         let bounds = if target == "position" { None } else { points.bounds() };
-        Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out.with_bounds(bounds))]))
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out.with_bounds(self.own.bounds(bounds)))]))
     }
 }

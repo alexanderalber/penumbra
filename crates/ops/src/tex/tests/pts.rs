@@ -11,11 +11,25 @@ use super::geo::{render, rig};
 use super::{Rig, connect, create, gpu, set};
 use crate::pts::generate::{MAX_POINTS, Shape, cloud};
 
+/// Whether a node's compile, if it has one, has finished.
+pub(super) fn compiled(s: &penumbra_graph::NodeStatus) -> bool {
+    !matches!(s.job, Some(penumbra_graph::JobStatus::Queued | penumbra_graph::JobStatus::Running { .. }))
+}
+
+/// The points of `path`, cooked until a program it compiles off the cook thread is there.
 pub(super) fn points(rig: &mut Rig, path: &str) -> Points {
-    rig.clock.advance(1);
-    rig.cook(path);
-    let s = rig.cooker.status(rig.id(path)).unwrap();
-    assert_eq!((s.error, s.warning), (None, None), "{path}");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        rig.clock.advance(1);
+        rig.cook(path);
+        let s = rig.cooker.status(rig.id(path)).unwrap();
+        if s.has_output && compiled(&s) || s.error.is_some() {
+            assert_eq!((s.error, s.warning), (None, None), "{path}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "{path} did not settle: {s:?}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
     rig.cooker.output(Port { node: rig.id(path), output: 0 }).unwrap().get::<Points>().unwrap().clone()
 }
 

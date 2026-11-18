@@ -1172,6 +1172,12 @@ impl Gpu {
         Ok(compiled)
     }
 
+    /// The program [`Gpu::cached_compute`] compiled for `source` and `params` before, without
+    /// compiling: `None` when nobody has.
+    pub fn compiled_compute(&self, source: &str, params: &[ParamSpec]) -> Option<Arc<Compute>> {
+        lock(&self.inner.computes).get(&pass::cache_key(source, params)).cloned()
+    }
+
     /// `volume` as a picture of its slices side by side ([`atlas_size`]), for a state snapshot.
     pub fn volume_to_atlas(&self, volume: &Volume) -> Result<Tex, Error> {
         let (w, h) = atlas_size(volume.size());

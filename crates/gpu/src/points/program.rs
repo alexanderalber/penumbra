@@ -562,6 +562,13 @@ impl Program {
         Ok(Self { compute, generated })
     }
 
+    /// The program [`Program::cached`] compiled for `generated` before, at no cost: `None`
+    /// where it would have to compile.
+    pub fn compiled(gpu: &Gpu, generated: &Generated) -> Option<Self> {
+        let compute = gpu.compiled_compute(&generated.source, &generated.params)?;
+        Some(Self { compute, generated: generated.clone() })
+    }
+
     pub fn generated(&self) -> &Generated {
         &self.generated
     }
