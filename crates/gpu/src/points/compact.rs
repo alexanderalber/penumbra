@@ -183,6 +183,8 @@ pub struct Compactor {
     rings: Vec<(String, BufferRing)>,
     /// The count of the last compaction, which the next one's display follows.
     last: Option<Seen>,
+    /// No readback of the count: the caller changes the count again and reads it itself.
+    quiet: bool,
 }
 
 impl Compactor {
@@ -190,9 +192,15 @@ impl Compactor {
         Self::default()
     }
 
+    /// A compactor that starts no readback of the count it makes ([`Count::seen`] stays
+    /// `None`): for a node that changes the count again in the same step and reads that one.
+    pub fn quiet() -> Self {
+        Self { quiet: true, ..Self::default() }
+    }
+
     /// The points of `points` whose flag in `keep` is not 0, in their order, with every
     /// attribute, in new buffers of the same capacity; their count on the GPU, read back for
-    /// display. `keep` holds a `u32` per point, at least as many as the count may be. Points
+    /// display (unless [`Compactor::quiet`]). `keep` holds a `u32` per point, at least as many as the count may be. Points
     /// past the input's count are never kept, also where that count is on the GPU. Bounds stay,
     /// `dims` and `strips` go. `Err` for a `keep` too short and for anything the GPU refuses.
     pub fn compact(&mut self, gpu: &Gpu, points: &Points, keep: &Buffer) -> Result<Points, Error> {
@@ -209,7 +217,8 @@ impl Compactor {
         let capacity = points.capacity().max(n);
         let blocks = n.div_ceil(BLOCK);
         let map = sized(gpu, &mut self.map, u64::from(capacity) * 4, "pts compact map")?;
-        let sums = sized(gpu, &mut self.sums, u64::from(blocks) * 4, "pts compact sums")?;
+        // Sized by the capacity, so a bound that moves keeps the buffer.
+        let sums = sized(gpu, &mut self.sums, u64::from(capacity.div_ceil(BLOCK)) * 4, "pts compact sums")?;
         let header = self.headers.next(gpu, HEADER_BYTES, "pts count")?;
         let before = points.count().header_for(gpu)?;
         let row = blocks.min(BLOCKS_PER_ROW);
@@ -278,7 +287,12 @@ impl Compactor {
                 moved.push(Attr::new(a.name(), a.ty(), out)?);
             }
         }
-        let seen = Seen::reading(gpu, &header, self.last.as_ref())?;
+        // The readback is for display only: one that cannot start leaves the count unseen.
+        let seen = if self.quiet {
+            Seen::default()
+        } else {
+            Seen::reading(gpu, &header, self.last.as_ref()).unwrap_or_default()
+        };
         self.last = Some(seen.clone());
         let count = Count::gpu(header, n, seen)?;
         Points::new(capacity, 0, moved)?.with_bounds(points.bounds()).with_count(count)

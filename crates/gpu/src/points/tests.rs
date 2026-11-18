@@ -213,3 +213,25 @@ fn every_count_and_type_lands_on_its_texel() {
     }
     assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
 }
+
+/// A readback gives its own count once it arrived; the one after it shows the earlier count
+/// until its own arrives, and never passes it off as its own.
+#[test]
+fn seen_counts_arrive_as_their_own() {
+    let Some(gpu) = gpu() else { return };
+    let header = Buffer::of::<u32>(&gpu, 4, "count").unwrap();
+    header.write(&gpu, 0, &[5u32, 0, 0, 0]).unwrap();
+    let a = Seen::reading(&gpu, &header, None).unwrap();
+    // A blocking read waits for the GPU, which brings the earlier readback in too.
+    header.read::<u32>(&gpu).unwrap();
+    assert_eq!((a.get(), a.arrived()), (Some(5), Some(5)));
+    header.write(&gpu, 0, &[7u32, 0, 0, 0]).unwrap();
+    let b = Seen::reading(&gpu, &header, Some(&a)).unwrap();
+    assert_eq!(a.arrived(), Some(5), "the earlier one keeps its value when its readback is reused");
+    if b.arrived().is_none() {
+        assert_eq!(b.get(), Some(5), "the earlier count until its own arrives");
+    }
+    header.read::<u32>(&gpu).unwrap();
+    assert_eq!((b.get(), b.arrived()), (Some(7), Some(7)));
+    assert_eq!(Seen::default().arrived(), None);
+}

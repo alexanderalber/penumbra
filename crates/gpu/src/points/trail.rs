@@ -325,7 +325,8 @@ impl Trailer {
                 points.with_count(Count::Known(n))?.with_dims(Some([trails, len, 1])).with_strips(strips)
             }
             Count::Gpu { .. } => {
-                let seen = Seen::reading(gpu, &header, self.last.as_ref())?;
+                // For display only: one that cannot start leaves the count unseen.
+                let seen = Seen::reading(gpu, &header, self.last.as_ref()).unwrap_or_default();
                 self.last = Some(seen.clone());
                 points.with_count(Count::gpu(header, n, seen)?)?.with_strips(strips)
             }

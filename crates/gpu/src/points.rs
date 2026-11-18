@@ -311,14 +311,34 @@ impl std::fmt::Debug for Count {
 pub struct Seen(Arc<SeenInner>);
 
 struct SeenInner {
-    /// [`UNSEEN`] until a value arrived.
+    /// [`UNSEEN`] until a value arrived: this one's own, or until then the one it follows.
     value: AtomicU32,
+    /// This one's own value, [`UNSEEN`] until its readback arrived.
+    own: AtomicU32,
     read: Mutex<Option<BufferRead>>,
 }
 
 impl Default for SeenInner {
     fn default() -> Self {
-        Self { value: AtomicU32::new(UNSEEN), read: Mutex::new(None) }
+        Self { value: AtomicU32::new(UNSEEN), own: AtomicU32::new(UNSEEN), read: Mutex::new(None) }
+    }
+}
+
+impl SeenInner {
+    /// Takes in the readback's value where it arrived; drops a readback that failed.
+    fn settle(&self, read: &mut Option<BufferRead>) {
+        let Some(r) = read.as_ref() else { return };
+        match r.state() {
+            crate::ReadState::Ready => {
+                if let Some(n) = r.get::<u32>().ok().and_then(|w| w.first().copied()) {
+                    let n = n.min(UNSEEN - 1);
+                    self.own.store(n, Ordering::Relaxed);
+                    self.value.store(n, Ordering::Relaxed);
+                }
+            }
+            crate::ReadState::Failed => *read = None,
+            crate::ReadState::Waiting => {}
+        }
     }
 }
 
@@ -330,34 +350,36 @@ impl Seen {
     /// flicker. `before`'s finished readback is reused, so a readback per frame allocates
     /// nothing.
     pub fn reading(gpu: &Gpu, header: &Buffer, before: Option<&Seen>) -> Result<Self, Error> {
-        let value = before.and_then(Seen::get).unwrap_or(UNSEEN);
         let spare = before.and_then(|b| {
             let mut read = crate::lock(&b.0.read);
+            // Its value first, so a readback that arrives just now is not lost with it.
+            b.0.settle(&mut read);
             match read.as_ref().map(BufferRead::state) {
                 Some(crate::ReadState::Ready) => read.take(),
                 _ => None,
             }
         });
+        let value = before.and_then(Seen::get).unwrap_or(UNSEEN);
         let read = header.read_async(gpu, spare)?;
-        Ok(Self(Arc::new(SeenInner { value: AtomicU32::new(value), read: Mutex::new(Some(read)) })))
+        Ok(Self(Arc::new(SeenInner {
+            value: AtomicU32::new(value),
+            own: AtomicU32::new(UNSEEN),
+            read: Mutex::new(Some(read)),
+        })))
     }
 
     /// The count as last read back; `None` before anything arrived.
     pub fn get(&self) -> Option<u32> {
-        let mut read = crate::lock(&self.0.read);
-        if let Some(r) = read.as_ref() {
-            match r.state() {
-                crate::ReadState::Ready => {
-                    if let Some(n) = r.get::<u32>().ok().and_then(|w| w.first().copied()) {
-                        self.0.value.store(n.min(UNSEEN - 1), Ordering::Relaxed);
-                    }
-                }
-                crate::ReadState::Failed => *read = None,
-                crate::ReadState::Waiting => {}
-            }
-        }
-        drop(read);
+        self.0.settle(&mut crate::lock(&self.0.read));
         let v = self.0.value.load(Ordering::Relaxed);
+        (v != UNSEEN).then_some(v)
+    }
+
+    /// The count in the header this one reads, at the time it was read: `None` until its own
+    /// readback arrived (never the value of the one it follows).
+    pub fn arrived(&self) -> Option<u32> {
+        self.0.settle(&mut crate::lock(&self.0.read));
+        let v = self.0.own.load(Ordering::Relaxed);
         (v != UNSEEN).then_some(v)
     }
 }
@@ -366,8 +388,8 @@ impl Seen {
 /// rounded up to a step of an eighth of the power of two at or above it, the step at least
 /// 1024. So a count that moves a little keeps its capacity and the buffers of a chain are
 /// reused instead of made again. Above 8192 points that is less than a quarter more than the
-/// count. Never above `most` (the largest number of elements a buffer holds), and never below
-/// the count.
+/// count. Never below the count, and never above `most` (the largest number of elements a
+/// buffer holds) unless the count itself is: a count above `most` is the caller's to refuse.
 pub fn capacity_for(count: u32, most: u32) -> u32 {
     if count == 0 {
         return 0;

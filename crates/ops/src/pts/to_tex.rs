@@ -2,8 +2,8 @@
 //! POP to TOP. Points made as a grid keep its rows and columns; others fill rows of a chosen
 //! width. Alpha is 1 where a point is and 0 in the texels past the last point, so `tex.shader`,
 //! `tex.scatter` and `geo.tex_instance` can tell the two apart. Where the count is on the GPU
-//! (after points were deleted) the picture is sized for as many as there may be, and the texels
-//! past the live count are transparent black.
+//! (after points were deleted, particles) the picture is sized for the capacity, so it keeps its
+//! size while the count moves, and the texels past the live count are transparent black.
 
 use penumbra_core::{Error, ParamSpec};
 use penumbra_gpu::{BufferRing, Points, TexRing};
@@ -47,7 +47,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .input("in", DataKind::Pts)
         .output("out", DataKind::Tex)
-        .describe_output("out", "The picture. Alpha is 1 at each point (a four-number attribute brings its own) and 0 in the texels past the last point"),
+        .describe_output("out", "The picture. Alpha is 1 at each point (a four-number attribute brings its own) and 0 in the texels past the last point. Points whose number is on the GPU (after pts.delete, particles) fill a picture sized for their capacity"),
         || Box::new(ToTex::default()) as Box<dyn Operator>,
     ))
 }
@@ -88,7 +88,12 @@ impl Operator for ToTex {
         let name = attr_name(cx, "attribute")?;
         let width = u32::try_from(cx.int("width")?.max(0)).unwrap_or(0);
         let grid = cx.text("layout")? == "auto";
-        let count = points.count().at_most();
+        // A count on the GPU moves from frame to frame: the picture holds the capacity, so it
+        // keeps its size.
+        let count = match points.count().known() {
+            Some(n) => n,
+            None => points.capacity().max(points.count().at_most()),
+        };
         let (w, h) = picture_size(count, points.dims(), grid, width);
         let most = gpu.max_texture_size();
         if w > most || h > most {

@@ -172,13 +172,14 @@ fn nodes_after_a_delete_stop_at_the_live_count() {
         let want = if i < 12 { 12.0 + i as f32 / 11.0 } else { 0.0 };
         assert!((s - want).abs() < 1e-5, "{i}: {s}");
     }
-    // The picture: sized for the 20 there may be, the 12 alive, then transparent black.
+    // The picture: sized for the capacity of 1024, so it keeps its size while the count
+    // moves; the 12 alive, then transparent black.
     let tex = rig.cook_until_new("/pic", 0);
-    assert_eq!(tex.size(), (5, 4));
+    assert_eq!(tex.size(), (32, 32));
     let px = rig.gpu.read(&tex).unwrap();
     let want = pick(&all, |i| i % 5 >= 2);
-    for j in 0..20u32 {
-        let got = px.get(j % 5, j / 5).unwrap();
+    for j in 0..1024u32 {
+        let got = px.get(j % 32, j / 32).unwrap();
         match want.get(j as usize) {
             Some(q) => assert_eq!(got, *q, "{j}"),
             None => assert_eq!(got, [0.0; 4], "{j}"),
