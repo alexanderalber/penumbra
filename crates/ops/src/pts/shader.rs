@@ -102,6 +102,9 @@ impl Operator for Shader {
                 Ok(Parsed { label, source, header })
             }));
         }
+        if cx.exact_frames() {
+            super::program::finish(&mut self.file);
+        }
 
         let Some(parsed) = self.file.latest().cloned() else {
             return Err(match self.file.error() {

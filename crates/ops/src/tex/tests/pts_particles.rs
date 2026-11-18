@@ -583,3 +583,47 @@ fn random_values_and_random_deletes_stay_with_the_particle() {
     let share = kept.values().filter(|k| **k).count() as f64 / kept.len() as f64;
     assert!((0.2..0.8).contains(&share), "about half kept: {share}");
 }
+
+/// Under exact frames (stepping, recording) a frame waits for the programs it needs: the first
+/// frame of a loop nobody compiled yet and the frame after an expression changed run the new
+/// programs, so stepping gives the same particles however long a compile takes.
+#[test]
+fn exact_frames_wait_for_every_compile() {
+    let ops = [
+        one_point(),
+        create("/p", KIND, &[("rate", Value::Float(60.0)), ("life", Value::Float(100.0))]),
+        connect("/src", "/p", 0),
+        // An expression no other test compiles, so it is not in the process's cache.
+        create("/m", "pts.math", &[("expression", "0.0 * 0.12345".into()), ("result", "kill".into())]),
+        connect("/p", "/m", 0),
+        create(
+            "/f",
+            crate::pts::force::KIND,
+            &[("kind", "vortex".into()), ("strength", Value::Float(0.4321))],
+        ),
+        connect("/m", "/f", 0),
+        create("/end", "pts.null", &[]),
+        connect("/f", "/end", 0),
+        connect("/end", "/p", 1),
+    ];
+    let Some(mut rig) = rig_of(&ops) else { return };
+    rig.cooker.set_exact_frames(true);
+    for n in 1..=12usize {
+        if n == 10 {
+            rig.edit(&[set("/m.expression", "1.0 + 0.12345".into())]);
+        }
+        rig.clock.advance(1);
+        rig.cook("/end");
+        for path in ["/p", "/m", "/f", "/end"] {
+            let s = rig.cooker.status(rig.id(path)).unwrap();
+            assert_eq!((s.error.as_deref(), s.warning.as_deref()), (None, None), "frame {n}: {path}");
+            assert!(s.has_output, "frame {n}: {path} has its result");
+        }
+        let p = output(&rig, "/p");
+        // One birth a frame; from frame 10 on the loop kills every particle, so from frame 11
+        // on only the one born in the frame is there.
+        let want = if n <= 10 { n } else { 1 };
+        assert_eq!(live(&rig, &p), want, "frame {n}");
+        assert!(live(&rig, &output(&rig, "/end")) == want, "frame {n}: the loop ran this frame");
+    }
+}
