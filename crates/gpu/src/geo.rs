@@ -421,16 +421,30 @@ impl Item {
     }
 
     /// The model's box in the item's space; with instances, the extent grown by the model's
-    /// reach from its origin in any direction (a copy may be turned and scaled).
+    /// reach from its origin in any direction (a copy may be turned and scaled). Sprites
+    /// ([`Instances::face_camera`]) are sized in the world's units, so their reach is left out
+    /// here: [`Item::sprite_reach`], which [`Geo::bounds`] adds in the world.
     pub fn bounds(&self) -> Option<Bounds> {
         let b = self.model.bounds?;
         let Some(inst) = &self.instances else { return Some(b) };
-        let size = if inst.size.is_finite() { inst.size.abs() } else { 1.0 };
-        let reach =
-            b.corners().iter().map(|c| c.iter().map(|x| x * x).sum::<f32>().sqrt()).fold(0.0, f32::max)
-                * size;
+        let reach = if inst.face_camera { 0.0 } else { self.reach(b, inst) };
         let e = if inst.extent.is_finite() { inst.extent.max(0.0) } else { 0.0 } + reach;
         Some(Bounds { min: [-e; 3], max: [e; 3] })
+    }
+
+    /// How far a sprite reaches from its point in any direction, in the world's units; 0 for
+    /// anything but sprites.
+    pub fn sprite_reach(&self) -> f32 {
+        match (&self.instances, self.model.bounds) {
+            (Some(inst), Some(b)) if inst.face_camera => self.reach(b, inst),
+            _ => 0.0,
+        }
+    }
+
+    /// The model's reach from its origin times the instances' size.
+    fn reach(&self, b: Bounds, inst: &Instances) -> f32 {
+        let size = if inst.size.is_finite() { inst.size.abs() } else { 1.0 };
+        b.corners().iter().map(|c| c.iter().map(|x| x * x).sum::<f32>().sqrt()).fold(0.0, f32::max) * size
     }
 }
 
@@ -632,14 +646,17 @@ impl Geo {
         self.items.iter().map(|i| i.model.mesh.vertices.len()).sum()
     }
 
-    /// The world bounds: each model's box moved by its matrix.
+    /// The world bounds: each model's box moved by its matrix, sprites grown by their size.
     pub fn bounds(&self) -> Option<Bounds> {
         let mut out: Option<Bounds> = None;
         for item in &self.items {
             let Some(b) = item.bounds() else { continue };
+            let r = item.sprite_reach();
             for c in b.corners() {
                 let p = transform(&item.world, c.map(f64::from)).map(|x| x as f32);
-                out = Some(out.map_or(Bounds { min: p, max: p }, |o| o.with(p)));
+                for q in [p.map(|v| v - r), p.map(|v| v + r)] {
+                    out = Some(out.map_or(Bounds { min: q, max: q }, |o| o.with(q)));
+                }
             }
         }
         out
@@ -725,6 +742,36 @@ mod tests {
         let loaded = parse(tris);
         assert!(loaded.mesh.inner_edges.is_empty());
         assert_eq!(inner_edges(&loaded.mesh), vec![0b010, 0b100]);
+    }
+
+    #[test]
+    fn sprites_keep_their_world_size_in_the_bounds_of_a_scaled_item() {
+        let Some(gpu) = crate::testing::gpu() else { return };
+        let (model, _) =
+            Model::upload(&gpu, penumbra_mesh::prim::plane([1.0, 1.0]).unwrap(), "sprite").unwrap();
+        let position = crate::Tex::new_float(&gpu, 1, 1, "position").unwrap();
+        // One point at the origin, a sprite 1 m wide in the world, the cloud scaled down 100
+        // times after: the sprite stays 1 m wide, so the box must reach half a metre out.
+        let sprites = Instances { size: 1.0, face_camera: true, ..Instances::of(position) };
+        let mut item = Item {
+            model: Arc::new(model),
+            world: scale(0.01, 0.01, 0.01),
+            part_offset: 0,
+            material: None,
+            instances: Some(Arc::new(sprites.clone())),
+        };
+        let reach = |item: &Item| {
+            let geo = Geo { items: vec![item.clone()], preview: None };
+            let b = geo.bounds().unwrap();
+            b.max[0].min(-b.min[0])
+        };
+        assert!(reach(&item) >= 0.5 * 2f32.sqrt() - 1e-4, "{}", reach(&item));
+        // Scaled up, no more than needed.
+        item.world = scale(100.0, 100.0, 100.0);
+        assert!((reach(&item) - 0.5 * 2f32.sqrt()).abs() < 1e-3, "{}", reach(&item));
+        // Copies scale with the item.
+        item.instances = Some(Arc::new(Instances { face_camera: false, ..sprites }));
+        assert!((reach(&item) - 50.0 * 2f32.sqrt()).abs() < 1e-2, "{}", reach(&item));
     }
 
     #[test]
