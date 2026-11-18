@@ -2427,7 +2427,7 @@ Outputs:
 | `order` *(more)* | srt \| str \| rst \| rts \| tsr \| trs | `"srt"` |  | The order of scale, rotate and translate. Each step also acts on what the steps before it did; srt: scale, rotate, translate: the move follows the world axes, whatever the turn and size; str: scale, translate, rotate: the move turns with rotate, so the cloud circles the pivot; rst: rotate, scale, translate: a non-uniform scale stretches along the world axes and skews a turned cloud; rts: rotate, translate, scale: the move grows with scale, and a non-uniform scale skews a turned cloud; tsr: translate, scale, rotate: the move grows with scale and turns with rotate, circling the pivot; trs: translate, rotate, scale: the move turns and grows, and a non-uniform scale skews a turned cloud |
 | `attribute` *(more)* | text | `"position"` |  | The attribute of three numbers that is transformed, TouchDesigner's names too (P, PartVel) |
 | `meaning` *(more)* | point \| direction | `"point"` |  | What the attribute's numbers are; point: a place: it moves, turns and scales about the pivot; direction: a direction or a speed, such as velocity: it turns and scales, translate and pivot do not count |
-| `normals` *(more)* | bool | `true` |  | Turns `normal` with the points, where they have one, so lit copies and sprites stay right |
+| `normals` *(more)* | bool | `true` |  | Turns `normal` with the points, where they have one, so lit copies stay right. Only when the attribute is position |
 
 ## geo
 

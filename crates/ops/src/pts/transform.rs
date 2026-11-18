@@ -4,7 +4,7 @@
 
 use penumbra_core::{Error, ParamSpec, Unit, Value};
 use penumbra_gpu::Gpu;
-use penumbra_gpu::geo::{Mat4, mul};
+use penumbra_gpu::geo::{Mat4, mul, normal_matrix};
 use penumbra_gpu::points::AttrType;
 use penumbra_gpu::points::program::{self, Decl, Program, Spec};
 use penumbra_graph::{
@@ -66,7 +66,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .param(
                 ParamSpec::bool("normals", true)
                     .more()
-                    .doc("Turns `normal` with the points, where they have one, so lit copies and sprites stay right"),
+                    .doc("Turns `normal` with the points, where they have one, so lit copies stay right. Only when the attribute is position"),
             )
             .input("in", DataKind::Pts)
             .output("out", DataKind::Pts)
@@ -79,30 +79,6 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 /// The rows of the matrix and of the normals' matrix, for the program.
 fn program_params() -> Vec<ParamSpec> {
     ["m0", "m1", "m2", "n0", "n1", "n2"].iter().map(|n| ParamSpec::vec4(n, [0.0; 4])).collect()
-}
-
-/// `m` without translation, its upper 3 x 3.
-fn linear(m: &Mat4) -> [[f64; 3]; 3] {
-    let [a, b, c, _] = m;
-    [[a[0], a[1], a[2]], [b[0], b[1], b[2]], [c[0], c[1], c[2]]]
-}
-
-/// The matrix that turns normals with `m`: the inverse transposed of its upper 3 x 3, or `None`
-/// where it squashes space flat.
-fn normal_matrix(m: &Mat4) -> Option<[[f64; 3]; 3]> {
-    let [[a, b, c], [d, e, f], [g, h, i]] = linear(m);
-    let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-    if det.abs() < 1e-12 || !det.is_finite() {
-        return None;
-    }
-    // The cofactor matrix is the inverse transposed times the determinant; the length of a
-    // normal is set again in the program, so only its sign counts.
-    let s = det.signum();
-    Some([
-        [s * (e * i - f * h), s * (f * g - d * i), s * (d * h - e * g)],
-        [s * (c * h - b * i), s * (a * i - c * g), s * (b * g - a * h)],
-        [s * (b * f - c * e), s * (c * d - a * f), s * (a * e - b * d)],
-    ])
 }
 
 /// `m` applied to the point `p`.
@@ -151,9 +127,14 @@ fn spec(target: &str, vec4: bool, point: bool, turn_normals: bool) -> Spec {
     let mut decls = vec![Decl::write(target)];
     if turn_normals {
         decls.push(Decl::write("normal"));
+        // The normals' matrix (the cofactors) takes a normal to the one of the moved surface.
+        // Where the transform squashes the points flat, it gives zero for a normal lying in
+        // the flat plane: such a normal turns as a direction does. One left zero stays.
         body.push_str(
             "    let pts_n = vec3f(dot(params.n0.xyz, normal), dot(params.n1.xyz, normal), dot(params.n2.xyz, normal));
-                 normal = select(normal, normalize(pts_n), dot(pts_n, pts_n) > 0.0);
+    let pts_d = vec3f(dot(params.m0.xyz, normal), dot(params.m1.xyz, normal), dot(params.m2.xyz, normal));
+    let pts_t = select(pts_d, pts_n, dot(pts_n, pts_n) > 1e-12);
+    normal = select(normal, normalize(pts_t), dot(pts_t, pts_t) > 1e-24);
 ",
         );
     }
@@ -220,17 +201,14 @@ impl Operator for Transform {
             )));
         }
         let vec4 = ty == Some(AttrType::Vec4);
-        let normal_m = normal_matrix(&m);
-        let turn_normals = cx.bool("normals")?
-            && target != "normal"
-            && points.attr("normal").is_some()
-            && normal_m.is_some();
+        // Normals belong to the positions: they turn when the points move, not with another
+        // attribute.
+        let turn_normals = cx.bool("normals")? && target == "position" && points.attr("normal").is_some();
         let spec = spec(target, vec4, point, turn_normals);
         let row4 = |r: &[f64; 4]| Value::Vec4(*r);
         let row3 = |r: &[f64; 3]| Value::Vec4([r[0], r[1], r[2], 0.0]);
         let [m0, m1, m2, _] = &m;
-        let n = normal_m.unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
-        let [n0, n1, n2] = &n;
+        let [n0, n1, n2] = &normal_matrix(&m);
         let param = |name: &str| match name {
             "m0" => Some(row4(m0)),
             "m1" => Some(row4(m1)),

@@ -467,3 +467,36 @@ fn random_values_of_different_attributes_are_unrelated() {
     rig.edit(&[set("/colour.distribution", "normal".into())]);
     assert!(fresh(&mut rig, "/colour", "color").iter().all(|c| c[3] == 1.0));
 }
+
+#[test]
+fn transform_turns_normals_of_flattened_points_and_only_with_positions() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        grid(1, 2),
+        create(
+            "/t",
+            "pts.transform",
+            &[("rotate", Value::Vec3([0.0, 0.0, 90.0])), ("scale", Value::Vec3([1.0, 1.0, 0.0]))],
+        ),
+        connect("/grid", "/t", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let near = |a: [f32; 4], b: [f32; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-5);
+    // Squashed flat along z and turned a quarter: the normal (0, -1, 0) lies in the flat plane
+    // and turns with it.
+    let n = fresh(&mut rig, "/t", "normal");
+    assert!(near(n[0], [1.0, 0.0, 0.0]), "{:?}", n[0]);
+    // Squashed along the normal itself: it stays the plane's normal, turned.
+    rig.edit(&[set("/t.scale", Value::Vec3([1.0, 0.0, 1.0]))]);
+    let n = fresh(&mut rig, "/t", "normal");
+    assert!(near(n[0], [1.0, 0.0, 0.0]), "{:?}", n[0]);
+    // A velocity transformed leaves the normals as they are.
+    rig.edit(&[
+        set("/t.scale", Value::Vec3([1.0; 3])),
+        set("/t.attribute", "velocity".into()),
+        set("/t.meaning", "direction".into()),
+    ]);
+    let p = points(&mut rig, "/t");
+    assert!(near(read(&rig, &p, "normal")[0], [0.0, -1.0, 0.0]), "{:?}", read(&rig, &p, "normal")[0]);
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
