@@ -726,6 +726,11 @@ fn main() {
             continue;
         }
         for (input, spec) in desc.inputs.iter().enumerate() {
+            // The end of a particle loop is the particles' own result, never another set of
+            // points: unwired, the node steps on its own.
+            if spec.previous && kind == crate::pts::particles::KIND {
+                continue;
+            }
             let feed = match spec.kind {
                 penumbra_graph::DataKind::Tex => Some("/feed"),
                 penumbra_graph::DataKind::Geo => Some("/geo_feed"),
@@ -2899,6 +2904,8 @@ mod mesh_out;
 mod palettes;
 mod pts;
 mod pts_count;
+mod pts_forces;
+mod pts_particles;
 mod pts_pictures;
 mod pts_programs;
 mod reduce;

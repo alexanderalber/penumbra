@@ -3,16 +3,22 @@
 //! geometry that `tex.render` draws. `pts.from_tex` and `tex.from_pts` turn pictures into points
 //! and back; `pts.lookup_tex` colours points from a picture. `pts.delete` drops points, after
 //! which their count is known on the GPU only ([`penumbra_gpu::points::Count`]).
+//! `pts.particles` makes points that are born, move and die, pushed by `pts.force` in its loop
+//! and masked by `pts.field`; `pts.feedback` closes a loop of any points.
 
 use penumbra_core::Error;
 use penumbra_graph::{DataKind, FnNodeType, NodeDesc, NodeTypes, Operator};
 
 pub mod delete;
+pub mod feedback;
+pub mod field;
+pub mod force;
 pub mod from_tex;
 pub mod generate;
 pub mod lookup_tex;
 pub mod math;
 pub mod noise;
+pub mod particles;
 pub(crate) mod program;
 pub mod random;
 pub mod shader;
@@ -34,6 +40,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     lookup_tex::register(types)?;
     delete::register(types)?;
     to_chan::register(types)?;
+    particles::register(types)?;
+    feedback::register(types)?;
+    force::register(types)?;
+    field::register(types)?;
     types.register(FnNodeType::new(
         NodeDesc::new("pts.null", "Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes")
             .input("in", DataKind::Pts)

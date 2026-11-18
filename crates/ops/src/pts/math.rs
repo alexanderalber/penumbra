@@ -32,7 +32,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     .param(
         ParamSpec::text("expression", "position")
             .lines(2)
-            .doc("A WGSL expression, worked out once per point. It can name attributes (position, color, P, Color), index, count, index01 (0 at the first point, 1 at the last), time, dt, frame, rand(k) and rand3(k), a, b, c and d, and WGSL's functions: sin, clamp, mix, smoothstep, length, normalize, ... One number fills every number of the result"),
+            .doc("A WGSL expression, worked out once per point. It can name attributes (position, color, P, Color), index, count, index01 (0 at the first point, 1 at the last), time, dt, frame, rand(k) and rand3(k) (by index), rand_key(id, k) and rand3_key(id, k) (by a particle's id, so they stay with it), a, b, c and d, and WGSL's functions: sin, clamp, mix, smoothstep, length, normalize, ... One number fills every number of the result"),
     )
     .param(
         ParamSpec::text("result", "position")

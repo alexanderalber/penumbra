@@ -1,0 +1,294 @@
+//! `pts.force` and `pts.field` by the numbers, `pts.feedback` carrying points over frames, and
+//! particles drawn end to end, on WARP.
+
+use penumbra_core::Value;
+use penumbra_gpu::Points;
+
+use super::geo::{render, rig};
+use super::pts::{coverage, points};
+use super::pts_particles::{live, values};
+use super::{Rig, connect, create, gpu, set};
+
+/// Five points on the x axis at -2, -1, 0, 1, 2.
+fn line() -> penumbra_graph::Op {
+    create(
+        "/line",
+        "pts.generate",
+        &[("shape", "line".into()), ("count", Value::Int(5)), ("size", Value::Vec3([4.0, 0.0, 0.0]))],
+    )
+}
+
+fn close(a: [f32; 4], b: [f32; 3]) -> bool {
+    (0..3).all(|k| (a[k] - b[k]).abs() < 1e-4)
+}
+
+/// The `force` of the five points after `edits`.
+fn forces(rig: &mut Rig, edits: Vec<penumbra_graph::Op>) -> Vec<[f32; 4]> {
+    rig.edit(&edits);
+    let p = points(rig, "/f");
+    values(rig, &p, "force")
+}
+
+#[test]
+fn each_force_pushes_its_way_and_falls_off_with_distance() {
+    let Some(gpu) = gpu() else { return };
+    let ops =
+        [line(), create("/f", "pts.force", &[("strength", Value::Float(2.0))]), connect("/line", "/f", 0)];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let p = points(&mut rig, "/line");
+    let xs: Vec<f32> = values(&rig, &p, "position").iter().map(|v| v[0]).collect();
+    assert_eq!(xs, [-2.0, -1.0, 0.0, 1.0, 2.0]);
+    let check = |got: &[[f32; 4]], want: &[[f32; 3]], what: &str| {
+        for (g, w) in got.iter().zip(want) {
+            assert!(close(*g, *w), "{what}: {got:?}");
+        }
+    };
+    let f = forces(&mut rig, vec![]);
+    check(&f, &[[2.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0; 3], [-2.0, 0.0, 0.0], [-2.0, 0.0, 0.0]], "attract");
+    let f = forces(&mut rig, vec![set("/f.kind", "repel".into())]);
+    check(&f, &[[-2.0, 0.0, 0.0], [-2.0, 0.0, 0.0], [0.0; 3], [2.0, 0.0, 0.0], [2.0, 0.0, 0.0]], "repel");
+    let f = forces(&mut rig, vec![set("/f.falloff", "linear".into()), set("/f.radius", Value::Float(2.0))]);
+    check(&f, &[[0.0; 3], [-1.0, 0.0, 0.0], [0.0; 3], [1.0, 0.0, 0.0], [0.0; 3]], "linear");
+    let f = forces(&mut rig, vec![set("/f.falloff", "smooth".into())]);
+    check(
+        &f,
+        &[[0.0; 3], [-1.0, 0.0, 0.0], [0.0; 3], [1.0, 0.0, 0.0], [0.0; 3]],
+        "smooth: half way at half the radius",
+    );
+    let f = forces(
+        &mut rig,
+        vec![set("/f.falloff", "inverse_square".into()), set("/f.radius", Value::Float(1.0))],
+    );
+    check(
+        &f,
+        &[[-0.4, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0; 3], [1.0, 0.0, 0.0], [0.4, 0.0, 0.0]],
+        "inverse square",
+    );
+    // Towards and around the z axis through x = 1.
+    let f = forces(
+        &mut rig,
+        vec![
+            set("/f.falloff", "none".into()),
+            set("/f.kind", "axis".into()),
+            set("/f.center", Value::Vec3([1.0, 0.0, 5.0])),
+        ],
+    );
+    check(&f, &[[2.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0; 3], [-2.0, 0.0, 0.0]], "axis");
+    let f = forces(&mut rig, vec![set("/f.kind", "vortex".into())]);
+    check(
+        &f,
+        &[[0.0, -2.0, 0.0], [0.0, -2.0, 0.0], [0.0, -2.0, 0.0], [0.0; 3], [0.0, 2.0, 0.0]],
+        "vortex, anticlockwise",
+    );
+    let f = forces(
+        &mut rig,
+        vec![set("/f.kind", "direction".into()), set("/f.direction", Value::Vec3([0.0, 0.0, -3.0]))],
+    );
+    check(&f, &[[0.0, 0.0, -2.0]; 5], "direction: its length does not count");
+    // Wind of 3 m/s along x on points at rest: strength times the difference in speed.
+    let f = forces(
+        &mut rig,
+        vec![
+            set("/f.kind", "wind".into()),
+            set("/f.direction", Value::Vec3([3.0, 0.0, 0.0])),
+            set("/f.strength", Value::Float(0.5)),
+        ],
+    );
+    check(&f, &[[1.5, 0.0, 0.0]; 5], "wind");
+    // A mask: weight 0 at the first point, 1 at the last.
+    rig.edit(&[
+        create("/w", "pts.math", &[("expression", "index01".into()), ("result", "weight".into())]),
+        connect("/line", "/w", 0),
+        connect("/w", "/f", 0),
+    ]);
+    points(&mut rig, "/w");
+    let f = forces(&mut rig, vec![]);
+    check(
+        &f,
+        &[[0.0; 3], [0.375, 0.0, 0.0], [0.75, 0.0, 0.0], [1.125, 0.0, 0.0], [1.5, 0.0, 0.0]],
+        "masked by weight",
+    );
+    let f = forces(&mut rig, vec![set("/f.mask", "".into())]);
+    check(&f, &[[1.5, 0.0, 0.0]; 5], "no mask");
+    // Into velocity, added at once; an existing value is added to.
+    let p = {
+        rig.edit(&[set("/f.attribute", "velocity".into()), set("/f.kind", "direction".into())]);
+        points(&mut rig, "/f")
+    };
+    let v = values(&rig, &p, "velocity");
+    check(&v, &[[0.5, 0.0, 0.0]; 5], "velocity: strength 0.5 along x");
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
+
+#[test]
+fn each_field_shape_weighs_the_points() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        line(),
+        create(
+            "/field",
+            "pts.field",
+            &[("radius", Value::Float(1.0)), ("falloff", Value::Float(0.0)), ("distance", "gap".into())],
+        ),
+        connect("/line", "/field", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let mut weights = |edits: Vec<penumbra_graph::Op>| -> (Vec<f32>, Points) {
+        rig.edit(&edits);
+        let p = points(&mut rig, "/field");
+        (values(&rig, &p, "weight").iter().map(|v| v[0]).collect(), p)
+    };
+    let (w, p) = weights(vec![]);
+    assert_eq!(w, [0.0, 1.0, 1.0, 1.0, 0.0], "sphere");
+    let _ = p;
+    let (w, _) = weights(vec![set("/field.falloff", Value::Float(2.0))]);
+    assert_eq!(w, [0.5, 1.0, 1.0, 1.0, 0.5], "a soft edge two metres wide");
+    let (w, _) = weights(vec![
+        set("/field.falloff", Value::Float(0.0)),
+        set("/field.shape", "box".into()),
+        set("/field.size", Value::Vec3([2.2, 1.0, 1.0])),
+    ]);
+    assert_eq!(w, [0.0, 1.0, 1.0, 1.0, 0.0], "box");
+    let (w, _) = weights(vec![
+        set("/field.shape", "plane".into()),
+        set("/field.normal", Value::Vec3([2.0, 0.0, 0.0])),
+    ]);
+    assert_eq!(w, [0.0, 0.0, 1.0, 1.0, 1.0], "plane: the side the normal points to");
+    let (w, _) = weights(vec![
+        set("/field.shape", "capsule".into()),
+        set("/field.axis", Value::Vec3([1.0, 0.0, 0.0])),
+        set("/field.length", Value::Float(2.0)),
+        set("/field.radius", Value::Float(0.5)),
+    ]);
+    assert_eq!(w, [0.0, 1.0, 1.0, 1.0, 0.0], "capsule");
+    let (w, _) = weights(vec![set("/field.invert", Value::Bool(true))]);
+    assert_eq!(w, [1.0, 0.0, 0.0, 0.0, 1.0], "inverted");
+    // The distance from the edge: half a metre beyond the round ends at the outer points.
+    let (_, p) = weights(vec![]);
+    let gap: Vec<f32> = values(&rig, &p, "gap").iter().map(|v| v[0]).collect();
+    assert_eq!(gap, [0.5, -0.5, -0.5, -0.5, 0.5]);
+    // Combined with a weight there already: 0.5 everywhere.
+    rig.edit(&[
+        create("/half", "pts.math", &[("expression", "0.5".into()), ("result", "weight".into())]),
+        connect("/line", "/half", 0),
+        connect("/half", "/field", 0),
+        set("/field.invert", Value::Bool(false)),
+    ]);
+    points(&mut rig, "/half");
+    let mut w_of = |combine: &str| {
+        rig.edit(&[set("/field.combine", combine.into())]);
+        let p = points(&mut rig, "/field");
+        values(&rig, &p, "weight").iter().map(|v| v[0]).collect::<Vec<f32>>()
+    };
+    assert_eq!(w_of("multiply"), [0.0, 0.5, 0.5, 0.5, 0.0]);
+    assert_eq!(w_of("add"), [0.5, 1.5, 1.5, 1.5, 0.5]);
+    assert_eq!(w_of("max"), [0.5, 1.0, 1.0, 1.0, 0.5]);
+    assert_eq!(w_of("min"), [0.0, 0.5, 0.5, 0.5, 0.0]);
+    assert_eq!(w_of("set"), [0.0, 1.0, 1.0, 1.0, 0.0]);
+}
+
+/// A loop of points: each frame lifts them by 10 cm and deletes the first one; the first frame
+/// passes `initial`, a reset starts from it again.
+#[test]
+fn feedback_carries_points_over_frames_whatever_the_loop_does_to_them() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        line(),
+        create("/fb", "pts.feedback", &[]),
+        connect("/line", "/fb", 0),
+        create("/lift", "pts.transform", &[("translate", Value::Vec3([0.0, 0.0, 0.1]))]),
+        connect("/fb", "/lift", 0),
+        create("/del", "pts.delete", &[("by", "index".into())]),
+        connect("/lift", "/del", 0),
+        create("/heat", "pts.math", &[("expression", "1.0".into()), ("result", "heat".into())]),
+        connect("/del", "/heat", 0),
+        connect("/heat", "/fb", 1),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    // Until the loop's programs compile it carries nothing back; then frame by frame.
+    let first = points(&mut rig, "/heat");
+    let n0 = live(&rig, &first);
+    let z0 = values(&rig, &first, "position")[0][2];
+    let mut want = (n0, z0);
+    for _ in 0..3 {
+        let p = points(&mut rig, "/heat");
+        want = (want.0 - 1, want.1 + 0.1);
+        assert_eq!(live(&rig, &p), want.0, "one point fewer each frame");
+        let pos = values(&rig, &p, "position");
+        assert!((pos[0][2] - want.1).abs() < 1e-5, "{pos:?}");
+        assert!(p.attr("heat").is_some(), "an attribute the input lacks comes round");
+    }
+    // Reset: `initial` again.
+    rig.edit(&[set("/fb.reset", Value::Bool(true))]);
+    let p = points(&mut rig, "/fb");
+    assert_eq!(live(&rig, &p), 5);
+    assert!(p.attr("heat").is_none());
+    rig.edit(&[set("/fb.reset", Value::Bool(false))]);
+    let id = rig.id("/fb");
+    rig.cooker.reset(id);
+    let p = points(&mut rig, "/fb");
+    assert_eq!(
+        (live(&rig, &p), values(&rig, &p, "position")[0][2]),
+        (5, 0.0),
+        "node.reset starts from `initial`"
+    );
+}
+
+/// Particles from a point, fanned out, drawn as sprites: more of the picture covered as they
+/// spread; none drawn while `reset` holds them.
+#[test]
+fn particles_draw_end_to_end() {
+    let Some(gpu) = gpu() else { return };
+    let ops = vec![
+        create(
+            "/src",
+            "pts.generate",
+            &[("shape", "line".into()), ("count", Value::Int(1)), ("size", Value::Vec3([0.0; 3]))],
+        ),
+        create(
+            "/p",
+            crate::pts::particles::KIND,
+            &[
+                ("rate", Value::Float(600.0)),
+                ("life", Value::Float(5.0)),
+                ("spread", Value::Float(2.0)),
+                ("max", Value::Int(400)),
+            ],
+        ),
+        connect("/src", "/p", 0),
+        // Drawn from the end of a loop, as a network with forces is.
+        create("/end", "pts.null", &[]),
+        connect("/p", "/end", 0),
+        connect("/end", "/p", 1),
+        create("/sprites", "geo.from_pts", &[("size", Value::Float(0.1)), ("sprite", "square".into())]),
+        connect("/end", "/sprites", 0),
+        create("/white", "mat.constant", &[]),
+        create("/lit", "geo.assign_material", &[]),
+        connect("/sprites", "/lit", 0),
+        connect("/white", "/lit", 1),
+        render("/front", &[("position", Value::Vec3([0.0, -8.0, 0.0])), ("antialias", Value::Bool(false))]),
+        connect("/lit", "/front", 0),
+    ];
+    let mut rig = rig(gpu, None, &ops);
+    rig.types.get(crate::pts::particles::KIND).unwrap().warm_up(&rig.gpu).unwrap();
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        for _ in 0..10 {
+            rig.clock.advance(1);
+            rig.cook("/front");
+        }
+        let px = rig.gpu.read(&rig.tex("/front").unwrap()).unwrap();
+        let (n, b) = coverage(&px);
+        seen.push((n, b[2].saturating_sub(b[0])));
+    }
+    assert!(seen[0].0 > 10, "{seen:?}");
+    assert!(seen[2].1 > seen[0].1 * 3 / 2, "the cloud widens: {seen:?}");
+    let p = rig.cooker.output(penumbra_graph::Port { node: rig.id("/p"), output: 0 }).unwrap();
+    assert_eq!(live(&rig, p.get::<Points>().unwrap()), 300, "ten births a frame, thirty frames");
+    rig.edit(&[set("/p.reset", Value::Bool(true))]);
+    rig.clock.advance(1);
+    rig.cook("/front");
+    let px = rig.gpu.read(&rig.tex("/front").unwrap()).unwrap();
+    assert_eq!(coverage(&px).0, 0, "no particles, nothing drawn");
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
