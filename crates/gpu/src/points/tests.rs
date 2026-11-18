@@ -145,3 +145,71 @@ fn attributes_become_pictures_of_one_texel_per_point() {
     assert!(Points::empty().attr_texture(&gpu, "position", &mut ring, &mut scratch).unwrap().is_none());
     assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
 }
+
+#[test]
+fn replacing_or_removing_positions_drops_the_bounds() {
+    let Some(gpu) = gpu() else { return };
+    let vec3 = || Buffer::of::<[f32; 4]>(&gpu, 4, "p").unwrap();
+    let position = Attr::new("position", AttrType::Vec3, vec3()).unwrap();
+    let bounds = penumbra_mesh::Bounds::of([[0.0; 3], [1.0; 3]]);
+    let p = Points::new(4, 4, vec![position]).unwrap().with_bounds(bounds);
+    let normal = Attr::new("normal", AttrType::Vec3, vec3()).unwrap();
+    assert!(p.with_attr(normal).unwrap().bounds().is_some(), "another attribute keeps them");
+    assert!(p.without("normal").bounds().is_some());
+    let moved = Attr::new("P", AttrType::Vec3, vec3()).unwrap();
+    assert!(p.with_attr(moved).unwrap().bounds().is_none(), "new positions, no box known");
+    assert!(p.without("P").bounds().is_none(), "no positions, no box");
+}
+
+#[test]
+fn a_ring_whose_buffers_are_all_held_forgets_the_oldest() {
+    let Some(gpu) = gpu() else { return };
+    let mut ring = BufferRing::new();
+    let held: Vec<Buffer> = (0..3).map(|_| ring.next(&gpu, 16, "held").unwrap()).collect();
+    let fourth = ring.next(&gpu, 16, "fourth").unwrap();
+    assert!(held.iter().all(|b| !b.same(&fourth)));
+    assert_eq!(ring.bytes(), 48, "still three");
+    assert!(!ring.iter().any(|b| b.same(&held[0])), "the oldest is forgotten, its holder keeps it");
+    assert!(ring.iter().any(|b| b.same(&fourth)));
+}
+
+#[test]
+fn every_count_and_type_lands_on_its_texel() {
+    let Some(gpu) = gpu() else { return };
+    let mut ring = TexRing::new();
+    let mut scratch = BufferRing::new();
+    // One point; part of a row; exactly two whole rows. As u32 (expanded) and as vec3f (copied).
+    for n in [1u32, 20, 2048] {
+        let ids: Vec<u32> = (0..n).map(|i| i * 3).collect();
+        let id = Buffer::new(&gpu, u64::from(n) * 4, "id").unwrap();
+        id.write(&gpu, 0, &ids).unwrap();
+        let pos: Vec<[f32; 4]> = (0..n).map(|i| [i as f32, 1.0, 2.0, 1.0]).collect();
+        let p = Buffer::new(&gpu, u64::from(n) * 16, "p").unwrap();
+        p.write(&gpu, 0, &pos).unwrap();
+        let points = Points::new(
+            n,
+            n,
+            vec![
+                Attr::new("id", AttrType::U32, id).unwrap(),
+                Attr::new("position", AttrType::Vec3, p).unwrap(),
+            ],
+        )
+        .unwrap();
+        let (w, h) = texel_size(n);
+        for name in ["id", "position"] {
+            let tex = points.attr_texture(&gpu, name, &mut ring, &mut scratch).unwrap().unwrap();
+            assert_eq!(tex.size(), (w, h), "{n}");
+            let px = gpu.read(&tex).unwrap();
+            for i in [0, n / 2, n - 1] {
+                let want = if name == "id" {
+                    let v = (i * 3) as f32;
+                    [v, v, v, 1.0]
+                } else {
+                    [i as f32, 1.0, 2.0, 1.0]
+                };
+                assert_eq!(px.get(i % w, i / w), Some(want), "{name} {i} of {n}");
+            }
+        }
+    }
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}

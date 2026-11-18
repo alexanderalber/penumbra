@@ -83,9 +83,22 @@ fn main() {
     assert_eq!(tag[..5], [5; 5]);
     assert_eq!(out.attr("tag").unwrap().ty(), AttrType::U32);
 
-    // Run again: new buffers from the ring while the first output is still held.
-    let again = run(&gpu, &program, &out, &mut Outputs::default(), 0.5);
+    // Run again on its own output with the same rings: the first output is still held, so the
+    // ring hands out another buffer and the program never writes what it reads.
+    let again = run(&gpu, &program, &out, &mut outputs, 0.5);
     assert_eq!(read4(&gpu, &again, "position")[2], [2.0, 4.0, 8.0, 1.0]);
+    let buffer = |p: &Points| p.attr("position").unwrap().buffer().clone();
+    assert!(!buffer(&again).same(&buffer(&out)));
+    // Fed back for a few more cooks, dropping what is no longer read: the ring reuses a buffer
+    // nobody holds, never the input's.
+    let mut last = again;
+    for k in 0..4 {
+        let next = run(&gpu, &program, &last, &mut outputs, 0.5);
+        assert!(!buffer(&next).same(&buffer(&last)), "cook {k}");
+        assert_eq!(read4(&gpu, &next, "position")[2][2], 9.0 + k as f32, "cook {k}");
+        last = next;
+    }
+    drop(out);
     assert!(
         Program::compile(&gpu, generate(&spec(source, vec![]), &Shape::of(&input), 16).unwrap()).is_err()
     );
@@ -227,4 +240,93 @@ fn names_wgsl_or_the_program_already_has_are_refused() {
     let max = spec("fn main() {}", vec![Decl::set("max").ty(AttrType::F32)]);
     assert!(generate(&max, &shape, 8).err().is_some_and(|e| e.0.contains("WGSL function")));
     assert!(parse_header("// @write distance float\nfn main() {}").is_err());
+}
+
+#[test]
+fn a_program_keeps_buffers_only_for_what_it_writes() {
+    let Some(gpu) = gpu() else { return };
+    let input = points(&gpu, 1000, 1000);
+    let mut outputs = Outputs::default();
+    // A name typed letter by letter: each one a program of its own over the same rings.
+    for name in ["a", "ab", "abc"] {
+        let decls = vec![Decl::set(name).ty(AttrType::F32)];
+        let source = format!("fn main() {{ {name} = 1.0; }}");
+        let g = generate(&spec(&source, decls), &Shape::of(&input), storage_budget(&gpu)).unwrap();
+        let out = run(&gpu, &Program::compile(&gpu, g).unwrap(), &input, &mut outputs, 1.0);
+        assert!(out.attr(name).is_some());
+    }
+    assert_eq!(outputs.bytes(), 1000 * 4, "one attribute's worth");
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}
+
+#[test]
+fn no_points_still_carry_what_the_program_writes() {
+    let Some(gpu) = gpu() else { return };
+    let source = "fn main() { heat = 2.0; }";
+    for (capacity, count) in [(4, 0), (0, 0)] {
+        let input = if capacity == 0 { Points::empty() } else { points(&gpu, count, capacity) };
+        let decls = vec![Decl::set("heat").ty(AttrType::F32)];
+        let g = generate(&spec(source, decls), &Shape::of(&input), storage_budget(&gpu)).unwrap();
+        let out = run(&gpu, &Program::compile(&gpu, g).unwrap(), &input, &mut Outputs::default(), 1.0);
+        assert_eq!(out.count().known(), Some(0));
+        let heat = out.attr("heat").unwrap_or_else(|| panic!("capacity {capacity}: no heat"));
+        assert_eq!(heat.ty(), AttrType::F32);
+        assert!(heat.len() >= u64::from(capacity));
+    }
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}
+
+#[test]
+fn whole_number_defaults_reach_the_ends_of_their_range() {
+    let Some(gpu) = gpu() else { return };
+    let input = points(&gpu, 2, 2);
+    let decls = vec![
+        Decl::read("low").ty(AttrType::I32).default([-2_147_483_648.0; 4]),
+        Decl::read("high").ty(AttrType::U32).default([4_294_967_296.0; 4]),
+        Decl::set("low_out").ty(AttrType::I32),
+        Decl::set("high_out").ty(AttrType::U32),
+    ];
+    let source = "fn main() { low_out = low; high_out = high; }";
+    let g = generate(&spec(source, decls), &Shape::of(&input), storage_budget(&gpu)).unwrap();
+    let program = Program::compile(&gpu, g).unwrap_or_else(|e| panic!("{e}"));
+    let out = run(&gpu, &program, &input, &mut Outputs::default(), 1.0);
+    assert_eq!(out.attr("low_out").unwrap().buffer().read::<i32>(&gpu).unwrap()[0], i32::MIN);
+    assert_eq!(out.attr("high_out").unwrap().buffer().read::<u32>(&gpu).unwrap()[0], u32::MAX);
+}
+
+#[test]
+fn a_header_with_endless_declarations_is_refused_at_once() {
+    let mut source: String = (0..20_000).map(|i| format!("// @read a{i} float\n")).collect();
+    source.push_str("fn main() {}\n");
+    let started = std::time::Instant::now();
+    let e = parse_header(&source).err().map(|e| e.0).unwrap_or_default();
+    assert!(e.contains("declarations"), "{e}");
+    assert!(started.elapsed().as_secs_f64() < 1.0, "{:?}", started.elapsed());
+    // The same from code: more declarations than any program can use.
+    let decls: Vec<Decl> = (0..20_000).map(|i| Decl::read(&format!("a{i}")).ty(AttrType::F32)).collect();
+    let started = std::time::Instant::now();
+    let e =
+        generate(&spec("fn main() {}", decls), &Shape::default(), 8).err().map(|e| e.0).unwrap_or_default();
+    assert!(e.contains("declarations"), "{e}");
+    assert!(started.elapsed().as_secs_f64() < 1.0, "{:?}", started.elapsed());
+}
+
+#[test]
+fn a_written_vector_has_its_fourth_number_set_and_helpers_count_as_uses() {
+    let Some(gpu) = gpu() else { return };
+    let input = points(&gpu, 3, 3);
+    let source = "
+fn pts_speed() -> f32 {
+    return time * 0.0 + 2.0;
+}
+
+fn main() {
+    velocity = vec3f(pts_speed());
+}";
+    let g = generate(&spec(source, vec![Decl::set("velocity")]), &Shape::of(&input), storage_budget(&gpu))
+        .unwrap();
+    let program = Program::compile(&gpu, g).unwrap();
+    assert!(program.uses_time(), "time read through a function of the source");
+    let out = run(&gpu, &program, &input, &mut Outputs::default(), 1.0);
+    assert_eq!(read4(&gpu, &out, "velocity")[2], [2.0, 2.0, 2.0, 0.0]);
 }

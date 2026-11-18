@@ -128,6 +128,9 @@ pub fn default_of(name: &str) -> Option<&'static Standard> {
     STANDARD.iter().find(|s| s.name == name)
 }
 
+/// The attribute that places the points, and that their bounds are of.
+const POSITION: &str = "position";
+
 /// Longest attribute name.
 const MAX_NAME: usize = 64;
 
@@ -296,21 +299,24 @@ impl Points {
         self.strips
     }
 
-    /// These points with `attr` added, or in place of the attribute of its name. `Err` when
-    /// its buffer holds fewer elements than the capacity, or the points hold [`MAX_ATTRS`]
+    /// These points with `attr` added, or in place of the attribute of its name. New positions
+    /// drop the bounds: set them again with [`Points::with_bounds`] where they are known. `Err`
+    /// when its buffer holds fewer elements than the capacity, or the points hold [`MAX_ATTRS`]
     /// already.
     pub fn with_attr(&self, attr: Attr) -> Result<Self, Error> {
+        let bounds = if attr.name() == POSITION { None } else { self.bounds };
         let mut attrs: Vec<Attr> = self.attrs.iter().filter(|a| a.name() != attr.name()).cloned().collect();
         attrs.push(attr);
         check_attrs(self.capacity, &attrs)?;
-        Ok(Self { attrs: attrs.into(), ..self.clone() })
+        Ok(Self { attrs: attrs.into(), bounds, ..self.clone() })
     }
 
-    /// These points without the attribute `name`.
+    /// These points without the attribute `name`; without `position`, without bounds too.
     pub fn without(&self, name: &str) -> Self {
         let name = canonical(name);
+        let bounds = if name == POSITION { None } else { self.bounds };
         let attrs: Vec<Attr> = self.attrs.iter().filter(|a| a.name() != name).cloned().collect();
-        Self { attrs: attrs.into(), ..self.clone() }
+        Self { attrs: attrs.into(), bounds, ..self.clone() }
     }
 
     pub fn with_bounds(self, bounds: Option<Bounds>) -> Self {
