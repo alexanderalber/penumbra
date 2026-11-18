@@ -113,33 +113,7 @@ fn choose(@builtin(global_invocation_id) id: vec3u) {
     var rank: array<u32, 32>;
     var who: array<u32, 32>;
     var c = 0u;
-    var w = near_begin(q.xyz, i);
-    while near_next(&w) {
-        if w.distance < params.min_distance {
-            continue;
-        }
-        let j = w.index;
-        let r = pts_rank(i, j, w.distance);
-        if c == most && !pts_less(r, j, rank[most - 1u], who[most - 1u]) {
-            continue;
-        }
-        var at = c;
-        if c < most {
-            c += 1u;
-        } else {
-            at = most - 1u;
-        }
-        loop {
-            if at == 0u || !pts_less(r, j, rank[at - 1u], who[at - 1u]) {
-                break;
-            }
-            rank[at] = rank[at - 1u];
-            who[at] = who[at - 1u];
-            at -= 1u;
-        }
-        rank[at] = r;
-        who[at] = j;
-    }
+WALK
     chosen_n[i] = c;
     for (var s = 0u; s < c; s++) {
         chosen[i * most + s] = who[s];
@@ -256,8 +230,37 @@ fn finish(@builtin(global_invocation_id) id: vec3u) {
 }
 ";
 
+/// What a point does with each neighbour: keeps the best `most` by rank, then index.
+const KEEP: &str = "
+            if w.distance < params.min_distance {
+                continue;
+            }
+            let j = w.index;
+            let r = pts_rank(i, j, w.distance);
+            if c == most && !pts_less(r, j, rank[most - 1u], who[most - 1u]) {
+                continue;
+            }
+            var at = c;
+            if c < most {
+                c += 1u;
+            } else {
+                at = most - 1u;
+            }
+            loop {
+                if at == 0u || !pts_less(r, j, rank[at - 1u], who[at - 1u]) {
+                    break;
+                }
+                rank[at] = rank[at - 1u];
+                who[at] = who[at - 1u];
+                at -= 1u;
+            }
+            rank[at] = r;
+            who[at] = j;
+";
+
 fn choose_source() -> String {
-    format!("{}\n{COMMON}\n{CHOOSE}", near::query_wgsl(4))
+    let choose = CHOOSE.replace("WALK", &near::near_loop("q.xyz", "i", KEEP));
+    format!("{}\n{COMMON}\n{choose}", near::query_wgsl(4))
 }
 
 fn count_source() -> String {
