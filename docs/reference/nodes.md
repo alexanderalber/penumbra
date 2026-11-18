@@ -2375,7 +2375,7 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `attribute` | text | `"color"` |  | The attribute the values go into, TouchDesigner's names too (Color, PointScale, P). A new attribute is made |
-| `distribution` | uniform \| normal \| direction \| sphere | `"uniform"` |  | How the values spread; uniform: evenly between min and max, each number on its own; normal: around mean, most within deviation of it (a bell curve); direction: a direction of length radius, evenly over all directions. A colour keeps its alpha; sphere: a point inside a ball of radius around 0, evenly spread. A colour keeps its alpha |
+| `distribution` | uniform \| normal \| direction \| sphere | `"uniform"` |  | How the values spread; uniform: evenly between min and max, each number on its own; normal: around mean, most within deviation of it (a bell curve). A colour keeps its alpha; direction: a direction of length radius, evenly over all directions. A colour keeps its alpha; sphere: a point inside a ball of radius around 0, evenly spread. A colour keeps its alpha |
 | `min` | vec4 | `[0, 0, 0, 1]` | -1 to 1 (soft) | uniform: the lowest value of each number. An attribute of fewer numbers takes the first ones. Does something only with distribution uniform. |
 | `max` | vec4 | `[1, 1, 1, 1]` | -1 to 1 (soft) | uniform: the highest value of each number. Does something only with distribution uniform. |
 | `mean` | vec4 | `[0, 0, 0, 0]` | -1 to 1 (soft) | normal: the middle of the values. Does something only with distribution normal. |
