@@ -196,6 +196,14 @@ impl Compiling {
     /// exact frames ([`CookContext::exact_frames`]) it waits for the compile, so the frame runs
     /// the program it asks for.
     pub(crate) fn want(&mut self, cx: &CookContext<'_>, gpu: &Gpu, generated: Generated) {
+        if self.asked.as_ref() != Some(&generated)
+            && let Some(p) = Program::compiled(gpu, &generated)
+        {
+            // Warmed up at start: there at once, and no older compile's error stays.
+            self.asked = Some(generated.clone());
+            self.current = Some(Arc::new(p));
+            self.slot = AsyncSlot::default();
+        }
         if self.asked.as_ref() != Some(&generated) {
             self.asked = Some(generated.clone());
             let gpu = gpu.clone();

@@ -27,6 +27,9 @@ pub const BY: [&str; 5] = ["expression", "index", "box", "sphere", "random"];
 /// The attribute the flag program writes: 1 keeps a point. Never part of the output.
 pub(crate) const KEEP: &str = "pts_keep";
 
+/// The expression a new node has: the empty texels of pts.from_tex go.
+const DEFAULT_EXPRESSION: &str = "weight <= 0.0";
+
 /// Longest expression.
 const MAX_EXPRESSION: usize = 4096;
 
@@ -47,7 +50,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .choice_doc("random", "a random share of them, `share` of all, the same for the same `seed`"),
             )
             .param(
-                ParamSpec::text("expression", "weight <= 0.0")
+                ParamSpec::text("expression", DEFAULT_EXPRESSION)
                     .lines(2)
                     .doc("A WGSL expression worked out once per point; where it is true (or not 0) the point goes. It can name attributes (position, weight, P), index, count, index01, time, rand(k) (by index), rand_key(id, k) (by a particle's id, so it stays with the particle) and WGSL's functions: position.z < 0.0, rand(0) < 0.5, index % 2u == 0u. The default deletes the points of weight 0, such as the empty texels of pts.from_tex, and keeps every other point")
                     .applies_when("by", &["expression"]),
@@ -212,12 +215,23 @@ fn salt(seed: i64) -> i64 {
     i64::from((h >> 33) as u32 & 0x7fff_ffff)
 }
 
-/// Compiles the program of the box, the choice that needs positions.
+/// Compiles the program of the box (the choice that needs positions), of an index, and of the
+/// default expression, for generated points with and without a `weight` (as pts.from_tex makes
+/// them).
 fn warm_up(gpu: &Gpu) -> Result<(), Error> {
+    let budget = program::storage_budget(gpu);
     for by in ["box", "index"] {
-        let generated =
-            program::generate(&fixed(by, false), &generated_shape(), program::storage_budget(gpu))?;
-        Program::cached(gpu, generated)?;
+        Program::cached(gpu, program::generate(&fixed(by, false), &generated_shape(), budget)?)?;
+    }
+    let weighted = Shape::new(&[
+        ("position", AttrType::Vec3),
+        ("normal", AttrType::Vec3),
+        ("uv", AttrType::Vec2),
+        ("weight", AttrType::F32),
+    ]);
+    let default = typed(DEFAULT_EXPRESSION, &Points::empty())?;
+    for shape in [generated_shape(), weighted] {
+        Program::cached(gpu, program::generate(&default, &shape, budget)?)?;
     }
     Ok(())
 }
