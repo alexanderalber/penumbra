@@ -2908,6 +2908,7 @@ mod pts_forces;
 mod pts_particles;
 mod pts_pictures;
 mod pts_programs;
+mod pts_trails;
 mod reduce;
 mod resample;
 mod scatter;

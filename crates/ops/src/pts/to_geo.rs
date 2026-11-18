@@ -1,15 +1,17 @@
 //! `geo.from_pts`: points as geometry that `tex.render` draws. Each point becomes a sprite (a
-//! small disc or square that faces the camera) or a copy of a model, all in one instanced draw.
-//! The attributes the drawing reads (`position`, `scale`, `color`, `normal`) are copied on the
-//! GPU into pictures of 32-bit floats, one texel per point, for the renderer's instances. The
-//! pictures are as large as the points' capacity, so they keep their size while the count
-//! moves. Where the count is on the GPU, the renderer reads it there and draws exactly the
-//! points that are alive.
+//! small disc or square that faces the camera) or a copy of a model, all in one instanced draw;
+//! or the points' lines ([`Strips`]) become ribbons that face the camera, one instance per
+//! segment. The attributes the drawing reads (`position`, `scale` or `width`, `color`, `normal`)
+//! are copied on the GPU into pictures of 32-bit floats, one texel per point, for the renderer's
+//! instances. The pictures are as large as the points' capacity, so they keep their size while
+//! the count moves. Where the count is on the GPU, the renderer reads it there and draws exactly
+//! the points that are alive.
 
 use std::sync::Arc;
 
 use penumbra_core::{Curve, Error, ParamSpec};
-use penumbra_gpu::geo::{IDENTITY, Instances, Item, Mat4, Model};
+use penumbra_gpu::geo::{IDENTITY, Instances, Item, Lines, Mat4, Model};
+use penumbra_gpu::points::{Count, Strips};
 use penumbra_gpu::{BufferRing, Geo, Gpu, Points, TexRing};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
@@ -21,7 +23,7 @@ use crate::gpu;
 pub const KIND: &str = "geo.from_pts";
 
 /// Choices of `mode`, `sprite` and `orient`.
-pub const MODES: [&str; 2] = ["sprites", "copies"];
+pub const MODES: [&str; 3] = ["sprites", "copies", "lines"];
 pub const SPRITES: [&str; 2] = ["disc", "square"];
 pub const ORIENTS: [&str; 2] = ["none", "normal"];
 
@@ -36,13 +38,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             KIND,
-            "Draws points with tex.render: a small disc or square facing the camera at every point, or a copy of a model at every point, all on the GPU",
+            "Draws points with tex.render: a small disc or square facing the camera at every point, a copy of a model at every point, or ribbons along the points' lines, all on the GPU",
         )
         .param(
             ParamSpec::choice("mode", &MODES)
                 .doc("What stands at each point")
                 .choice_doc("sprites", "a flat disc or square that always faces the camera")
-                .choice_doc("copies", "a copy of the geometry on the `model` input"),
+                .choice_doc("copies", "a copy of the geometry on the `model` input")
+                .choice_doc("lines", "a ribbon facing the camera from each point to the next along the points' lines (a trail, a generated line or circle). Points without lines make one line in their order"),
         )
         .param(
             ParamSpec::float("size", 0.02)
@@ -68,6 +71,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .applies_when("mode", &["copies"]),
         )
         .param(
+            ParamSpec::float("width", 0.01)
+                .clamp(0.0, 1e4)
+                .range(0.0005, 0.5)
+                .curve(Curve::Log)
+                .doc("lines: the width of the ribbons in metres, times the points' `width` (LineWidth in TouchDesigner), blended between the two ends of each segment")
+                .applies_when("mode", &["lines"]),
+        )
+        .param(
             ParamSpec::choice("orient", &ORIENTS)
                 .doc("copies: how each copy is turned")
                 .choice_doc("none", "every copy keeps the model's own turn")
@@ -76,7 +87,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .input("in", DataKind::Pts)
         .input("model", DataKind::Geo)
-        .describe_input("in", "The points. `position` places each sprite or copy, `scale` sizes it, `color` multiplies its colour. Without `scale` every point counts as 1, without `color` as white")
+        .describe_input("in", "The points. `position` places each sprite, copy or line point, `scale` sizes a sprite or copy, `width` a line, `color` multiplies the colour. Without `scale` or `width` every point counts as 1, without `color` as white")
         .describe_input("model", "copies: the geometry put at every point, as it stands around its origin")
         .output("out", DataKind::Geo),
         || Box::new(FromPts::default()) as Box<dyn Operator>,
@@ -97,6 +108,8 @@ struct FromPts {
     scratch: BufferRing,
     /// The sprite's model and whether it is the square.
     sprite: Option<(bool, Arc<Model>)>,
+    /// The quad each segment of a line is drawn from.
+    segment: Option<Arc<Model>>,
     baked: Vec<Baked>,
 }
 
@@ -111,6 +124,16 @@ impl FromPts {
         let (model, _) = Model::upload(gpu, mesh, "sprite")?;
         let model = Arc::new(model);
         self.sprite = Some((square, model.clone()));
+        Ok(model)
+    }
+
+    fn segment(&mut self, gpu: &Gpu) -> Result<Arc<Model>, Error> {
+        if let Some(m) = &self.segment {
+            return Ok(m.clone());
+        }
+        let (model, _) = Model::upload(gpu, segment()?, "line segment")?;
+        let model = Arc::new(model);
+        self.segment = Some(model.clone());
         Ok(model)
     }
 
@@ -158,10 +181,57 @@ fn disc() -> Result<Mesh, Error> {
     Ok(b.finish())
 }
 
+/// The quad a segment of a line is drawn from: x 0 at the segment's start and 1 at its end, z
+/// -0.5 and 0.5 its two sides; the renderer puts the corners where the line runs.
+fn segment() -> Result<Mesh, Error> {
+    let limits = Limits::default();
+    let mut b = Builder::new(&limits);
+    let part = b.part("line")?;
+    let normal = [0.0, -1.0, 0.0];
+    let mut corners = Vec::with_capacity(4);
+    for (x, z) in [(0.0, -0.5), (1.0, -0.5), (1.0, 0.5), (0.0, 0.5)] {
+        corners.push(b.vertex(Vertex { position: [x, 0.0, z], normal, uv: [x, z + 0.5] })?);
+    }
+    let [c0, c1, c2, c3] = corners[..] else { return Err(Error::new("a segment has four corners")) };
+    // Counter-clockwise seen from the viewer, where the renderer turns the ribbon.
+    b.triangle([c3, c2, c1], part, 0)?;
+    b.triangle([c3, c1, c0], part, 0)?;
+    Ok(b.finish())
+}
+
+/// The lines the renderer draws through `points`: one set for each way their strips run. With
+/// no strips, one line through every point.
+pub fn lines_of(points: &Points) -> Vec<Lines> {
+    let count = points.count();
+    let (limit, live) = match &count {
+        Count::Known(n) => (*n, false),
+        _ => (u32::MAX, true),
+    };
+    let line = |len: u32, stride: u32, closed: bool| Lines { len, stride, closed, limit, live };
+    match points.strips() {
+        Strips::Regular { len, closed } => vec![line(len, 1, closed)],
+        Strips::Grid { cols, rows, columns } => {
+            let cols = cols.max(1);
+            let mut out = Vec::new();
+            if rows {
+                out.push(line(cols, 1, false));
+            }
+            if columns {
+                out.push(line(count.at_most().div_ceil(cols), cols, false));
+            }
+            out
+        }
+        // One line through all: as long as the count where it is known, else until the first
+        // point past the count on the GPU.
+        _ => vec![line(if live { 0 } else { limit }, 1, false)],
+    }
+}
+
 impl Operator for FromPts {
     fn gpu_bytes(&self) -> u64 {
         let textures: u64 = self.textures.iter().map(TexRing::bytes).sum();
-        let sprite = self.sprite.as_ref().map_or(0, |(_, m)| m.bytes());
+        let sprite = self.sprite.as_ref().map_or(0, |(_, m)| m.bytes())
+            + self.segment.as_ref().map_or(0, |m| m.bytes());
         let baked: u64 = self.baked.iter().map(|b| b.made.bytes()).sum();
         textures + self.scratch.bytes() + sprite + baked
     }
@@ -183,7 +253,8 @@ impl Operator for FromPts {
                 CookError::failed("connect points to `in`")
             });
         };
-        let copies = cx.text("mode")? == "copies";
+        let mode = cx.text("mode")?;
+        let (copies, lines) = (mode == "copies", mode == "lines");
         let model = if copies {
             match cx.input_as::<Geo>(1) {
                 Some(g) => Some(g),
@@ -203,7 +274,9 @@ impl Operator for FromPts {
             cx.warn("the points have no `position`: nothing is drawn");
             return empty();
         };
-        let scale = points.attr_texture(gpu, "scale", scale, &mut self.scratch)?;
+        // A line's width comes from `width`, a sprite's or a copy's size from `scale`.
+        let sized_by = if lines { "width" } else { "scale" };
+        let scale = points.attr_texture(gpu, sized_by, scale, &mut self.scratch)?;
         let color = points.attr_texture(gpu, "color", color, &mut self.scratch)?;
         let aim = if copies && cx.text("orient")? == "normal" {
             points.attr_texture(gpu, "normal", normal, &mut self.scratch)?
@@ -213,19 +286,43 @@ impl Operator for FromPts {
         let extent = points
             .bounds()
             .map_or(UNKNOWN_EXTENT, |b| b.min.iter().chain(&b.max).map(|v| v.abs()).fold(0.0, f32::max));
-        let size = if copies { cx.float("scale")? } else { cx.float("size")? } as f32;
-        let instances = Arc::new(Instances {
+        let size = match mode {
+            "copies" => cx.float("scale")?,
+            "lines" => cx.float("width")?,
+            _ => cx.float("size")?,
+        } as f32;
+        let instances = Instances {
             count: Some(count),
             // A count on the GPU: the renderer draws that many, none of the dead points.
             live: points.count().header().cloned(),
             size,
-            face_camera: !copies,
+            face_camera: !copies && !lines,
             aim,
             scale,
             color,
             extent,
             ..Instances::of(position)
-        });
+        };
+        if lines {
+            self.baked.clear();
+            let ways = lines_of(points);
+            if ways.iter().all(|l| l.len == 1) && count > 0 {
+                cx.warn("every line has one point: nothing is drawn");
+            }
+            let model = self.segment(gpu)?;
+            let items = ways
+                .into_iter()
+                .map(|l| Item {
+                    model: model.clone(),
+                    world: IDENTITY,
+                    part_offset: 0,
+                    material: None,
+                    instances: Some(Arc::new(Instances { lines: Some(l), ..instances.clone() })),
+                })
+                .collect();
+            return Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, Geo { items, preview: None })]));
+        }
+        let instances = Arc::new(instances);
         let items = match model {
             None => {
                 // No copies: the models baked for them are not needed any more.

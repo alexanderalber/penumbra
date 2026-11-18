@@ -61,12 +61,39 @@ as they age.
 stays with it. `rand(0u)` is keyed by the place in the list, and the place changes when older
 particles die.
 
+## Trails
+
+`pts.trail` puts a line behind every particle through the places it had over the last frames.
+TouchDesigner's Trail POP with a Line MAT does the same.
+
+```
+pts.particles -> pts.trail -> pts.math -> geo.from_pts (mode lines)
+```
+
+1. **`pts.trail`** after the particles (or after the null at the end of their loop). `length`
+   is how many places a trail keeps, the particle's own place included. `every` 2 keeps every
+   second frame: the trail reaches twice as far back. Trails find their particle by `id`, so a
+   trail stays with its particle while others die.
+2. **`pts.math`** with `result` `width` or `color` shapes the trail. Each trail point has
+   `trail`: 0 at the particle, 1 at the oldest place. `1.0 - trail` thins the trail to its tail;
+   `vec4f(mix(vec3f(1.0, 0.9, 0.5), vec3f(0.6, 0.1, 0.02), trail), 1.0)` fades it from yellow to
+   dark red.
+3. **`geo.from_pts`** with `mode` `lines` draws each trail as a ribbon that faces the camera.
+   `width` is in metres; the points' `width` attribute multiplies it.
+
+A new particle starts with a trail of its birth place, which grows from there. A trail ends with
+its particle. The trail carries `position`, `id`, `trail` and the attributes in `attributes`
+(`color width scale` by default): each place keeps the value the particle had then. Trails cost
+`length` points per particle: 100 000 particles with trails of 32 are 3.2 million points.
+
 ## Time
 
 One step per frame, as long as the frame. While the show stands still the particles stand
 still. Stepped frame by frame (`cook.step`), the same steps give the same particles. `reset`
 starts over, as does `node.reset` and the `reset` of a component the particles sit in.
 `warm_up` simulates that many seconds at once at the start, without the loop's forces.
+`pts.trail` follows the same clock: a place per frame, none while time stands, `reset` and
+`node.reset` start the trails over.
 
 ## What each particle carries
 

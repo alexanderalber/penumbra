@@ -83,7 +83,7 @@ pub const MAX_SHADOWS: usize = 8;
 pub const MAX_PROJECTORS: usize = 4;
 const LIGHT_BYTES: u64 = 128;
 const FRAME_BYTES: u64 = 160 + MAX_LIGHTS as u64 * LIGHT_BYTES;
-const DRAW_BYTES: u64 = 224;
+const DRAW_BYTES: u64 = 240;
 const AO_BYTES: u64 = 96;
 /// Most draws (runs of one part and material, over all models) in one render.
 pub const MAX_DRAWS: usize = 1 << 16;
@@ -1683,9 +1683,18 @@ fn draw_slot(
             | u32::from(i.scale.is_some()) << 1
             | u32::from(i.color.is_some()) << 2
             | u32::from(i.face_camera) << 3
+            | u32::from(i.lines.is_some()) << 4
     });
     let size = instances.map_or(1.0f32, |i| if i.size.is_finite() { i.size } else { 1.0 });
     for v in [u32::from(instances.is_some()), has, size.to_bits(), 0] {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    // Lines through the instances: points per line, their distance in the list, whether the
+    // lines close and the count is on the GPU, the most points.
+    let lines = instances.and_then(|i| i.lines);
+    let words = lines
+        .map_or([0; 4], |l| [l.len, l.stride.max(1), u32::from(l.closed) | u32::from(l.live) << 1, l.limit]);
+    for v in words {
         b.extend_from_slice(&v.to_le_bytes());
     }
     b.resize(DRAW_BYTES as usize, 0);

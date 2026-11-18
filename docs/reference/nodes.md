@@ -2232,7 +2232,7 @@ Outputs: `out` (table).
 
 ## pts
 
-[pts.delete](#ptsdelete), [pts.feedback](#ptsfeedback), [pts.field](#ptsfield), [pts.force](#ptsforce), [pts.from_tex](#ptsfrom_tex), [pts.generate](#ptsgenerate), [pts.lookup_tex](#ptslookup_tex), [pts.math](#ptsmath), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.particles](#ptsparticles), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.transform](#ptstransform)
+[pts.delete](#ptsdelete), [pts.feedback](#ptsfeedback), [pts.field](#ptsfield), [pts.force](#ptsforce), [pts.from_tex](#ptsfrom_tex), [pts.generate](#ptsgenerate), [pts.lookup_tex](#ptslookup_tex), [pts.math](#ptsmath), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.particles](#ptsparticles), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.trail](#ptstrail), [pts.transform](#ptstransform)
 
 ### pts.delete
 
@@ -2367,7 +2367,7 @@ Inputs: none.
 
 Outputs:
 
-- `out` (pts): The points with `position`, and `normal` and `uv` where the shape gives them a meaning
+- `out` (pts): The points with `position`, and `normal` and `uv` where the shape gives them a meaning. Ordered lines, outlines of circles and grids come as lines (strips) that geo.from_pts draws in lines mode
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -2377,6 +2377,7 @@ Outputs:
 | `count` | int | `1000` | 1 to 1000000 (soft, held within 1 to 4194304) | How many points. An ordered box comes as near as its lattice allows; the viewer shows the count made. Does something only with shape line, circle, sphere or box. |
 | `rows` | int | `10` | 1 to 1000 (soft, held within 1 to 4096) | Grid: points from top to bottom. Does something only with shape grid. |
 | `cols` | int | `10` | 1 to 1000 (soft, held within 1 to 4096) | Grid: points from left to right. Does something only with shape grid. |
+| `lines` | both \| rows \| columns \| none | `"both"` |  | Ordered grid: which points join into lines, for geo.from_pts in lines mode. An ordered line is always one line, an ordered circle's outline one closed ring; both: every row and every column: the grid's wireframe; rows: each row from left to right; columns: each column from top to bottom; none: no lines: drawn as lines, all the points make one line, row after row. Does something only with shape grid. |
 | `size` | vec3 | `[1, 1, 1]` | 0 to 10 (soft) | Grid: x wide, z high. Line: x long. Circle and sphere: the diameter is x. Box: x, y, z. In metres |
 | `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | random: another number gives other places for the points. Does something only with distribution random. |
 
@@ -2554,6 +2555,29 @@ Outputs:
 |---|---|---|---|---|
 | `file` | file (wgsl) |  |  | The WGSL file, relative to the project directory; saving it reloads the node. `// @write position` lines name the attributes, `fn main()` runs once per point |
 
+### pts.trail
+
+A trail behind every point: a line through the places it had over the last frames, newest first. geo.from_pts draws it in lines mode
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs:
+
+- `in` (pts): The points that leave trails. Their number may change from frame to frame, as particles do
+
+Outputs:
+
+- `out` (pts): `length` points per input point, head first, joined into lines: position, `trail` (0 at the head, 1 at the tail), the matching attribute and the ones in `attributes`
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `length` | int | `16` | 2 to 128 (soft, held within 2 to 1024) | Points in each trail, the point itself included: how many places back it reaches |
+| `every` | int | `1` | 1 to 30 (soft, held within 1 to 1000) | Frames between two places kept. 2 keeps every second frame: a trail twice as long for the same `length`. The head follows the point every frame |
+| `match` *(more)* | text | `"id"` |  | The attribute that tells a point from frame to frame, as pts.particles gives `id`. Points without it keep their trail by their place in the list: right for a set whose points stay in order |
+| `attributes` *(more)* | text | `"color width scale"` |  | Attributes the trail carries besides position, separated by spaces: each place keeps the value the point had then. The ones the points lack are left out |
+| `max` *(more)* | int | `100000` | 1 to 1000000 (soft, held within 1 to 67108864) | The most trails: points past this many have none. The trails take `max` times `length` points of memory |
+| `reset` | bool | `false` |  | Trails start over at every frame while on: each a single place |
+
 ### pts.transform
 
 Moves, turns and scales points about a pivot; turns their normals with them
@@ -2620,21 +2644,22 @@ Outputs:
 
 ### geo.from_pts
 
-Draws points with tex.render: a small disc or square facing the camera at every point, or a copy of a model at every point, all on the GPU
+Draws points with tex.render: a small disc or square facing the camera at every point, a copy of a model at every point, or ribbons along the points' lines, all on the GPU
 
 Inputs:
 
-- `in` (pts): The points. `position` places each sprite or copy, `scale` sizes it, `color` multiplies its colour. Without `scale` every point counts as 1, without `color` as white
+- `in` (pts): The points. `position` places each sprite, copy or line point, `scale` sizes a sprite or copy, `width` a line, `color` multiplies the colour. Without `scale` or `width` every point counts as 1, without `color` as white
 - `model` (geo): copies: the geometry put at every point, as it stands around its origin
 
 Outputs: `out` (geo).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `mode` | sprites \| copies | `"sprites"` |  | What stands at each point; sprites: a flat disc or square that always faces the camera; copies: a copy of the geometry on the `model` input |
+| `mode` | sprites \| copies \| lines | `"sprites"` |  | What stands at each point; sprites: a flat disc or square that always faces the camera; copies: a copy of the geometry on the `model` input; lines: a ribbon facing the camera from each point to the next along the points' lines (a trail, a generated line or circle). Points without lines make one line in their order |
 | `size` | float | `0.02` | 0.001 to 1 (soft, held within 0 to 10000) | sprites: the width of each sprite in metres, times the point's `scale`. Does something only with mode sprites. |
 | `sprite` | disc \| square | `"disc"` |  | sprites: the sprite's outline; disc: a round disc, as wide as `size`; square: a square of side `size`. Does something only with mode sprites. |
 | `scale` | float | `1` | 0.01 to 10 (soft, held within 0 to 1000000) | copies: multiplies the model's size at every point, times the point's `scale`. Does something only with mode copies. |
+| `width` | float | `0.01` | 0.0005 to 0.5 (soft, held within 0 to 10000) | lines: the width of the ribbons in metres, times the points' `width` (LineWidth in TouchDesigner), blended between the two ends of each segment. Does something only with mode lines. |
 | `orient` | none \| normal | `"none"` |  | copies: how each copy is turned; none: every copy keeps the model's own turn; normal: each copy turns its +y to the point's `normal`, keeping +z up as far as it can. Does something only with mode copies. |
 
 ### geo.instance

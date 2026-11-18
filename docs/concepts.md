@@ -169,6 +169,16 @@ The families:
   wired back into their `previous` input. `pts.field` gives the points a `weight` from a shape,
   to mask a force. `pts.feedback` closes such a loop for any points. See
   [Particles](particles.md).
+
+  **Lines.** Points can be joined into lines (line strips): a list of which point follows which.
+  `geo.from_pts` in `lines` mode draws a ribbon from each point to the next one on its line.
+  The ribbon faces the camera, is `width` metres wide times the point's `width` attribute
+  (`LineWidth`), and takes the points' `color`. An ordered line from `pts.generate` is one line,
+  an ordered circle a closed ring, a grid its rows, its columns or both. `pts.trail` makes a
+  line behind every point through the places it had. Nodes that keep the number and order of
+  the points (`pts.noise`, `pts.math`, `pts.transform`, ...) keep the lines. `pts.delete` and
+  `pts.particles` change the order, so their points come without lines. Points without lines
+  drawn in `lines` mode make one line through all of them, in their order.
 - **`vol`**: volumes, such as smoke. `vol.smoke` simulates smoke in a box: emitters blow hot
   smoke in, the smoke rises against `gravity`, swirls and fades. `vol.emitter` is one emitter;
   wire several into the `emitter` inputs of `vol.smoke`, 64 at most, later ones acting on what

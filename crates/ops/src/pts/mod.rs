@@ -4,7 +4,8 @@
 //! and back; `pts.lookup_tex` colours points from a picture. `pts.delete` drops points, after
 //! which their count is known on the GPU only ([`penumbra_gpu::points::Count`]).
 //! `pts.particles` makes points that are born, move and die, pushed by `pts.force` in its loop
-//! and masked by `pts.field`; `pts.feedback` closes a loop of any points.
+//! and masked by `pts.field`; `pts.feedback` closes a loop of any points. `pts.trail` keeps a
+//! line behind every point, which `geo.from_pts` draws as ribbons.
 
 use penumbra_core::Error;
 use penumbra_graph::{DataKind, FnNodeType, NodeDesc, NodeTypes, Operator};
@@ -25,6 +26,7 @@ pub mod shader;
 pub mod to_chan;
 pub(crate) mod to_geo;
 pub mod to_tex;
+pub mod trail;
 pub mod transform;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
@@ -44,6 +46,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     feedback::register(types)?;
     force::register(types)?;
     field::register(types)?;
+    trail::register(types)?;
     types.register(FnNodeType::new(
         NodeDesc::new("pts.null", "Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes")
             .input("in", DataKind::Pts)
