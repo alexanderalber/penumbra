@@ -84,13 +84,13 @@ fn unkey(k: u32) -> f32 {
 fn box_of(words: &[u32]) -> Option<Bounds> {
     let [l0, l1, l2, _, h0, h1, h2, ..] = *words else { return None };
     let (min, max) = ([unkey(l0), unkey(l1), unkey(l2)], [unkey(h0), unkey(h1), unkey(h2)]);
-    let sound = (0..3).all(|k| min[k].is_finite() && max[k].is_finite() && min[k] <= max[k]);
+    let sound = min.iter().zip(&max).all(|(lo, hi)| lo.is_finite() && hi.is_finite() && lo <= hi);
     sound.then_some(Bounds { min, max })
 }
 
 /// `b` grown by [`MARGIN`] of its largest side on each side.
 fn grown(b: Bounds) -> Bounds {
-    let side = (0..3).map(|k| b.max[k] - b.min[k]).fold(0.0f32, f32::max);
+    let side = b.max.iter().zip(&b.min).map(|(hi, lo)| hi - lo).fold(0.0f32, f32::max);
     let m = side * MARGIN;
     Bounds { min: b.min.map(|v| v - m), max: b.max.map(|v| v + m) }
 }
