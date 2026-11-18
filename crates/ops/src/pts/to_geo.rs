@@ -1,7 +1,10 @@
 //! `geo.from_pts`: points as geometry that `tex.render` draws. Each point becomes a sprite (a
 //! small disc or square that faces the camera) or a copy of a model, all in one instanced draw;
 //! or the points' lines ([`Strips`]) become ribbons that face the camera, one instance per
-//! segment. The attributes the drawing reads (`position`, `scale` or `width`, `color`, `normal`)
+//! segment. A sprite is a square of two triangles; a disc and a soft edge are cut out of it by
+//! the renderer's fragment stage ([`Instances::round`], [`Instances::softness`]), so a million
+//! discs cost what a million squares cost. With `blend` add the copies add their colour to what
+//! lies behind them ([`Instances::add`]). The attributes the drawing reads (`position`, `scale` or `width`, `color`, `normal`)
 //! are copied on the GPU into pictures of 32-bit floats, one texel per point, for the renderer's
 //! instances. The pictures are as large as the points' capacity, so they keep their size while
 //! the count moves. Where the count is on the GPU, the renderer reads it there and draws exactly
@@ -31,8 +34,10 @@ pub const KIND: &str = "geo.from_pts";
 pub const MODES: [&str; 3] = ["sprites", "copies", "lines"];
 pub const SPRITES: [&str; 2] = ["disc", "square"];
 pub const ORIENTS: [&str; 2] = ["none", "normal"];
+pub const BLENDS: [&str; 2] = ["over", "add"];
 
-/// Corners around a disc sprite.
+/// Corners around the disc a file gets for a round sprite (`out.mesh`): the renderer cuts its
+/// discs from a square instead.
 const DISC_SEGMENTS: u32 = 16;
 
 /// Half the side of the box that holds every point where the points do not say and no box has
@@ -66,6 +71,19 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .choice_doc("disc", "a round disc, as wide as `size`")
                 .choice_doc("square", "a square of side `size`")
                 .applies_when("mode", &["sprites"]),
+        )
+        .param(
+            ParamSpec::float("softness", 0.0)
+                .clamp(0.0, 1.0)
+                .range(0.0, 1.0)
+                .doc("sprites: how far in from the outline each sprite fades out. 0 is a hard edge. 1 fades all the way from the centre: a soft glowing dot, as a point sprite with a falloff texture in TouchDesigner. A soft edge is see-through, so it costs a second draw")
+                .applies_when("mode", &["sprites"]),
+        )
+        .param(
+            ParamSpec::choice("blend", &BLENDS)
+                .doc("How the copies meet what lies behind them")
+                .choice_doc("over", "they cover it, as any surface: opaque where the colour is, see-through where its alpha or a soft edge says")
+                .choice_doc("add", "their colour is added to it, so overlapping sprites or lines grow brighter: glow, sparks, light trails. Drawn after everything else, hidden by what stands in front, casting no shadow"),
         )
         .param(
             ParamSpec::float("scale", 1.0)
@@ -111,8 +129,8 @@ struct FromPts {
     /// Pictures of `position`, `scale`, `color` and `normal`.
     textures: [TexRing; 4],
     scratch: BufferRing,
-    /// The sprite's model and whether it is the square.
-    sprite: Option<(bool, Arc<Model>)>,
+    /// The square every sprite is drawn from, disc or not.
+    sprite: Option<Arc<Model>>,
     /// The quad each segment of a line is drawn from.
     segment: Option<Arc<Model>>,
     baked: Vec<Baked>,
@@ -121,16 +139,13 @@ struct FromPts {
 }
 
 impl FromPts {
-    fn sprite(&mut self, gpu: &Gpu, square: bool) -> Result<Arc<Model>, Error> {
-        if let Some((s, m)) = &self.sprite
-            && *s == square
-        {
+    fn sprite(&mut self, gpu: &Gpu) -> Result<Arc<Model>, Error> {
+        if let Some(m) = &self.sprite {
             return Ok(m.clone());
         }
-        let mesh = if square { prim::plane([1.0, 1.0])? } else { disc()? };
-        let (model, _) = Model::upload(gpu, mesh, "sprite")?;
+        let (model, _) = Model::upload(gpu, prim::plane([1.0, 1.0])?, "sprite")?;
         let model = Arc::new(model);
-        self.sprite = Some((square, model.clone()));
+        self.sprite = Some(model.clone());
         Ok(model)
     }
 
@@ -167,8 +182,9 @@ impl FromPts {
     }
 }
 
-/// A disc of diameter 1 upright in the xz plane, facing -y, the texture over its square.
-fn disc() -> Result<Mesh, Error> {
+/// A disc of diameter 1 upright in the xz plane, facing -y, the texture over its square: what a
+/// round sprite is in a file.
+pub(crate) fn disc() -> Result<Mesh, Error> {
     let limits = Limits::default();
     let mut b = Builder::new(&limits);
     let part = b.part("sprite")?;
@@ -242,8 +258,8 @@ pub fn lines_of(points: &Points) -> Vec<Lines> {
 impl Operator for FromPts {
     fn gpu_bytes(&self) -> u64 {
         let textures: u64 = self.textures.iter().map(TexRing::bytes).sum();
-        let sprite = self.sprite.as_ref().map_or(0, |(_, m)| m.bytes())
-            + self.segment.as_ref().map_or(0, |m| m.bytes());
+        let sprite =
+            self.sprite.as_ref().map_or(0, |m| m.bytes()) + self.segment.as_ref().map_or(0, |m| m.bytes());
         let baked: u64 = self.baked.iter().map(|b| b.made.bytes()).sum();
         textures + self.scratch.bytes() + sprite + baked + self.late.bytes()
     }
@@ -320,6 +336,9 @@ impl Operator for FromPts {
             color,
             extent,
             late: late.is_some(),
+            round: !copies && !lines && cx.text("sprite")? == "disc",
+            softness: if copies || lines { 0.0 } else { cx.float("softness")? as f32 },
+            add: cx.text("blend")? == "add",
             ..Instances::of(position)
         };
         if lines {
@@ -354,7 +373,7 @@ impl Operator for FromPts {
             None => {
                 // No copies: the models baked for them are not needed any more.
                 self.baked.clear();
-                let model = self.sprite(gpu, cx.text("sprite")? == "square")?;
+                let model = self.sprite(gpu)?;
                 vec![Item {
                     model,
                     world: IDENTITY,

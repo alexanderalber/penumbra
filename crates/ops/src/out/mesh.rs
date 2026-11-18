@@ -199,6 +199,8 @@ struct Piece {
     world: Mat4,
     /// Replaces the colour of every material of the model.
     color: Option<[f32; 4]>,
+    /// Round sprites: the renderer cuts a disc out of the model's square, the file gets a disc.
+    disc: bool,
     /// The copies' textures, as indices into the readback.
     instances: Option<InstanceTextures>,
 }
@@ -451,8 +453,10 @@ fn instance_matrix(i: u32, position: &Texels, aim: Option<&Texels>, scale: Optio
 fn assemble(pieces: &[Piece], textures: &[Texels]) -> Result<(Mesh, Counts), String> {
     let mut out = Mesh::default();
     let mut counts = Counts::default();
+    let disc = crate::pts::to_geo::disc().map_err(|e| e.to_string())?;
     for piece in pieces {
-        let t = template(&piece.model.mesh, piece.color);
+        let mesh = if piece.disc { &disc } else { &piece.model.mesh };
+        let t = template(mesh, piece.color);
         let Some(inst) = piece.instances else {
             out.append(&t.transformed(&piece.world));
             counts.copies += 1;
@@ -633,6 +637,7 @@ impl MeshOut {
                 model: i.model.clone(),
                 world: i.world,
                 color: i.material.as_ref().map(|m| m.color),
+                disc: i.instances.as_ref().is_some_and(|inst| inst.face_camera && inst.round),
                 instances: i.instances.as_ref().filter(|_| expand).map(|inst| InstanceTextures {
                     position: index(&inst.position),
                     // Sprites face whoever looks: a file has no camera, so they stay unturned.

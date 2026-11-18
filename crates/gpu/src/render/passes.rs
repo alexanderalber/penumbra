@@ -39,6 +39,9 @@ pub(super) struct DrawCall {
     hides: bool,
     /// Drawn in the shadow and tint passes.
     shadows: bool,
+    /// Adds its colour to what lies behind it ([`Instances::add`]): drawn after everything
+    /// else in the colour pass only.
+    adds: bool,
     /// Distance of its middle along the view, for the sorting.
     depth: f64,
 }
@@ -58,6 +61,8 @@ pub(super) struct Calls {
     hiding: Vec<usize>,
     /// See-through draws, farthest first.
     behind: Vec<usize>,
+    /// Draws that add their colour, after the see-through ones.
+    adding: Vec<usize>,
     /// What casts shadows: whole, and the see-through draws among it tinting the light.
     casting: Vec<usize>,
     pub(super) tinting: Vec<usize>,
@@ -132,6 +137,10 @@ impl Calls {
                 let wire = m.wire.is_some();
                 let occluder = m.shading == Shading::Occluder && !look.shade_all;
                 let hides = m.wire.is_some_and(|w| w.faces == Faces::Hidden);
+                let inst = item.instances.as_deref();
+                let adds = !occluder && !hides && inst.is_some_and(|i| i.add);
+                // A soft sprite's edge is see-through.
+                let soft = inst.is_some_and(|i| i.face_camera && i.lines.is_none() && i.softness > 0.0);
                 // Filled faces are see-through where their colour is.
                 let fill_clear = m.wire.is_some_and(|w| w.faces == Faces::Open || w.fill[3] < OPAQUE);
                 // A geometry's material replaces the file's colour and textures; without one
@@ -153,6 +162,7 @@ impl Calls {
                 let clear = !occluder
                     && !hides
                     && (fill_clear
+                        || soft
                         || match look.surface {
                             Surface::Material => color[3] < OPAQUE || tex.is_some(),
                             Surface::Texture => tex.is_some(),
@@ -185,7 +195,8 @@ impl Calls {
                     occluder,
                     covers: occluder && m.cover,
                     hides,
-                    shadows: m.shadows,
+                    shadows: m.shadows && !adds,
+                    adds,
                     depth: if depth.is_finite() { depth } else { 0.0 },
                 });
             }
@@ -196,15 +207,16 @@ impl Calls {
         let mut order: Vec<usize> = (0..calls.len()).collect();
         order.sort_by_key(|k| calls.get(*k).map_or((true, false), |c| (!c.occluder, c.covers)));
         let hiding = pick(|c| c.hides);
-        let rest = order.into_iter().filter(|k| !hiding.contains(k)).collect();
-        let mut behind = pick(|c| c.clear);
+        let adding = pick(|c| c.adds);
+        let rest = order.into_iter().filter(|k| !hiding.contains(k) && !adding.contains(k)).collect();
+        let mut behind = pick(|c| c.clear && !c.adds);
         behind.sort_by(|a, b| {
             let depth = |k: &usize| calls.get(*k).map_or(0.0, |c| c.depth);
             depth(b).total_cmp(&depth(a))
         });
         let casting = pick(|c| c.shadows);
         let tinting = behind.iter().copied().filter(|k| calls.get(*k).is_some_and(|c| c.shadows)).collect();
-        Ok(Self { calls, bytes, align, rest, hiding, behind, casting, tinting })
+        Ok(Self { calls, bytes, align, rest, hiding, behind, adding, casting, tinting })
     }
 
     /// The textures the draws sample, a texture as often as draws name it.
@@ -248,6 +260,8 @@ pub(super) struct RenderPipes {
     /// For the see-through draws: one with culling; without, each draw twice, its back faces
     /// then its front faces (a closed glass body shows its far side through its near one).
     blend: Vec<Pipes>,
+    /// For the draws that add their colour; both faces.
+    add: Option<Pipes>,
     /// Hidden faces' two steps, per pass that draws them; only wireframes use them.
     solid_stages: Option<(Pipes, Pipes)>,
     data_stages: Option<(Pipes, Pipes)>,
@@ -307,6 +321,7 @@ impl RenderPipes {
             tint: some(wanted.tinted, 1, Pass::Tint, None)?,
             prepass: some(wanted.ao, 1, Pass::Prepass, cull)?,
             blend,
+            add: some(!calls.adding.is_empty(), wanted.samples, Pass::Add, None)?,
             solid_stages: stages(true, wanted.samples, Pass::Solid)?,
             data_stages: stages(wanted.data, 1, Pass::Data)?,
             measure_stages: stages(wanted.measure, 1, Pass::Measure)?,
@@ -811,6 +826,10 @@ impl Renderer {
                     for p in &pipes.blend {
                         enc.draw(&mut rp, p, [*k]);
                     }
+                }
+                // Then what adds its colour: the order does not matter.
+                if let Some(p) = &pipes.add {
+                    enc.draw(&mut rp, p, enc.calls.adding.iter().copied());
                 }
             }
             // Wireframes with hidden faces last: the faces' depth, then the lines where it is
