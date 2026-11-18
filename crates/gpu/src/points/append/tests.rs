@@ -177,3 +177,80 @@ fn per_point_and_random_sources_and_expressions_of_the_source() {
     assert_eq!(header(&gpu, &set), 2);
     assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
 }
+
+/// Births per point of many sources: the product passes what a `u32` holds, and the births
+/// still fill the room.
+#[test]
+fn births_per_point_of_many_sources_fill_the_room() {
+    let Some(gpu) = gpu() else { return };
+    let n = 65_536usize;
+    let pos: Vec<f32> = (0..n).flat_map(|i| [i as f32, 0.0, 0.0, 1.0]).collect();
+    let src = Points::new(
+        n as u32,
+        n as u32,
+        vec![Attr::new("position", AttrType::Vec3, floats(&gpu, &pos)).unwrap()],
+    )
+    .unwrap();
+    let set = state(&gpu, 64, 0);
+    let ids = buffer(&gpu, &[0, 0, 0, 0]);
+    let none = |_: &str| None;
+    let births = Births {
+        source: &src,
+        wanted: 65_536,
+        per_point: true,
+        pick: Pick::Cycle,
+        salt: 0,
+        room: 64,
+        params: &[],
+        param: &none,
+    };
+    assert_eq!(births.most(), 64);
+    append(&gpu, &set, &ids, &births, &[]).unwrap();
+    assert_eq!(header(&gpu, &set), 64, "65 536 x 65 536 births wanted, 64 fit");
+    assert_eq!(ids.read::<u32>(&gpu).unwrap()[0], 64);
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}
+
+/// A standard name of another type than its own (a `color` of three numbers) is copied where
+/// the source and the set agree on the type.
+#[test]
+fn a_standard_name_of_another_type_is_copied_where_the_types_agree() {
+    let Some(gpu) = gpu() else { return };
+    let pos: Vec<f32> = (0..2).flat_map(|i| [i as f32, 0.0, 0.0, 1.0]).collect();
+    let col: Vec<f32> = (0..2).flat_map(|i| [0.25 + i as f32 * 0.5, 0.5, 0.75, 0.0]).collect();
+    let src = Points::new(
+        2,
+        2,
+        vec![
+            Attr::new("position", AttrType::Vec3, floats(&gpu, &pos)).unwrap(),
+            Attr::new("color", AttrType::Vec3, floats(&gpu, &col)).unwrap(),
+        ],
+    )
+    .unwrap();
+    let attrs = vec![
+        Attr::new("position", AttrType::Vec3, floats(&gpu, &[0.0; 16])).unwrap(),
+        Attr::new("color", AttrType::Vec3, floats(&gpu, &[9.0; 16])).unwrap(),
+    ];
+    let header = buffer(&gpu, &[0, 0, 0, 0]);
+    let set = Points::new(4, 0, attrs)
+        .unwrap()
+        .with_count(Count::gpu(header, 4, Seen::default()).unwrap())
+        .unwrap();
+    let ids = buffer(&gpu, &[0, 0, 0, 0]);
+    let none = |_: &str| None;
+    let births = Births {
+        source: &src,
+        wanted: 2,
+        per_point: false,
+        pick: Pick::Cycle,
+        salt: 0,
+        room: 4,
+        params: &[],
+        param: &none,
+    };
+    append(&gpu, &set, &ids, &births, &[]).unwrap();
+    let got: Vec<f32> = read(&gpu, &set, "color").iter().map(|w| f32::from_bits(*w)).collect();
+    assert_eq!(got[..3], [0.25, 0.5, 0.75], "the source's colour");
+    assert_eq!(got[4..7], [0.75, 0.5, 0.75]);
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}

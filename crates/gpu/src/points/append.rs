@@ -121,8 +121,13 @@ fn pts_born(count: u32) -> u32 {
     let room = pts_u(params.pts_room);
     let n = pts_sources();
     var wanted = pts_u(params.pts_wanted);
+    // Per source point: a product past what a u32 holds asks for every place there is.
     if params.pts_per_point != 0 {
-        wanted = wanted * n;
+        if n != 0u && wanted > room / n {
+            wanted = room;
+        } else {
+            wanted = wanted * n;
+        }
     }
     if n == 0u || count >= room {
         wanted = 0u;
@@ -214,14 +219,16 @@ pub fn append(
                 Value::Fixed(_) => Vec::new(),
                 Value::Expr { reads, .. } => reads.iter().map(|r| canonical(r).to_string()).collect(),
             };
+            let copy = value == Value::Copy;
             let reads = names
                 .into_iter()
                 .map(|n| {
-                    // A standard attribute of another type than its own reads as its default.
+                    // An expression reads a standard attribute of another type than its own as
+                    // its default; a copy takes it as it is, of the type the set has too.
                     let ty = source
                         .attr(&n)
                         .map(super::Attr::ty)
-                        .filter(|t| default_of(&n).is_none_or(|d| d.ty == *t));
+                        .filter(|t| copy || default_of(&n).is_none_or(|d| d.ty == *t));
                     (n, ty)
                 })
                 .collect();
