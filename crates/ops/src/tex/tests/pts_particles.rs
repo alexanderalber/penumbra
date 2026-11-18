@@ -538,3 +538,48 @@ fn per_point_births_come_from_every_source_point() {
     assert_eq!(live(&rig, &p), 16);
     assert_eq!(ids(&rig, &p), (0..16).collect::<Vec<u32>>());
 }
+
+/// After particles, `pts.random` gives each particle one value for its whole life and
+/// `pts.delete` by random keeps or drops it for its whole life: both follow the `id`.
+#[test]
+fn random_values_and_random_deletes_stay_with_the_particle() {
+    let ops = [
+        one_point(),
+        create("/p", KIND, &[("rate", Value::Float(60.0)), ("life", Value::Float(0.5))]),
+        connect("/src", "/p", 0),
+        create("/rnd", "pts.random", &[("attribute", "heat".into())]),
+        connect("/p", "/rnd", 0),
+        create("/del", "pts.delete", &[("by", "random".into())]),
+        connect("/rnd", "/del", 0),
+    ];
+    let Some(mut rig) = rig_of(&ops) else { return };
+    let mut heat: std::collections::BTreeMap<u32, f32> = Default::default();
+    let mut kept: std::collections::BTreeMap<u32, bool> = Default::default();
+    let mut frames = 0;
+    for _ in 0..400 {
+        rig.clock.advance(1);
+        rig.cook("/del");
+        let ready = ["/rnd", "/del"].iter().all(|n| {
+            let s = rig.cooker.status(rig.id(n)).unwrap();
+            s.has_output && super::pts::compiled(&s)
+        });
+        if !ready {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            continue;
+        }
+        let all = output(&rig, "/rnd");
+        let left: Vec<u32> = ids(&rig, &output(&rig, "/del"));
+        for (id, v) in ids(&rig, &all).iter().zip(values(&rig, &all, "heat")) {
+            assert_eq!(*heat.entry(*id).or_insert(v[0]), v[0], "particle {id}: its value stays");
+            let k = left.contains(id);
+            assert_eq!(*kept.entry(*id).or_insert(k), k, "particle {id}: kept or dropped for good");
+        }
+        frames += 1;
+        if frames > 60 {
+            break;
+        }
+    }
+    assert!(frames > 60 && heat.len() > 40, "{frames} frames, {} particles", heat.len());
+    let share = kept.values().filter(|k| **k).count() as f64 / kept.len() as f64;
+    assert!((0.2..0.8).contains(&share), "about half kept: {share}");
+}

@@ -167,7 +167,7 @@ fn desc() -> NodeDesc {
             .range(0.0, 10.0)
             .doc("Seconds simulated at once when the node starts or starts over, so the particles are there from the first frame. The nodes of the loop take no part in them"),
     )
-    .param(ParamSpec::int("seed", 0).clamp(0.0, 1e9).range(0.0, 100.0).doc("Another number gives other random lives, speeds and source points"))
+    .param(ParamSpec::int("seed", 0).clamp(0.0, 1e9).range(0.0, 100.0).doc("Another number gives other random lives, speeds and source points. Two nodes with the same seed and the same params give the same particles: give each its own"))
     .param(ParamSpec::bool("reset", false).doc("No particles while on; they start over when it turns off"))
     .input("source", DataKind::Pts)
     .describe_input("source", "Where particles are born: a position and every attribute of a source point go to the particles born on it")

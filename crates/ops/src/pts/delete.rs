@@ -49,7 +49,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .param(
                 ParamSpec::text("expression", "weight <= 0.0")
                     .lines(2)
-                    .doc("A WGSL expression worked out once per point; where it is true (or not 0) the point goes. It can name attributes (position, weight, P), index, count, index01, time, rand(k) and WGSL's functions: position.z < 0.0, rand(0) < 0.5, index % 2u == 0u. The default deletes the points of weight 0, such as the empty texels of pts.from_tex, and keeps every other point")
+                    .doc("A WGSL expression worked out once per point; where it is true (or not 0) the point goes. It can name attributes (position, weight, P), index, count, index01, time, rand(k) (by index), rand_key(id, k) (by a particle's id, so it stays with the particle) and WGSL's functions: position.z < 0.0, rand(0) < 0.5, index % 2u == 0u. The default deletes the points of weight 0, such as the empty texels of pts.from_tex, and keeps every other point")
                     .applies_when("by", &["expression"]),
             )
             .param(
@@ -96,7 +96,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 ParamSpec::float("share", 0.5)
                     .clamp(0.0, 1.0)
                     .range(0.0, 1.0)
-                    .doc("random: the part of the points deleted, 0.25 for a quarter. Each point is drawn on its own, so the number varies a little")
+                    .doc("random: the part of the points deleted, 0.25 for a quarter. Each point is drawn on its own, so the number varies a little. Points with an `id` (particles) are drawn by their id, so a particle is kept or deleted for as long as it lives")
                     .applies_when("by", &["random"]),
             )
             .param(
@@ -136,20 +136,25 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 }
 
 /// The program that flags the points kept, for every choice of `by` but `expression`: one source
-/// per choice, its numbers as params.
-fn fixed(by: &str) -> Spec {
+/// per choice, its numbers as params. With `keyed`, a random choice follows each point's `id`.
+fn fixed(by: &str, keyed: bool) -> Spec {
+    let keyed = keyed && by == "random";
     let hit = match by {
         "index" => {
             "index >= u32(params.lo) && index <= u32(params.hi) && (index - u32(params.lo)) % u32(max(params.every, 1)) == 0u"
         }
         "box" => "all(abs(position - params.center) <= abs(params.extent) * 0.5)",
         "sphere" => "distance(position, params.center) <= params.radius",
+        _ if keyed => "rand_key(u32(id), u32(params.salt)) < params.share",
         _ => "rand(u32(params.salt)) < params.share",
     };
     let reads = matches!(by, "box" | "sphere");
     let mut decls = vec![Decl::set(KEEP).ty(AttrType::U32)];
     if reads {
         decls.push(Decl::read("position"));
+    }
+    if keyed {
+        decls.push(Decl::read("id"));
     }
     Spec {
         label: KIND.into(),
@@ -210,7 +215,8 @@ fn salt(seed: i64) -> i64 {
 /// Compiles the program of the box, the choice that needs positions.
 fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     for by in ["box", "index"] {
-        let generated = program::generate(&fixed(by), &generated_shape(), program::storage_budget(gpu))?;
+        let generated =
+            program::generate(&fixed(by, false), &generated_shape(), program::storage_budget(gpu))?;
         Program::cached(gpu, generated)?;
     }
     Ok(())
@@ -291,7 +297,8 @@ impl Operator for Delete {
                 "flip" => Some(Value::Int(flip)),
                 other => cx.param(other).cloned(),
             };
-            self.own.run(cx, gpu, &fixed(by), points, false, &param, &[])?
+            let keyed = points.attr("id").is_some_and(|a| matches!(a.ty(), AttrType::U32 | AttrType::I32));
+            self.own.run(cx, gpu, &fixed(by, keyed), points, false, &param, &[])?
         };
         let Some(keep) = flagged.attr(KEEP) else {
             return Err(CookError::failed("the flags of the points kept are missing"));
