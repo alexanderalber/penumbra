@@ -1,7 +1,10 @@
 //! `geo.from_pts`: points as geometry that `tex.render` draws. Each point becomes a sprite (a
 //! small disc or square that faces the camera) or a copy of a model, all in one instanced draw.
 //! The attributes the drawing reads (`position`, `scale`, `color`, `normal`) are copied on the
-//! GPU into pictures of 32-bit floats, one texel per point, for the renderer's instances.
+//! GPU into pictures of 32-bit floats, one texel per point, for the renderer's instances. The
+//! pictures are as large as the points' capacity, so they keep their size while the count
+//! moves. Where the count is on the GPU, the renderer reads it there and draws exactly the
+//! points that are alive.
 
 use std::sync::Arc;
 
@@ -213,6 +216,8 @@ impl Operator for FromPts {
         let size = if copies { cx.float("scale")? } else { cx.float("size")? } as f32;
         let instances = Arc::new(Instances {
             count: Some(count),
+            // A count on the GPU: the renderer draws that many, none of the dead points.
+            live: points.count().header().cloned(),
             size,
             face_camera: !copies,
             aim,

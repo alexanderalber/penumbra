@@ -5,7 +5,7 @@
 use std::f32::consts::{PI, TAU};
 
 use penumbra_core::{Curve, Error, ParamSpec};
-use penumbra_gpu::points::{Attr, AttrType, Points};
+use penumbra_gpu::points::{Attr, AttrType, Points, capacity_for, most_elements};
 use penumbra_gpu::{Buffer, BufferRing, Gpu};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
@@ -425,19 +425,21 @@ impl Rng {
     }
 }
 
-/// Uploads `cloud` as points, each attribute into a buffer of its ring.
+/// Uploads `cloud` as points, each attribute into a buffer of its ring. The buffers hold
+/// [`capacity_for`] the count, so a count that moves a little reuses them.
 pub fn upload(gpu: &Gpu, cloud: &Cloud, rings: &mut Rings) -> Result<Points, Error> {
     let n = cloud.position.len();
     let count = u32::try_from(n).map_err(|_| Error::new("too many points"))?;
     if count == 0 {
         return Ok(Points::empty());
     }
+    let capacity = capacity_for(count, most_elements(gpu, AttrType::Vec3));
     // `values` holds the floats of `count` elements of `ty`, in its layout.
     let put = |ring: &mut BufferRing, name: &str, ty: AttrType, values: &[f32]| -> Result<Attr, Error> {
-        let bytes = u64::from(count) * ty.stride();
-        if values.len() as u64 * 4 != bytes {
+        if values.len() as u64 * 4 != u64::from(count) * ty.stride() {
             return Err(Error::new(format!("the attribute `{name}` has another length than the positions")));
         }
+        let bytes = u64::from(capacity) * ty.stride();
         let buffer: Buffer = ring.next(gpu, bytes, &format!("pts {name}"))?;
         buffer.write(gpu, 0, values)?;
         Attr::new(name, ty, buffer)
@@ -451,7 +453,7 @@ pub fn upload(gpu: &Gpu, cloud: &Cloud, rings: &mut Rings) -> Result<Points, Err
         attrs.push(put(&mut rings.uv, "uv", AttrType::Vec2, uv.as_flattened())?);
     }
     let bounds = Bounds::of(cloud.position.iter().map(|p| [p[0], p[1], p[2]]));
-    Ok(Points::new(count, count, attrs)?.with_bounds(bounds).with_dims(cloud.dims))
+    Ok(Points::new(capacity, count, attrs)?.with_bounds(bounds).with_dims(cloud.dims))
 }
 
 /// The buffers of one generator, one ring per attribute.

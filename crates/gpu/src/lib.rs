@@ -193,6 +193,9 @@ struct Inner {
     input_groups: Mutex<Vec<std::sync::Weak<pass::InputGroups>>>,
     /// Calls of [`Gpu::poll`] so far.
     polls: AtomicU64,
+    /// The header that bounds no count, for points whose count the CPU knows (see
+    /// [`points::Count`]).
+    no_limit: Mutex<Option<Buffer>>,
 }
 
 /// Whether the device is lost, why, and who wants to know (see [`Gpu::on_lost`]). Shared with
@@ -327,6 +330,7 @@ impl Gpu {
                 deferred: Mutex::new(deferred::Deferred::default()),
                 input_groups: Mutex::new(Vec::new()),
                 polls: AtomicU64::new(0),
+                no_limit: Mutex::new(None),
             }),
         }
     }
