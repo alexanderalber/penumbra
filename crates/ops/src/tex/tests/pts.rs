@@ -114,6 +114,21 @@ fn every_shape_makes_what_it_says() {
     let disc = cloud(&Shape { shape: "circle", count: 400, inside: true, ..base }).unwrap();
     let near = disc.position.iter().filter(|p| p[0] * p[0] + p[2] * p[2] < 1.0).count();
     assert!((80..=120).contains(&near), "a quarter of the area holds a quarter of the points: {near}");
+    // An ordered ball fills the ball: the points towards the top lie as far out on average as
+    // all of them, three quarters of the radius.
+    let ball = cloud(&Shape { shape: "sphere", inside: true, count: 2000, size: [1.0; 3], ..base }).unwrap();
+    let radius = |p: &[f32; 4]| (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+    let mean = |ps: &[&[f32; 4]]| ps.iter().map(|p| radius(p)).sum::<f32>() / ps.len() as f32;
+    let all: Vec<&[f32; 4]> = ball.position.iter().collect();
+    let top: Vec<&[f32; 4]> = ball.position.iter().filter(|p| p[2] > 0.5 * radius(p)).collect();
+    assert!((mean(&all) - 0.375).abs() < 0.01, "{}", mean(&all));
+    assert!(
+        top.len() > 400 && (mean(&top) - 0.375).abs() < 0.02,
+        "{} near the top, {} out",
+        top.len(),
+        mean(&top)
+    );
+    assert!(ball.position.iter().all(|p| radius(p) <= 0.5 + 1e-5));
     // A box's lattice: about the count asked, its dims multiply to what it made.
     let solid = cloud(&Shape { shape: "box", inside: true, count: 1000, size: [1.0; 3], ..base }).unwrap();
     assert_eq!(solid.dims, Some([10, 10, 10]));

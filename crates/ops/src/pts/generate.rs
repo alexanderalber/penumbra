@@ -242,6 +242,13 @@ fn sphere_uv(d: [f32; 3]) -> [f32; 2] {
     [u, d[2].clamp(-1.0, 1.0).acos() / PI]
 }
 
+/// Point `i`'s share of the ball's volume inside it, 0 to 1: an even sequence that does not
+/// follow the spiral's (steps of 1 over the plastic number, unrelated to the golden angle).
+fn depth(i: u32) -> f32 {
+    let x = (f64::from(i) + 0.5) * 0.754_877_666_246_692_7;
+    (x - x.floor()) as f32
+}
+
 fn sphere(count: u32, r: f32, inside: bool, mut rng: Option<&mut Rng>) -> Cloud {
     let mut position = Vec::with_capacity(count as usize);
     let mut normal = Vec::with_capacity(count as usize);
@@ -253,11 +260,11 @@ fn sphere(count: u32, r: f32, inside: bool, mut rng: Option<&mut Rng>) -> Cloud 
                 (d, if inside { r * rng.next().cbrt() } else { r })
             }
             None => {
-                // A Fibonacci spiral from the north pole down; inside, each point a little
-                // further out than the one before.
+                // A Fibonacci spiral from the north pole down. Inside, the distance from the
+                // centre follows a sequence of its own, so every direction reaches every depth.
                 let t = (i as f32 + 0.5) / count as f32;
                 let d = direction(1.0 - 2.0 * t, GOLDEN_ANGLE * i as f32);
-                (d, if inside { r * t.cbrt() } else { r })
+                (d, if inside { r * depth(i).cbrt() } else { r })
             }
         };
         position.push([d[0] * radius, d[1] * radius, d[2] * radius, 1.0]);
