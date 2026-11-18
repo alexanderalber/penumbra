@@ -381,7 +381,8 @@ fn a_force_in_the_loop_moves_the_particles_and_a_delete_is_refused() {
         rig.clock.advance(1);
         rig.cook("/end");
         let s = rig.cooker.status(id).unwrap();
-        if let Some(w) = s.warning {
+        // While the delete compiles, the loop does not run: said so in other words.
+        if let Some(w) = s.warning.filter(|w| !w.contains("did not run")) {
             assert!(w.contains("pts.delete") && w.contains("kill"), "{w}");
             break;
         }
@@ -664,4 +665,83 @@ fn the_bound_follows_the_count_and_a_picture_keeps_its_size() {
     // readback lags.
     assert!(most <= 120, "the bound stays near the count: {most}");
     assert_eq!(sizes.len(), 1, "one picture size: {sizes:?}");
+}
+
+/// `warm_up` while the show runs: a few milliseconds a frame, no particles meanwhile, a job
+/// that shows how far it got; then the particles as a run of that length leaves them. Under
+/// exact frames the whole pre-roll comes in the first frame.
+#[test]
+fn a_warm_up_spreads_over_frames_and_comes_whole_when_stepping() {
+    let ops = [
+        one_point(),
+        create(
+            "/p",
+            KIND,
+            &[("rate", Value::Float(60.0)), ("life", Value::Float(1.0)), ("warm_up", Value::Float(5.0))],
+        ),
+        connect("/src", "/p", 0),
+    ];
+    let Some(mut rig) = rig_of(&ops) else { return };
+    let id = rig.id("/p");
+    let started = std::time::Instant::now();
+    rig.clock.advance(1);
+    rig.cook("/p");
+    let first = started.elapsed();
+    let s = rig.cooker.status(id).unwrap();
+    assert!(matches!(s.job, Some(penumbra_graph::JobStatus::Running { progress: Some(_) })), "{s:?}");
+    assert_eq!(live(&rig, &output(&rig, "/p")), 0, "no particles while it warms up");
+    let mut frames = 1;
+    loop {
+        rig.clock.advance(1);
+        rig.cook("/p");
+        frames += 1;
+        let s = rig.cooker.status(id).unwrap();
+        if !matches!(s.job, Some(penumbra_graph::JobStatus::Running { .. })) {
+            break;
+        }
+        assert!(frames < 400, "the warm-up ends");
+    }
+    assert!(frames > 2, "spread over {frames} frames, the first took {first:?}");
+    // A second of particles at 60 a second, one born at this frame.
+    let p = output(&rig, "/p");
+    assert_eq!(live(&rig, &p), 61);
+    assert_eq!(ids(&rig, &p).first().copied(), Some(300 - 60), "five seconds of births before");
+
+    // Stepping: all of it at once.
+    rig.cooker.reset(id);
+    rig.cooker.set_exact_frames(true);
+    let p = step(&mut rig, "/p");
+    assert_eq!(live(&rig, &p), 61);
+    assert_eq!(ids(&rig, &p).first().copied(), Some(300 - 60));
+}
+
+/// A node in the loop that fails after the loop ran: the warning says the loop did not run,
+/// not that a node changed the particles' number.
+#[test]
+fn a_loop_that_stops_is_named_as_such() {
+    let ops = [
+        one_point(),
+        create("/p", KIND, &[("rate", Value::Float(60.0)), ("life", Value::Float(10.0))]),
+        connect("/src", "/p", 0),
+        create("/f", crate::pts::force::KIND, &[]),
+        connect("/p", "/f", 0),
+        create("/end", "pts.null", &[]),
+        connect("/f", "/end", 0),
+        connect("/end", "/p", 1),
+    ];
+    let Some(mut rig) = rig_of(&ops) else { return };
+    rig.cooker.set_exact_frames(true);
+    for _ in 0..3 {
+        step(&mut rig, "/end");
+    }
+    // A force into an attribute of one number: an error.
+    rig.edit(&[set("/f.attribute", "age".into())]);
+    let mut warned = None;
+    for _ in 0..3 {
+        rig.clock.advance(1);
+        rig.cook("/end");
+        warned = warned.or(rig.cooker.status(rig.id("/p")).unwrap().warning);
+    }
+    let w = warned.expect("a warning");
+    assert!(w.contains("did not run") && !w.contains("pts.delete"), "{w}");
 }

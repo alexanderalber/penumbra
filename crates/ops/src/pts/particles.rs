@@ -23,6 +23,7 @@
 //! list, so it stays with the particle while those before it die.
 
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use penumbra_core::{Curve, Error, ParamSpec, Tick, Value};
 use penumbra_gpu::points::append::{self, Births, Item, Pick};
@@ -37,7 +38,7 @@ use penumbra_graph::{
 use super::delete::KEEP;
 use super::force::WIND;
 use super::program::Own;
-use crate::tex::fluid::step;
+use crate::tex::fluid::{MAX_DT, step};
 use crate::{gpu, on_gpu};
 
 pub const KIND: &str = "pts.particles";
@@ -169,7 +170,7 @@ fn desc() -> NodeDesc {
         ParamSpec::float("warm_up", 0.0)
             .clamp(0.0, MAX_WARM_UP)
             .range(0.0, 10.0)
-            .doc("Seconds simulated at once when the node starts or starts over, so the particles are there from the first frame. The nodes of the loop take no part in them"),
+            .doc("Seconds simulated ahead when the node starts or starts over, so the particles are there in full when they appear. The nodes of the loop take no part in them. While the show runs, the pre-roll takes about 4 ms of each frame, and the node gives out no particles until it is done: 30 seconds took about 4 seconds on a fast desktop. Stepping and recording do it all in the first frame"),
     )
     .param(ParamSpec::int("seed", 0).clamp(0.0, 1e9).range(0.0, 100.0).doc("Another number gives other random lives, speeds and source points. Two nodes with the same seed and the same params give the same particles: give each its own"))
     .param(ParamSpec::bool("reset", false).doc("No particles while on; they start over when it turns off"))
@@ -356,7 +357,13 @@ struct Sim {
     /// `fire` at the last step, so a burst comes when it turns on.
     fired: bool,
     bound: Bound,
+    /// The count headers of the outputs of the steps before the last, newest first: a loop
+    /// that hands one of them back did not cook at the last step.
+    older: Vec<Buffer>,
 }
+
+/// Outputs before the last that [`Sim::older`] knows.
+const OLDER: usize = 4;
 
 /// One step's settings, read from the params once.
 struct Settings {
@@ -382,9 +389,71 @@ struct Particles {
     headers: BufferRing,
     /// A `force` of 0 for every particle, shared by every step.
     zero: Option<Buffer>,
+    /// The warm-up of a new start while it runs over several frames.
+    warming: Option<Warming>,
 }
 
+/// A warm-up under way: `done` of `steps` steps of `length` seconds.
+struct Warming {
+    capacity: u32,
+    ids: Buffer,
+    carry: f64,
+    bound: Bound,
+    out: Option<Points>,
+    done: u32,
+    steps: u32,
+    length: f64,
+}
+
+/// Longest a cook spends on a warm-up while the show runs; the rest waits for the next frame.
+/// Stepping and recording take the whole warm-up at once.
+const WARM_BUDGET: Duration = Duration::from_millis(4);
+
 impl Particles {
+    /// No particles, with the attributes they will have.
+    fn nothing(&mut self, gpu: &Gpu, source: &Points, capacity: u32) -> Result<Cooked, CookError> {
+        let empty = self.empty(gpu, source, capacity)?;
+        let zero = self.zero(gpu, capacity)?;
+        let out = empty.with_attr(Attr::new(FORCE, AttrType::Vec3, zero)?)?.with_count(Count::Known(0))?;
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out)]))
+    }
+
+    /// Steps of the warm-up `w`, as many as [`WARM_BUDGET`] allows (all of them under exact
+    /// frames), at least one.
+    fn warm(
+        &mut self,
+        cx: &CookContext<'_>,
+        gpu: &Gpu,
+        source: &Points,
+        set: &Settings,
+        mut w: Warming,
+    ) -> Result<Warming, CookError> {
+        let start = Instant::now();
+        while w.done < w.steps {
+            let (wanted, rest) = births_of(set.rate, w.length, w.carry);
+            let (o, b) = self.advance(
+                cx,
+                gpu,
+                source,
+                w.out.as_ref(),
+                w.capacity,
+                &w.ids,
+                w.length,
+                wanted,
+                set,
+                &w.bound,
+            )?;
+            w.carry = rest;
+            w.out = Some(o);
+            w.bound = b;
+            w.done += 1;
+            if !cx.exact_frames() && start.elapsed() >= WARM_BUDGET {
+                break;
+            }
+        }
+        Ok(w)
+    }
+
     /// A buffer for attribute `name` of `bytes` from the node's own rings.
     fn fresh(&mut self, gpu: &Gpu, name: &str, bytes: u64) -> Result<Buffer, Error> {
         if let Some((_, ring)) = self.fresh.iter_mut().find(|(n, _)| n == name) {
@@ -616,6 +685,10 @@ impl Operator for Particles {
     }
 
     fn job_status(&self) -> Option<JobStatus> {
+        if let Some(w) = &self.warming {
+            let progress = w.done as f32 / w.steps.max(1) as f32;
+            return Some(JobStatus::Running { progress: Some(progress) });
+        }
         let busy = |s: &JobStatus| matches!(s, JobStatus::Queued | JobStatus::Running { .. });
         let (a, m) = (self.age.status(), self.motion.status());
         Some(if busy(&a) || !busy(&m) { a } else { m })
@@ -651,12 +724,9 @@ impl Operator for Particles {
         if cx.bool("reset")? {
             // No particles, with the attributes they will have.
             self.sim = None;
+            self.warming = None;
             self.last = Some(now.tick);
-            let empty = self.empty(gpu, source, capacity)?;
-            let zero = self.zero(gpu, capacity)?;
-            let out =
-                empty.with_attr(Attr::new(FORCE, AttrType::Vec3, zero)?)?.with_count(Count::Known(0))?;
-            return Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out)]));
+            return self.nothing(gpu, source, capacity);
         }
         let kept = self.sim.as_ref().is_some_and(|s| s.capacity == capacity);
         if dt == 0.0 && kept && !cx.params_changed() && !cx.inputs_changed() && !cx.first_cook() {
@@ -675,6 +745,15 @@ impl Operator for Particles {
             Some(sim) => {
                 state = Some(match previous {
                     Some(p) if dt > 0.0 && same_particles(p, &sim.out) => p.clone(),
+                    Some(p)
+                        if dt > 0.0
+                            && p.count().header().is_some_and(|h| sim.older.iter().any(|o| o.same(h))) =>
+                    {
+                        cx.warn(
+                            "the loop into `previous` did not run at the last step: a node in it is in error or still waiting (for a compile, an input), so it handed back older particles. Stepping on without the loop meanwhile",
+                        );
+                        sim.out.clone()
+                    }
                     Some(_) if dt > 0.0 => {
                         cx.warn(
                             "the points on `previous` are not the particles this node gave out a step ago: a node in the loop changes their number or order (pts.delete does), or they come from elsewhere. Only pts.particles adds and removes particles; set `kill` to end them from the loop. Stepping on without the loop meanwhile",
@@ -685,33 +764,33 @@ impl Operator for Particles {
                 });
             }
             None => {
-                // A new start: the ids from 0, the warm-up first.
-                let ids = Buffer::new(gpu, 16, "pts particle ids")?;
-                let warm = cx.float("warm_up")?.clamp(0.0, MAX_WARM_UP);
-                let steps = (warm / period).round() as u32;
-                let mut carry = 0.0;
-                let mut bound = Bound::default();
-                let mut out: Option<Points> = None;
-                for _ in 0..steps {
-                    let (wanted, rest) = births_of(set.rate, period, carry);
-                    carry = rest;
-                    let (o, b) = self.advance(
-                        cx,
-                        gpu,
-                        source,
-                        out.as_ref(),
-                        capacity,
-                        &ids,
-                        period,
-                        wanted,
-                        &set,
-                        &bound,
-                    )?;
-                    out = Some(o);
-                    bound = b;
+                // A new start: the ids from 0, the warm-up first, in steps of at most MAX_DT.
+                let warming = match self.warming.take() {
+                    Some(w) if w.capacity == capacity => w,
+                    _ => {
+                        let warm = cx.float("warm_up")?.clamp(0.0, MAX_WARM_UP);
+                        let length = period.min(MAX_DT);
+                        Warming {
+                            capacity,
+                            ids: Buffer::new(gpu, 16, "pts particle ids")?,
+                            carry: 0.0,
+                            bound: Bound::default(),
+                            out: None,
+                            done: 0,
+                            steps: (warm / length).round() as u32,
+                            length,
+                        }
+                    }
+                };
+                let w = self.warm(cx, gpu, source, &set, warming)?;
+                if w.done < w.steps {
+                    // Not there yet: no particles meanwhile, and the rest at the next frames.
+                    self.last = Some(now.tick);
+                    self.warming = Some(w);
+                    return self.nothing(gpu, source, capacity);
                 }
-                state = out.clone();
-                fresh = Some((ids, carry, bound));
+                state = w.out.clone();
+                fresh = Some((w.ids, w.carry, w.bound));
             }
         }
 
@@ -730,7 +809,14 @@ impl Operator for Particles {
         let (out, bound) =
             self.advance(cx, gpu, source, state.as_ref(), capacity, &ids, dt, wanted, &set, &bound)?;
         self.last = Some(now.tick);
-        self.sim = Some(Sim { capacity, ids, out: out.clone(), carry, fired, bound });
+        let older = match &self.sim {
+            Some(sim) => {
+                let last = sim.out.count().header().cloned();
+                last.into_iter().chain(sim.older.iter().cloned()).take(OLDER).collect()
+            }
+            None => Vec::new(),
+        };
+        self.sim = Some(Sim { capacity, ids, out: out.clone(), carry, fired, bound, older });
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out)]))
     }
 }
