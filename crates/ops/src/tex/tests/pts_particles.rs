@@ -785,3 +785,62 @@ fn drawn_particles_get_a_box_read_back_from_the_gpu() {
     // Half a second of particles at 1 m/s: x from 0 to 0.5, grown by a tenth.
     assert!((0.5..=0.7).contains(&extent), "{extent}");
 }
+
+/// A particle takes `inherit` of its source point's `velocity`, and the `drag` and `mass` its
+/// source point carries take the place of the params.
+#[test]
+fn inherited_speed_and_drag_and_mass_as_attributes() {
+    let ops = [
+        one_point(),
+        create(
+            "/v",
+            "pts.math",
+            &[("expression", "vec3f(2.0, 0.0, 0.0)".into()), ("result", "velocity".into())],
+        ),
+        connect("/src", "/v", 0),
+        create("/d", "pts.math", &[("expression", "1.0".into()), ("result", "drag".into())]),
+        connect("/v", "/d", 0),
+        create("/m", "pts.math", &[("expression", "4.0".into()), ("result", "mass".into())]),
+        connect("/d", "/m", 0),
+        create(
+            "/p",
+            KIND,
+            &[
+                ("rate", Value::Float(0.0)),
+                ("burst", Value::Int(1)),
+                ("fire", Value::Bool(true)),
+                ("life", Value::Float(100.0)),
+                ("inherit", Value::Float(0.5)),
+                ("mass", Value::Float(1.0)),
+            ],
+        ),
+        connect("/m", "/p", 0),
+        create(
+            "/push",
+            "pts.math",
+            &[("expression", "vec3f(0.0, 8.0, 0.0)".into()), ("result", "force".into())],
+        ),
+        connect("/p", "/push", 0),
+        create("/end", "pts.null", &[]),
+        connect("/push", "/end", 0),
+        connect("/end", "/p", 1),
+    ];
+    let Some(mut rig) = rig_of(&ops) else { return };
+    rig.cooker.set_exact_frames(true);
+    let p = step(&mut rig, "/end");
+    let v0 = values(&rig, &p, "velocity")[0];
+    assert!((v0[0] - 1.0).abs() < 1e-5 && v0[1] == 0.0, "half the source's speed: {v0:?}");
+    let (mut vx, mut vy) = (1.0f64, 0.0f64);
+    for n in 2..=10 {
+        let p = step(&mut rig, "/end");
+        // Drag 1 from the attribute, a force of 8 over a mass of 4 from the attribute.
+        let shrink = (-DT).exp();
+        vx *= shrink;
+        vy = (vy + 2.0 * DT) * shrink;
+        let v = values(&rig, &p, "velocity")[0];
+        assert!(
+            (f64::from(v[0]) - vx).abs() < 1e-5 && (f64::from(v[1]) - vy).abs() < 1e-5,
+            "step {n}: {v:?}"
+        );
+    }
+}
