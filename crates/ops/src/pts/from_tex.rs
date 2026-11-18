@@ -5,17 +5,21 @@
 //! The points form a grid of rows and columns (`dims`), row 0 at the top of the picture, so
 //! `tex.from_pts` turns them back into a picture of the same layout. Every point gets `uv` (the
 //! centre of its cell) and `weight` (the picture's alpha there; 0 where a depth picture holds
-//! no depth), for a node that keeps only some of the points.
+//! no depth or one outside `near` and `far`), for a node that keeps only some of the points.
+//! `delete_empty` drops the points of weight 0 right here, TouchDesigner's "active" points:
+//! then their count is on the GPU and the rows and columns are gone.
 
 use penumbra_core::{Curve, Error, ParamSpec, Unit, Value};
 use penumbra_gpu::Gpu;
-use penumbra_gpu::points::Points;
+use penumbra_gpu::points::compact::Compactor;
 use penumbra_gpu::points::program::{self, Decl, Program, Shape, Spec};
+use penumbra_gpu::points::{AttrType, Points, capacity_for, most_elements};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, JobStatus, NodeDesc, NodeTypes, Operator,
 };
 use penumbra_mesh::Bounds;
 
+use super::delete::KEEP;
 use super::generate::MAX_POINTS;
 use super::program::{Own, picture};
 use crate::{gpu, on_gpu};
@@ -113,6 +117,27 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("depth: metres per unit of `channel`. A 16-bit depth picture in millimetres loads as 0 to 1 for 0 to 65.535 m: use 65.535")
                 .applies_when("mode", &["depth"]),
         )
+        .param(
+            ParamSpec::float("near", 0.0)
+                .clamp(0.0, 1e9)
+                .range(0.0, 10.0)
+                .unit(Unit::Metres)
+                .doc("depth: points nearer than this get weight 0, as empty texels do")
+                .applies_when("mode", &["depth"]),
+        )
+        .param(
+            ParamSpec::float("far", 0.0)
+                .clamp(0.0, 1e9)
+                .range(0.0, 10.0)
+                .unit(Unit::Metres)
+                .special(0.0, "no limit")
+                .doc("depth: points farther than this get weight 0")
+                .applies_when("mode", &["depth"]),
+        )
+        .param(
+            ParamSpec::bool("delete_empty", false)
+                .doc("Delete the points of weight 0: transparent texels, and in depth mode texels without a depth or outside near and far. The rest keep their order, but no longer form rows and columns, and their number is on the GPU (the viewer shows it a frame late)"),
+        )
         .input("in", DataKind::Tex)
         .describe_input("in", "The picture: 8-bit, half floats or 32-bit floats")
         .output("out", DataKind::Pts)
@@ -199,11 +224,13 @@ fn program_params() -> Vec<ParamSpec> {
         ParamSpec::choice("channel", &CHANNELS),
         ParamSpec::float("tan_half", 0.5),
         ParamSpec::float("depth_scale", 1.0),
+        ParamSpec::float("near", 0.0),
+        ParamSpec::float("far", 0.0),
     ]
 }
 
-/// The program of `mode`.
-fn spec(mode: &str) -> Spec {
+/// The program of `mode`; with `flags`, it also flags the points of weight above 0 to keep.
+fn spec(mode: &str, flags: bool) -> Spec {
     let (body, coloured) = match mode {
         "height" => ("position = pts_flat(u) + vec3f(0.0, -params.height * pts_channel(c), 0.0);", true),
         "position" => ("position = c.xyz;", false),
@@ -212,12 +239,14 @@ fn spec(mode: &str) -> Spec {
     let size = vec2f(textureDimensions(pic0));
     let t = params.tan_half;
     position = vec3f((2.0 * u.x - 1.0) * t * size.x / max(size.y, 1.0) * d, d, (1.0 - 2.0 * u.y) * t * d);
-    weight = select(0.0, c.a, d > 0.0);",
+    let inside = d >= params.near && (params.far <= 0.0 || d <= params.far);
+    weight = select(0.0, c.a, d > 0.0 && inside);",
             false,
         ),
         _ => ("position = pts_flat(u);", true),
     };
     let colour = if coloured { "color = c;\n    normal = vec3f(0.0, -1.0, 0.0);" } else { "" };
+    let flag = if flags { format!("{KEEP} = select(0u, 1u, weight > 0.0);") } else { String::new() };
     let source = format!(
         "{CELL}
 fn main() {{
@@ -227,6 +256,7 @@ fn main() {{
     weight = c.a;
     {colour}
     {body}
+    {flag}
 }}
 "
     );
@@ -234,27 +264,33 @@ fn main() {{
     if coloured {
         decls.extend([Decl::set("color"), Decl::set("normal")]);
     }
+    if flags {
+        decls.push(Decl::set(KEEP).ty(AttrType::U32));
+    }
     Spec { label: KIND.into(), source, decls, params: program_params() }
 }
 
 /// Compiles the program of the default mode.
 fn warm_up(gpu: &Gpu) -> Result<(), Error> {
-    let generated = program::generate(&spec("color"), &Shape::default(), program::storage_budget(gpu))?;
+    let generated =
+        program::generate(&spec("color", false), &Shape::default(), program::storage_budget(gpu))?;
     Program::cached(gpu, generated).map(|_| ())
 }
 
 #[derive(Default)]
 struct FromTex {
     own: Own,
+    compactor: Compactor,
 }
 
 impl Operator for FromTex {
     fn gpu_bytes(&self) -> u64 {
-        self.own.bytes()
+        self.own.bytes() + self.compactor.bytes()
     }
 
     fn trim(&mut self) {
         self.own.trim();
+        self.compactor.trim();
     }
 
     fn job_status(&self) -> Option<JobStatus> {
@@ -292,8 +328,10 @@ impl Operator for FromTex {
             "tan_half" => Some(Value::Float(tan_half)),
             other => cx.param(other).cloned(),
         };
-        let empty = Points::new(n, n, Vec::new())?;
-        let out = self.own.run(cx, gpu, &spec(mode), &empty, false, &param, &[Some(tex)])?;
+        let delete = cx.bool("delete_empty")?;
+        let capacity = capacity_for(n, most_elements(gpu, AttrType::Vec4));
+        let empty = Points::new(capacity, n, Vec::new())?;
+        let out = self.own.run(cx, gpu, &spec(mode, delete), &empty, false, &param, &[Some(tex)])?;
         let bounds = if mode == "color" {
             let (x, z) = (0.5 * size as f32, 0.5 * (size * aspect) as f32);
             Bounds::of([[-x, 0.0, -z], [x, 0.0, z]])
@@ -301,6 +339,10 @@ impl Operator for FromTex {
             None
         };
         let out = out.with_bounds(self.own.bounds(bounds)).with_dims(Some([rows, cols, 1]));
+        let out = match out.attr(KEEP).map(|a| a.buffer().clone()) {
+            Some(keep) => self.compactor.compact(gpu, &out.without(KEEP), &keep)?,
+            None => out,
+        };
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out)]))
     }
 }
