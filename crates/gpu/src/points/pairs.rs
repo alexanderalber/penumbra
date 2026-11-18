@@ -29,6 +29,9 @@ pub const SPAN: &str = "span";
 /// The length of a line over the search distance: 0 to 1.
 pub const SPAN01: &str = "span01";
 
+/// Readbacks of the header a [`Pairer`] waits for at once.
+const PENDING: usize = 8;
+
 /// The most lines one point chooses.
 pub const MAX_LINES: u32 = 32;
 
@@ -311,6 +314,9 @@ pub struct Pairer {
     headers: BufferRing,
     rings: Vec<(String, BufferRing)>,
     last: Option<Seen>,
+    /// Readbacks not yet arrived, oldest first, at most [`PENDING`]: under load a readback can
+    /// take longer than a frame, and the newest one that arrived still counts.
+    pending: Vec<Seen>,
     /// The header of the newest lines read back so far.
     words: Option<[u32; 4]>,
 }
@@ -324,9 +330,7 @@ impl Pairer {
     /// distance that is not a positive number, more line ends than a buffer holds, and anything
     /// the GPU refuses.
     pub fn pairs(&mut self, gpu: &Gpu, points: &Points, set: &Settings) -> Result<Points, Error> {
-        if let Some(w) = self.last.as_ref().and_then(Seen::arrived_words) {
-            self.words = Some(w);
-        }
+        self.settle();
         let n = points.count().at_most();
         let most = set.most.clamp(1, MAX_LINES);
         let carried = carried(points, set)?;
@@ -409,6 +413,10 @@ impl Pairer {
         // For display, and for what the node says about crowded cubes and lines left out.
         let seen = Seen::reading(gpu, &header, self.last.as_ref()).unwrap_or_default();
         self.last = Some(seen.clone());
+        self.pending.push(seen.clone());
+        if self.pending.len() > PENDING {
+            self.pending.remove(0);
+        }
         let count = Count::gpu(header, 2 * lines_cap, seen)?;
         Ok(Points::new(capacity, 0, out)?
             .with_bounds(points.bounds())
@@ -419,8 +427,24 @@ impl Pairer {
     /// The header of the newest lines read back so far, a frame or more late: the line ends, the
     /// lines, the points past the cap of their cube, the lines wanted before `max`. `None` before
     /// the first arrives.
-    pub fn words(&self) -> Option<[u32; 4]> {
-        self.last.as_ref().and_then(Seen::arrived_words).or(self.words)
+    pub fn words(&mut self) -> Option<[u32; 4]> {
+        self.settle();
+        self.words
+    }
+
+    /// Takes in the readbacks that arrived; the newest of them gives [`Pairer::words`].
+    fn settle(&mut self) {
+        let mut newest = None;
+        self.pending.retain(|s| match s.arrived_words() {
+            Some(w) => {
+                newest = Some(w);
+                false
+            }
+            None => true,
+        });
+        if newest.is_some() {
+            self.words = newest;
+        }
     }
 
     /// The attributes `carried` of each end's point, through `map`, into `out`.
