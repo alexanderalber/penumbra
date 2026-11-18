@@ -85,7 +85,7 @@ pub const MAX_SHADOWS: usize = 8;
 pub const MAX_PROJECTORS: usize = 4;
 const LIGHT_BYTES: u64 = 128;
 const FRAME_BYTES: u64 = 160 + MAX_LIGHTS as u64 * LIGHT_BYTES;
-const DRAW_BYTES: u64 = 240;
+const DRAW_BYTES: u64 = 256;
 const AO_BYTES: u64 = 96;
 /// Most draws (runs of one part and material, over all models) in one render.
 pub const MAX_DRAWS: usize = 1 << 16;
@@ -267,6 +267,9 @@ enum Pass {
     /// The colour pass's see-through pixels, drawn back to front over the solid ones without
     /// writing depth.
     Blend,
+    /// The colour pass's copies that add their colour to what lies behind them
+    /// ([`crate::geo::Instances::add`]), last, without writing depth.
+    Add,
     Data,
     Measure,
     /// Depth only, from a light; see-through pixels left out.
@@ -298,6 +301,7 @@ impl Pass {
         match self {
             Pass::Solid => "fs_solid",
             Pass::Blend => "fs_blend",
+            Pass::Add => "fs_add",
             Pass::Data => "fs_data",
             Pass::Measure => "fs_measure",
             Pass::Shadow => "fs_shadow",
@@ -307,12 +311,21 @@ impl Pass {
     }
 
     fn colour(self) -> bool {
-        matches!(self, Pass::Solid | Pass::Blend)
+        matches!(self, Pass::Solid | Pass::Blend | Pass::Add)
     }
 
     fn blend(self) -> Option<wgpu::BlendState> {
         match self {
             Pass::Solid | Pass::Blend => Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            // Colour: added to what is there; alpha: over it, as a see-through surface's.
+            Pass::Add => Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent::OVER,
+            }),
             // Colour: what is there times what this surface lets through; alpha: the nearest
             // depth.
             Pass::Tint => Some(wgpu::BlendState {
@@ -736,7 +749,7 @@ impl Pipelines {
                 // The tint pass has no depth: every see-through surface along the ray counts.
                 depth_stencil: (pass != Pass::Tint).then_some(wgpu::DepthStencilState {
                     format: DEPTH,
-                    depth_write_enabled: Some(pass != Pass::Blend),
+                    depth_write_enabled: Some(!matches!(pass, Pass::Blend | Pass::Add)),
                     // The lines over hidden faces pass where the faces' own depth is.
                     depth_compare: Some(if stage == Stage::Over {
                         wgpu::CompareFunction::LessEqual
@@ -1700,6 +1713,15 @@ fn draw_slot(
         [l.len, l.stride.max(1), flags, l.limit]
     });
     for v in words {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    // Sprites: a disc cut out of the square, the soft edge, whether the copies add their colour.
+    let flag = |on: bool| if on { 1.0f32 } else { 0.0 };
+    let sprite = instances.map_or([0.0; 4], |i| {
+        let soft = if i.softness.is_finite() { i.softness.clamp(0.0, 1.0) } else { 0.0 };
+        [flag(i.round), soft, flag(i.add), 0.0]
+    });
+    for v in sprite {
         b.extend_from_slice(&v.to_le_bytes());
     }
     b.resize(DRAW_BYTES as usize, 0);

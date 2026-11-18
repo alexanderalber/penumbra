@@ -214,3 +214,25 @@ fn copies_of_deleted_points_stay_out_of_the_file() {
     let b = Bounds::of(m.vertices.iter().map(|v| v.position)).unwrap();
     assert!(close(b.min, [-1.6, -0.1, -0.1]) && close(b.max, [1.6, 0.1, 0.1]), "the ends only: {b:?}");
 }
+
+/// Round sprites are squares cut in the renderer; a file gets the disc they show.
+#[test]
+fn round_sprites_go_into_the_file_as_discs() {
+    let dir = scratch("mesh-out-sprites");
+    let ops = vec![
+        create(
+            "/line",
+            "pts.generate",
+            &[("shape", "line".into()), ("count", Value::Int(3)), ("size", Value::Vec3([2.0, 0.0, 0.0]))],
+        ),
+        create("/dots", "geo.from_pts", &[("size", Value::Float(0.5))]),
+        connect("/line", "/dots", 0),
+        create("/w", "out.mesh", &[("file", "dots.obj".into())]),
+        connect("/dots", "/w", 0),
+    ];
+    let Some((mut rig, outs)) = rig_with_outs(&ops, dir.path()) else { return };
+    let m = written(&mut rig, &outs, &dir.join("dots.obj"), &[]);
+    assert_eq!(m.triangle_count(), 3 * 16, "three discs of 16 triangles");
+    let b = Bounds::of(m.vertices.iter().map(|v| v.position)).unwrap();
+    assert!(close(b.min, [-1.25, 0.0, -0.25]) && close(b.max, [1.25, 0.0, 0.25]), "{b:?}");
+}

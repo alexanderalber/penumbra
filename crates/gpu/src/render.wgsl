@@ -96,6 +96,10 @@ struct Draw {
     // y their distance in the list, z bit 0 closed lines, bit 1 a count on the GPU, bit 2 every
     // two points a line of their own (instance i joins points 2i and 2i + 1), w the most points.
     lines: vec4u,
+    // Sprites (inst.y bit 3): x 1 where a disc is cut out of the square, y how far in from the
+    // outline it fades (0 a hard edge, 1 from the centre); z 1 where the copies add their colour
+    // to what lies behind them (fs_add).
+    sprite: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -400,8 +404,8 @@ fn place(p: vec3f, n: vec3f, uv: vec2f, i: u32) -> VOut {
             // picture's up, its size in the world's units, whatever the item's placement does
             // to its position. From a light it stands square to the light, so it throws the
             // shadow of a disc whatever the camera, and stands back along the light by its
-            // reach (the sprite meshes reach 0.71 of their size), so the sprite the camera
-            // sees is never in its own shadow.
+            // reach (the corners of the unit square, 0.71 of its size, whether or not a disc is
+            // cut out of it), so the sprite the camera sees is never in its own shadow.
             let centre = (draw.world * vec4f(at, 1.0)).xyz;
             let facing = sprite_turn();
             var back = vec3f(0.0);
@@ -574,10 +578,11 @@ fn texel(v: VOut) -> vec4f {
     return textureSample(tex, samp, v.uv) * vec4f(v.tint, 1.0);
 }
 
-// How much of the pixel a wireframe's lines cover, as opacity (a thin line's fade included);
-// 1 on a whole surface. Uses derivatives: call in uniform control flow.
+// How much of the pixel a wireframe's lines cover, as opacity (a thin line's fade included),
+// times what a sprite's cut leaves; 1 on a whole surface. Uses derivatives: call in uniform
+// control flow.
 fn lines(v: VOut) -> f32 {
-    return reach(v) * select(1.0, line_fade(), draw.wire.x > 0.0);
+    return reach(v) * select(1.0, line_fade(), draw.wire.x > 0.0) * sprite_alpha(v);
 }
 
 // How much of the pixel a wireframe's lines cover, without a thin line's fade; 1 on a whole
@@ -652,13 +657,83 @@ struct Cover {
     mask: u32,
 };
 
-// With four samples per pixel each sample is tested against the lines on its own. Where lines
-// overlap, as the faces of a thin prism do along their shared edges, a sample is drawn once
-// instead of their soft edges piling up; nearer lines hide farther ones sample by sample, and the
-// pixel's four samples give the line its soft edge. With one sample, or over filled faces that
-// cover every sample anyway, the coverage at the pixel's centre goes into alpha. Uses
+// What the colour pass draws at a fragment: a wireframe's lines, and a sprite's cut. Uses
 // derivatives: call in uniform control flow.
 fn coverage(v: VOut) -> Cover {
+    let line = line_cover(v);
+    let sprite = sprite_cover(v);
+    return Cover(line.alpha * sprite.alpha, line.mask & sprite.mask);
+}
+
+// Whether this draw's copies are sprites (geo::Instances::face_camera).
+fn is_sprite() -> bool {
+    return draw.inst.x == 1u && (draw.inst.y & 8u) != 0u && (draw.inst.y & 16u) == 0u;
+}
+
+// Whether this draw's copies add their colour to what lies behind them.
+fn adds() -> bool {
+    return draw.inst.x == 1u && draw.sprite.z > 0.5;
+}
+
+// How far `uv` lies from a sprite's centre: 0 there, 1 on its outline, the disc's circle or the
+// square's sides.
+fn sprite_radius(uv: vec2f) -> f32 {
+    let d = abs(uv - vec2f(0.5)) * 2.0;
+    return select(max(d.x, d.y), length(d), draw.sprite.x > 0.5);
+}
+
+// A sprite's opacity at `r` (sprite_radius): 0 outside its outline, 1 inside; a soft one fades
+// smoothly from 1 - softness to the outline.
+fn sprite_fade(r: f32) -> f32 {
+    let soft = clamp(draw.sprite.y, 0.0, 1.0);
+    if soft <= 0.0 {
+        return select(0.0, 1.0, r <= 1.0);
+    }
+    return 1.0 - smoothstep(1.0 - soft, 1.0, r);
+}
+
+// What a sprite leaves of its square at a fragment, as opacity; 1 for anything else. For the
+// passes that test no samples of their own (shadow, tint, data, measuring, prepass).
+fn sprite_alpha(v: VOut) -> f32 {
+    if !is_sprite() {
+        return 1.0;
+    }
+    return sprite_fade(sprite_radius(v.uv));
+}
+
+// A sprite's cut in the colour pass. With four samples per pixel each sample is tested against a
+// disc's circle on its own, so its edge is smooth; the soft fade goes into alpha. With one sample
+// the pixel's centre decides. Uses derivatives: call in uniform control flow.
+fn sprite_cover(v: VOut) -> Cover {
+    let gx = dpdx(v.uv);
+    let gy = dpdy(v.uv);
+    if !is_sprite() {
+        return Cover(1.0, 0xffffffffu);
+    }
+    let fade = sprite_fade(sprite_radius(v.uv));
+    let soft = clamp(draw.sprite.y, 0.0, 1.0);
+    if draw.sprite.x < 0.5 || frame.pixels.z < 3.5 {
+        return Cover(fade, 0xffffffffu);
+    }
+    var mask = 0u;
+    for (var i = 0u; i < 4u; i++) {
+        let o = SAMPLES[i];
+        if sprite_radius(v.uv + gx * o.x + gy * o.y) <= 1.0 {
+            mask |= 1u << i;
+        }
+    }
+    // A hard disc is whole in every sample it covers; a soft one fades at the pixel's centre.
+    let alpha = select(1.0, fade, soft > 0.0);
+    return Cover(select(0.0, alpha, mask != 0u), mask);
+}
+
+// A wireframe's lines. With four samples per pixel each sample is tested against the lines on
+// its own. Where lines overlap, as the faces of a thin prism do along their shared edges, a
+// sample is drawn once instead of their soft edges piling up; nearer lines hide farther ones
+// sample by sample, and the pixel's four samples give the line its soft edge. With one sample, or
+// over filled faces that cover every sample anyway, the coverage at the pixel's centre goes into
+// alpha. Uses derivatives: call in uniform control flow.
+fn line_cover(v: VOut) -> Cover {
     let b = v.edge.xyz;
     let gx = dpdx(b);
     let gy = dpdy(b);
@@ -1039,6 +1114,18 @@ fn fs_blend(v: VOut) -> Colour {
     return Colour(c, line.mask);
 }
 
+// The colour pass's copies that add their colour to what lies behind them, after everything
+// else: their premultiplied colour is added, their alpha laid over (render::Pass::Add).
+@fragment
+fn fs_add(v: VOut) -> Colour {
+    let line = coverage(v);
+    let c = shade(v, 1.0, line.alpha);
+    if c.a < 0.002 || line.mask == 0u {
+        discard;
+    }
+    return Colour(c, line.mask);
+}
+
 // `open`: what ambient occlusion leaves of ambient and environment light; `line`: the lines'
 // opacity at the fragment (coverage), 1 on a whole surface.
 fn shade(v: VOut, open: f32, line: f32) -> vec4f {
@@ -1114,7 +1201,7 @@ struct Prepass {
 
 @fragment
 fn fs_prepass(v: VOut) -> Prepass {
-    if surface(texel(v), lines(v)).a < OPAQUE {
+    if surface(texel(v), lines(v)).a < OPAQUE || adds() {
         discard;
     }
     var n = v.normal;
@@ -1179,7 +1266,8 @@ fn fs_measure(v: VOut) -> @location(0) vec4f {
 
 @fragment
 fn fs_data(v: VOut) -> @location(0) vec4f {
-    let line = reach(v);
+    let cut = sprite_alpha(v);
+    let line = reach(v) * cut;
     let t = texel(v);
     if draw.shading == 3u {
         return vec4f(0.0);
@@ -1194,7 +1282,7 @@ fn fs_data(v: VOut) -> @location(0) vec4f {
     // A surface that lets nearly all light through, such as a faint haze, is not what the pixel
     // shows: what lies behind it keeps the pixel. Open lines count by their material and a thin
     // line's fade, not by how much of the pixel they cover.
-    let fade = select(1.0, line_fade(), draw.wire.x > 0.0);
+    let fade = select(1.0, line_fade(), draw.wire.x > 0.0) * cut;
     let seen = select(surface(t, line * fade).a, surface(t, 1.0).a * fade, open);
     if seen < FAINT {
         discard;

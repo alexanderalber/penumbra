@@ -489,6 +489,18 @@ pub struct Instances {
     pub late: bool,
     /// Lines through the points instead of a copy at each: see [`Lines`].
     pub lines: Option<Lines>,
+    /// Sprites ([`Instances::face_camera`]): a disc is cut out of the model's square in the
+    /// fragment stage, in every pass (so its shadow is a disc too). The model must be a unit
+    /// square with its texture coordinates over it, as `prim::plane` makes it. A round sprite
+    /// then costs what a square one costs.
+    pub round: bool,
+    /// Sprites: how far in from the outline the sprite fades out, 0 a hard edge to 1 a fade
+    /// from the centre. A soft sprite is drawn again with the see-through surfaces.
+    pub softness: f32,
+    /// The copies add their colour to what lies behind them instead of covering it (glow,
+    /// sparks): drawn after everything else, depth tested but not written, casting no shadow,
+    /// and left out of the data pass.
+    pub add: bool,
 }
 
 /// How far out a line's mitred corner may reach, in half widths; at sharper turns the corner is
@@ -547,6 +559,9 @@ impl Instances {
             extent: 0.0,
             late: false,
             lines: None,
+            round: false,
+            softness: 0.0,
+            add: false,
         }
     }
 

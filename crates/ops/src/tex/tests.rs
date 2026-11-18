@@ -2909,6 +2909,7 @@ mod pts_near;
 mod pts_particles;
 mod pts_pictures;
 mod pts_programs;
+mod pts_sprites;
 mod pts_trails;
 mod reduce;
 mod resample;
