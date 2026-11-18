@@ -223,6 +223,8 @@ impl Operator for FromPts {
         });
         let items = match model {
             None => {
+                // No copies: the models baked for them are not needed any more.
+                self.baked.clear();
                 let model = self.sprite(gpu, cx.text("sprite")? == "square")?;
                 vec![Item {
                     model,
