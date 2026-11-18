@@ -3,11 +3,13 @@
 //!
 //! The grid: space is cut into cubes a little larger than the search radius ([`CELL_MARGIN`]), so
 //! the points within the radius of a point lie in its own cube or one of the 26 around it. A cube
-//! is found through a table of buckets: its three whole-number coordinates are hashed to one of
-//! `T` buckets (`T` the power of two at or above the number of points, within
-//! [`MIN_TABLE_BITS`] and [`MAX_TABLE_BITS`]), so space has no bounds and needs no box. Two cubes
-//! may share a bucket: a query checks each point's own cube, so that costs time, never a wrong
-//! answer.
+//! is found through a table of `T` buckets (`T` the power of two at or above the number of
+//! points, within [`MIN_TABLE_BITS`] and [`MAX_TABLE_BITS`]): the low bits of the Morton code of
+//! its three whole-number coordinates. So space has no bounds and needs no box, and cubes near
+//! each other have buckets near each other: the sorted points of the 27 cubes a query visits lie
+//! close in memory. Two cubes share a bucket when they lie a multiple of `2^(bits / 3)` cubes
+//! apart along each axis (128 cubes for a million points): a query checks each point's own cube,
+//! so that costs time, never a wrong answer.
 //!
 //! The build, each time anew: every point gets the key of its bucket; a radix sort (8 bits per
 //! pass, stable, ranks counted within tiles of 256 points, so no step depends on which thread
@@ -83,13 +85,24 @@ fn pn_near_cell_of(p: vec3f, origin: vec3f, inv: f32) -> vec3i {
     return vec3i(q);
 }
 
+// The low ten bits of v, each moved to every third place.
+fn pn_near_spread(v: u32) -> u32 {
+    var x = v & 1023u;
+    x = (x | (x << 16u)) & 0x030000ffu;
+    x = (x | (x << 8u)) & 0x0300f00fu;
+    x = (x | (x << 4u)) & 0x030c30c3u;
+    x = (x | (x << 2u)) & 0x09249249u;
+    return x;
+}
+
+// The bucket of cube c: the low bits of its Morton code, the bits of x, y and z taken in turn.
+// Cubes near each other get buckets near each other, so the sorted points of neighbouring cubes
+// lie close in memory; cubes share a bucket only when they lie a multiple of 2^(bits / 3) cubes
+// apart along each axis.
 fn pn_near_bucket_of(c: vec3i, mask: u32) -> u32 {
     let u = bitcast<vec3u>(c);
-    var h = (u.x * 0x8da6b343u) ^ (u.y * 0xd8163841u) ^ (u.z * 0xcb1ab31fu);
-    h = h ^ (h >> 16u);
-    h = h * 0x7feb352du;
-    h = h ^ (h >> 15u);
-    return h & mask;
+    let m = pn_near_spread(u.x) | (pn_near_spread(u.y) << 1u) | (pn_near_spread(u.z) << 2u);
+    return m & mask;
 }
 ";
 
@@ -262,22 +275,29 @@ fn scatter(@builtin(workgroup_id) w: vec3u, @builtin(local_invocation_index) t: 
 }
 ";
 
-fn sort_params() -> [ParamSpec; 5] {
-    [
+fn sort_params() -> Vec<ParamSpec> {
+    let mut p = vec![
         ParamSpec::int("n", 0),
         ParamSpec::int("tiles", 0),
         ParamSpec::int("row", 1),
         ParamSpec::int("shift", 0),
         ParamSpec::int("first", 0),
-    ]
+    ];
+    p.extend(scan_params());
+    p
 }
 
-/// An exclusive prefix sum of `u32` values in place, and their total.
-const SCAN: &str = "
+/// The bindings of the standalone prefix sum.
+const SCAN_BINDINGS: &str = "
 @group(2) @binding(0) var<storage, read_write> values: array<u32>;
 @group(2) @binding(1) var<storage, read_write> sums: array<u32>;
 @group(2) @binding(2) var<storage, read_write> total: array<u32>;
+";
 
+/// An exclusive prefix sum of `u32` values in place (the array `VALUES`), and their total, in
+/// three entry points: `reduce` and `down` over blocks of 1024 values, `top` in one workgroup.
+/// The program declares `sums` and `total` itself.
+const SCAN_BODY: &str = "
 var<workgroup> pts_scan: array<u32, 256>;
 
 // The sum of v over the threads before this one. Every thread of the workgroup calls it;
@@ -298,12 +318,12 @@ fn pts_exclusive(t: u32, v: u32) -> u32 {
 }
 
 fn pts_block(w: vec3u) -> u32 {
-    return w.y * u32(max(params.row, 1)) + w.x;
+    return w.y * u32(max(params.scan_row, 1)) + w.x;
 }
 
 fn pts_value(i: u32) -> u32 {
-    if i < u32(max(params.n, 0)) {
-        return values[i];
+    if i < u32(max(params.scan_n, 0)) {
+        return VALUES[i];
     }
     return 0u;
 }
@@ -314,14 +334,14 @@ fn reduce(@builtin(workgroup_id) w: vec3u, @builtin(local_invocation_index) t: u
     let first = b * 1024u + t * 4u;
     let mine = pts_value(first) + pts_value(first + 1u) + pts_value(first + 2u) + pts_value(first + 3u);
     pts_exclusive(t, mine);
-    if t == 255u && b < u32(max(params.blocks, 0)) {
+    if t == 255u && b < u32(max(params.scan_blocks, 0)) {
         sums[b] = pts_scan[255];
     }
 }
 
 @compute @workgroup_size(256)
 fn top(@builtin(local_invocation_index) t: u32) {
-    let blocks = u32(max(params.blocks, 0));
+    let blocks = u32(max(params.scan_blocks, 0));
     let chunk = (blocks + 255u) / 256u;
     let lo = min(t * chunk, blocks);
     let hi = min(lo + chunk, blocks);
@@ -346,12 +366,12 @@ fn down(@builtin(workgroup_id) w: vec3u, @builtin(local_invocation_index) t: u32
     let first = b * 1024u + t * 4u;
     let v = vec4u(pts_value(first), pts_value(first + 1u), pts_value(first + 2u), pts_value(first + 3u));
     let before = pts_exclusive(t, v.x + v.y + v.z + v.w);
-    if b < u32(max(params.blocks, 0)) {
+    if b < u32(max(params.scan_blocks, 0)) {
         var at = sums[b] + before;
-        let n = u32(max(params.n, 0));
+        let n = u32(max(params.scan_n, 0));
         for (var j = 0u; j < 4u; j++) {
             if first + j < n {
-                values[first + j] = at;
+                VALUES[first + j] = at;
                 at += v[j];
             }
         }
@@ -359,8 +379,24 @@ fn down(@builtin(workgroup_id) w: vec3u, @builtin(local_invocation_index) t: u32
 }
 ";
 
+/// The standalone prefix sum: [`SCAN_BODY`] over `values`.
+fn scan_source() -> String {
+    format!("{SCAN_BINDINGS}{}", SCAN_BODY.replace("VALUES", "values"))
+}
+
+/// The radix sort with the prefix sum of its counts, so one pass of the sort is one call.
+fn sort_source() -> String {
+    format!(
+        "{SORT}
+@group(2) @binding(5) var<storage, read_write> sums: array<u32>;
+@group(2) @binding(6) var<storage, read_write> total: array<u32>;
+{}",
+        SCAN_BODY.replace("VALUES", "counts")
+    )
+}
+
 fn scan_params() -> [ParamSpec; 3] {
-    [ParamSpec::int("n", 0), ParamSpec::int("blocks", 0), ParamSpec::int("row", 1)]
+    [ParamSpec::int("scan_n", 0), ParamSpec::int("scan_blocks", 0), ParamSpec::int("scan_row", 1)]
 }
 
 /// The WGSL a program includes to query a grid: the grid's two buffers at bindings `first` and
@@ -391,6 +427,50 @@ pub fn query_wgsl(first: u32) -> String {
     let _ = writeln!(s, "@group(2) @binding({}) var<storage, read> pn_near_points: array<vec4f>;", first + 1);
     s.push_str(QUERY);
     s
+}
+
+/// WGSL that runs `body` for every point within the radius of `p` but the point `me`, as
+/// [`query_wgsl`]'s walk does, written out as two loops: compilers do better with these than
+/// with the walk's state in a struct. In `body`, `w` is a `Near` with `index`, `position` and
+/// `distance` of the point found; `continue` goes on to the next one.
+pub fn near_loop(p: &str, me: &str, body: &str) -> String {
+    format!(
+        "if pn_near_finite({p}) {{
+    let pn_home = pn_near_cell({p});
+    let pn_mask = pn_near_cells[5];
+    let pn_cap = clamp(pn_near_cells[6], 1u, PN_NEAR_MAX_CAP);
+    let pn_radius = near_radius();
+    let pn_r2 = pn_radius * pn_radius;
+    for (var pn_c = 0u; pn_c < 27u; pn_c++) {{
+        let pn_target = pn_home + vec3i(i32(pn_c % 3u) - 1, i32((pn_c / 3u) % 3u) - 1, i32(pn_c / 9u) - 1);
+        let pn_h = pn_near_bucket_of(pn_target, pn_mask);
+        let pn_first = pn_near_cells[PN_NEAR_HEAD + 2u * pn_h];
+        let pn_end = pn_near_cells[PN_NEAR_HEAD + 2u * pn_h + 1u];
+        let pn_stop = select(pn_first, min(pn_end, pn_first + pn_cap), pn_end > pn_first);
+        for (var pn_s = pn_first; pn_s < pn_stop; pn_s++) {{
+            let pn_q = pn_near_points[pn_s];
+            let pn_j = bitcast<u32>(pn_q.w);
+            if pn_j == {me} {{
+                continue;
+            }}
+            let pn_v = pn_q.xyz - {p};
+            let pn_d2 = dot(pn_v, pn_v);
+            if !(pn_d2 <= pn_r2) {{
+                continue;
+            }}
+            if any(pn_near_cell(pn_q.xyz) != pn_target) {{
+                continue;
+            }}
+            var w: Near;
+            w.index = pn_j;
+            w.position = pn_q.xyz;
+            w.distance = sqrt(pn_d2);
+{body}
+        }}
+    }}
+}}
+"
+    )
 }
 
 const QUERY: &str = "
@@ -545,8 +625,8 @@ pub struct NearGrid {
 /// Compiles the build's passes, so the first search does not wait for them.
 pub fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     gpu.cached_compute("pts near build", &build_source(), &build_params())?;
-    gpu.cached_compute("pts near sort", SORT, &sort_params())?;
-    gpu.cached_compute("pts scan", SCAN, &scan_params())?;
+    gpu.cached_compute("pts near sort", &sort_source(), &sort_params())?;
+    gpu.cached_compute("pts scan", &scan_source(), &scan_params())?;
     Ok(())
 }
 
@@ -635,9 +715,15 @@ impl NearGrid {
 
         // Keys hold bits + 1 bits: the last value says "in no bucket".
         let passes = (bits + 1).div_ceil(8);
-        let sort = gpu.cached_compute("pts near sort", SORT, &sort_params())?;
+        let sort = gpu.cached_compute("pts near sort", &sort_source(), &sort_params())?;
         let row = tiles.min(PER_ROW);
         let over_tiles = Out::Size([row * TILE, tiles.div_ceil(row), 1]);
+        let scanned = tiles * 256;
+        let blocks = scanned.div_ceil(SCAN_BLOCK);
+        let block_row = blocks.min(PER_ROW);
+        let over_blocks = Out::Size([block_row * 256, blocks.div_ceil(block_row), 1]);
+        let sums = grown(gpu, &mut self.sums, u64::from(blocks) * 4, "pts scan sums")?;
+        let total = sized(gpu, &mut self.total, 16, "pts scan total")?;
         for pass in 0..passes {
             let [ka, kb] = &keys;
             let [va, vb] = &vals;
@@ -650,14 +736,24 @@ impl NearGrid {
                 "row" => Some(Value::Int(i64::from(row))),
                 "shift" => Some(Value::Int(i64::from(pass * 8))),
                 "first" => Some(Value::Int(i64::from(pass == 0))),
+                "scan_n" => Some(Value::Int(i64::from(scanned))),
+                "scan_blocks" => Some(Value::Int(i64::from(blocks))),
+                "scan_row" => Some(Value::Int(i64::from(block_row))),
                 _ => None,
             };
             let input =
                 Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
-            let buffers = [keys_in, vals_in, keys_to, vals_to, &counts];
-            sort.run_with(gpu, &buffers, &[Step { entry: "tally", out: over_tiles, input: &input }])?;
-            self.scan(gpu, &counts, tiles * 256)?;
-            sort.run_with(gpu, &buffers, &[Step { entry: "scatter", out: over_tiles, input: &input }])?;
+            sort.run_with(
+                gpu,
+                &[keys_in, vals_in, keys_to, vals_to, &counts, &sums, &total],
+                &[
+                    Step { entry: "tally", out: over_tiles, input: &input },
+                    Step { entry: "reduce", out: over_blocks, input: &input },
+                    Step { entry: "top", out: Out::range(256), input: &input },
+                    Step { entry: "down", out: over_blocks, input: &input },
+                    Step { entry: "scatter", out: over_tiles, input: &input },
+                ],
+            )?;
         }
         let [ka, kb] = &keys;
         let [va, vb] = &vals;
@@ -683,11 +779,11 @@ impl NearGrid {
         let sums = grown(gpu, &mut self.sums, u64::from(blocks) * 4, "pts scan sums")?;
         let total = sized(gpu, &mut self.total, 16, "pts scan total")?;
         let row = blocks.min(PER_ROW);
-        let scan = gpu.cached_compute("pts scan", SCAN, &scan_params())?;
+        let scan = gpu.cached_compute("pts scan", &scan_source(), &scan_params())?;
         let param = |name: &str| match name {
-            "n" => Some(Value::Int(i64::from(n))),
-            "blocks" => Some(Value::Int(i64::from(blocks))),
-            "row" => Some(Value::Int(i64::from(row))),
+            "scan_n" => Some(Value::Int(i64::from(n))),
+            "scan_blocks" => Some(Value::Int(i64::from(blocks))),
+            "scan_row" => Some(Value::Int(i64::from(row))),
             _ => None,
         };
         let input =

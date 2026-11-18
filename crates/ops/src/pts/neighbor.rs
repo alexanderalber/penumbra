@@ -148,6 +148,18 @@ fn source(average: Average) -> String {
             )
         }
     };
+    let walk = near::near_loop(
+        "q.xyz",
+        "i",
+        &format!(
+            "            c += 1u;
+            toward += w.position - q.xyz;
+            if w.distance < apart && w.distance > 0.0 {{
+                push += (q.xyz - w.position) / w.distance * (1.0 - w.distance / apart);
+            }}
+    {add}"
+        ),
+    );
     s.push_str(&format!(
         "
 @compute @workgroup_size(64)
@@ -166,15 +178,7 @@ fn neighbor(@builtin(global_invocation_id) id: vec3u) {{
     var c = 0u;
     var toward = vec3f(0.0);
     var push = vec3f(0.0);
-{zero}    var w = near_begin(q.xyz, i);
-    while near_next(&w) {{
-        c += 1u;
-        toward += w.position - q.xyz;
-        if w.distance < apart && w.distance > 0.0 {{
-            push += (q.xyz - w.position) / w.distance * (1.0 - w.distance / apart);
-        }}
-{add}    }}
-    neighbors[i] = f32(c);
+{zero}{walk}    neighbors[i] = f32(c);
     var middle = vec3f(0.0);
     if c > 0u {{
         middle = toward / f32(c);
