@@ -224,3 +224,26 @@ fn capacities_round_up_so_small_changes_keep_them() {
     assert_eq!(capacity_for(5000, 4000), 5000, "never below the count");
     assert_eq!(capacity_for(3000, 3050), 3050);
 }
+
+/// More blocks than the scan's one workgroup has threads (above 256 blocks, so each thread
+/// sums a run of them), an exact multiple of the block, and a single point.
+#[test]
+fn compaction_of_many_blocks_and_of_one_point() {
+    let Some(gpu) = gpu() else { return };
+    for n in [300_007u32, 1024 * 300, 1] {
+        let types_only = 0;
+        let input = {
+            // Two attributes are enough here: position and one more.
+            let p = points(&gpu, n, n, types_only);
+            let keep: Vec<Attr> = p.attrs().iter().take(2).cloned().collect();
+            Points::new(n, n, keep).unwrap()
+        };
+        let keep: Vec<bool> =
+            (0..n).map(|i| (i.wrapping_mul(2654435761) >> 9) % 5 < 2 || i == n - 1).collect();
+        let kept: Vec<u32> = (0..n).filter(|i| keep[*i as usize]).collect();
+        let mut c = Compactor::new();
+        let out = c.compact(&gpu, &input, &flags(&gpu, &keep)).unwrap();
+        check(&gpu, &input, &out, &kept);
+    }
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}
