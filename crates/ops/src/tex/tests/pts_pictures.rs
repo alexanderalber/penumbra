@@ -112,14 +112,15 @@ fn a_picture_becomes_points_in_each_mode() {
     let w = scalars(&rig, &p, "weight");
     assert_eq!((w[7], w[8]), (0.0, texels[8][3]));
 
-    // Sampled down: about 4 points keep the shape (3 by 2); every 2nd texel; the mean of a cell.
+    // Sampled down: about 4 points and never more (a row of 3); every 2nd texel; the mean of a
+    // cell.
     rig.edit(&[
         set("/pts.mode", "color".into()),
         set("/pts.sampling", "count".into()),
         set("/pts.count", Value::Int(4)),
     ]);
     let p = points(&mut rig, "/pts");
-    assert_eq!((p.count().known(), p.dims()), (Some(6), Some([2, 3, 1])));
+    assert_eq!((p.count().known(), p.dims()), (Some(3), Some([1, 3, 1])));
     rig.edit(&[set("/pts.sampling", "step".into()), set("/pts.step", Value::Int(2))]);
     let p = points(&mut rig, "/pts");
     let reds: Vec<f32> = read(&rig, &p, "color").iter().map(|c| c[0]).collect();
