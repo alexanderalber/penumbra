@@ -235,3 +235,44 @@ fn seen_counts_arrive_as_their_own() {
     assert_eq!((b.get(), b.arrived()), (Some(7), Some(7)));
     assert_eq!(Seen::default().arrived(), None);
 }
+
+/// The half floats a picture is packed into by hand round as `half` rounds them: at the edges
+/// (no number, infinities, minus zero, the smallest and the largest).
+#[test]
+fn half_floats_round_at_their_edges_as_half_does() {
+    let Some(gpu) = gpu() else { return };
+    let values = [
+        f32::NAN,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        -0.0,
+        0.0,
+        2f32.powi(-25),
+        2f32.powi(-25) * 1.5,
+        2f32.powi(-24),
+        2f32.powi(-14) * 0.75,
+        2f32.powi(-14),
+        1.0 + 2f32.powi(-11),
+        1.0 + 3.0 * 2f32.powi(-11),
+        65504.0,
+        65519.0,
+        65520.0,
+        -65520.0,
+        1e9,
+    ];
+    let b = Buffer::of::<f32>(&gpu, values.len() as u64, "values").unwrap();
+    b.write(&gpu, 0, &values).unwrap();
+    let n = values.len() as u32;
+    let p = Points::new(n, n, vec![Attr::new("v", AttrType::F32, b).unwrap()]).unwrap();
+    let tex =
+        p.picture(&gpu, "v", (n, 1), false, &mut TexRing::default(), &mut BufferRing::default()).unwrap();
+    let px = gpu.read(&tex).unwrap();
+    for (i, v) in values.iter().enumerate() {
+        let want = half::f16::from_f32(*v).to_f32();
+        let got = px.get(i as u32, 0).unwrap()[0];
+        let same = (want.is_nan() && got.is_nan())
+            || (want == got && want.is_sign_negative() == got.is_sign_negative());
+        assert!(same, "{v:e}: {got:e}, half gives {want:e}");
+    }
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}

@@ -254,3 +254,68 @@ fn a_standard_name_of_another_type_is_copied_where_the_types_agree() {
     assert_eq!(got[4..7], [0.75, 0.5, 0.75]);
     assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
 }
+
+/// A source whose count is on the GPU gives births only from its live points; a set already at
+/// or past its room takes none; attributes beyond one pass's bindings are all written.
+#[test]
+fn births_from_a_live_count_into_a_full_set_and_over_several_passes() {
+    let Some(gpu) = gpu() else { return };
+    let none = |_: &str| None;
+    let budget = storage_budget(&gpu) as usize;
+    let names: Vec<String> = (0..budget + 3).map(|k| format!("a{k}")).collect();
+    let src_attrs = |base: f32| -> Vec<Attr> {
+        let mut attrs = vec![Attr::new("position", AttrType::Vec3, floats(&gpu, &[0.0; 16])).unwrap()];
+        for (k, n) in names.iter().enumerate() {
+            let v: Vec<f32> = (0..4).map(|i| base + (k * 10 + i) as f32).collect();
+            attrs.push(Attr::new(n, AttrType::F32, floats(&gpu, &v)).unwrap());
+        }
+        attrs
+    };
+    let set_of = |count: u32| {
+        let mut attrs = vec![Attr::new("position", AttrType::Vec3, floats(&gpu, &[0.0; 64])).unwrap()];
+        for n in &names {
+            attrs.push(Attr::new(n, AttrType::F32, floats(&gpu, &[-1.0; 16])).unwrap());
+        }
+        let header = buffer(&gpu, &[count, 0, 0, 0]);
+        Points::new(16, 0, attrs)
+            .unwrap()
+            .with_count(Count::gpu(header, 16, Seen::default()).unwrap())
+            .unwrap()
+    };
+    // Two of the four source points live.
+    let source_header = buffer(&gpu, &[2, 0, 0, 0]);
+    let source = Points::new(4, 0, src_attrs(0.0))
+        .unwrap()
+        .with_count(Count::gpu(source_header.clone(), 4, Seen::default()).unwrap())
+        .unwrap();
+    let ids = buffer(&gpu, &[0, 0, 0, 0]);
+    let births = |room| Births {
+        source: &source,
+        wanted: 3,
+        per_point: true,
+        pick: Pick::Cycle,
+        salt: 0,
+        room,
+        params: &[],
+        param: &none,
+    };
+    let set = set_of(0);
+    append(&gpu, &set, &ids, &births(16), &[]).unwrap();
+    assert_eq!(header(&gpu, &set), 6, "three from each of the two live points");
+    for (k, n) in names.iter().enumerate() {
+        let got: Vec<f32> = read(&gpu, &set, n).iter().map(|w| f32::from_bits(*w)).collect();
+        let want: Vec<f32> = (0..6).map(|t| (k * 10 + t % 2) as f32).collect();
+        assert_eq!(got[..6], want, "{n}, beyond one pass of {budget} bindings too");
+    }
+    // No live source point: nothing born.
+    source_header.write(&gpu, 0, &[0u32, 0, 0, 0]).unwrap();
+    let set = set_of(1);
+    append(&gpu, &set, &ids, &births(16), &[]).unwrap();
+    assert_eq!(header(&gpu, &set), 1);
+    // A count already past the room stays as it is.
+    source_header.write(&gpu, 0, &[2u32, 0, 0, 0]).unwrap();
+    let set = set_of(9);
+    append(&gpu, &set, &ids, &births(6), &[]).unwrap();
+    assert_eq!(header(&gpu, &set), 9);
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}
