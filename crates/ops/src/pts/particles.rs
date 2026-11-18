@@ -159,7 +159,7 @@ fn desc() -> NodeDesc {
             .clamp(1.0, 64.0 * 1024.0 * 1024.0)
             .range(1.0, 1_000_000.0)
             .curve(Curve::Log)
-            .doc("The most particles there are at once. While that many live, the births wait. Changing it starts over"),
+            .doc("The most particles there are at once. While that many live, the births that do not fit are dropped, not saved for later. Changing it starts over"),
     )
     .param(
         ParamSpec::text("kill", "kill")

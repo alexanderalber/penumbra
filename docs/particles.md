@@ -17,7 +17,9 @@ deaths.
    a camera into `tex.render`, as for any geometry.
 
 The viewer on `pts.particles` shows how many particles live, a frame late: "15024 of at most
-20000 points". `max` is the most at once; while that many live, births wait.
+15130 points". "At most" is the count read back a frame or two ago plus the births since: the
+work over the particles covers that many. `max` is the most particles at once. While that many
+live, the births of a step that do not fit are dropped, not saved for later.
 
 ## A force in the loop
 
@@ -45,6 +47,23 @@ above 0 into the attribute `kill` (`pts.math`, result `kill`, expression `positi
 **A mask:** a `pts.field` before the `pts.force` writes `weight`, 1 inside its shape and 0
 outside. The force multiplies by `weight`, so it acts only there.
 
+**Wind** pulls each particle towards the wind's speed. However light the particle, it never
+passes that speed: `pts.particles` steps the wind's part of the speed so that it cannot
+overshoot. A negative strength pushes nothing.
+
+### Two traps
+
+- **What the loop writes stays.** Every attribute but `force` comes back into the next step as
+  the loop left it. A `pts.field` with `combine` add, or a `pts.math` that adds to an
+  attribute, adds again at every step: the value grows frame after frame. Set the value
+  (`combine` set, an expression that does not read the attribute), or reset it at the start of
+  the loop.
+- **An inherited `weight` masks every force.** The particles take every attribute of their
+  source point. Points from `pts.from_tex` carry `weight` (the picture's alpha), so a force
+  with the default `mask` acts on each particle as strongly as its birth texel was opaque, and
+  not at all where it was transparent. Clear `mask` on the force, or write `weight` in the
+  loop.
+
 ## Colour over life
 
 Every particle has `age` (seconds since its birth) and `life` (the seconds it lives). `age /
@@ -59,7 +78,7 @@ as they age.
 
 **Random per particle:** `rand_key(id, 0u)` gives each particle its own number in 0..1 that
 stays with it. `rand(0u)` is keyed by the place in the list, and the place changes when older
-particles die.
+particles die. `pts.random` and `pts.delete` by random follow the `id` by themselves.
 
 ## Trails
 
@@ -91,7 +110,10 @@ its particle. The trail carries `position`, `id`, `trail` and the attributes in 
 One step per frame, as long as the frame. While the show stands still the particles stand
 still. Stepped frame by frame (`cook.step`), the same steps give the same particles. `reset`
 starts over, as does `node.reset` and the `reset` of a component the particles sit in.
-`warm_up` simulates that many seconds at once at the start, without the loop's forces.
+`warm_up` simulates that many seconds ahead at the start, without the loop's forces. While the
+show runs this takes about 4 ms of each frame, and no particles show until it is done; stepped,
+it all happens in the first frame. Stepped frames also wait for every program the loop's nodes
+compile, so a script needs no `wait` before `cook.step`.
 `pts.trail` follows the same clock: a place per frame, none while time stands, `reset` and
 `node.reset` start the trails over.
 

@@ -244,7 +244,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
             "particles",
         ],
     ),
-    ("pts.delete", &["delete pop", "remove points", "filter", "cull", "kill", "mask", "active"]),
+    ("pts.delete", &["delete pop", "remove points", "filter", "cull", "mask", "active"]),
     ("pts.feedback", &["feedback pop", "loop", "previous frame", "accumulate", "simulation"]),
     (
         "pts.field",
@@ -307,6 +307,9 @@ pub const TAGS: &[(&str, &[&str])] = &[
             "fountain",
             "sparks",
             "life",
+            "lifespan",
+            "kill",
+            "death",
             "simulation",
             "physics",
         ],
