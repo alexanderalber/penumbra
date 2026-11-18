@@ -135,7 +135,7 @@ fn scan_params() -> [ParamSpec; 3] {
 
 /// The gather of `k` attributes: each output element `j` below the new count takes the input
 /// element `map[j]`, `params.s<a>` words each.
-fn gather_source(k: usize) -> String {
+pub(super) fn gather_source(k: usize) -> String {
     let mut s = String::from(
         "@group(2) @binding(0) var<storage, read> map: array<u32>;\n\
          @group(2) @binding(1) var<uniform> header: vec4u;\n",
@@ -163,7 +163,7 @@ fn gather_source(k: usize) -> String {
     s
 }
 
-fn gather_params(k: usize) -> Vec<ParamSpec> {
+pub(super) fn gather_params(k: usize) -> Vec<ParamSpec> {
     let mut p = vec![ParamSpec::int("n", 0)];
     p.extend((0..k).map(|a| ParamSpec::int(&format!("s{a}"), 1)));
     p

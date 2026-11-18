@@ -2905,6 +2905,7 @@ mod palettes;
 mod pts;
 mod pts_count;
 mod pts_forces;
+mod pts_near;
 mod pts_particles;
 mod pts_pictures;
 mod pts_programs;

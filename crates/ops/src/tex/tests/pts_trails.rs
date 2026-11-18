@@ -88,7 +88,7 @@ fn a_line_is_a_ribbon_of_its_width_that_faces_the_camera() {
         .get::<penumbra_gpu::Geo>()
         .unwrap()
         .clone();
-    assert_eq!(geo.triangle_count(), 4, "a quad per point, the first one empty");
+    assert_eq!(geo.triangle_count(), 2, "a line of two points is one quad");
     // The box reaches out by the corners' reach beyond the points.
     let b = geo.bounds().unwrap();
     assert!(b.max[0] >= 1.25 && b.min[0] <= -1.25, "{b:?}");

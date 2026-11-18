@@ -214,8 +214,13 @@ pub fn lines_of(points: &Points) -> Vec<Lines> {
         Count::Known(n) => (*n, false),
         _ => (u32::MAX, true),
     };
-    let line = |len: u32, stride: u32, closed: bool| Lines { len, stride, closed, limit, live };
+    let line = |len: u32, stride: u32, closed: bool| Lines { len, stride, closed, pairs: false, limit, live };
+    let pairs = Lines { pairs: true, ..line(2, 1, false) };
     match points.strips() {
+        Strips::Pairs => vec![pairs],
+        // Lines of two points with a count the CPU knows: a copy per line, none spent on a first
+        // point.
+        Strips::Regular { len: 2, closed: false } if !live => vec![pairs],
         Strips::Regular { len, closed } => vec![line(len, 1, closed)],
         Strips::Grid { cols, rows, columns } => {
             let cols = cols.max(1);
@@ -326,12 +331,20 @@ impl Operator for FromPts {
             let model = self.segment(gpu)?;
             let items = ways
                 .into_iter()
-                .map(|l| Item {
-                    model: model.clone(),
-                    world: IDENTITY,
-                    part_offset: 0,
-                    material: None,
-                    instances: Some(Arc::new(Instances { lines: Some(l), ..instances.clone() })),
+                .map(|l| {
+                    // Every two points a line: a copy per line.
+                    let copies = if l.pairs { count / 2 } else { count };
+                    Item {
+                        model: model.clone(),
+                        world: IDENTITY,
+                        part_offset: 0,
+                        material: None,
+                        instances: Some(Arc::new(Instances {
+                            lines: Some(l),
+                            count: Some(copies),
+                            ..instances.clone()
+                        })),
+                    }
                 })
                 .collect();
             return Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, Geo { items, preview: None })]));

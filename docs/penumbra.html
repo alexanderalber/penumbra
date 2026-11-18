@@ -5952,7 +5952,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-pts">
 <h3>pts</h3>
-<p class="kinds"><a href="#pts.delete">pts.delete</a> <a href="#pts.feedback">pts.feedback</a> <a href="#pts.field">pts.field</a> <a href="#pts.force">pts.force</a> <a href="#pts.from_tex">pts.from_tex</a> <a href="#pts.generate">pts.generate</a> <a href="#pts.lookup_tex">pts.lookup_tex</a> <a href="#pts.math">pts.math</a> <a href="#pts.noise">pts.noise</a> <a href="#pts.null">pts.null</a> <a href="#pts.particles">pts.particles</a> <a href="#pts.random">pts.random</a> <a href="#pts.shader">pts.shader</a> <a href="#pts.trail">pts.trail</a> <a href="#pts.transform">pts.transform</a></p>
+<p class="kinds"><a href="#pts.delete">pts.delete</a> <a href="#pts.feedback">pts.feedback</a> <a href="#pts.field">pts.field</a> <a href="#pts.force">pts.force</a> <a href="#pts.from_tex">pts.from_tex</a> <a href="#pts.generate">pts.generate</a> <a href="#pts.lookup_tex">pts.lookup_tex</a> <a href="#pts.math">pts.math</a> <a href="#pts.neighbor">pts.neighbor</a> <a href="#pts.noise">pts.noise</a> <a href="#pts.null">pts.null</a> <a href="#pts.particles">pts.particles</a> <a href="#pts.proximity">pts.proximity</a> <a href="#pts.random">pts.random</a> <a href="#pts.shader">pts.shader</a> <a href="#pts.trail">pts.trail</a> <a href="#pts.transform">pts.transform</a></p>
 <details class="entry node" id="pts.delete"><summary><code class="name">pts.delete</code><span class="sum">Drops points: those an expression you type holds true for, a range of indices, those inside a box or a ball, or a random share. The rest keep their order and attributes</span></summary>
 <div class="body">
 <p>Drops points: those an expression you type holds true for, a range of indices, those inside a box or a ball, or a random share. The rest keep their order and attributes</p>
@@ -6189,6 +6189,29 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a>, <a href="#particles-two-traps">Particles › Two traps</a>, <a href="#particles-colour-over-life">Particles › Colour over life</a>, <a href="#particles-trails">Particles › Trails</a>, <a href="#shaders-a-program-over-points-ptsshader">Shaders › A program over points (pts.shader)</a></p>
 </div></details>
+<details class="entry node" id="pts.neighbor"><summary><code class="name">pts.neighbor</code><span class="sum">Counts each point's neighbours within <code>distance</code> and averages over them: the way to their middle, a push away from the nearest, the mean of an attribute. The three rules of a flock (boids)</span></summary>
+<div class="body">
+<p>Counts each point's neighbours within <code>distance</code> and averages over them: the way to their middle, a push away from the nearest, the mean of an attribute. The three rules of a flock (boids)</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span>: The points, such as particles inside their loop</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span>: The points with <code>neighbors</code> (how many lie within <code>distance</code>), <code>cohesion</code> (from the point to the mean position of its neighbours, 0 without any), <code>separation</code> (away from the neighbours nearer than <code>separation</code>: each pushes along the line between the two, 1 at no distance down to 0 at <code>separation</code>) and <code>near_&lt;name&gt;</code> (the mean of <code>average</code>)</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>distance</code></td><td>float</td><td><code>0.1</code></td><td>0.001 to 1 (soft, held within 0.000001 to 10000)</td><td>How far a point looks for neighbours, in metres</td></tr>
+<tr><td><code>separation</code></td><td>float</td><td><code>0.05</code></td><td>0 to 1 (soft, held within 0 to 10000)</td><td>Neighbours nearer than this, in metres, push the point away: the <code>separation</code> attribute. 0: no push. Beyond <code>distance</code> it acts as <code>distance</code></td></tr>
+<tr><td><code>average</code></td><td>text</td><td><code>&quot;velocity&quot;</code></td><td></td><td>An attribute averaged over the neighbours into <code>near_&lt;name&gt;</code>: velocity for a flock that flies alike, color to blur colours. Empty: none. A point without neighbours keeps its own value</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>max_per_cell</code></td><td>int</td><td><code>64</code></td><td>8 to 1024 (soft, held within 1 to 4096)</td><td>The search cuts space into cubes as wide as <code>distance</code>. A point looks at no more than this many points of each cube around it: a dense clump costs no more than that. The node warns when points are left out</td></tr>
+</tbody>
+</table>
+</div></details>
 <details class="entry node" id="pts.noise"><summary><code class="name">pts.noise</code><span class="sum">Smooth random values over space and time, looked up at each point and added to an attribute: points that wobble, drift or flow, colours that vary</span></summary>
 <div class="body">
 <p>Smooth random values over space and time, looked up at each point and added to an attribute: points that wobble, drift or flow, colours that vary</p>
@@ -6278,6 +6301,34 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles">Particles</a>, <a href="#particles-the-smallest-network">Particles › The smallest network</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a></p>
+</div></details>
+<details class="entry node" id="pts.proximity"><summary><code class="name">pts.proximity</code><span class="sum">Lines between near points: the plexus look. Each point joins up to <code>max_lines</code> of its neighbours within <code>distance</code>. geo.from_pts draws the lines in lines mode</span></summary>
+<div class="body">
+<p>Lines between near points: the plexus look. Each point joins up to <code>max_lines</code> of its neighbours within <code>distance</code>. geo.from_pts draws the lines in lines mode</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span>: The points to join, as many as they may be: generated, particles, points from a picture</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span>: Two points per line, its two ends: position and the attributes in <code>attributes</code> of each end's point, <code>span</code> (the line's length in metres) and <code>span01</code> (the length over <code>distance</code>: 0 for touching points, 1 at the longest). The number of lines is on the GPU</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>distance</code></td><td>float</td><td><code>0.1</code></td><td>0.001 to 1 (soft, held within 0.000001 to 10000)</td><td>The longest line, in metres: points farther apart are not joined</td></tr>
+<tr><td><code>min_distance</code></td><td>float</td><td><code>0</code></td><td>0 to 1 (soft, held within 0 to 10000)</td><td>The shortest line, in metres: points nearer than this are not joined</td></tr>
+<tr><td><code>max_lines</code></td><td>int</td><td><code>4</code></td><td>1 to 12 (soft, held within 1 to 32)</td><td>Lines each point starts, at most. A point that other points choose can end up with more lines</td></tr>
+<tr><td><code>choose</code></td><td>nearest | random</td><td><code>&quot;nearest&quot;</code></td><td></td><td>Which neighbours a point joins when more than <code>max_lines</code> are within <code>distance</code><ul><li><code>nearest</code>: the nearest ones. A line can switch to another neighbour when two distances change order</li><li><code>random</code>: a random few, by a number each pair keeps while both points exist: lines change only as points come within <code>distance</code> or leave it. Points with an <code>id</code> (particles) keep their numbers by id</li></ul></td></tr>
+<tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft, held within 0 to 1000000000)</td><td>random: another number chooses other neighbours</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>duplicates</code></td><td>bool</td><td><code>false</code></td><td></td><td>Two points that choose each other get two lines, one from each. Off: one line. Two lines on top of each other look brighter with additive blending</td></tr>
+<tr><td><code>max</code></td><td>int</td><td><code>1000000</code></td><td>1000 to 10000000 (soft, held within 1 to 67108864)</td><td>The most lines. Lines past this many are left out, the lines of the last points first. Memory: about 100 bytes a line with the default attributes</td></tr>
+<tr><td><code>attributes</code></td><td>text</td><td><code>&quot;color width&quot;</code></td><td></td><td>Attributes each end of a line takes from its point besides position, separated by spaces. The ones the points lack are left out</td></tr>
+<tr><td><code>max_per_cell</code></td><td>int</td><td><code>64</code></td><td>8 to 1024 (soft, held within 1 to 4096)</td><td>The search cuts space into cubes as wide as <code>distance</code>. A point looks at no more than this many points of each cube around it: a dense clump costs no more than that. The node warns when points are left out</td></tr>
+</tbody>
+</table>
 </div></details>
 <details class="entry node" id="pts.random"><summary><code class="name">pts.random</code><span class="sum">A random value per point into an attribute: random colours, sizes, directions or places, the same for the same seed</span></summary>
 <div class="body">

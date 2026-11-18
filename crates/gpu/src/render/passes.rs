@@ -89,7 +89,13 @@ impl Calls {
                     mapped_at_creation: false,
                 });
                 gpu.queue().write_buffer(&args, 0, bytemuck::cast_slice(words));
-                encoder.copy_buffer_to_buffer(live.buffer(), 0, &args, 4, 4);
+                // Lines of two points each draw a copy per line, whose number is the second word.
+                let pairs = c.instances.as_ref().and_then(|i| i.lines).is_some_and(|l| l.pairs);
+                let word = if pairs { 4 } else { 0 };
+                if live.bytes() < word + 4 {
+                    return None;
+                }
+                encoder.copy_buffer_to_buffer(live.buffer(), word, &args, 4, 4);
                 Some(args)
             })
             .collect()

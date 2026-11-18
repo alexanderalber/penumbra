@@ -198,8 +198,8 @@ impl Attr {
     }
 }
 
-/// Bytes of the header that holds a count on the GPU: four `u32`, the first the count, the
-/// others 0.
+/// Bytes of the header that holds a count on the GPU: four `u32`, the first the count. The
+/// others are 0, or hold what the node that wrote the header says ([`Strips::Pairs`]).
 pub const HEADER_BYTES: u64 = 16;
 
 /// How many of the elements are points.
@@ -315,12 +315,19 @@ struct SeenInner {
     value: AtomicU32,
     /// This one's own value, [`UNSEEN`] until its readback arrived.
     own: AtomicU32,
+    /// The header's other three words as they arrived with `own`.
+    rest: [AtomicU32; 3],
     read: Mutex<Option<BufferRead>>,
 }
 
 impl Default for SeenInner {
     fn default() -> Self {
-        Self { value: AtomicU32::new(UNSEEN), own: AtomicU32::new(UNSEEN), read: Mutex::new(None) }
+        Self {
+            value: AtomicU32::new(UNSEEN),
+            own: AtomicU32::new(UNSEEN),
+            rest: [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)],
+            read: Mutex::new(None),
+        }
     }
 }
 
@@ -330,7 +337,12 @@ impl SeenInner {
         let Some(r) = read.as_ref() else { return };
         match r.state() {
             crate::ReadState::Ready => {
-                if let Some(n) = r.get::<u32>().ok().and_then(|w| w.first().copied()) {
+                if let Ok(words) = r.get::<u32>()
+                    && let Some(n) = words.first().copied()
+                {
+                    for (slot, w) in self.rest.iter().zip(words.iter().skip(1)) {
+                        slot.store(*w, Ordering::Relaxed);
+                    }
                     let n = n.min(UNSEEN - 1);
                     self.own.store(n, Ordering::Relaxed);
                     self.value.store(n, Ordering::Relaxed);
@@ -363,8 +375,8 @@ impl Seen {
         let read = header.read_async(gpu, spare)?;
         Ok(Self(Arc::new(SeenInner {
             value: AtomicU32::new(value),
-            own: AtomicU32::new(UNSEEN),
             read: Mutex::new(Some(read)),
+            ..SeenInner::default()
         })))
     }
 
@@ -381,6 +393,15 @@ impl Seen {
         self.0.settle(&mut crate::lock(&self.0.read));
         let v = self.0.own.load(Ordering::Relaxed);
         (v != UNSEEN).then_some(v)
+    }
+
+    /// The four words of the header this one reads, at the time it was read: the count, then
+    /// what the node that wrote it keeps in the other three. `None` until its own readback
+    /// arrived.
+    pub fn arrived_words(&self) -> Option<[u32; 4]> {
+        let n = self.arrived()?;
+        let [a, b, c] = &self.0.rest;
+        Some([n, a.load(Ordering::Relaxed), b.load(Ordering::Relaxed), c.load(Ordering::Relaxed)])
     }
 }
 
@@ -423,6 +444,11 @@ pub enum Strips {
     /// The points are a grid `cols` wide, row by row (as `dims` [rows, cols, 1] lays them out):
     /// lines along its `rows`, along its `columns`, or both (a wireframe of the grid).
     Grid { cols: u32, rows: bool, columns: bool },
+    /// Every two points are one line on their own: points 0 and 1, 2 and 3, and so on (the
+    /// lines between near points). Where the count is on the GPU, the header's second word
+    /// holds the number of lines, so a drawing reads it there; only a node that writes that
+    /// word gives these strips.
+    Pairs,
 }
 
 impl Strips {
@@ -985,6 +1011,7 @@ fn copy_rows(gpu: &Gpu, src: &Buffer, count: u32, tex: &Tex) -> Result<(), Error
 pub mod append;
 pub mod compact;
 pub mod near;
+pub mod pairs;
 pub mod program;
 pub mod reach;
 pub mod trail;

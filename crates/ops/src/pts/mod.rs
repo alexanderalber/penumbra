@@ -5,7 +5,8 @@
 //! which their count is known on the GPU only ([`penumbra_gpu::points::Count`]).
 //! `pts.particles` makes points that are born, move and die, pushed by `pts.force` in its loop
 //! and masked by `pts.field`; `pts.feedback` closes a loop of any points. `pts.trail` keeps a
-//! line behind every point, which `geo.from_pts` draws as ribbons.
+//! line behind every point, which `geo.from_pts` draws as ribbons. `pts.proximity` joins near
+//! points with lines; `pts.neighbor` counts and averages each point's neighbours.
 
 use penumbra_core::Error;
 use penumbra_graph::{DataKind, FnNodeType, NodeDesc, NodeTypes, Operator};
@@ -18,9 +19,11 @@ pub mod from_tex;
 pub mod generate;
 pub mod lookup_tex;
 pub mod math;
+pub mod neighbor;
 pub mod noise;
 pub mod particles;
 pub(crate) mod program;
+pub mod proximity;
 pub mod random;
 pub mod shader;
 pub mod to_chan;
@@ -47,6 +50,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     force::register(types)?;
     field::register(types)?;
     trail::register(types)?;
+    proximity::register(types)?;
+    neighbor::register(types)?;
     types.register(FnNodeType::new(
         NodeDesc::new("pts.null", "Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes")
             .input("in", DataKind::Pts)
