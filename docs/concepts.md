@@ -179,6 +179,11 @@ The families:
   the points (`pts.noise`, `pts.math`, `pts.transform`, ...) keep the lines. `pts.delete` and
   `pts.particles` change the order, so their points come without lines. Points without lines
   drawn in `lines` mode make one line through all of them, in their order.
+
+  **Neighbours.** `pts.proximity` joins near points with lines, two points per line: the plexus
+  look. `pts.neighbor` counts each point's neighbours within a distance and averages over them,
+  for flocks and for blurring an attribute. `pts.shader` with `// @neighbors` walks the
+  neighbours in a program. See [Particles](particles.md#lines-between-near-points-plexus).
 - **`vol`**: volumes, such as smoke. `vol.smoke` simulates smoke in a box: emitters blow hot
   smoke in, the smoke rises against `gravity`, swirls and fades. `vol.emitter` is one emitter;
   wire several into the `emitter` inputs of `vol.smoke`, 64 at most, later ones acting on what

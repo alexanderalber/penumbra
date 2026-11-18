@@ -2596,7 +2596,7 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `file` | file (wgsl) |  |  | The WGSL file, relative to the project directory; saving it reloads the node. `// @write position` lines name the attributes, `fn main()` runs once per point |
+| `file` | file (wgsl) |  |  | The WGSL file, relative to the project directory; saving it reloads the node. `// @write position` lines name the attributes, `fn main()` runs once per point. `// @neighbors 0.2` lets it walk the points within 0.2 m of each point |
 
 ### pts.trail
 

@@ -174,9 +174,32 @@ of yours instead of the place: `rand_key(id, 0u)` keeps a particle's number whil
 before it die), `params.<name>`, and from the prelude above `pn_noise`, `pn_hash` and the
 pictures on the inputs `pic0` and `pic1`: `textureSampleLevel(pic0, pn_clamp, uv, 0.0)`.
 
-**Limits.** Each attribute read takes one storage buffer, each one written another. A GPU gives
-a program 7 to 15 of them; more is an error that says so. Names starting with `pn_` and the
-names in the list above cannot be attributes.
+**Neighbours.** A line `// @neighbors 0.2` lets `main` walk the points within 0.2 m of its
+point. The radius may also name a float param of the program: `// @neighbors reach`. A walk:
+
+```wgsl
+// @read position
+// @read velocity
+// @write force
+// @neighbors 0.3
+fn main() {
+    var n = near_begin(position, index);
+    while near_next(&n) {
+        force += (velocity_at(n.index) - velocity) * 0.5;
+    }
+}
+```
+
+`n.index`, `n.position` and `n.distance` describe the neighbour found; the point itself is never
+one. `<name>_at(j)` reads point `j`'s value of any attribute the header declares. The node builds
+a grid of cubes as wide as the radius over its input every frame. A point looks at no more than
+64 points of each cube around it; a second number raises that: `// @neighbors 0.3 256`. The
+neighbours come in no particular order, the same order every frame.
+
+**Limits.** Each attribute read takes one storage buffer, each one written another, and
+neighbours two more. A GPU gives a program 7 to 15 of them; more is an error that says so. Names
+starting with `pn_` and the names in the list above cannot be attributes, nor can `near_begin`,
+`near_next`, `near_radius` and `Near`.
 
 For one line of arithmetic, `pts.math` takes the expression as a param instead of a file.
 

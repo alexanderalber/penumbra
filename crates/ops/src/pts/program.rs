@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use penumbra_core::{ParamSpec, Value};
+use penumbra_gpu::points::near::Near;
 use penumbra_gpu::points::program::{self, Generated, Outputs, Program, Run, Shape, Spec};
 use penumbra_gpu::points::{AttrType, Points};
 use penumbra_gpu::{Gpu, Tex};
@@ -252,9 +253,25 @@ impl Compiling {
         param: &dyn Fn(&str) -> Option<Value>,
         pictures: &[Option<&Tex>],
     ) -> Result<Points, CookError> {
+        self.run_near(cx, gpu, program, input, param, pictures, None)
+    }
+
+    /// [`Compiling::run`] for a program that may walk neighbours: `near` is the grid over
+    /// `input`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn run_near(
+        &mut self,
+        cx: &CookContext<'_>,
+        gpu: &Gpu,
+        program: &Program,
+        input: &Points,
+        param: &dyn Fn(&str) -> Option<Value>,
+        pictures: &[Option<&Tex>],
+        near: Option<&Near>,
+    ) -> Result<Points, CookError> {
         let (seconds, frame, dt) = time(cx, program.uses_time());
         let run = Run { seconds, frame, dt, param, pictures };
-        Ok(program.run(gpu, input, &mut self.outputs, &run)?)
+        Ok(program.run_near(gpu, input, &mut self.outputs, &run, near)?)
     }
 
     pub(crate) fn bytes(&self) -> u64 {
