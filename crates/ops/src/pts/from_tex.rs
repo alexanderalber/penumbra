@@ -60,7 +60,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .clamp(1.0, f64::from(MAX_POINTS))
                 .range(100.0, 1e6)
                 .curve(Curve::Log)
-                .doc("About this many points; never more than the picture has texels. The viewer shows the count made")
+                .doc("About this many points and never more, nor more than the picture has texels. The viewer shows the count made")
                 .applies_when("sampling", &["count"]),
         )
         .param(
@@ -147,7 +147,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     .warm_up(on_gpu(warm_up)))
 }
 
-/// Rows and columns of points for a picture of `w` by `h` texels.
+/// Rows and columns of points for a picture of `w` by `h` texels: every `step`-th texel, or
+/// about `count` points in the picture's shape and never more than `count` (nor more than the
+/// picture has texels).
 pub fn cells(w: u32, h: u32, step: Option<u32>, count: u32) -> (u32, u32) {
     let (w, h) = (w.max(1), h.max(1));
     match step {
@@ -156,9 +158,12 @@ pub fn cells(w: u32, h: u32, step: Option<u32>, count: u32) -> (u32, u32) {
             (w.div_ceil(k), h.div_ceil(k))
         }
         None => {
+            let count = count.max(1);
             let aspect = f64::from(w) / f64::from(h);
-            let cols = (f64::from(count.max(1)) * aspect).sqrt().round().clamp(1.0, f64::from(w)) as u32;
-            let rows = (f64::from(cols) / aspect).round().clamp(1.0, f64::from(h)) as u32;
+            let cols = (f64::from(count) * aspect).sqrt().round().clamp(1.0, f64::from(w.min(count))) as u32;
+            // The rows from the count rather than the shape: a picture far wider or higher than
+            // the count allows still gives about the count.
+            let rows = (count / cols).clamp(1, h);
             (cols, rows)
         }
     }
@@ -310,7 +315,7 @@ impl Operator for FromTex {
         let n = u64::from(cols) * u64::from(rows);
         if n > u64::from(MAX_POINTS) {
             return Err(CookError::failed(format!(
-                "{cols}x{rows} points are more than the {MAX_POINTS} allowed: choose a larger `step`, or `count`"
+                "{cols}x{rows} points are more than the {MAX_POINTS} allowed: choose a larger `step` or a smaller `count`"
             )));
         }
         let n = n as u32;
@@ -344,5 +349,29 @@ impl Operator for FromTex {
             None => out,
         };
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out)]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn about_count_points_in_any_shape_of_picture() {
+        let n = |(c, r): (u32, u32)| u64::from(c) * u64::from(r);
+        // A picture one texel wide and one high: about the count, not a point per texel.
+        assert!(n(cells(1, 4096, None, 100)) <= 100, "{:?}", cells(1, 4096, None, 100));
+        assert!(n(cells(4096, 1, None, 100)) <= 100, "{:?}", cells(4096, 1, None, 100));
+        assert!(n(cells(1, 4096, None, 100)) >= 90);
+        // As many as allowed, in a wide picture: never more.
+        let most = cells(3840, 2160, None, MAX_POINTS);
+        assert!(n(most) <= u64::from(MAX_POINTS), "{most:?}");
+        // The usual case keeps the picture's shape and comes close to the count.
+        let (c, r) = cells(1920, 1080, None, 20_000);
+        assert!((19_000..=20_000).contains(&(c * r)), "{c}x{r}");
+        assert!((f64::from(c) / f64::from(r) - 16.0 / 9.0).abs() < 0.05, "{c}x{r}");
+        // Never more points than texels.
+        assert_eq!(cells(4, 3, None, 1000), (4, 3));
+        assert_eq!(cells(10, 10, Some(3), 0), (4, 4));
     }
 }
