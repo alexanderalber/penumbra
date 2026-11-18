@@ -22,6 +22,8 @@
 //! particles. Every random number of a particle is keyed by its `id`, not by its place in the
 //! list, so it stays with the particle while those before it die.
 
+use std::collections::VecDeque;
+
 use penumbra_core::{Curve, Error, ParamSpec, Tick, Value};
 use penumbra_gpu::points::append::{self, Births, Item, Pick};
 use penumbra_gpu::points::compact::Compactor;
@@ -63,8 +65,10 @@ const MAX_WARM_UP: f64 = 30.0;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(
-        FnNodeType::new(desc(), || Box::new(Particles::default()) as Box<dyn Operator>)
-            .warm_up(on_gpu(warm_up)),
+        FnNodeType::new(desc(), || {
+            Box::new(Particles { compactor: Compactor::quiet(), ..Particles::default() }) as Box<dyn Operator>
+        })
+        .warm_up(on_gpu(warm_up)),
     )
 }
 
@@ -351,7 +355,7 @@ struct Sim {
     carry: f64,
     /// `fire` at the last step, so a burst comes when it turns on.
     fired: bool,
-    seen: Option<Seen>,
+    bound: Bound,
 }
 
 /// One step's settings, read from the params once.
@@ -369,6 +373,7 @@ struct Settings {
 struct Particles {
     age: Own,
     motion: Own,
+    /// Quiet: the count after the births is read back, not the one before.
     compactor: Compactor,
     sim: Option<Sim>,
     last: Option<Tick>,
@@ -451,11 +456,17 @@ impl Particles {
         dt: f64,
         wanted: u32,
         set: &Settings,
-        seen: Option<&Seen>,
-    ) -> Result<(Points, Seen), CookError> {
+        bound: &Bound,
+    ) -> Result<(Points, Bound), CookError> {
+        let mut bound = bound.clone();
+        bound.settle();
         let state = state.filter(|s| s.count().at_most() > 0 && s.capacity() == capacity);
         let alive = match state {
-            None => self.empty(gpu, source, capacity)?,
+            None => {
+                // No particles before the births: a count known to be 0.
+                bound.anchor = (0, bound.born);
+                self.empty(gpu, source, capacity)?
+            }
             Some(s) => {
                 let step = |name: &str| match name {
                     "step" => Some(Value::Float(dt)),
@@ -492,22 +503,25 @@ impl Particles {
             params: &params,
             param: &param,
         };
-        // The count may grow by the births at most; a set that starts empty from 0.
-        let at_most = if state.is_some() { alive.count().at_most() } else { 0 };
-        let room = u64::from(at_most) + u64::from(births.most());
-        let room = u32::try_from(room).unwrap_or(u32::MAX).min(capacity);
+        // The count after the births is at most the last one read back plus every birth since;
+        // the births stop there, so it holds on the GPU too.
+        bound.born = bound.born.saturating_add(u64::from(births.most()));
+        let room = bound.most(capacity);
         let births = Births { room, ..births };
         append::append(gpu, &alive, ids, &births, &birth_items())?;
         let Some(header) = alive.count().header().cloned() else {
             return Err(CookError::failed("the count of the particles is not on the GPU"));
         };
-        let seen = Seen::reading(gpu, &header, seen)?;
+        // One readback a step: for display, and to tighten the bound a frame or two later. One
+        // that cannot start leaves the bound as loose as the births make it.
+        let seen = Seen::reading(gpu, &header, bound.pending.back().map(|(s, _)| s)).unwrap_or_default();
+        bound.read(seen.clone());
         let zero = self.zero(gpu, capacity)?;
         let out = alive
             .with_attr(Attr::new(FORCE, AttrType::Vec3, zero)?)?
             .with_bounds(None)
-            .with_count(Count::gpu(header, room, seen.clone())?)?;
-        Ok((out, seen))
+            .with_count(Count::gpu(header, room, seen)?)?;
+        Ok((out, bound))
     }
 }
 
@@ -522,13 +536,60 @@ fn births_of(rate: f64, dt: f64, carry: f64) -> (u32, f64) {
 }
 
 /// Whether `p` is what the node gave out last: the same count on the GPU (a node that drops or
-/// reorders points makes a count of its own) in buffers of the same capacity.
+/// reorders points makes a count of its own) in buffers of the same capacity. No particles at
+/// all are the same whatever carries them.
 fn same_particles(p: &Points, out: &Points) -> bool {
     match (p.count().header(), out.count().header()) {
         (Some(a), Some(b)) => {
             a.same(b) && p.capacity() == out.capacity() && p.count().at_most() == out.count().at_most()
         }
+        (None, None) => p.count().known() == Some(0) && out.count().known() == Some(0),
         _ => false,
+    }
+}
+
+/// Readbacks of the count in flight at most; an older one is let go.
+const MAX_READS: usize = 8;
+
+/// What the CPU knows of the count: never less than it, and close to it a frame or two after
+/// a readback arrives. Programs, compaction and pictures work over this many, so few particles
+/// in a large `max` cost little.
+#[derive(Clone, Default)]
+struct Bound {
+    /// Births at most since the start, each step's [`Births::most`] at the capacity.
+    born: u64,
+    /// The last count known (read back, or 0 at a start) and `born` at that step.
+    anchor: (u32, u64),
+    /// The counts read back after each step that have not arrived, oldest first, with `born`
+    /// at their step.
+    pending: VecDeque<(Seen, u64)>,
+}
+
+impl Bound {
+    /// Takes the newest count that arrived as the anchor, and lets go of the older ones.
+    fn settle(&mut self) {
+        let newest =
+            self.pending.iter().enumerate().rev().find_map(|(k, (s, b))| s.arrived().map(|n| (k, n, *b)));
+        if let Some((k, n, b)) = newest {
+            self.anchor = (n, b);
+            self.pending.drain(..=k);
+        }
+    }
+
+    /// The most particles there may be now: the anchor plus every birth since, within the
+    /// capacity.
+    fn most(&self, capacity: u32) -> u32 {
+        let since = self.born.saturating_sub(self.anchor.1);
+        let n = u64::from(self.anchor.0).saturating_add(since);
+        u32::try_from(n).unwrap_or(u32::MAX).min(capacity)
+    }
+
+    /// The readback of the count after this step's births.
+    fn read(&mut self, seen: Seen) {
+        if self.pending.len() >= MAX_READS {
+            self.pending.pop_front();
+        }
+        self.pending.push_back((seen, self.born));
     }
 }
 
@@ -629,12 +690,12 @@ impl Operator for Particles {
                 let warm = cx.float("warm_up")?.clamp(0.0, MAX_WARM_UP);
                 let steps = (warm / period).round() as u32;
                 let mut carry = 0.0;
-                let mut seen = None;
+                let mut bound = Bound::default();
                 let mut out: Option<Points> = None;
                 for _ in 0..steps {
                     let (wanted, rest) = births_of(set.rate, period, carry);
                     carry = rest;
-                    let (o, s) = self.advance(
+                    let (o, b) = self.advance(
                         cx,
                         gpu,
                         source,
@@ -644,19 +705,19 @@ impl Operator for Particles {
                         period,
                         wanted,
                         &set,
-                        seen.as_ref(),
+                        &bound,
                     )?;
                     out = Some(o);
-                    seen = Some(s);
+                    bound = b;
                 }
                 state = out.clone();
-                fresh = Some((ids, carry, seen));
+                fresh = Some((ids, carry, bound));
             }
         }
 
-        let (ids, carry, seen_before) = match (&fresh, &self.sim) {
-            (Some((ids, carry, seen)), _) => (ids.clone(), *carry, seen.clone()),
-            (None, Some(sim)) => (sim.ids.clone(), sim.carry, sim.seen.clone()),
+        let (ids, carry, bound) = match (&fresh, &self.sim) {
+            (Some((ids, carry, bound)), _) => (ids.clone(), *carry, bound.clone()),
+            (None, Some(sim)) => (sim.ids.clone(), sim.carry, sim.bound.clone()),
             (None, None) => return Err(CookError::failed("the particles have no state")),
         };
         // A burst waits for time to move, as every birth does.
@@ -666,20 +727,10 @@ impl Operator for Particles {
         if fired && !fired_before {
             wanted = wanted.saturating_add(set.burst);
         }
-        let (out, seen) = self.advance(
-            cx,
-            gpu,
-            source,
-            state.as_ref(),
-            capacity,
-            &ids,
-            dt,
-            wanted,
-            &set,
-            seen_before.as_ref(),
-        )?;
+        let (out, bound) =
+            self.advance(cx, gpu, source, state.as_ref(), capacity, &ids, dt, wanted, &set, &bound)?;
         self.last = Some(now.tick);
-        self.sim = Some(Sim { capacity, ids, out: out.clone(), carry, fired, seen: Some(seen) });
+        self.sim = Some(Sim { capacity, ids, out: out.clone(), carry, fired, bound });
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out)]))
     }
 }

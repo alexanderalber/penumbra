@@ -105,6 +105,7 @@ fn births_at_a_rate_age_and_die_with_their_ids() {
             next += 1;
         }
         assert_eq!(live(&rig, &p), alive.len(), "step {n}");
+        assert!(p.count().at_most() as usize >= alive.len(), "step {n}: the bound is never below the count");
         let want: Vec<u32> = alive.iter().map(|(_, id)| *id).collect();
         assert_eq!(ids(&rig, &p), want, "step {n}: the ids of those alive, oldest first");
         let ages: Vec<f32> = values(&rig, &p, "age").iter().map(|v| v[0]).collect();
@@ -115,11 +116,13 @@ fn births_at_a_rate_age_and_die_with_their_ids() {
     }
     assert_eq!(alive.len(), 16, "a steady state: 31 frames of one birth every second frame");
     let p = output(&rig, "/p");
-    assert_eq!((p.capacity(), p.count().at_most()), (1000, 1000.min(p.count().at_most())));
-    assert!(p.count().at_most() <= 41, "the bound grows with the births only: {}", p.count().at_most());
-    for name in ["position", "velocity", "force", "age", "life", "id", "normal"] {
-        assert!(p.attr(name).is_some() || name == "normal", "{name}");
-    }
+    assert_eq!(p.capacity(), 1000);
+    // The count read back a frame or two ago plus the births since: close to the 16 alive, far
+    // from the 40 born in all.
+    assert!(p.count().at_most() <= 20, "the bound follows the count: {}", p.count().at_most());
+    let mut names: Vec<&str> = p.attrs().iter().map(|a| a.name()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["age", "force", "id", "life", "position", "uv", "velocity"], "the source's uv too");
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
 
@@ -626,4 +629,39 @@ fn exact_frames_wait_for_every_compile() {
         assert_eq!(live(&rig, &p), want, "frame {n}");
         assert!(live(&rig, &output(&rig, "/end")) == want, "frame {n}: the loop ran this frame");
     }
+}
+
+/// Particles that live a short time in a large `max`: the bound follows the count, so programs
+/// and pictures do not run over the whole capacity, and a picture of them keeps its size.
+#[test]
+fn the_bound_follows_the_count_and_a_picture_keeps_its_size() {
+    let ops = [
+        one_point(),
+        create(
+            "/p",
+            KIND,
+            &[("rate", Value::Float(600.0)), ("life", Value::Float(0.1)), ("max", Value::Int(100_000))],
+        ),
+        connect("/src", "/p", 0),
+        create("/tex", crate::pts::to_tex::KIND, &[("attribute", "age".into()), ("layout", "rows".into())]),
+        connect("/p", "/tex", 0),
+    ];
+    let Some(mut rig) = rig_of(&ops) else { return };
+    let mut sizes = std::collections::BTreeSet::new();
+    let mut most = 0;
+    for n in 1..=40 {
+        rig.clock.advance(1);
+        rig.cook("/tex");
+        let p = output(&rig, "/p");
+        let alive = live(&rig, &p);
+        assert!(p.count().at_most() as usize >= alive, "step {n}");
+        if n > 10 {
+            most = most.max(p.count().at_most());
+        }
+        sizes.insert(rig.tex("/tex").unwrap().size());
+    }
+    // About 60 alive (six frames of ten births); the bound adds the births of the frames the
+    // readback lags.
+    assert!(most <= 120, "the bound stays near the count: {most}");
+    assert_eq!(sizes.len(), 1, "one picture size: {sizes:?}");
 }
