@@ -4,8 +4,8 @@
 
 use penumbra_core::{Error, ParamSpec, Value};
 use penumbra_gpu::Gpu;
-use penumbra_gpu::points::AttrType;
 use penumbra_gpu::points::program::{self, Decl, Program, Spec};
+use penumbra_gpu::points::{AttrType, Points};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, JobStatus, NodeDesc, NodeTypes, Operator,
 };
@@ -72,7 +72,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::int("seed", 0)
                 .clamp(0.0, 1e9)
                 .range(0.0, 100.0)
-                .doc("Another number gives every point another value"),
+                .doc("Another number gives every point another value. Points with an `id` (particles) keep their value as long as they live: the values follow the id, not the place in the list"),
         )
         .param(operation_param("set", "the random value"))
         .param(type_param())
@@ -113,7 +113,7 @@ const RANDOM: &str = "
 fn pts_random() -> vec4f {
     // Seed and attribute hashed into the key, so no other node's numbers line up with these.
     let k = pn_hash(vec3u(u32(max(params.seed, 0)), u32(max(params.salt, 0)), 0x1b873593u)).x;
-    let u = vec4f(rand3(k), rand3(k + 1u).x);
+    let u = vec4f(pts_rand3(k), pts_rand3(k + 1u).x);
     let tau = 6.2831853;
     var v = vec4f(0.0);
     if params.distribution == distribution_uniform {
@@ -146,10 +146,21 @@ fn vec4(cx: &CookContext<'_>, name: &str) -> Result<[f32; 4], CookError> {
     }
 }
 
-/// The program that puts a random value into `target`.
-fn spec(target: &str, ty: AttrType, rgb_only: bool) -> Spec {
+/// Whether the random numbers of `points` follow their `id`: a whole number that names each
+/// point (each particle) while its place in the list moves. Not where `target` is the id itself.
+fn keyed_by_id(points: &Points, target: &str) -> bool {
+    target != "id" && points.attr("id").is_some_and(|a| matches!(a.ty(), AttrType::U32 | AttrType::I32))
+}
+
+/// The program that puts a random value into `target`; with `keyed`, keyed by the `id` of each
+/// point rather than its index.
+fn spec(target: &str, ty: AttrType, rgb_only: bool, keyed: bool) -> Spec {
+    let key = if keyed { "rand3_key(u32(id), k)" } else { "rand3(k)" };
     let source = format!(
-        "{RANDOM}{COMBINE}
+        "fn pts_rand3(k: u32) -> vec3f {{
+    return {key};
+}}
+{RANDOM}{COMBINE}
 fn main() {{
     let pts_v = pts_random();
     {}
@@ -157,13 +168,17 @@ fn main() {{
 ",
         combine(target, ty, "pts_v", rgb_only)
     );
-    Spec { label: KIND.into(), source, decls: vec![Decl::write(target).ty(ty)], params: program_params() }
+    let mut decls = vec![Decl::write(target).ty(ty)];
+    if keyed {
+        decls.push(Decl::read("id"));
+    }
+    Spec { label: KIND.into(), source, decls, params: program_params() }
 }
 
 /// Compiles the program of the defaults over the points `pts.generate` makes.
 fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     let generated = program::generate(
-        &spec("color", AttrType::Vec4, false),
+        &spec("color", AttrType::Vec4, false, false),
         &generated_shape(),
         program::storage_budget(gpu),
     )?;
@@ -196,7 +211,7 @@ impl Operator for Random {
         let distribution = cx.text("distribution")?;
         // Only uniform has a range per number, alpha included; the others keep a colour's alpha.
         let rgb_only = distribution != "uniform";
-        let spec = spec(target, ty, rgb_only);
+        let spec = spec(target, ty, rgb_only, keyed_by_id(points, target));
         let param = |name: &str| match name {
             "low" => cx.param("min").cloned(),
             "high" => cx.param("max").cloned(),
