@@ -33,6 +33,7 @@ use penumbra_graph::{
 };
 
 use super::delete::KEEP;
+use super::force::WIND;
 use super::program::Own;
 use crate::tex::fluid::step;
 use crate::{gpu, on_gpu};
@@ -200,9 +201,11 @@ fn age_spec(kill: Option<&str>) -> Spec {
 }
 
 /// The program that moves the particles: from the attribute `mass` and `drag` where the
-/// particles have them, else from the params.
-fn motion_spec(mass: bool, drag: bool) -> Spec {
-    let m = if mass { "mass" } else { "params.mass" };
+/// particles have them, else from the params. With `wind` (the pull of `pts.force`'s wind) the
+/// change of speed is divided by `1 + pull * dt / mass`: an implicit step for the wind's part,
+/// so the speed moves towards the wind's and never past it, whatever the mass and the step.
+fn motion_spec(mass: bool, drag: bool, wind: bool) -> Spec {
+    let m = if mass { "max(mass, 1e-6)" } else { "max(params.mass, 1e-6)" };
     let d = if drag { "drag" } else { "params.drag" };
     let mut decls = vec![Decl::write("position"), Decl::write("velocity"), Decl::read(FORCE)];
     if mass {
@@ -211,11 +214,17 @@ fn motion_spec(mass: bool, drag: bool) -> Spec {
     if drag {
         decls.push(Decl::read("drag"));
     }
+    let implicit = if wind {
+        decls.push(Decl::read(WIND));
+        format!(" / (1.0 + max({WIND}, 0.0) * params.step / {m})")
+    } else {
+        String::new()
+    };
     Spec {
         label: KIND.into(),
         source: format!(
             "fn main() {{
-    let pts_a = params.gravity + force / max({m}, 1e-6);
+    let pts_a = (params.gravity + force / {m}){implicit};
     velocity = (velocity + pts_a * params.step) * exp(-max({d}, 0.0) * params.step);
     position += velocity * params.step;
 }}
@@ -288,7 +297,7 @@ fn particle_shape() -> Shape {
 /// Compiles the programs of the defaults, and the births from the points `pts.generate` makes.
 fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     let budget = program::storage_budget(gpu);
-    for spec in [age_spec(None), motion_spec(false, false)] {
+    for spec in [age_spec(None), motion_spec(false, false, false)] {
         Program::cached(gpu, program::generate(&spec, &particle_shape(), budget)?)?;
     }
     // One birth into a set of one, as a sphere of `pts.generate` gives them.
@@ -323,7 +332,7 @@ fn warm_up(gpu: &Gpu) -> Result<(), Error> {
 fn state_attrs(source: &Points) -> Vec<(String, AttrType)> {
     let mut out: Vec<(String, AttrType)> = OWN.iter().map(|(n, t)| (n.to_string(), *t)).collect();
     for a in source.attrs() {
-        if a.name() == FORCE || a.name() == KEEP || out.iter().any(|(n, _)| n == a.name()) {
+        if [FORCE, KEEP, WIND].contains(&a.name()) || out.iter().any(|(n, _)| n == a.name()) {
             continue;
         }
         out.push((a.name().to_string(), a.ty()));
@@ -458,7 +467,7 @@ impl Particles {
                 let aged = self.age.run(cx, gpu, &age_spec(kill), s, false, &step, &[])?;
                 let moved = if set.integrate {
                     let f32_attr = |n: &str| aged.attr(n).is_some_and(|a| a.ty() == AttrType::F32);
-                    let spec = motion_spec(f32_attr("mass"), f32_attr("drag"));
+                    let spec = motion_spec(f32_attr("mass"), f32_attr("drag"), f32_attr(WIND));
                     self.motion.run(cx, gpu, &spec, &aged, false, &step, &[])?
                 } else {
                     aged
@@ -466,7 +475,7 @@ impl Particles {
                 let Some(keep) = moved.attr(KEEP).map(|a| a.buffer().clone()) else {
                     return Err(CookError::failed("the flags of the particles that live on are missing"));
                 };
-                let body = moved.without(KEEP).without(FORCE);
+                let body = moved.without(KEEP).without(FORCE).without(WIND);
                 let alive = self.compactor.compact(gpu, &body, &keep)?;
                 self.complete(gpu, alive, source)?
             }
