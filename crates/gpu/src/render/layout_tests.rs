@@ -157,6 +157,7 @@ fn lines_through_instances_reach_the_shader() {
     let u = |name: &str, plus: u32| u32_at(&b, member(&m, name).offset + plus);
     assert_eq!((u("inst", 0), u("inst", 4)), (1, 1 << 4));
     assert_eq!(f32::from_bits(u("inst", 8)), 0.5);
+    assert_eq!(u("inst", 12), 1, "the most copies: one per texel of a 1 x 1 position");
     assert_eq!([u("lines", 0), u("lines", 4), u("lines", 8), u("lines", 12)], [7, 3, 3, 21]);
 }
 

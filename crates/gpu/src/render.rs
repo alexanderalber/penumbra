@@ -60,6 +60,8 @@ use crate::{FORMAT, Gpu, Tex};
 const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("render.wgsl"));
 
 #[cfg(test)]
+mod indirect_tests;
+#[cfg(test)]
 mod layout_tests;
 mod mips;
 mod passes;
@@ -1677,7 +1679,7 @@ fn draw_slot(
         b.extend_from_slice(&v.to_le_bytes());
     }
     // Drawn per instance, which of their textures are there, whether they face the camera,
-    // and the size every copy is scaled by.
+    // the size every copy is scaled by, and the most copies drawn.
     let has = instances.map_or(0u32, |i| {
         u32::from(i.aim.is_some())
             | u32::from(i.scale.is_some()) << 1
@@ -1686,7 +1688,8 @@ fn draw_slot(
             | u32::from(i.lines.is_some()) << 4
     });
     let size = instances.map_or(1.0f32, |i| if i.size.is_finite() { i.size } else { 1.0 });
-    for v in [u32::from(instances.is_some()), has, size.to_bits(), 0] {
+    let most = instances.map_or(0, Instances::count);
+    for v in [u32::from(instances.is_some()), has, size.to_bits(), most] {
         b.extend_from_slice(&v.to_le_bytes());
     }
     // Lines through the instances: points per line, their distance in the list, whether the

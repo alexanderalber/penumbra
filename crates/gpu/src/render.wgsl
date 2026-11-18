@@ -89,7 +89,8 @@ struct Draw {
     // x: 1 where drawn once per instance (geo::Instances); y: which instance textures are
     // there, bit 0 aim, 1 scale, 2 colour, bit 3 where each copy faces the camera, bit 4 where
     // the copies are the segments of lines through the instances; z: the bits of the f32 every
-    // copy's scale (a line's width) is multiplied by.
+    // copy's scale (a line's width) is multiplied by; w: the most copies drawn, so a number kept
+    // on the GPU that says more draws no more.
     inst: vec4u,
     // Lines through the instances (geo::Lines): x points per line (0: one line through all),
     // y their distance in the list, z bit 0 closed lines, bit 1 a count on the GPU, w the most
@@ -355,6 +356,12 @@ fn line_vertex(p: vec3f, i: u32) -> VOut {
 }
 
 fn place(p: vec3f, n: vec3f, uv: vec2f, i: u32) -> VOut {
+    if draw.inst.x == 1u && i >= draw.inst.w {
+        // A copy past the most: outside the depth range, so nothing of it is drawn.
+        var none: VOut;
+        none.pos = vec4f(0.0, 0.0, 2.0, 1.0);
+        return none;
+    }
     var model = p;
     var normal = n;
     var tint = vec3f(1.0);
