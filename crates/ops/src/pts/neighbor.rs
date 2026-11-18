@@ -224,6 +224,8 @@ struct Neighbor {
     rings: Vec<(String, BufferRing)>,
     /// The count of points past the cap of their cube, read back for the warning.
     last: Option<Seen>,
+    /// Readbacks not yet arrived, oldest first: under load one can take longer than a frame.
+    pending: Vec<Seen>,
     crowded: Option<u32>,
 }
 
@@ -289,8 +291,16 @@ impl Operator for Neighbor {
         if !wanted.is_empty() {
             check_name(&out_name).map_err(|e| CookError::failed(format!("average: {}", e.0)))?;
         }
-        if let Some(n) = self.last.as_ref().and_then(Seen::arrived) {
-            self.crowded = Some(n);
+        let mut newest = None;
+        self.pending.retain(|s| match s.arrived() {
+            Some(n) => {
+                newest = Some(n);
+                false
+            }
+            None => true,
+        });
+        if newest.is_some() {
+            self.crowded = newest;
         }
         let capacity = u64::from(points.capacity().max(1));
         let count = self.next(gpu, COUNT, capacity * 4)?;
@@ -336,7 +346,11 @@ impl Operator for Neighbor {
             )?;
             // For the warning only: one that cannot start says nothing.
             let seen = Seen::reading(gpu, near.crowded(), self.last.as_ref()).unwrap_or_default();
-            self.last = Some(seen);
+            self.last = Some(seen.clone());
+            self.pending.push(seen);
+            if self.pending.len() > 8 {
+                self.pending.remove(0);
+            }
         }
         if let Some(crowded) = self.crowded.filter(|n| *n > 0) {
             cx.warn(format!(

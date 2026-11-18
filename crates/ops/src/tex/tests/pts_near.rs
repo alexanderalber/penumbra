@@ -132,13 +132,15 @@ fn proximity_joins_each_point_to_its_nearest_once() {
     // Fewer lines than wanted: a word about it, once the count came back.
     rig.edit(&[set("/near.max", Value::Int(10))]);
     let mut warned = None;
-    for seed in 0..200 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    for seed in 0.. {
         rig.clock.advance(1);
         rig.gpu.poll();
         rig.cook("/near");
         warned = rig.cooker.status(rig.id("/near")).unwrap().warning;
         std::thread::sleep(std::time::Duration::from_millis(20));
-        if warned.is_some() {
+        rig.gpu.poll();
+        if warned.is_some() || std::time::Instant::now() > deadline {
             break;
         }
         // Nothing changes upstream: a param change makes the node cook again.
