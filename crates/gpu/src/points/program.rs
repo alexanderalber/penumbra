@@ -26,7 +26,7 @@
 //! count: u32        // how many points there are
 //! index01: f32      // index / (count - 1): 0 at the first point, 1 at the last
 //! time: f32         // the show time in seconds
-//! dt: f32           // seconds since the cook before
+//! dt: f32           // the length of one frame in seconds, 1 / the frame rate
 //! frame: i32        // the show's frame
 //! fn rand(k: u32) -> f32     // a random number in 0..1, the same for this point and k every time
 //! fn rand3(k: u32) -> vec3f  // three of them
@@ -215,6 +215,10 @@ pub fn storage_budget(gpu: &Gpu) -> u32 {
 const PRELUDE_NAMES: &[&str] =
     &["params", "pn", "pic0", "pic1", "vol0", "vol1", "vol2", "vol3", "vol_out", "pic_out", "Params"];
 
+/// Most declarations one program has: a program reads and writes at most every attribute a set
+/// of points holds.
+pub const MAX_DECLS: usize = 2 * super::MAX_ATTRS;
+
 /// Whether `name` is one of WGSL's own: a function, a type or one of its short names
 /// (`vec3f`, `mat4x4f`), an enumerant.
 fn wgsl_builtin(name: &str) -> bool {
@@ -261,6 +265,12 @@ pub fn check_name(name: &str) -> Result<(), Error> {
 /// unknown type, a source without `fn main`, and for more storage buffers than `budget`.
 pub fn generate(spec: &Spec, shape: &Shape, budget: u32) -> Result<Generated, Error> {
     let label = spec.label.as_str();
+    if spec.decls.len() > MAX_DECLS {
+        return Err(Error::new(format!(
+            "{label}: {} declarations are more than the {MAX_DECLS} a program can use",
+            spec.decls.len()
+        )));
+    }
     if !has_main(&spec.source) {
         return Err(Error::new(format!(
             "{label}: no `fn main()`; the program is a function `fn main() {{ ... }}` that runs once per point"
@@ -383,7 +393,11 @@ fn literal(ty: AttrType, v: [f32; 4]) -> String {
         AttrType::Vec3 => format!("vec3f({}, {}, {})", f(v[0]), f(v[1]), f(v[2])),
         AttrType::Vec4 => format!("vec4f({}, {}, {}, {})", f(v[0]), f(v[1]), f(v[2]), f(v[3])),
         AttrType::U32 => format!("{}u", v[0].max(0.0) as u32),
-        AttrType::I32 => format!("{}i", v[0] as i32),
+        // WGSL has no literal for the lowest i32: the minus applies to 2147483648i, out of range.
+        AttrType::I32 => match v[0] as i32 {
+            i32::MIN => "(-2147483647i - 1i)".to_string(),
+            i => format!("{i}i"),
+        },
     }
 }
 
@@ -502,6 +516,12 @@ impl Outputs {
         self.rings.iter().map(|(_, r)| r.bytes()).sum()
     }
 
+    /// Forgets the rings of every attribute `generated` does not write: the buffers of a name
+    /// no program writes any more go once nobody downstream holds them.
+    fn keep_only(&mut self, generated: &Generated) {
+        self.rings.retain(|(n, _)| generated.writes().any(|k| k == n));
+    }
+
     /// Forgets the buffers nobody else holds.
     pub fn trim(&mut self) {
         for (_, r) in &mut self.rings {
@@ -515,7 +535,7 @@ impl Outputs {
 pub struct Run<'a> {
     pub seconds: f64,
     pub frame: i64,
-    /// Seconds since the cook before.
+    /// The length of one frame in seconds (1 / the frame rate), so a run repeats exactly.
     pub dt: f64,
     /// The value of a declared param; `None` means its default.
     pub param: &'a dyn Fn(&str) -> Option<Value>,
@@ -576,11 +596,11 @@ impl Program {
         if !g.fits(input) {
             return Err(Error::new(format!("{}: the program was made for other attributes", g.label)));
         }
+        outputs.keep_only(g);
         let n = input.count().at_most();
-        if n == 0 {
-            return Ok(input.clone());
-        }
-        let capacity = u64::from(input.capacity());
+        // Without points the written attributes are there all the same, so what comes out has
+        // the same attributes whatever the count: a buffer cannot be empty, so it holds one.
+        let capacity = u64::from(input.capacity().max(1));
         let mut bound: Vec<(u32, Buffer)> = Vec::with_capacity(g.slots.len() * 2);
         let mut written: Vec<Attr> = Vec::new();
         for slot in &g.slots {
@@ -612,19 +632,20 @@ impl Program {
             frame: run.frame,
             param: &param,
         };
-        let (w, h) = grid(n);
-        self.compute.run_with(
-            gpu,
-            &buffers,
-            &[Step { entry: ENTRY, out: Out::grid(w, h), input: &dispatch }],
-        )?;
+        if n > 0 {
+            let (w, h) = grid(n);
+            self.compute.run_with(
+                gpu,
+                &buffers,
+                &[Step { entry: ENTRY, out: Out::grid(w, h), input: &dispatch }],
+            )?;
+        }
         let mut out = input.clone();
-        let mut moved = false;
+        // New positions drop the bounds ([`Points::with_attr`]).
         for attr in written {
-            moved |= attr.name() == "position";
             out = out.with_attr(attr)?;
         }
-        Ok(if moved { out.with_bounds(None) } else { out })
+        Ok(out)
     }
 }
 
@@ -670,6 +691,12 @@ pub fn parse_header(source: &str) -> Result<Header, Error> {
                 continue;
             }
         };
+        if decls.len() == MAX_DECLS {
+            return Err(Error::new(format!(
+                "more than {MAX_DECLS} declarations of attributes; a program can use no more"
+            ))
+            .context(ctx()));
+        }
         decls.push(decl(args, access).map_err(|e| e.context(ctx()))?);
     }
     for p in &shader.params {
