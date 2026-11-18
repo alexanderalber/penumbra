@@ -11,7 +11,7 @@ use super::geo::{render, rig};
 use super::{Rig, connect, create, gpu, set};
 use crate::pts::generate::{MAX_POINTS, Shape, cloud};
 
-fn points(rig: &mut Rig, path: &str) -> Points {
+pub(super) fn points(rig: &mut Rig, path: &str) -> Points {
     rig.clock.advance(1);
     rig.cook(path);
     let s = rig.cooker.status(rig.id(path)).unwrap();
@@ -19,7 +19,7 @@ fn points(rig: &mut Rig, path: &str) -> Points {
     rig.cooker.output(Port { node: rig.id(path), output: 0 }).unwrap().get::<Points>().unwrap().clone()
 }
 
-fn read(rig: &Rig, p: &Points, name: &str) -> Vec<[f32; 4]> {
+pub(super) fn read(rig: &Rig, p: &Points, name: &str) -> Vec<[f32; 4]> {
     let a = p.attr(name).unwrap_or_else(|| panic!("no {name}"));
     let n = p.count().known().unwrap() as usize;
     match a.ty().components() {
@@ -143,7 +143,7 @@ fn every_shape_makes_what_it_says() {
 }
 
 /// Where the opaque pixels of `px` lie: their count and the box around them.
-fn coverage(px: &Pixels) -> (usize, [u32; 4]) {
+pub(super) fn coverage(px: &Pixels) -> (usize, [u32; 4]) {
     let mut n = 0;
     let mut b = [u32::MAX, u32::MAX, 0, 0];
     for y in 0..px.height {
@@ -157,7 +157,7 @@ fn coverage(px: &Pixels) -> (usize, [u32; 4]) {
     (n, b)
 }
 
-fn drawn(rig: &mut Rig, path: &str) -> Pixels {
+pub(super) fn drawn(rig: &mut Rig, path: &str) -> Pixels {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let v = rig.cooker.status(rig.id(path)).map_or(0, |s| s.version);

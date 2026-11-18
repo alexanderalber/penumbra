@@ -6,11 +6,22 @@ use penumbra_core::Error;
 use penumbra_graph::{DataKind, FnNodeType, NodeDesc, NodeTypes, Operator};
 
 pub mod generate;
+pub mod math;
+pub mod noise;
+pub(crate) mod program;
+pub mod random;
+pub mod shader;
 pub(crate) mod to_geo;
+pub mod transform;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     generate::register(types)?;
     to_geo::register(types)?;
+    shader::register(types)?;
+    noise::register(types)?;
+    transform::register(types)?;
+    math::register(types)?;
+    random::register(types)?;
     types.register(FnNodeType::new(
         NodeDesc::new("pts.null", "Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes")
             .input("in", DataKind::Pts)

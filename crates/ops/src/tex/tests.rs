@@ -596,6 +596,15 @@ fn every_builtin_cooks_without_warnings() {
     )
     .unwrap();
     std::fs::write(dir.join("rings.wgsl"), SHADER).unwrap();
+    std::fs::write(
+        dir.join("lift.wgsl"),
+        "// @write position
+fn main() {
+    position.z += 0.1;
+}
+",
+    )
+    .unwrap();
     let types = builtin_types().unwrap();
     let mut ops = vec![
         create("/feed", "tex.constant", &size()),
@@ -666,6 +675,7 @@ fn every_builtin_cooks_without_warnings() {
             "tex.image_file" => params.push(("file", "ramp.png".into())),
             "tex.face_content" => params.push(("face", "1".into())),
             "tex.shader" => params.push(("file", "rings.wgsl".into())),
+            "pts.shader" => params.push(("file", "lift.wgsl".into())),
             "tex.video_file" => params.push(("file", "bars.mp4".into())),
             "audio.file" => params.push(("file", "tone.wav".into())),
             "tex.noise" => params.push(("speed", Value::Float(0.5))),
@@ -2888,6 +2898,7 @@ mod liquid;
 mod mesh_out;
 mod palettes;
 mod pts;
+mod pts_programs;
 mod reduce;
 mod resample;
 mod scatter;

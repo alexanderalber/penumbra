@@ -2202,7 +2202,7 @@ Outputs: `out` (table).
 
 ## pts
 
-[pts.generate](#ptsgenerate), [pts.null](#ptsnull)
+[pts.generate](#ptsgenerate), [pts.math](#ptsmath), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.transform](#ptstransform)
 
 ### pts.generate
 
@@ -2225,6 +2225,59 @@ Outputs:
 | `size` | vec3 | `[1, 1, 1]` | 0 to 10 (soft) | Grid: x wide, z high. Line: x long. Circle and sphere: the diameter is x. Box: x, y, z. In metres |
 | `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | random: another number gives other places for the points. Does something only with distribution random. |
 
+### pts.math
+
+Computes an attribute per point from an expression you type, such as position.z + sin(time) * 0.1: arithmetic, limits, ranges, trigonometry
+
+Inputs:
+
+- `in` (pts)
+
+Outputs:
+
+- `out` (pts): The points with the result attribute computed; the others pass on unchanged
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `expression` | text | `"position"` |  | A WGSL expression, worked out once per point. It can name attributes (position, color, P, Color), index, count, index01 (0 at the first point, 1 at the last), time, dt, frame, rand(k) and rand3(k), a, b, c and d, and WGSL's functions: sin, clamp, mix, smoothstep, length, normalize, ... One number fills every number of the result |
+| `result` | text | `"position"` |  | The attribute the expression goes into, TouchDesigner's names too. A part of it after a dot: position.z, color.rgb. A new attribute is made |
+| `type` *(more)* | auto \| float \| vec2 \| vec3 \| vec4 \| int \| uint | `"auto"` |  | The type of the attribute when it is new: one the input has keeps its type, and so does one penumbra knows (position, color, scale, ...); auto: a number (float) for a name penumbra does not know; float: one number; vec2: two numbers; vec3: three numbers, such as a position or a direction; vec4: four numbers, such as a colour; int: a whole number; uint: a whole number from 0 |
+| `a` *(more)* | float | `0` | -1 to 1 (soft) | A number the expression reads as a. Bind it to a channel to steer the expression |
+| `b` *(more)* | float | `0` | -1 to 1 (soft) | A number the expression reads as b |
+| `c` *(more)* | float | `0` | -1 to 1 (soft) | A number the expression reads as c |
+| `d` *(more)* | float | `0` | -1 to 1 (soft) | A number the expression reads as d |
+
+### pts.noise
+
+Smooth random values over space and time, looked up at each point and added to an attribute: points that wobble, drift or flow, colours that vary
+
+Inputs:
+
+- `in` (pts)
+
+Outputs:
+
+- `out` (pts): The points with the attribute changed; the others pass on unchanged
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `flavour` | scalar \| vector \| curl | `"scalar"` |  | What the noise gives each point; scalar: one number, the same in x, y and z: points move along a diagonal, or along the normal; vector: three independent numbers: points move every which way; curl: the curl of three noises: a flow that neither gathers nor spreads points, for smoke and swarms. Its size follows the period less tightly |
+| `basis` | gradient \| value | `"gradient"` |  | The kind of noise; gradient: smooth, round blobs (Perlin-like); value: blockier, with a visible grid of cells |
+| `amplitude` | float | `0.1` | 0 to 2 (soft) | The noise (between -1 and 1) is multiplied by this, in the attribute's units: metres for a position |
+| `period` | float | `1` | 0.01 to 10 (soft, held within 0.000001 to 1000000) | The size of one bump of the noise, in metres of the lookup attribute: smaller is finer |
+| `speed` | float | `0` | 0 to 4 (soft) | How fast the noise changes, in bumps per second; 0 is still. It changes in place rather than sliding |
+| `octaves` | int | `1` | 1 to 8 | Layers of ever finer noise added up, TouchDesigner's Harmonics; 1 is smooth bumps only |
+| `roughness` | float | `0.5` | 0 to 1 (soft) | Strength of each octave relative to the one before, TouchDesigner's Harmonic Gain |
+| `lacunarity` *(more)* | float | `2` | 1 to 4 (soft) | How much finer each octave is than the one before, TouchDesigner's Harmonic Spread |
+| `offset` | float | `0` | -1 to 1 (soft) | Added to the noise after amplitude: with multiply, 1 keeps the attribute around its value |
+| `translate` *(more)* | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | Moves the noise along x, y, z, in metres of the lookup attribute |
+| `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | Picks another noise of the same look |
+| `lookup` | text | `"position"` |  | The attribute the noise is looked up at, TouchDesigner's names too (P). Its first three numbers count, in metres |
+| `attribute` | text | `"position"` |  | The attribute the noise goes into, TouchDesigner's names too (P, Color, PointScale). A colour keeps its alpha. A new attribute is made |
+| `operation` | add \| set \| multiply | `"add"` |  | How the noise meets the attribute's value; add: the noise is added to it; set: the noise takes its place; multiply: it is multiplied by the noise |
+| `along_normal` | bool | `false` |  | The noise moves the attribute along each point's `normal`: a scalar noise by its value, a vector or curl noise by its part along the normal. For a three-number attribute such as position |
+| `type` *(more)* | auto \| float \| vec2 \| vec3 \| vec4 \| int \| uint | `"auto"` |  | The type of the attribute when it is new: one the input has keeps its type, and so does one penumbra knows (position, color, scale, ...); auto: a number (float) for a name penumbra does not know; float: one number; vec2: two numbers; vec3: three numbers, such as a position or a direction; vec4: four numbers, such as a colour; int: a whole number; uint: a whole number from 0 |
+
 ### pts.null
 
 Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes
@@ -2234,6 +2287,75 @@ Inputs:
 - `in` (pts)
 
 Outputs: `out` (pts).
+
+### pts.random
+
+A random value per point into an attribute: random colours, sizes, directions or places, the same for the same seed
+
+Inputs:
+
+- `in` (pts)
+
+Outputs:
+
+- `out` (pts): The points with the attribute set; the others pass on unchanged
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `attribute` | text | `"color"` |  | The attribute the values go into, TouchDesigner's names too (Color, PointScale, P). A new attribute is made |
+| `distribution` | uniform \| normal \| direction \| sphere | `"uniform"` |  | How the values spread; uniform: evenly between min and max, each number on its own; normal: around mean, most within deviation of it (a bell curve); direction: a direction of length radius, evenly over all directions. A colour keeps its alpha; sphere: a point inside a ball of radius around 0, evenly spread. A colour keeps its alpha |
+| `min` | vec4 | `[0, 0, 0, 1]` | -1 to 1 (soft) | uniform: the lowest value of each number. An attribute of fewer numbers takes the first ones. Does something only with distribution uniform. |
+| `max` | vec4 | `[1, 1, 1, 1]` | -1 to 1 (soft) | uniform: the highest value of each number. Does something only with distribution uniform. |
+| `mean` | vec4 | `[0, 0, 0, 0]` | -1 to 1 (soft) | normal: the middle of the values. Does something only with distribution normal. |
+| `deviation` | vec4 | `[1, 1, 1, 1]` | 0 to 1 (soft) | normal: how far the values spread, the standard deviation; about two in three lie within it. Does something only with distribution normal. |
+| `radius` | float | `1` | 0 to 10 (soft) | direction and sphere: the length of the directions, the radius of the ball. Does something only with distribution direction or sphere. |
+| `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | Another number gives every point another value |
+| `operation` | add \| set \| multiply | `"set"` |  | How the random value meets the attribute's value; add: the random value is added to it; set: the random value takes its place; multiply: it is multiplied by the random value |
+| `type` *(more)* | auto \| float \| vec2 \| vec3 \| vec4 \| int \| uint | `"auto"` |  | The type of the attribute when it is new: one the input has keeps its type, and so does one penumbra knows (position, color, scale, ...); auto: a number (float) for a name penumbra does not know; float: one number; vec2: two numbers; vec3: three numbers, such as a position or a direction; vec4: four numbers, such as a colour; int: a whole number; uint: a whole number from 0 |
+
+### pts.shader
+
+A program of your own that runs once per point, written in WGSL in a file; reloads when saved. Its header names the attributes it reads and writes, and its params
+
+Declares further params per node, from its file or code.
+
+Inputs:
+
+- `in` (pts): The points the program runs over
+- `pic0` (tex): A picture the program samples as pic0, with textureSampleLevel(pic0, pn_clamp, uv, 0.0). Unwired it reads as transparent black
+- `pic1` (tex): A second picture, pic1
+
+Outputs:
+
+- `out` (pts): The points with the attributes the program writes; the others pass on unchanged
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `file` | file (wgsl) |  |  | The WGSL file, relative to the project directory; saving it reloads the node. `// @write position` lines name the attributes, `fn main()` runs once per point |
+
+### pts.transform
+
+Moves, turns and scales points about a pivot; turns their normals with them
+
+Inputs:
+
+- `in` (pts)
+
+Outputs:
+
+- `out` (pts): The points transformed, and the box around them with them
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `translate` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | Move along x, y, z (z up), in metres |
+| `rotate` | vec3 | `[0, 0, 0]` | -180 to 180° (soft) | Turn about the pivot: about x, then y, then z |
+| `scale` | vec3 | `[1, 1, 1]` | 0 to 4 (soft) | Size along x, y, z around the pivot: 1 keeps the size, negative mirrors |
+| `uniform` | float | `1` | 0.001 to 1000 (soft) | Times the scale along every axis: 0.001 turns millimetres into metres |
+| `pivot` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | The point the turn and the scale happen about, in metres |
+| `order` *(more)* | srt \| str \| rst \| rts \| tsr \| trs | `"srt"` |  | The order of scale, rotate and translate. Each step also acts on what the steps before it did; srt: scale, rotate, translate: the move follows the world axes, whatever the turn and size; str: scale, translate, rotate: the move turns with rotate, so the cloud circles the pivot; rst: rotate, scale, translate: a non-uniform scale stretches along the world axes and skews a turned cloud; rts: rotate, translate, scale: the move grows with scale, and a non-uniform scale skews a turned cloud; tsr: translate, scale, rotate: the move grows with scale and turns with rotate, circling the pivot; trs: translate, rotate, scale: the move turns and grows, and a non-uniform scale skews a turned cloud |
+| `attribute` *(more)* | text | `"position"` |  | The attribute of three numbers that is transformed, TouchDesigner's names too (P, PartVel) |
+| `meaning` *(more)* | point \| direction | `"point"` |  | What the attribute's numbers are; point: a place: it moves, turns and scales about the pivot; direction: a direction or a speed, such as velocity: it turns and scales, translate and pivot do not count |
+| `normals` *(more)* | bool | `true` |  | Turns `normal` with the points, where they have one, so lit copies and sprites stay right |
 
 ## geo
 

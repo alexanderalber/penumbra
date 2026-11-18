@@ -144,6 +144,40 @@ transparent black.
 `pn_hash` returns three numbers, a `vec3u`: `.w` does not compile. For more random numbers,
 hash its result again: `pn_hash(h ^ vec3u(7u))`.
 
+## A program over points (`pts.shader`)
+
+`pts.shader` runs a WGSL program once per point of a `pts` input, TouchDesigner's GLSL POP. It
+reloads when saved and keeps the last good version running, as `tex.shader` does. This file
+lifts a grid into a wave, `wave.wgsl`:
+
+```wgsl
+// @write position
+// @param height float = 0.1
+fn main() {
+    position.z += sin(position.x * 6.283 + time) * params.height;
+}
+```
+
+**Attributes.** `// @write position` names an attribute the program changes. Inside `main` it
+is a variable holding the point's value; what `main` leaves in it goes out. `// @read normal`
+names one the program only reads. TouchDesigner's names work too: `// @write P`. An attribute
+penumbra does not know needs a type and may have a default: `// @write heat float = 0`. Types
+are `float`, `vec2`, `vec3`, `vec4`, `int` and `uint`. A missing attribute reads as its default
+(position 0, color white, scale 1). The node passes every attribute the program does not write
+on unchanged.
+
+**What `main` sees besides the attributes.** `index` (the point's place, from 0), `count`,
+`index01` (0 at the first point, 1 at the last), `time`, `dt` (the length of a frame in
+seconds), `frame`, `rand(k)` and `rand3(k)` (random numbers in 0..1, the same for a point and
+`k` every time), `params.<name>`, and from the prelude above `pn_noise`, `pn_hash` and the
+pictures on the inputs `pic0` and `pic1`: `textureSampleLevel(pic0, pn_clamp, uv, 0.0)`.
+
+**Limits.** Each attribute read takes one storage buffer, each one written another. A GPU gives
+a program 7 to 15 of them; more is an error that says so. Names starting with `pn_` and the
+names in the list above cannot be attributes.
+
+For one line of arithmetic, `pts.math` takes the expression as a param instead of a file.
+
 ## On Windows (Direct3D 12)
 
 On Windows penumbra draws with Direct3D 12. naga first checks the WGSL, then translates it to
