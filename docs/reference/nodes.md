@@ -2232,7 +2232,7 @@ Outputs: `out` (table).
 
 ## pts
 
-[pts.delete](#ptsdelete), [pts.feedback](#ptsfeedback), [pts.field](#ptsfield), [pts.force](#ptsforce), [pts.from_tex](#ptsfrom_tex), [pts.generate](#ptsgenerate), [pts.lookup_tex](#ptslookup_tex), [pts.math](#ptsmath), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.particles](#ptsparticles), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.trail](#ptstrail), [pts.transform](#ptstransform)
+[pts.delete](#ptsdelete), [pts.feedback](#ptsfeedback), [pts.field](#ptsfield), [pts.force](#ptsforce), [pts.from_tex](#ptsfrom_tex), [pts.generate](#ptsgenerate), [pts.lookup_tex](#ptslookup_tex), [pts.math](#ptsmath), [pts.neighbor](#ptsneighbor), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.particles](#ptsparticles), [pts.proximity](#ptsproximity), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.trail](#ptstrail), [pts.transform](#ptstransform)
 
 ### pts.delete
 
@@ -2432,6 +2432,25 @@ Outputs:
 | `c` *(more)* | float | `0` | -1 to 1 (soft) | A number the expression reads as c |
 | `d` *(more)* | float | `0` | -1 to 1 (soft) | A number the expression reads as d |
 
+### pts.neighbor
+
+Counts each point's neighbours within `distance` and averages over them: the way to their middle, a push away from the nearest, the mean of an attribute. The three rules of a flock (boids)
+
+Inputs:
+
+- `in` (pts): The points, such as particles inside their loop
+
+Outputs:
+
+- `out` (pts): The points with `neighbors` (how many lie within `distance`), `cohesion` (from the point to the mean position of its neighbours, 0 without any), `separation` (away from the neighbours nearer than `separation`: each pushes along the line between the two, 1 at no distance down to 0 at `separation`) and `near_<name>` (the mean of `average`)
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `distance` | float | `0.1` | 0.001 to 1 (soft, held within 0.000001 to 10000) | How far a point looks for neighbours, in metres |
+| `separation` | float | `0.05` | 0 to 1 (soft, held within 0 to 10000) | Neighbours nearer than this, in metres, push the point away: the `separation` attribute. 0: no push. Beyond `distance` it acts as `distance` |
+| `average` | text | `"velocity"` |  | An attribute averaged over the neighbours into `near_<name>`: velocity for a flock that flies alike, color to blur colours. Empty: none. A point without neighbours keeps its own value |
+| `max_per_cell` *(more)* | int | `64` | 8 to 1024 (soft, held within 1 to 4096) | The search cuts space into cubes as wide as `distance`. A point looks at no more than this many points of each cube around it: a dense clump costs no more than that. The node warns when points are left out |
+
 ### pts.noise
 
 Smooth random values over space and time, looked up at each point and added to an attribute: points that wobble, drift or flow, colours that vary
@@ -2509,6 +2528,30 @@ Outputs:
 | `warm_up` | float | `0` | 0 to 10 (soft, held within 0 to 30) | Seconds simulated ahead when the node starts or starts over, so the particles are there in full when they appear. The nodes of the loop take no part in them. While the show runs, the pre-roll takes about 4 ms of each frame, and the node gives out no particles until it is done: 30 seconds took about 4 seconds on a fast desktop. Stepping and recording do it all in the first frame |
 | `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | Another number gives other random lives, speeds and source points. Two nodes with the same seed and the same params give the same particles: give each its own |
 | `reset` | bool | `false` |  | No particles while on; they start over when it turns off |
+
+### pts.proximity
+
+Lines between near points: the plexus look. Each point joins up to `max_lines` of its neighbours within `distance`. geo.from_pts draws the lines in lines mode
+
+Inputs:
+
+- `in` (pts): The points to join, as many as they may be: generated, particles, points from a picture
+
+Outputs:
+
+- `out` (pts): Two points per line, its two ends: position and the attributes in `attributes` of each end's point, `span` (the line's length in metres) and `span01` (the length over `distance`: 0 for touching points, 1 at the longest). The number of lines is on the GPU
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `distance` | float | `0.1` | 0.001 to 1 (soft, held within 0.000001 to 10000) | The longest line, in metres: points farther apart are not joined |
+| `min_distance` | float | `0` | 0 to 1 (soft, held within 0 to 10000) | The shortest line, in metres: points nearer than this are not joined |
+| `max_lines` | int | `4` | 1 to 12 (soft, held within 1 to 32) | Lines each point starts, at most. A point that other points choose can end up with more lines |
+| `choose` | nearest \| random | `"nearest"` |  | Which neighbours a point joins when more than `max_lines` are within `distance`; nearest: the nearest ones. A line can switch to another neighbour when two distances change order; random: a random few, by a number each pair keeps while both points exist: lines change only as points come within `distance` or leave it. Points with an `id` (particles) keep their numbers by id |
+| `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | random: another number chooses other neighbours. Does something only with choose random. |
+| `duplicates` *(more)* | bool | `false` |  | Two points that choose each other get two lines, one from each. Off: one line. Two lines on top of each other look brighter with additive blending |
+| `max` *(more)* | int | `1000000` | 1000 to 10000000 (soft, held within 1 to 67108864) | The most lines. Lines past this many are left out, the lines of the last points first. Memory: about 100 bytes a line with the default attributes |
+| `attributes` *(more)* | text | `"color width"` |  | Attributes each end of a line takes from its point besides position, separated by spaces. The ones the points lack are left out |
+| `max_per_cell` *(more)* | int | `64` | 8 to 1024 (soft, held within 1 to 4096) | The search cuts space into cubes as wide as `distance`. A point looks at no more than this many points of each cube around it: a dense clump costs no more than that. The node warns when points are left out |
 
 ### pts.random
 

@@ -150,7 +150,7 @@ fn lines_through_instances_reach_the_shader() {
     let Some(gpu) = crate::testing::gpu() else { return };
     let (_, m) = wgsl_struct(RENDER, "Draw");
     let position = crate::Tex::new_float(&gpu, 1, 1, "position").unwrap();
-    let lines = crate::geo::Lines { len: 7, stride: 3, closed: true, limit: 21, live: true };
+    let lines = crate::geo::Lines { len: 7, stride: 3, closed: true, pairs: false, limit: 21, live: true };
     let inst = crate::geo::Instances { size: 0.5, lines: Some(lines), ..crate::geo::Instances::of(position) };
     let normals = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
     let b = draw_slot(&mat(1.0), &normals, [1.0; 4], &Material::constant(), false, 0, Some(&inst));

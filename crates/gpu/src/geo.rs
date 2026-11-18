@@ -505,11 +505,17 @@ pub const MITRE_LIMIT: f32 = 4.0;
 /// `i` is number `(i / stride) % len` along its line. A first point has no segment, unless the
 /// line is `closed` and longer than two points: then its segment comes from the line's last
 /// point. `len` 0: one line through every point.
+///
+/// `pairs`: every two points are a line of their own, and copy `i` is the segment from point
+/// `2i` to point `2i + 1`, so no copy is spent on a first point; `len`, `stride` and `closed`
+/// say nothing then. [`Instances::count`] counts the lines; where [`Instances::live`] keeps the
+/// number on the GPU, the number of lines is its second word.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Lines {
     pub len: u32,
     pub stride: u32,
     pub closed: bool,
+    pub pairs: bool,
     /// The points past this many are none (the count where the CPU knows it, `u32::MAX`
     /// where not): a line ends there.
     pub limit: u32,

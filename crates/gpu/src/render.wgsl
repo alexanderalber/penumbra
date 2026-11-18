@@ -93,8 +93,8 @@ struct Draw {
     // on the GPU that says more draws no more.
     inst: vec4u,
     // Lines through the instances (geo::Lines): x points per line (0: one line through all),
-    // y their distance in the list, z bit 0 closed lines, bit 1 a count on the GPU, w the most
-    // points.
+    // y their distance in the list, z bit 0 closed lines, bit 1 a count on the GPU, bit 2 every
+    // two points a line of their own (instance i joins points 2i and 2i + 1), w the most points.
     lines: vec4u,
 };
 
@@ -297,27 +297,39 @@ fn line_vertex(p: vec3f, i: u32) -> VOut {
     o.normal = vec3f(0.0, 0.0, 1.0);
     // Outside the picture: nothing is drawn of a segment that is none.
     o.pos = vec4f(-2.0, -2.0, 0.5, 1.0);
-    let before = line_before(i);
+    let pairs = (draw.lines.z & 4u) != 0u;
+    var before = NO_POINT;
+    var last = i;
+    if pairs {
+        if i < 0x7fffffffu {
+            before = 2u * i;
+            last = 2u * i + 1u;
+        }
+    } else {
+        before = line_before(i);
+    }
     if before == NO_POINT {
         return o;
     }
     let a = line_point(before);
-    let b = line_point(i);
+    let b = line_point(last);
     let d = b - a;
     if !(dot(d, d) > 1e-20) {
         return o;
     }
     let end = p.x > 0.5;
-    let here = select(before, i, end);
+    let here = select(before, last, end);
     let at = select(a, b, end);
     let v = line_to_viewer(at);
     let s = line_side(d, v);
     if dot(s, s) == 0.0 {
         return o;
     }
-    // The neighbouring segment at this end, where the line goes on.
+    // The neighbouring segment at this end, where the line goes on; a pair has none.
     var other = NO_POINT;
-    if end {
+    if pairs {
+        other = NO_POINT;
+    } else if end {
         other = line_after(i);
     } else {
         other = line_before(before);
