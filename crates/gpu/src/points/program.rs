@@ -38,6 +38,18 @@
 //! pn_noise, pn_value_noise, pn_hash   // noise and hashes, as in every shader
 //! ```
 //!
+//! A program made with neighbours ([`generate_near`], `// @neighbors` in a file) also walks the
+//! points near each point, through a grid built over the input ([`super::near`]), and reads any
+//! declared attribute of another point:
+//!
+//! ```wgsl
+//! var n = near_begin(position, index);  // the points within the radius, not this one
+//! while near_next(&n) {
+//!     // n.index, n.position, n.distance
+//!     force += (velocity_at(n.index) - velocity) * 0.1;  // <name>_at(j): point j's value
+//! }
+//! ```
+//!
 //! A missing attribute that is read holds its default ([`super::default_of`], or the declared
 //! one). No program writes into its input's buffers: each written attribute gets a buffer of
 //! the node's ([`Outputs`]); the others pass on as they are.
@@ -65,8 +77,23 @@ pub const ENTRY: &str = "pn_points";
 pub const MAIN: &str = "main";
 
 /// Names the program gives `main` besides the attributes; no attribute can take them.
-pub const HELPERS: &[&str] =
-    &["index", "count", "index01", "time", "dt", "frame", "rand", "rand3", "rand_key", "rand3_key", MAIN];
+pub const HELPERS: &[&str] = &[
+    "index",
+    "count",
+    "index01",
+    "time",
+    "dt",
+    "frame",
+    "rand",
+    "rand3",
+    "rand_key",
+    "rand3_key",
+    "near_begin",
+    "near_next",
+    "near_radius",
+    "Near",
+    MAIN,
+];
 
 /// Params every program gets: the count and the time step.
 const COUNT_PARAM: &str = "pn_count";
@@ -181,6 +208,9 @@ pub struct Generated {
     slots: Vec<Slot>,
     /// The binding of the count's header, after every attribute's.
     header: u32,
+    /// The bindings of the grid of near points, where the program walks neighbours: its cells,
+    /// and its points one after.
+    near: Option<u32>,
 }
 
 impl Generated {
@@ -200,7 +230,14 @@ impl Generated {
 
     /// Storage buffers the program binds; the count's header is a uniform besides them.
     pub fn bindings(&self) -> u32 {
-        self.slots.iter().map(|s| u32::from(s.input.is_some()) + u32::from(s.output.is_some())).sum()
+        let attrs: u32 =
+            self.slots.iter().map(|s| u32::from(s.input.is_some()) + u32::from(s.output.is_some())).sum();
+        attrs + if self.near.is_some() { 2 } else { 0 }
+    }
+
+    /// Whether the program walks the points near each point: it needs a grid to run.
+    pub fn walks_neighbors(&self) -> bool {
+        self.near.is_some()
     }
 
     /// The attributes the program writes.
@@ -273,6 +310,13 @@ pub fn check_name(name: &str) -> Result<(), Error> {
 /// that cannot be an attribute, a type the program and the input disagree on, an attribute of
 /// unknown type, a source without `fn main`, and for more storage buffers than `budget`.
 pub fn generate(spec: &Spec, shape: &Shape, budget: u32) -> Result<Generated, Error> {
+    generate_near(spec, shape, budget, false)
+}
+
+/// [`generate`], and with `near` the program walks the points near each point: it binds a grid
+/// ([`super::near::Near`], given to [`Program::run_near`]) and gets `near_begin`, `near_next` and
+/// a function `<name>_at(j)` per declared attribute that reads point j's value of it.
+pub fn generate_near(spec: &Spec, shape: &Shape, budget: u32, near: bool) -> Result<Generated, Error> {
     let label = spec.label.as_str();
     if spec.decls.len() > MAX_DECLS {
         return Err(Error::new(format!(
@@ -327,11 +371,16 @@ pub fn generate(spec: &Spec, shape: &Shape, budget: u32) -> Result<Generated, Er
         });
         slots.push(Slot { name: d.name.clone(), ty, default, seen, depends, input, output });
     }
+    let near = near.then(|| {
+        binding += 2;
+        binding - 2
+    });
     if binding > budget {
         let reads = slots.iter().filter(|s| s.input.is_some()).count();
         let writes = slots.iter().filter(|s| s.output.is_some()).count();
+        let grid = if near.is_some() { " and walking neighbours (2 more)" } else { "" };
         return Err(Error::new(format!(
-            "{label}: reading {reads} attributes and writing {writes} takes {binding} storage buffers; this GPU gives a program {budget}. Split the work over two nodes"
+            "{label}: reading {reads} attributes and writing {writes}{grid} takes {binding} storage buffers; this GPU gives a program {budget}. Split the work over two nodes"
         )));
     }
     let mut params = spec.params.clone();
@@ -346,8 +395,11 @@ pub fn generate(spec: &Spec, shape: &Shape, budget: u32) -> Result<Generated, Er
     params.push(ParamSpec::int(COUNT_PARAM, 0));
     params.push(ParamSpec::float(DT_PARAM, 0.0));
     let header = binding;
-    let source = format!("{}\n{}", spec.source, around(&slots, header));
-    Ok(Generated { label: label.to_string(), source, params, slots, header })
+    let mut source = format!("{}\n{}", spec.source, around(&slots, header));
+    if let Some(first) = near {
+        source.push_str(&neighbors(&slots, first));
+    }
+    Ok(Generated { label: label.to_string(), source, params, slots, header, near })
 }
 
 /// Whether `source` defines `fn main`.
@@ -472,6 +524,22 @@ fn around(slots: &[Slot], header: u32) -> String {
         let _ = writeln!(s, "    pn_out_{name}[pn_i] = {value};");
     }
     s.push_str("}\n");
+    s
+}
+
+/// The grid's bindings and query, and `<name>_at(j)` for each attribute: point j's value as the
+/// input has it, or the default where the input lacks it.
+fn neighbors(slots: &[Slot], first: u32) -> String {
+    let mut s = super::near::query_wgsl(first);
+    for slot in slots {
+        let (name, ty) = (&slot.name, slot.ty.wgsl());
+        let value = match (slot.input, slot.ty) {
+            (Some(_), AttrType::Vec3) => format!("pn_in_{name}[j].xyz"),
+            (Some(_), _) => format!("pn_in_{name}[j]"),
+            (None, t) => literal(t, slot.default),
+        };
+        let _ = writeln!(s, "fn {name}_at(j: u32) -> {ty} {{\n    return {value};\n}}");
+    }
     s
 }
 
@@ -623,6 +691,20 @@ impl Program {
         outputs: &mut Outputs,
         run: &Run<'_>,
     ) -> Result<Points, Error> {
+        self.run_near(gpu, input, outputs, run, None)
+    }
+
+    /// [`Program::run`] for a program that walks neighbours ([`generate_near`]): `near` is the
+    /// grid built over `input` ([`super::near::NearGrid::build`]). `Err` where the program walks
+    /// neighbours, there are points, and no grid is given.
+    pub fn run_near(
+        &self,
+        gpu: &Gpu,
+        input: &Points,
+        outputs: &mut Outputs,
+        run: &Run<'_>,
+        near: Option<&super::near::Near>,
+    ) -> Result<Points, Error> {
         let g = &self.generated;
         if !g.fits(input) {
             return Err(Error::new(format!("{}: the program was made for other attributes", g.label)));
@@ -648,6 +730,21 @@ impl Program {
             }
         }
         bound.push((g.header, input.count().header_for(gpu)?));
+        if let Some(first) = g.near {
+            match near {
+                Some(grid) => {
+                    bound.push((first, grid.cells().clone()));
+                    bound.push((first + 1, grid.points().clone()));
+                }
+                None if n > 0 => {
+                    return Err(Error::new(format!(
+                        "{}: the program walks neighbours and has no grid",
+                        g.label
+                    )));
+                }
+                None => {}
+            }
+        }
         bound.sort_by_key(|(b, _)| *b);
         let buffers: Vec<&Buffer> = bound.iter().map(|(_, b)| b).collect();
         let dt = run.dt;
@@ -684,12 +781,33 @@ impl Program {
 /// The header words of a `pts.shader` file beyond `@param` and `@group`.
 pub const READ: &str = "@read";
 pub const WRITE: &str = "@write";
+pub const NEIGHBORS: &str = "@neighbors";
 
-/// What a `pts.shader` file declares: its params and the attributes it uses.
+/// The radius of a program's neighbours: metres, or the name of one of its params.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Radius {
+    Metres(f32),
+    Param(String),
+}
+
+/// `// @neighbors <radius> [<most per cube>]`: the program walks the points near each point.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NearDecl {
+    pub radius: Radius,
+    /// The most points one cube of the grid gives a point ([`super::near::NearGrid::build`]).
+    pub cap: u32,
+}
+
+/// The cap of `@neighbors` without one.
+pub const DEFAULT_NEAR_CAP: u32 = 64;
+
+/// What a `pts.shader` file declares: its params, the attributes it uses, and whether it walks
+/// neighbours.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Header {
     pub params: Vec<ParamSpec>,
     pub decls: Vec<Decl>,
+    pub near: Option<NearDecl>,
 }
 
 /// Parses the header of a points program: `// @param` and `// @group` lines as a shader has
@@ -703,20 +821,34 @@ pub struct Header {
 /// `@read` reads an attribute, `@write` reads and writes it (it starts as the input's value).
 /// The type (`float`, `vec2`, `vec3`, `vec4`, `int`, `uint`) is needed for a name penumbra does
 /// not know that the input may lack; the default is a number or a list (`[1, 0, 0, 1]`).
-/// Errors name the line.
+///
+/// ```wgsl
+/// // @neighbors <radius> [<most per cube>]
+/// ```
+///
+/// makes the program walk the points within the radius of each point: metres, or the name of
+/// one of its params ([`generate_near`]). Errors name the line.
 pub fn parse_header(source: &str) -> Result<Header, Error> {
     let shader = crate::header::parse(source)?;
     let mut decls = Vec::new();
+    let mut near = None;
     for (i, line) in source.lines().enumerate() {
         let Some((word, args)) = declare::split(line, true) else { continue };
         let ctx = || format!("line {}", i + 1);
         let access = match word {
             READ => Access::Read,
             WRITE => Access::Write,
+            NEIGHBORS => {
+                if near.is_some() {
+                    return Err(Error::new("a second @neighbors line").context(ctx()));
+                }
+                near = Some(near_decl(args, &shader.params).map_err(|e| e.context(ctx()))?);
+                continue;
+            }
             _ => {
-                if let Some(meant) = declare::misspelt(word, &[READ, WRITE]) {
+                if let Some(meant) = declare::misspelt(word, &[READ, WRITE, NEIGHBORS]) {
                     return Err(Error::new(format!(
-                        "`{word}` looks like a misspelt `{meant}`; a points program declares @read, @write, @param and @group"
+                        "`{word}` looks like a misspelt `{meant}`; a points program declares @read, @write, @neighbors, @param and @group"
                     ))
                     .context(ctx()));
                 }
@@ -739,7 +871,36 @@ pub fn parse_header(source: &str) -> Result<Header, Error> {
             )));
         }
     }
-    Ok(Header { params: shader.params, decls })
+    Ok(Header { params: shader.params, decls, near })
+}
+
+/// `<radius> [<most per cube>] [-- doc]` of an `@neighbors` line.
+fn near_decl(args: &str, params: &[ParamSpec]) -> Result<NearDecl, Error> {
+    let args = args.split_once("--").map_or(args, |(a, _)| a);
+    let mut words = args.split_whitespace();
+    let usage = "expected `@neighbors <radius> [<most per cube>]`: the radius in metres or the name of a float param, such as `@neighbors 0.2` or `@neighbors reach 128`";
+    let (Some(r), cap, None) = (words.next(), words.next(), words.next()) else {
+        return Err(Error::new(usage));
+    };
+    let radius = match r.parse::<f32>() {
+        Ok(v) if v.is_finite() && v > 0.0 => Radius::Metres(v),
+        Ok(_) => return Err(Error::new(format!("the radius `{r}` must be a positive number of metres"))),
+        Err(_) if params.iter().any(|p| p.name == r) => Radius::Param(r.to_string()),
+        Err(_) => return Err(Error::new(format!("`{r}` is no number and no param of the program; {usage}"))),
+    };
+    let cap = match cap {
+        None => DEFAULT_NEAR_CAP,
+        Some(c) => match c.parse::<u32>() {
+            Ok(v) if (1..=super::near::MAX_PER_CELL).contains(&v) => v,
+            _ => {
+                return Err(Error::new(format!(
+                    "the most points per cube `{c}` must be a whole number from 1 to {}",
+                    super::near::MAX_PER_CELL
+                )));
+            }
+        },
+    };
+    Ok(NearDecl { radius, cap })
 }
 
 /// `<name> [<type>] [= <default>] [-- doc]`.

@@ -105,6 +105,57 @@ its particle. The trail carries `position`, `id`, `trail` and the attributes in 
 (`color width scale` by default): each place keeps the value the particle had then. Trails cost
 `length` points per particle: 100 000 particles with trails of 32 are 3.2 million points.
 
+## Lines between near points (plexus)
+
+`pts.proximity` joins each point to its nearest neighbours with lines: the plexus look,
+TouchDesigner's Proximity POP.
+
+```
+points -> pts.proximity -> pts.math -> geo.from_pts (mode lines)
+     \-> geo.from_pts (sprites) ------------------------------> geo.merge
+```
+
+1. **`pts.proximity`** after any points: particles, a generator with `pts.noise` that drifts,
+   points from a picture. `distance` is the longest line in metres, `max_lines` how many lines
+   each point starts. A pair is one line.
+2. **`pts.math`** fades the long lines. Each line end has `span` (the line's length in metres)
+   and `span01` (the length over `distance`, from 0 to 1). `result` `color`,
+   `vec4f(color.rgb * (1.0 - span01), 1.0)` darkens a line as it grows; `result` `width`,
+   `1.0 - span01` thins it. On a black background a dark line disappears.
+3. **`geo.from_pts`** with `mode` `lines` draws the lines, a second one with `sprites` the
+   points; `geo.merge` puts both into one render.
+
+**Steady lines:** `choose` `nearest` joins the nearest points; a line switches only when two
+distances change order. `choose` `random` gives each pair a number that stays with it, so lines
+come and go only as points come within `distance` or leave it.
+
+**Cost:** about 3.6 ms a frame for a million moving points with 1.8 million lines, plus about
+2.5 ns a line to draw (RTX 3090). `max` (a million lines by default) caps the lines; the node
+warns when it cuts some.
+
+## A flock (boids)
+
+`pts.neighbor` gives each point what its neighbours within `distance` add up to: `neighbors`
+(how many), `cohesion` (the way to their middle), `separation` (a push away from those nearer
+than `separation`) and `near_velocity` (their mean speed, from `average`). These are the three
+rules of a flock. In the particle loop, a `pts.math` with `result` `force` steers by them:
+
+```
+pts.particles -> pts.neighbor -> pts.math (force) -> pts.null --+
+      ^ previous                                                |
+      +---------------------------------------------------------+
+```
+
+```
+6.0 * separation + 1.5 * (near_velocity - velocity) + 1.2 * cohesion - 0.35 * position
+```
+
+The first three terms keep the birds apart, fly them alike and keep them together;
+`- 0.35 * position` pulls the flock back to the middle. Particles with a long `life` and no
+`gravity` make a flock that lives on. `average` `color` blurs colours over neighbours instead.
+For rules of your own, `pts.shader` with `// @neighbors` walks the neighbours in a program
+(see [Shaders](shaders.md)).
+
 ## Time
 
 One step per frame, as long as the frame. While the show stands still the particles stand

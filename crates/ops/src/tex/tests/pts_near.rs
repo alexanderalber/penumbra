@@ -340,3 +340,56 @@ fn a_flock_steers_by_its_neighbours_in_a_particle_loop() {
     assert!(force.iter().any(|f| f[0] != 0.0 || f[1] != 0.0 || f[2] != 0.0), "the flock steers");
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
+
+#[test]
+fn a_program_walks_its_neighbours_as_pts_neighbor_does() {
+    let Some(gpu) = gpu() else { return };
+    let dir = super::scratch("pts-near-shader");
+    // Counts the neighbours, averages their colour and sums the way to them, as pts.neighbor does.
+    let walk = "// @read position\n// @read color\n// @write heat float\n// @write blur vec4\n// @write way vec3\n// @param reach float = 0.3\n// @neighbors reach\nfn main() {\n    var c = 0.0;\n    var sum = vec4f(0.0);\n    way = vec3f(0.0);\n    var n = near_begin(position, index);\n    while near_next(&n) {\n        c += 1.0;\n        sum += color_at(n.index);\n        way += n.position - position;\n    }\n    heat = c;\n    blur = color;\n    if c > 0.0 {\n        blur = sum / c;\n        way = way / c;\n    }\n}\n";
+    std::fs::write(dir.join("walk.wgsl"), walk).unwrap();
+    let ops = [
+        ball(),
+        create("/tint", "pts.random", &[("attribute", "color".into())]),
+        connect("/ball", "/tint", 0),
+        create("/walk", "pts.shader", &[("file", "walk.wgsl".into())]),
+        connect("/tint", "/walk", 0),
+        create("/near", NEIGHBOR, &[("distance", Value::Float(0.3)), ("average", "color".into())]),
+        connect("/tint", "/near", 0),
+    ];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let walked = points(&mut rig, "/walk");
+    let near = points(&mut rig, "/near");
+    let heat = values(&rig, &walked, "heat");
+    let count = values(&rig, &near, "neighbors");
+    assert!(count.iter().any(|c| c[0] >= 3.0), "points have neighbours");
+    for (name, other) in [("heat", "neighbors"), ("blur", "near_color"), ("way", "cohesion")] {
+        let a = values(&rig, &walked, name);
+        let b = values(&rig, &near, other);
+        for (i, (x, y)) in a.iter().zip(&b).enumerate() {
+            for k in 0..3 {
+                assert!((x[k] - y[k]).abs() < 1e-4, "{name} at {i}: {x:?} against {other} {y:?}");
+            }
+        }
+    }
+    assert_eq!(heat.len(), 300);
+    // The radius follows the param: none within a millimetre.
+    rig.edit(&[set("/walk.reach", Value::Float(0.001))]);
+    let walked = points(&mut rig, "/walk");
+    assert!(values(&rig, &walked, "heat").iter().all(|h| h[0] == 0.0));
+    // A header mistake names the line.
+    std::fs::write(dir.join("walk.wgsl"), "// @write heat float\n// @neighbors far\nfn main() {}\n").unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        rig.clock.advance(1);
+        rig.cook("/walk");
+        let s = rig.cooker.status(rig.id("/walk")).unwrap();
+        if let Some(w) = s.warning.or(s.error) {
+            assert!(w.contains("line 2") && w.contains("`far`"), "{w}");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "no word about the header");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}

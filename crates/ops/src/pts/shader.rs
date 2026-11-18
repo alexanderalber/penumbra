@@ -5,10 +5,14 @@
 //!
 //! Reading and compiling run off the cook thread. A version that does not compile leaves the
 //! last good one running, with the compiler's message as the node's warning.
+//!
+//! A `// @neighbors <radius>` line makes the program walk the points near each point: the node
+//! builds a grid over its input every cook ([`NearGrid`]).
 
 use penumbra_core::{Error, ParamSpec};
 use penumbra_gpu::Tex;
-use penumbra_gpu::points::program::{self, Header, Shape, Spec};
+use penumbra_gpu::points::near::NearGrid;
+use penumbra_gpu::points::program::{self, Header, Radius, Shape, Spec};
 use penumbra_graph::{
     AsyncSlot, CookContext, CookError, Cooked, Data, DataKind, FileWatch, FnNodeType, JobStatus, NodeDesc,
     NodeTypes, Operator,
@@ -33,7 +37,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .param(
             ParamSpec::file("file", &["wgsl"])
-                .doc("The WGSL file, relative to the project directory; saving it reloads the node. `// @write position` lines name the attributes, `fn main()` runs once per point"),
+                .doc("The WGSL file, relative to the project directory; saving it reloads the node. `// @write position` lines name the attributes, `fn main()` runs once per point. `// @neighbors 0.2` lets it walk the points within 0.2 m of each point"),
         )
         .input("in", DataKind::Pts)
         .input("pic0", DataKind::Tex)
@@ -61,15 +65,18 @@ struct Shader {
     file: AsyncSlot<Parsed>,
     watch: Option<FileWatch>,
     compiling: Compiling,
+    /// The grid of near points, for a program with `@neighbors`.
+    grid: NearGrid,
 }
 
 impl Operator for Shader {
     fn gpu_bytes(&self) -> u64 {
-        self.compiling.bytes()
+        self.compiling.bytes() + self.grid.bytes()
     }
 
     fn trim(&mut self) {
         self.compiling.trim();
+        self.grid.trim();
     }
 
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
@@ -119,7 +126,9 @@ impl Operator for Shader {
             decls: parsed.header.decls.clone(),
             params: parsed.header.params.clone(),
         };
-        let made = program::generate(&spec, &Shape::of(points), program::storage_budget(gpu));
+        let near = parsed.header.near.as_ref();
+        let made =
+            program::generate_near(&spec, &Shape::of(points), program::storage_budget(gpu), near.is_some());
         let made_error = match made {
             Ok(g) => {
                 self.compiling.want(cx, gpu, g);
@@ -171,7 +180,27 @@ impl Operator for Shader {
             return Err(CookError::Pending);
         }
         let param = |name: &str| cx.param(name).cloned();
-        let out = self.compiling.run(cx, gpu, &program, points, &param, &pictures)?;
+        // The grid the program walks, built over the points it runs on.
+        let grid = match near.filter(|_| program.generated().walks_neighbors()) {
+            None => None,
+            Some(decl) => {
+                let radius = match &decl.radius {
+                    Radius::Metres(r) => f64::from(*r),
+                    Radius::Param(name) => {
+                        let default =
+                            parsed.header.params.iter().find(|p| p.name == *name).map(|p| &p.default);
+                        cx.param(name).or(default).and_then(|v| v.as_f64()).unwrap_or(0.0)
+                    }
+                };
+                if !(radius.is_finite() && radius > 0.0) {
+                    return Err(CookError::failed(format!(
+                        "@neighbors: the radius is {radius}; it must be a positive number of metres"
+                    )));
+                }
+                self.grid.build(gpu, points, radius as f32, decl.cap)?
+            }
+        };
+        let out = self.compiling.run_near(cx, gpu, &program, points, &param, &pictures, grid.as_ref())?;
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out)]))
     }
 

@@ -344,6 +344,7 @@ details.target { outline: 2px solid var(--accent); }
 <p>The number of points can change on the GPU. <a class="ref" href="#pts.delete"><code>pts.delete</code></a> drops points: those an expression holds true for, a range of indices, those inside a box or a ball, or a random share. The rest keep their order. <a class="ref" href="#pts.from_tex"><code>pts.from_tex</code></a> drops the points of empty texels when <code>delete_empty</code> is on. After such a node the GPU knows how many points there are, and the CPU only how many there may be. Every node downstream handles that: programs stop at the last point, <a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a> draws exactly the points that are left, <a class="ref" href="#tex.from_pts"><code>tex.from_pts</code></a> leaves the texels past them transparent. The viewer shows the count a frame late, as &quot;1204 of at most 20000 points&quot;. <a class="ref" href="#chan.from_pts"><code>chan.from_pts</code></a> turns it into a channel, also a frame late, so a network can react to it.</p>
 <p><a class="ref" href="#pts.particles"><code>pts.particles</code></a> makes points that are born on its source points, move, age and die. Forces come from a loop: <a class="ref" href="#pts.force"><code>pts.force</code></a> or <a class="ref" href="#pts.noise"><code>pts.noise</code></a> on <code>force</code> between the particles and a node wired back into their <code>previous</code> input. <a class="ref" href="#pts.field"><code>pts.field</code></a> gives the points a <code>weight</code> from a shape, to mask a force. <a class="ref" href="#pts.feedback"><code>pts.feedback</code></a> closes such a loop for any points. See <a href="#particles">Particles</a>.</p>
 <p><strong>Lines.</strong> Points can be joined into lines (line strips): a list of which point follows which. <a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a> in <code>lines</code> mode draws a ribbon from each point to the next one on its line. The ribbon faces the camera, is <code>width</code> metres wide times the point's <code>width</code> attribute (<code>LineWidth</code>), and takes the points' <code>color</code>. An ordered line from <a class="ref" href="#pts.generate"><code>pts.generate</code></a> is one line, an ordered circle a closed ring, a grid its rows, its columns or both. <a class="ref" href="#pts.trail"><code>pts.trail</code></a> makes a line behind every point through the places it had. Nodes that keep the number and order of the points (<a class="ref" href="#pts.noise"><code>pts.noise</code></a>, <a class="ref" href="#pts.math"><code>pts.math</code></a>, <a class="ref" href="#pts.transform"><code>pts.transform</code></a>, ...) keep the lines. <a class="ref" href="#pts.delete"><code>pts.delete</code></a> and <a class="ref" href="#pts.particles"><code>pts.particles</code></a> change the order, so their points come without lines. Points without lines drawn in <code>lines</code> mode make one line through all of them, in their order.</p>
+<p><strong>Neighbours.</strong> <a class="ref" href="#pts.proximity"><code>pts.proximity</code></a> joins near points with lines, two points per line: the plexus look. <a class="ref" href="#pts.neighbor"><code>pts.neighbor</code></a> counts each point's neighbours within a distance and averages over them, for flocks and for blurring an attribute. <a class="ref" href="#pts.shader"><code>pts.shader</code></a> with <code>// @neighbors</code> walks the neighbours in a program. See <a href="#particles-lines-between-near-points-plexus">Particles</a>.</p>
 </li>
 <li><p><strong><code>vol</code></strong>: volumes, such as smoke. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> simulates smoke in a box: emitters blow hot smoke in, the smoke rises against <code>gravity</code>, swirls and fades. <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a> is one emitter; wire several into the <code>emitter</code> inputs of <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a>, 64 at most, later ones acting on what earlier ones left. Any table with columns x and y (see <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a>'s output) gives one emitter per row, so a computed table can move or multiply them. With no emitter the box stays empty. Fuel in the smoke burns once it is hot enough: it heats, makes more smoke and swells, so a jet of it widens like a flame. A <a class="ref" href="#vol.obstacle"><code>vol.obstacle</code></a> on the <code>obstacle</code> inputs is a still sphere or box the smoke flows around. <a class="ref" href="#tex.render_volume"><code>tex.render_volume</code></a> draws a volume as a picture, seen from the front through the whole box. Hot smoke glows with <code>glow</code>, in the colours of a palette picture on its <code>palette</code> input. Its <code>density</code> output shows how much smoke covers each pixel, as grey, for <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a>. Burning smoke is dense: a <code>thickness</code> well below 1 lets the eye see into it. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> keeps its smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean the same; how strongly a number acts was matched by eye to one Flow scene.</p>
 </li>
@@ -2028,6 +2029,30 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 </li>
 </ol>
 <p>A new particle starts with a trail of its birth place, which grows from there. A trail ends with its particle. The trail carries <code>position</code>, <code>id</code>, <code>trail</code> and the attributes in <code>attributes</code> (<code>color width scale</code> by default): each place keeps the value the particle had then. Trails cost <code>length</code> points per particle: 100 000 particles with trails of 32 are 3.2 million points.</p>
+<h3 id="particles-lines-between-near-points-plexus">Lines between near points (plexus)</h3>
+<p><a class="ref" href="#pts.proximity"><code>pts.proximity</code></a> joins each point to its nearest neighbours with lines: the plexus look, TouchDesigner's Proximity POP.</p>
+<pre><code>points -&gt; pts.proximity -&gt; pts.math -&gt; geo.from_pts (mode lines)
+     \-&gt; geo.from_pts (sprites) ------------------------------&gt; geo.merge
+</code></pre>
+<ol>
+<li><strong><a class="ref" href="#pts.proximity"><code>pts.proximity</code></a></strong> after any points: particles, a generator with <a class="ref" href="#pts.noise"><code>pts.noise</code></a> that drifts, points from a picture. <code>distance</code> is the longest line in metres, <code>max_lines</code> how many lines each point starts. A pair is one line.
+</li>
+<li><strong><a class="ref" href="#pts.math"><code>pts.math</code></a></strong> fades the long lines. Each line end has <code>span</code> (the line's length in metres) and <code>span01</code> (the length over <code>distance</code>, from 0 to 1). <code>result</code> <code>color</code>, <code>vec4f(color.rgb * (1.0 - span01), 1.0)</code> darkens a line as it grows; <code>result</code> <code>width</code>, <code>1.0 - span01</code> thins it. On a black background a dark line disappears.
+</li>
+<li><strong><a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a></strong> with <code>mode</code> <code>lines</code> draws the lines, a second one with <code>sprites</code> the points; <a class="ref" href="#geo.merge"><code>geo.merge</code></a> puts both into one render.
+</li>
+</ol>
+<p><strong>Steady lines:</strong> <code>choose</code> <code>nearest</code> joins the nearest points; a line switches only when two distances change order. <code>choose</code> <code>random</code> gives each pair a number that stays with it, so lines come and go only as points come within <code>distance</code> or leave it.</p>
+<p><strong>Cost:</strong> about 3.6 ms a frame for a million moving points with 1.8 million lines, plus about 2.5 ns a line to draw (RTX 3090). <code>max</code> (a million lines by default) caps the lines; the node warns when it cuts some.</p>
+<h3 id="particles-a-flock-boids">A flock (boids)</h3>
+<p><a class="ref" href="#pts.neighbor"><code>pts.neighbor</code></a> gives each point what its neighbours within <code>distance</code> add up to: <code>neighbors</code> (how many), <code>cohesion</code> (the way to their middle), <code>separation</code> (a push away from those nearer than <code>separation</code>) and <code>near_velocity</code> (their mean speed, from <code>average</code>). These are the three rules of a flock. In the particle loop, a <a class="ref" href="#pts.math"><code>pts.math</code></a> with <code>result</code> <code>force</code> steers by them:</p>
+<pre><code>pts.particles -&gt; pts.neighbor -&gt; pts.math (force) -&gt; pts.null --+
+      ^ previous                                                |
+      +---------------------------------------------------------+
+</code></pre>
+<pre><code>6.0 * separation + 1.5 * (near_velocity - velocity) + 1.2 * cohesion - 0.35 * position
+</code></pre>
+<p>The first three terms keep the birds apart, fly them alike and keep them together; <code>- 0.35 * position</code> pulls the flock back to the middle. Particles with a long <code>life</code> and no <code>gravity</code> make a flock that lives on. <code>average</code> <code>color</code> blurs colours over neighbours instead. For rules of your own, <a class="ref" href="#pts.shader"><code>pts.shader</code></a> with <code>// @neighbors</code> walks the neighbours in a program (see <a href="#shaders">Shaders</a>).</p>
 <h3 id="particles-time">Time</h3>
 <p>One step per frame, as long as the frame. While the show stands still the particles stand still. Stepped frame by frame (<a class="ref" href="#cook.step"><code>cook.step</code></a>), the same steps give the same particles. <code>reset</code> starts over, as does <a class="ref" href="#node.reset"><code>node.reset</code></a> and the <code>reset</code> of a component the particles sit in. <code>warm_up</code> simulates that many seconds ahead at the start, without the loop's forces. While the show runs this takes about 4 ms of each frame, and no particles show until it is done; stepped, it all happens in the first frame. Stepped frames also wait for every program the loop's nodes compile, so a script needs no <code>wait</code> before <a class="ref" href="#cook.step"><code>cook.step</code></a>. <a class="ref" href="#pts.trail"><code>pts.trail</code></a> follows the same clock: a place per frame, none while time stands, <code>reset</code> and <a class="ref" href="#node.reset"><code>node.reset</code></a> start the trails over.</p>
 <h3 id="particles-what-each-particle-carries">What each particle carries</h3>
@@ -2329,7 +2354,20 @@ fn main() {
 </code></pre>
 <p><strong>Attributes.</strong> <code>// @write position</code> names an attribute the program changes. Inside <code>main</code> it is a variable holding the point's value; what <code>main</code> leaves in it goes out. <code>// @read normal</code> names one the program only reads. TouchDesigner's names work too: <code>// @write P</code>. An attribute penumbra does not know needs a type and may have a default: <code>// @write heat float = 0</code>. Types are <code>float</code>, <code>vec2</code>, <code>vec3</code>, <code>vec4</code>, <code>int</code> and <code>uint</code>. A missing attribute reads as its default (position 0, color white, scale 1). The node passes every attribute the program does not write on unchanged.</p>
 <p><strong>What <code>main</code> sees besides the attributes.</strong> <code>index</code> (the point's place, from 0), <code>count</code>, <code>index01</code> (0 at the first point, 1 at the last), <code>time</code>, <code>dt</code> (the length of a frame in seconds), <code>frame</code>, <code>rand(k)</code> and <code>rand3(k)</code> (random numbers in 0..1, the same for a point and <code>k</code> every time), <code>rand_key(key, k)</code> and <code>rand3_key(key, k)</code> (the same, keyed by a whole number of yours instead of the place: <code>rand_key(id, 0u)</code> keeps a particle's number while the particles before it die), <code>params.&lt;name&gt;</code>, and from the prelude above <code>pn_noise</code>, <code>pn_hash</code> and the pictures on the inputs <code>pic0</code> and <code>pic1</code>: <code>textureSampleLevel(pic0, pn_clamp, uv, 0.0)</code>.</p>
-<p><strong>Limits.</strong> Each attribute read takes one storage buffer, each one written another. A GPU gives a program 7 to 15 of them; more is an error that says so. Names starting with <code>pn_</code> and the names in the list above cannot be attributes.</p>
+<p><strong>Neighbours.</strong> A line <code>// @neighbors 0.2</code> lets <code>main</code> walk the points within 0.2 m of its point. The radius may also name a float param of the program: <code>// @neighbors reach</code>. A walk:</p>
+<pre><code class="lang-wgsl">// @read position
+// @read velocity
+// @write force
+// @neighbors 0.3
+fn main() {
+    var n = near_begin(position, index);
+    while near_next(&amp;n) {
+        force += (velocity_at(n.index) - velocity) * 0.5;
+    }
+}
+</code></pre>
+<p><code>n.index</code>, <code>n.position</code> and <code>n.distance</code> describe the neighbour found; the point itself is never one. <code>&lt;name&gt;_at(j)</code> reads point <code>j</code>'s value of any attribute the header declares. The node builds a grid of cubes as wide as the radius over its input every frame. A point looks at no more than 64 points of each cube around it; a second number raises that: <code>// @neighbors 0.3 256</code>. The neighbours come in no particular order, the same order every frame.</p>
+<p><strong>Limits.</strong> Each attribute read takes one storage buffer, each one written another, and neighbours two more. A GPU gives a program 7 to 15 of them; more is an error that says so. Names starting with <code>pn_</code> and the names in the list above cannot be attributes, nor can <code>near_begin</code>, <code>near_next</code>, <code>near_radius</code> and <code>Near</code>.</p>
 <p>For one line of arithmetic, <a class="ref" href="#pts.math"><code>pts.math</code></a> takes the expression as a param instead of a file.</p>
 <h3 id="shaders-on-windows-direct3d-12">On Windows (Direct3D 12)</h3>
 <p>On Windows penumbra draws with Direct3D 12. naga first checks the WGSL, then translates it to HLSL for Direct3D's compiler, FXC. Some shaders pass naga and fail in FXC or on the GPU:</p>
@@ -6187,7 +6225,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>d</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>A number the expression reads as d</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a>, <a href="#particles-two-traps">Particles › Two traps</a>, <a href="#particles-colour-over-life">Particles › Colour over life</a>, <a href="#particles-trails">Particles › Trails</a>, <a href="#shaders-a-program-over-points-ptsshader">Shaders › A program over points (pts.shader)</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a>, <a href="#particles-two-traps">Particles › Two traps</a>, <a href="#particles-colour-over-life">Particles › Colour over life</a>, <a href="#particles-trails">Particles › Trails</a>, <a href="#particles-lines-between-near-points-plexus">Particles › Lines between near points (plexus)</a>, <a href="#particles-a-flock-boids">Particles › A flock (boids)</a>, <a href="#shaders-a-program-over-points-ptsshader">Shaders › A program over points (pts.shader)</a></p>
 </div></details>
 <details class="entry node" id="pts.neighbor"><summary><code class="name">pts.neighbor</code><span class="sum">Counts each point's neighbours within <code>distance</code> and averages over them: the way to their middle, a push away from the nearest, the mean of an attribute. The three rules of a flock (boids)</span></summary>
 <div class="body">
@@ -6211,6 +6249,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>max_per_cell</code></td><td>int</td><td><code>64</code></td><td>8 to 1024 (soft, held within 1 to 4096)</td><td>The search cuts space into cubes as wide as <code>distance</code>. A point looks at no more than this many points of each cube around it: a dense clump costs no more than that. The node warns when points are left out</td></tr>
 </tbody>
 </table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-a-flock-boids">Particles › A flock (boids)</a></p>
 </div></details>
 <details class="entry node" id="pts.noise"><summary><code class="name">pts.noise</code><span class="sum">Smooth random values over space and time, looked up at each point and added to an attribute: points that wobble, drift or flow, colours that vary</span></summary>
 <div class="body">
@@ -6246,7 +6285,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>type</code></td><td>auto | float | vec2 | vec3 | vec4 | int | uint</td><td><code>&quot;auto&quot;</code></td><td></td><td>The type of the attribute when it is new: one the input has keeps its type, and so does one penumbra knows (position, color, scale, ...)<ul><li><code>auto</code>: a number (float) for a name penumbra does not know</li><li><code>float</code>: one number</li><li><code>vec2</code>: two numbers</li><li><code>vec3</code>: three numbers, such as a position or a direction</li><li><code>vec4</code>: four numbers, such as a colour</li><li><code>int</code>: a whole number</li><li><code>uint</code>: a whole number from 0</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles">Particles</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles">Particles</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a>, <a href="#particles-lines-between-near-points-plexus">Particles › Lines between near points (plexus)</a></p>
 </div></details>
 <details class="entry node" id="pts.null"><summary><code class="name">pts.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
 <div class="body">
@@ -6329,6 +6368,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>max_per_cell</code></td><td>int</td><td><code>64</code></td><td>8 to 1024 (soft, held within 1 to 4096)</td><td>The search cuts space into cubes as wide as <code>distance</code>. A point looks at no more than this many points of each cube around it: a dense clump costs no more than that. The node warns when points are left out</td></tr>
 </tbody>
 </table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-lines-between-near-points-plexus">Particles › Lines between near points (plexus)</a></p>
 </div></details>
 <details class="entry node" id="pts.random"><summary><code class="name">pts.random</code><span class="sum">A random value per point into an attribute: random colours, sizes, directions or places, the same for the same seed</span></summary>
 <div class="body">
@@ -6378,10 +6418,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>file</code></td><td>file (wgsl)</td><td></td><td></td><td>The WGSL file, relative to the project directory; saving it reloads the node. <code>// @write position</code> lines name the attributes, <code>fn main()</code> runs once per point</td></tr>
+<tr><td><code>file</code></td><td>file (wgsl)</td><td></td><td></td><td>The WGSL file, relative to the project directory; saving it reloads the node. <code>// @write position</code> lines name the attributes, <code>fn main()</code> runs once per point. <code>// @neighbors 0.2</code> lets it walk the points within 0.2 m of each point</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#shaders-a-program-over-points-ptsshader">Shaders › A program over points (pts.shader)</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-a-flock-boids">Particles › A flock (boids)</a>, <a href="#shaders-a-program-over-points-ptsshader">Shaders › A program over points (pts.shader)</a></p>
 </div></details>
 <details class="entry node" id="pts.trail"><summary><code class="name">pts.trail</code><span class="sum">A trail behind every point: a line through the places it had over the last frames, newest first. geo.from_pts draws it in lines mode</span></summary>
 <div class="body">
@@ -6511,7 +6551,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>orient</code></td><td>none | normal</td><td><code>&quot;none&quot;</code></td><td></td><td>copies: how each copy is turned<ul><li><code>none</code>: every copy keeps the model's own turn</li><li><code>normal</code>: each copy turns its +y to the point's <code>normal</code>, keeping +z up as far as it can</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-the-smallest-network">Particles › The smallest network</a>, <a href="#particles-trails">Particles › Trails</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-the-smallest-network">Particles › The smallest network</a>, <a href="#particles-trails">Particles › Trails</a>, <a href="#particles-lines-between-near-points-plexus">Particles › Lines between near points (plexus)</a></p>
 </div></details>
 <details class="entry node" id="geo.instance"><summary><code class="name">geo.instance</code><span class="sum">Many copies of a model, each placed by a row of a table: a grid, a ring, a crowd of objects</span></summary>
 <div class="body">
@@ -6539,7 +6579,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <ul>
 <li><code>out</code> <span class="kind">geo</span>: All inputs as one; part ids continue from input to input</li>
 </ul>
-<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-lines-between-near-points-plexus">Particles › Lines between near points (plexus)</a></p>
 </div></details>
 <details class="entry node" id="geo.null"><summary><code class="name">geo.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
 <div class="body">

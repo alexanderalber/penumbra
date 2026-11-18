@@ -330,3 +330,36 @@ fn main() {
     let out = run(&gpu, &program, &input, &mut Outputs::default(), 1.0);
     assert_eq!(read4(&gpu, &out, "velocity")[2], [2.0, 2.0, 2.0, 0.0]);
 }
+
+#[test]
+fn a_header_asks_for_neighbours_by_metres_or_by_a_param() {
+    let near = |s: &str| parse_header(s).map(|h| h.near);
+    assert_eq!(near("fn main() {}").unwrap(), None);
+    assert_eq!(
+        near("// @neighbors 0.25\nfn main() {}").unwrap(),
+        Some(NearDecl { radius: Radius::Metres(0.25), cap: DEFAULT_NEAR_CAP })
+    );
+    assert_eq!(
+        near("// @param reach float = 0.1\n// @neighbors reach 200 -- how far\nfn main() {}").unwrap(),
+        Some(NearDecl { radius: Radius::Param("reach".into()), cap: 200 })
+    );
+    for bad in [
+        "// @neighbors",
+        "// @neighbors -1",
+        "// @neighbors far",
+        "// @neighbors 0.1 0",
+        "// @neighbors 0.1 9999",
+    ] {
+        let e = near(bad).unwrap_err().0;
+        assert!(e.contains("line 1"), "{bad}: {e}");
+    }
+    assert!(near("// @neighbors 0.1\n// @neighbors 0.2").unwrap_err().0.contains("line 2"));
+    assert!(near("// @neighbours 0.1").unwrap_err().0.contains("@neighbors"), "a misspelling is named");
+    // Its names are a program's own: no attribute takes them.
+    assert!(check_name("near_begin").is_err() && check_name("Near").is_err());
+    // Two more storage buffers, counted against the budget.
+    let s = spec("fn main() {}", vec![Decl::write("position")]);
+    let shape = Shape::new(&[("position", AttrType::Vec3)]);
+    assert_eq!(generate_near(&s, &shape, 8, true).unwrap().bindings(), 4);
+    assert!(generate_near(&s, &shape, 3, true).is_err());
+}
