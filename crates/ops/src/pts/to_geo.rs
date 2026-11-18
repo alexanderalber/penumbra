@@ -6,11 +6,16 @@
 //! instances. The pictures are as large as the points' capacity, so they keep their size while
 //! the count moves. Where the count is on the GPU, the renderer reads it there and draws exactly
 //! the points that are alive.
+//!
+//! The box around the points (for framing and shadow maps) is exact where the points carry
+//! bounds. Points a program moved have none: then a reduction on the GPU finds it, read back a
+//! frame or two late and grown by a tenth ([`LateBounds`]). Nothing is culled by it.
 
 use std::sync::Arc;
 
 use penumbra_core::{Curve, Error, ParamSpec};
 use penumbra_gpu::geo::{IDENTITY, Instances, Item, Lines, Mat4, Model};
+use penumbra_gpu::points::reach::LateBounds;
 use penumbra_gpu::points::{Count, Strips};
 use penumbra_gpu::{BufferRing, Geo, Gpu, Points, TexRing};
 use penumbra_graph::{
@@ -30,8 +35,8 @@ pub const ORIENTS: [&str; 2] = ["none", "normal"];
 /// Corners around a disc sprite.
 const DISC_SEGMENTS: u32 = 16;
 
-/// Half the side of the box that holds every point where the points do not say: framing and
-/// shadow maps use it.
+/// Half the side of the box that holds every point where the points do not say and no box has
+/// been read back from the GPU yet: framing and shadow maps use it.
 const UNKNOWN_EXTENT: f32 = 10.0;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
@@ -111,6 +116,8 @@ struct FromPts {
     /// The quad each segment of a line is drawn from.
     segment: Option<Arc<Model>>,
     baked: Vec<Baked>,
+    /// The box of points without exact bounds, read back from the GPU.
+    late: LateBounds,
 }
 
 impl FromPts {
@@ -233,7 +240,7 @@ impl Operator for FromPts {
         let sprite = self.sprite.as_ref().map_or(0, |(_, m)| m.bytes())
             + self.segment.as_ref().map_or(0, |m| m.bytes());
         let baked: u64 = self.baked.iter().map(|b| b.made.bytes()).sum();
-        textures + self.scratch.bytes() + sprite + baked
+        textures + self.scratch.bytes() + sprite + baked + self.late.bytes()
     }
 
     fn trim(&mut self) {
@@ -283,8 +290,14 @@ impl Operator for FromPts {
         } else {
             None
         };
+        // Exact bounds where the points know them; else the box read back from the GPU, late.
+        let late = match points.bounds() {
+            Some(_) => None,
+            None => self.late.update(gpu, points)?,
+        };
         let extent = points
             .bounds()
+            .or(late)
             .map_or(UNKNOWN_EXTENT, |b| b.min.iter().chain(&b.max).map(|v| v.abs()).fold(0.0, f32::max));
         let size = match mode {
             "copies" => cx.float("scale")?,
@@ -301,6 +314,7 @@ impl Operator for FromPts {
             scale,
             color,
             extent,
+            late: late.is_some(),
             ..Instances::of(position)
         };
         if lines {

@@ -745,3 +745,43 @@ fn a_loop_that_stops_is_named_as_such() {
     let w = warned.expect("a warning");
     assert!(w.contains("did not run") && !w.contains("pts.delete"), "{w}");
 }
+
+/// `geo.from_pts` of particles, which have no exact box: after a frame or two a box read back
+/// from the GPU frames them, not the 10 m kept for points nothing is known of.
+#[test]
+fn drawn_particles_get_a_box_read_back_from_the_gpu() {
+    let ops = [
+        one_point(),
+        create(
+            "/p",
+            KIND,
+            &[
+                ("rate", Value::Float(60.0)),
+                ("life", Value::Float(100.0)),
+                ("velocity", Value::Vec3([1.0, 0.0, 0.0])),
+            ],
+        ),
+        connect("/src", "/p", 0),
+        create("/geo", "geo.from_pts", &[]),
+        connect("/p", "/geo", 0),
+    ];
+    let Some(mut rig) = rig_of(&ops) else { return };
+    let mut extent = f32::INFINITY;
+    for _ in 0..30 {
+        rig.clock.advance(1);
+        rig.cook("/geo");
+        // The time a frame takes, in which the GPU catches up.
+        rig.gpu.wait(std::time::Duration::from_secs(5)).unwrap();
+        rig.gpu.poll();
+        let geo = rig
+            .cooker
+            .output(Port { node: rig.id("/geo"), output: 0 })
+            .unwrap()
+            .get::<penumbra_gpu::Geo>()
+            .unwrap()
+            .clone();
+        extent = geo.items[0].instances.as_ref().unwrap().extent;
+    }
+    // Half a second of particles at 1 m/s: x from 0 to 0.5, grown by a tenth.
+    assert!((0.5..=0.7).contains(&extent), "{extent}");
+}

@@ -262,11 +262,17 @@ impl Viewer {
                 }),
                 Some(d) if d.kind() == DataKind::Geo => d.get::<penumbra_gpu::Geo>().map(|g| {
                     let parts = g.part_count();
-                    format!(
+                    let line = format!(
                         "{parts} part{}, {} triangles",
                         if parts == 1 { "" } else { "s" },
                         g.triangle_count()
-                    )
+                    );
+                    // Points without exact bounds: their box was read back late, so say "about".
+                    let late = g.items.iter().filter_map(|i| i.instances.as_deref()).filter(|i| i.late);
+                    match late.map(|i| i.extent).reduce(f32::max) {
+                        Some(e) => format!("{line}, within about {} m", format_value(f64::from(e))),
+                        None => line,
+                    }
                 }),
                 Some(d) if d.kind() == DataKind::Pts => {
                     d.get::<penumbra_gpu::Points>().and_then(|p| pts_lines(p).into_iter().next())
