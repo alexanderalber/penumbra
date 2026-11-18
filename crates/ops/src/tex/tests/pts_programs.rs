@@ -421,3 +421,49 @@ fn colours_a_program_sets_arrive_in_the_picture() {
     assert!(greens.len() >= 3, "{greens:?}");
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
+
+/// The correlation of two lists of numbers.
+fn correlation(a: &[f32], b: &[f32]) -> f32 {
+    let n = a.len() as f32;
+    let (ma, mb) = (a.iter().sum::<f32>() / n, b.iter().sum::<f32>() / n);
+    let cov: f32 = a.iter().zip(b).map(|(x, y)| (x - ma) * (y - mb)).sum();
+    let va: f32 = a.iter().map(|x| (x - ma) * (x - ma)).sum();
+    let vb: f32 = b.iter().map(|y| (y - mb) * (y - mb)).sum();
+    cov / (va * vb).sqrt()
+}
+
+#[test]
+fn random_values_of_different_attributes_are_unrelated() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        grid(20, 20),
+        create("/colour", "pts.random", &[]),
+        connect("/grid", "/colour", 0),
+        create(
+            "/speed",
+            "pts.random",
+            &[("attribute", "velocity".into()), ("distribution", "direction".into())],
+        ),
+        connect("/grid", "/speed", 0),
+        create("/m", "pts.math", &[("expression", "rand(0u)".into()), ("result", "heat".into())]),
+        connect("/grid", "/m", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let red: Vec<f32> = fresh(&mut rig, "/colour", "color").iter().map(|c| c[0]).collect();
+    let up: Vec<f32> = fresh(&mut rig, "/speed", "velocity").iter().map(|v| v[2]).collect();
+    let m = clean(&mut rig, "/m");
+    let heat = m.attr("heat").unwrap().buffer().read::<f32>(&rig.gpu).unwrap()[..400].to_vec();
+    // Both seed 0: still each attribute its own numbers.
+    assert!(correlation(&red, &up).abs() < 0.2, "{}", correlation(&red, &up));
+    assert!(correlation(&red, &heat).abs() < 0.2, "{}", correlation(&red, &heat));
+    // And the same again, run after run.
+    rig.edit(&[set("/colour.seed", Value::Int(5))]);
+    let other: Vec<f32> = fresh(&mut rig, "/colour", "color").iter().map(|c| c[0]).collect();
+    assert_ne!(other, red);
+    rig.edit(&[set("/colour.seed", Value::Int(0))]);
+    let again: Vec<f32> = fresh(&mut rig, "/colour", "color").iter().map(|c| c[0]).collect();
+    assert_eq!(again, red);
+    // A bell curve of colours keeps their alpha, as directions and balls do.
+    rig.edit(&[set("/colour.distribution", "normal".into())]);
+    assert!(fresh(&mut rig, "/colour", "color").iter().all(|c| c[3] == 1.0));
+}

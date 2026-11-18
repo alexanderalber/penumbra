@@ -34,7 +34,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::choice("distribution", &DISTRIBUTIONS)
                 .doc("How the values spread")
                 .choice_doc("uniform", "evenly between min and max, each number on its own")
-                .choice_doc("normal", "around mean, most within deviation of it (a bell curve)")
+                .choice_doc("normal", "around mean, most within deviation of it (a bell curve). A colour keeps its alpha")
                 .choice_doc("direction", "a direction of length radius, evenly over all directions. A colour keeps its alpha")
                 .choice_doc("sphere", "a point inside a ball of radius around 0, evenly spread. A colour keeps its alpha"),
         )
@@ -95,13 +95,24 @@ fn program_params() -> Vec<ParamSpec> {
         ParamSpec::vec4("deviation", [1.0; 4]),
         ParamSpec::float("radius", 1.0),
         ParamSpec::int("seed", 0),
+        ParamSpec::int("salt", 0),
         operation_param("set", "the random value"),
     ]
 }
 
+/// A number of the attribute's name that the program mixes into its random numbers, so two
+/// attributes given random values with the same seed get unrelated ones, and none of them
+/// follows `rand(k)` of `pts.math` or `pts.shader`. The same name always gives the same number
+/// (FNV-1a), within the 31 bits an int param holds.
+fn salt(name: &str) -> i64 {
+    let h = name.bytes().fold(0x811c_9dc5u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193));
+    i64::from(h & 0x7fff_ffff)
+}
+
 const RANDOM: &str = "
 fn pts_random() -> vec4f {
-    let k = u32(max(params.seed, 0)) * 2u;
+    // Seed and attribute hashed into the key, so no other node's numbers line up with these.
+    let k = pn_hash(vec3u(u32(max(params.seed, 0)), u32(max(params.salt, 0)), 0x1b873593u)).x;
     let u = vec4f(rand3(k), rand3(k + 1u).x);
     let tau = 6.2831853;
     var v = vec4f(0.0);
@@ -179,11 +190,13 @@ impl Operator for Random {
         let target = attr_name(cx, "attribute")?;
         let ty = attr_type(points, target, cx.text("type")?);
         let distribution = cx.text("distribution")?;
-        let rgb_only = matches!(distribution, "direction" | "sphere");
+        // Only uniform has a range per number, alpha included; the others keep a colour's alpha.
+        let rgb_only = distribution != "uniform";
         let spec = spec(target, ty, rgb_only);
         let param = |name: &str| match name {
             "low" => cx.param("min").cloned(),
             "high" => cx.param("max").cloned(),
+            "salt" => Some(Value::Int(salt(target))),
             other => cx.param(other).cloned(),
         };
         let out = self.own.run(cx, gpu, &spec, points, false, &param, &[])?;
