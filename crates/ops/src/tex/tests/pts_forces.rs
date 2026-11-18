@@ -292,3 +292,83 @@ fn particles_draw_end_to_end() {
     assert_eq!(coverage(&px).0, 0, "no particles, nothing drawn");
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
+
+/// One particle in a loop with wind, until the loop's program has compiled; then started over.
+fn windy(strength: f64, mass: f64) -> Option<(Rig, Vec<[f32; 4]>)> {
+    let gpu = gpu()?;
+    let ops = [
+        create(
+            "/src",
+            "pts.generate",
+            &[("shape", "line".into()), ("count", Value::Int(1)), ("size", Value::Vec3([0.0; 3]))],
+        ),
+        create(
+            "/p",
+            crate::pts::particles::KIND,
+            &[
+                ("rate", Value::Float(0.0)),
+                ("burst", Value::Int(1)),
+                ("fire", Value::Bool(true)),
+                ("life", Value::Float(100.0)),
+                ("mass", Value::Float(mass)),
+            ],
+        ),
+        connect("/src", "/p", 0),
+        create(
+            "/wind",
+            "pts.force",
+            &[
+                ("kind", "wind".into()),
+                ("direction", Value::Vec3([3.0, 0.0, 0.0])),
+                ("strength", Value::Float(strength)),
+            ],
+        ),
+        connect("/p", "/wind", 0),
+        create("/end", "pts.null", &[]),
+        connect("/wind", "/end", 0),
+        connect("/end", "/p", 1),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    rig.cooker.set_exact_frames(true);
+    for _ in 0..500 {
+        rig.clock.advance(1);
+        rig.cook("/end");
+        let s = rig.cooker.status(rig.id("/wind")).unwrap();
+        if s.has_output && super::pts::compiled(&s) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let id = rig.id("/p");
+    rig.cooker.reset(id);
+    let mut speeds = Vec::new();
+    for _ in 0..40 {
+        rig.clock.advance(1);
+        rig.cook("/end");
+        let p = rig
+            .cooker
+            .output(penumbra_graph::Port { node: id, output: 0 })
+            .unwrap()
+            .get::<Points>()
+            .unwrap()
+            .clone();
+        speeds.push(values(&rig, &p, "velocity")[0]);
+    }
+    Some((rig, speeds))
+}
+
+/// Wind takes a light particle to the wind's speed without overshooting it, however light; a
+/// negative strength pushes nothing.
+#[test]
+fn wind_never_overshoots_and_a_negative_strength_pushes_nothing() {
+    let Some((rig, v)) = windy(2.0, 0.01) else { return };
+    assert!(v.iter().all(|s| s[0].is_finite() && (0.0..=3.0 + 1e-4).contains(&s[0])), "{v:?}");
+    assert!((v[39][0] - 3.0).abs() < 1e-3, "the wind's speed: {v:?}");
+    assert!(v.windows(2).all(|w| w[1][0] >= w[0][0] - 1e-6), "never past it and back: {v:?}");
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+    // A heavy particle follows slowly, as before: about strength / mass of the difference a second.
+    let Some((_, v)) = windy(0.5, 10.0) else { return };
+    assert!(v[0][0] < 0.01 && v[39][0] > 0.05 && v[39][0] < 0.2, "{v:?}");
+    let Some((_, v)) = windy(-2.0, 0.01) else { return };
+    assert!(v.iter().all(|s| s[0] == 0.0), "{v:?}");
+}

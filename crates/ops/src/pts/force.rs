@@ -41,12 +41,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .choice_doc("axis", "towards the line through `center` along `axis`")
                     .choice_doc("vortex", "around the line through `center` along `axis`, anticlockwise seen from where `axis` points. A negative strength turns the other way")
                     .choice_doc("direction", "along `direction`, the same everywhere: gravity, a steady push")
-                    .choice_doc("wind", "towards the speed `direction` (metres a second): each point is pulled to move with the wind, harder the more its `velocity` differs"),
+                    .choice_doc("wind", "towards the speed `direction` (metres a second): each point is pulled to move with the wind, harder the more its `velocity` differs. In pts.particles a particle never passes the wind's speed, however light it is. A negative strength pushes nothing"),
             )
             .param(
                 ParamSpec::float("strength", 1.0)
                     .range(-10.0, 10.0)
-                    .doc("How hard it pushes, in newtons: a particle of mass 1 gains this many metres a second each second. Negative turns it round"),
+                    .doc("How hard it pushes, in newtons: a particle of mass 1 gains this many metres a second each second. Negative turns it round, except for wind. For wind it is per metre a second of difference in speed"),
             )
             .param(
                 ParamSpec::vec3("center", [0.0; 3])
@@ -88,20 +88,41 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .param(
                 ParamSpec::text("attribute", "force")
                     .more()
-                    .doc("The attribute the force is added to. velocity changes the speed at once, by this much at every step"),
+                    .doc("The attribute the force is added to. velocity changes the speed at once, by this much at every step; wind then moves the speed at most all the way to the wind's"),
             )
             .input("in", DataKind::Pts)
             .output("out", DataKind::Pts)
-            .describe_output("out", "The points with the force added; the others pass on unchanged"),
+            .describe_output("out", "The points with the force added; the others pass on unchanged. Wind into `force` also adds to `pts_wind`, how hard it pulls each point: pts.particles reads it to step the speed without overshooting"),
             || Box::new(Force::default()) as Box<dyn Operator>,
         )
         .warm_up(on_gpu(warm_up)),
     )
 }
 
+/// The attribute wind adds its pull to (per metre a second of difference in speed), besides
+/// `force`: `pts.particles` divides the step's change of speed by `1 + pull * dt / mass`, an
+/// implicit step for the wind, so a light particle never passes the wind's speed.
+pub(crate) const WIND: &str = "pts_wind";
+
 /// The force of each kind, its falloff and mask, added to `target`.
 fn spec(target: &str, mask: Option<&str>, wind: bool) -> Spec {
     let m = mask.map_or("1.0".to_string(), |m| format!("f32({m})"));
+    // Wind pulls towards the wind's speed, never away from it: a negative pull would grow
+    // without end. Into `velocity` it is a change per step, at most all the way.
+    let push = match (wind, target) {
+        (false, _) => format!("{target} += pts_dir * params.strength * pts_falloff(pts_d) * {m};"),
+        (true, "velocity") => "velocity += pts_dir * min(pts_k, 1.0);".to_string(),
+        (true, "force") => format!(
+            "force += pts_dir * pts_k;
+    {WIND} += pts_k;"
+        ),
+        (true, _) => format!("{target} += pts_dir * pts_k;"),
+    };
+    let pull = if wind {
+        format!("let pts_k = max(params.strength * pts_falloff(pts_d) * {m}, 0.0);")
+    } else {
+        String::new()
+    };
     let source = format!(
         "
 fn pts_falloff(d: f32) -> f32 {{
@@ -144,7 +165,8 @@ fn main() {{
     }} else {{
         pts_dir = params.direction - {velocity};
     }}
-    {target} += pts_dir * params.strength * pts_falloff(pts_d) * {m};
+    {pull}
+    {push}
 }}
 ",
         velocity = if wind { "velocity" } else { "vec3f(0.0)" },
@@ -152,6 +174,9 @@ fn main() {{
     let mut decls = vec![Decl::read("position"), Decl::write(target).ty(AttrType::Vec3)];
     if wind && target != "velocity" {
         decls.push(Decl::read("velocity"));
+    }
+    if wind && target == "force" {
+        decls.push(Decl::write(WIND).ty(AttrType::F32).default([0.0; 4]));
     }
     if let Some(m) = mask {
         decls.push(Decl::read(m));
