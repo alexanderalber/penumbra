@@ -195,3 +195,36 @@ fn headers_declare_attributes_and_name_mistakes() {
         assert!(e.0.contains(needle), "{src}: {e}");
     }
 }
+
+#[test]
+fn names_wgsl_or_the_program_already_has_are_refused() {
+    // Builtin functions and types, the prelude's globals, and names WGSL keeps for itself.
+    for (name, needle) in [
+        ("max", "WGSL function"),
+        ("distance", "WGSL function"),
+        ("vec3", "WGSL"),
+        ("f32", "WGSL"),
+        ("params", "every program has"),
+        ("pic0", "every program has"),
+        ("vol_out", "every program has"),
+        ("index", "every program has"),
+        ("_", "cannot name"),
+        ("__x", "cannot name"),
+        ("pn_x", "penumbra's own"),
+        ("filter", "reserved"),
+    ] {
+        let e = check_name(name).err().unwrap_or_else(|| panic!("`{name}` was accepted"));
+        assert!(e.0.contains(needle) && e.0.contains("choose another name"), "{name}: {e}");
+    }
+    for name in ["heat", "max_speed", "a", "x2"] {
+        assert!(check_name(name).is_ok(), "{name}");
+    }
+    for s in super::super::STANDARD {
+        assert!(check_name(s.name).is_ok(), "{}", s.name);
+    }
+    // Every path that takes a name: a declaration in code, a header line.
+    let shape = Shape::new(&[("position", AttrType::Vec3)]);
+    let max = spec("fn main() {}", vec![Decl::set("max").ty(AttrType::F32)]);
+    assert!(generate(&max, &shape, 8).err().is_some_and(|e| e.0.contains("WGSL function")));
+    assert!(parse_header("// @write distance float\nfn main() {}").is_err());
+}
