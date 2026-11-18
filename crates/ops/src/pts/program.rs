@@ -6,6 +6,7 @@
 //! ([`penumbra_gpu::points::program::Spec`]); [`Own::run`] does the rest.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use penumbra_core::{ParamSpec, Value};
 use penumbra_gpu::points::program::{self, Generated, Outputs, Program, Run, Shape, Spec};
@@ -61,7 +62,8 @@ pub(crate) fn time(cx: &CookContext<'_>, timed: bool) -> (f64, i64, f64) {
 /// process, for each set of input attributes and params it meets ([`Program::cached`]), off the
 /// cook thread: a param that asks for a new program does not stall the picture. While it
 /// compiles the last program keeps running; before the first one has compiled the node waits
-/// (`Pending`). Nodes warm up their usual program, so it is there at the first cook.
+/// (`Pending`). Nodes warm up their usual program, so it is there at the first cook. Under exact
+/// frames ([`CookContext::exact_frames`]) the cook waits for the compile instead.
 #[derive(Default)]
 pub(crate) struct Own {
     /// The program the last cook ran.
@@ -102,23 +104,33 @@ impl Own {
                 p
             }
             None => {
-                let failed = if self.asked.as_ref() == Some(&generated) {
-                    self.slot.error().filter(|_| !self.slot.busy()).map(str::to_string)
-                } else {
-                    self.start(cx, gpu, generated);
-                    None
-                };
-                let last = self.program.clone().filter(|p| p.generated().fits(input));
-                match (last, failed) {
-                    (Some(p), failed) => {
-                        if let Some(e) = failed {
-                            cx.warn(format!("{e}\n(running the last program that compiled)"));
-                        }
-                        self.stale = true;
+                if self.asked.as_ref() != Some(&generated) {
+                    self.start(cx, gpu, generated.clone());
+                }
+                // Every frame counts: the frame waits for its program.
+                if cx.exact_frames() {
+                    finish(&mut self.slot);
+                }
+                match self.slot.latest().filter(|p| *p.generated() == generated).cloned() {
+                    Some(p) => {
+                        self.stale = false;
                         p
                     }
-                    (None, Some(e)) => return Err(CookError::failed(e)),
-                    (None, None) => return Err(CookError::Pending),
+                    None => {
+                        let failed = self.slot.error().filter(|_| !self.slot.busy()).map(str::to_string);
+                        let last = self.program.clone().filter(|p| p.generated().fits(input));
+                        match (last, failed) {
+                            (Some(p), failed) => {
+                                if let Some(e) = failed {
+                                    cx.warn(format!("{e}\n(running the last program that compiled)"));
+                                }
+                                self.stale = true;
+                                p
+                            }
+                            (None, Some(e)) => return Err(CookError::failed(e)),
+                            (None, None) => return Err(CookError::Pending),
+                        }
+                    }
                 }
             }
         };
@@ -180,15 +192,20 @@ impl Compiling {
         }
     }
 
-    /// Starts compiling `generated`, unless that is what the last compile was given.
+    /// Starts compiling `generated`, unless that is what the last compile was given. Under
+    /// exact frames ([`CookContext::exact_frames`]) it waits for the compile, so the frame runs
+    /// the program it asks for.
     pub(crate) fn want(&mut self, cx: &CookContext<'_>, gpu: &Gpu, generated: Generated) {
-        if self.asked.as_ref() == Some(&generated) {
-            return;
+        if self.asked.as_ref() != Some(&generated) {
+            self.asked = Some(generated.clone());
+            let gpu = gpu.clone();
+            self.slot.start(
+                cx.spawn(move |_job| Program::compile(&gpu, generated).map(Arc::new).map_err(|e| e.0)),
+            );
         }
-        self.asked = Some(generated.clone());
-        let gpu = gpu.clone();
-        self.slot
-            .start(cx.spawn(move |_job| Program::compile(&gpu, generated).map(Arc::new).map_err(|e| e.0)));
+        if cx.exact_frames() && finish(&mut self.slot) {
+            self.current = self.slot.latest().cloned();
+        }
     }
 
     /// The last program that compiled, where it fits `input`.
@@ -238,6 +255,25 @@ impl Compiling {
 
     pub(crate) fn trim(&mut self) {
         self.outputs.trim();
+    }
+}
+
+/// Longest a frame under exact frames waits for a job of a points node (a compile, a file).
+const EXACT_WAIT: Duration = Duration::from_secs(60);
+
+/// Waits for the job in `slot` to end, at most [`EXACT_WAIT`], and takes its result: for exact
+/// frames, where a frame waits for what it needs however long that takes. Whether a new good
+/// result came in.
+pub(crate) fn finish<T>(slot: &mut AsyncSlot<T>) -> bool {
+    let deadline = Instant::now() + EXACT_WAIT;
+    loop {
+        if slot.poll() {
+            return true;
+        }
+        if !slot.busy() || Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
