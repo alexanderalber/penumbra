@@ -1810,37 +1810,16 @@ impl Editor {
                     if let Some(lines) = crate::viewer::summary_lines(first)
                         && zoom > 0.4
                     {
-                        for (i, line) in lines.iter().take(lines_fit(body_rect, zoom)).enumerate() {
-                            painter.text(
-                                pos2(
-                                    body_rect.min.x + 4.0 * zoom,
-                                    body_rect.min.y + (3.0 + 12.0 * i as f32) * zoom,
-                                ),
-                                Align2::LEFT_TOP,
-                                line,
-                                FontId::proportional(10.0 * zoom),
-                                theme::TEXT,
-                            );
-                        }
+                        let after_labels = input_labels_width(painter, g, zoom);
+                        body_lines(painter, body_rect, &lines, zoom, after_labels);
                     }
                 }
                 DataKind::View => {
                     if let Some(v) = first.get::<penumbra_ops::view::Viewpoint>()
                         && zoom > 0.4
                     {
-                        let lines = crate::viewer::view_lines(v);
-                        for (i, line) in lines.iter().take(lines_fit(body_rect, zoom)).enumerate() {
-                            painter.text(
-                                pos2(
-                                    body_rect.min.x + 4.0 * zoom,
-                                    body_rect.min.y + (3.0 + 12.0 * i as f32) * zoom,
-                                ),
-                                Align2::LEFT_TOP,
-                                line,
-                                FontId::proportional(10.0 * zoom),
-                                theme::TEXT,
-                            );
-                        }
+                        let after_labels = input_labels_width(painter, g, zoom);
+                        body_lines(painter, body_rect, &crate::viewer::view_lines(v), zoom, after_labels);
                     }
                 }
             }
@@ -2779,6 +2758,26 @@ fn input_labels_width(painter: &egui::Painter, g: &Geo, zoom: f32) -> f32 {
         .map(|p| painter.layout_no_wrap(p.name.clone(), font.clone(), theme::TEXT_WEAK).size().x)
         .fold(0.0f32, f32::max);
     gap + widest + 3.0
+}
+
+/// Lines of text in a node's body, from its top: past the input labels (`text_left` points in
+/// from the left edge), each cut short with an ellipsis where it would run past the body.
+fn body_lines(painter: &egui::Painter, body: Rect, lines: &[String], zoom: f32, text_left: f32) {
+    let left = body.min.x + text_left.max(4.0 * zoom);
+    let width = body.max.x - 4.0 * zoom - left;
+    if width < 12.0 * zoom {
+        return;
+    }
+    for (i, line) in lines.iter().take(lines_fit(body, zoom)).enumerate() {
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            line.clone(),
+            FontId::proportional(10.0 * zoom),
+            theme::TEXT,
+        );
+        job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+        let galley = painter.layout_job(job);
+        painter.galley(pos2(left, body.min.y + (3.0 + 12.0 * i as f32) * zoom), galley, theme::TEXT);
+    }
 }
 
 /// A chan node's body with one sample per channel: one channel as its value with a bar (red
