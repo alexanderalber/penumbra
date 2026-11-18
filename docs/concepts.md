@@ -154,6 +154,15 @@ The families:
   `tex.shader` and `geo.tex_instance`. `pts.lookup_tex` gives each point a value from a
   picture, looked up at its `uv` or its position. The viewer shows how many points there are,
   their attributes and the box around them.
+
+  The number of points can change on the GPU. `pts.delete` drops points: those an expression
+  holds true for, a range of indices, those inside a box or a ball, or a random share. The rest
+  keep their order. `pts.from_tex` drops the points of empty texels when `delete_empty` is on.
+  After such a node the GPU knows how many points there are, and the CPU only how many there
+  may be. Every node downstream handles that: programs stop at the last point, `geo.from_pts`
+  draws exactly the points that are left, `tex.from_pts` leaves the texels past them
+  transparent. The viewer shows the count a frame late, as "1204 of at most 20000 points".
+  `chan.from_pts` turns it into a channel, also a frame late, so a network can react to it.
 - **`vol`**: volumes, such as smoke. `vol.smoke` simulates smoke in a box: emitters blow hot
   smoke in, the smoke rises against `gravity`, swirls and fades. `vol.emitter` is one emitter;
   wire several into the `emitter` inputs of `vol.smoke`, 64 at most, later ones acting on what

@@ -1316,7 +1316,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_envelope](#chanaudio_envelope), [chan.audio_pitch](#chanaudio_pitch), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.dropdown](#chandropdown), [chan.envelope](#chanenvelope), [chan.feedback](#chanfeedback), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
+[chan.audio_envelope](#chanaudio_envelope), [chan.audio_pitch](#chanaudio_pitch), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.dropdown](#chandropdown), [chan.envelope](#chanenvelope), [chan.feedback](#chanfeedback), [chan.filter](#chanfilter), [chan.from_pts](#chanfrom_pts), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
 
 *inputs:* [chan.data_in](#chandata_in), [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.midi_in](#chanmidi_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
@@ -1650,6 +1650,18 @@ Outputs: `out` (chan).
 | `up` | float | `1` | 0 to 10 (soft, held within 0 to 1000000000) | Fastest rise, in units per second; 0: no limit |
 | `down` | float | `1` | 0 to 10 (soft, held within 0 to 1000000000) | Fastest fall, in units per second; 0: no limit |
 | `beta` | float | `1` | 0 to 10 (soft, held within 0 to 1000000) | How much a fast move loosens the smoothing: 0 smooths like first_order, higher follows fast moves more closely. Depends on the units of the input |
+
+### chan.from_pts
+
+Numbers about points as channels: how many there are (count) and how many there may be (capacity). A count the GPU keeps, as after pts.delete, arrives a frame late
+
+Inputs:
+
+- `in` (pts)
+
+Outputs:
+
+- `out` (chan): `count`: the points there are. `capacity`: how many the buffers hold. A count kept on the GPU follows a frame or two late
 
 ### chan.from_table
 
@@ -2220,7 +2232,35 @@ Outputs: `out` (table).
 
 ## pts
 
-[pts.from_tex](#ptsfrom_tex), [pts.generate](#ptsgenerate), [pts.lookup_tex](#ptslookup_tex), [pts.math](#ptsmath), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.transform](#ptstransform)
+[pts.delete](#ptsdelete), [pts.from_tex](#ptsfrom_tex), [pts.generate](#ptsgenerate), [pts.lookup_tex](#ptslookup_tex), [pts.math](#ptsmath), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.transform](#ptstransform)
+
+### pts.delete
+
+Drops points: those an expression you type holds true for, a range of indices, those inside a box or a ball, or a random share. The rest keep their order and attributes
+
+Inputs:
+
+- `in` (pts)
+
+Outputs:
+
+- `out` (pts): The points that are left, in their order, with every attribute. Their number is on the GPU: the viewer shows it a frame late, chan.from_pts makes it a channel
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `by` | expression \| index \| box \| sphere \| random | `"expression"` |  | Which points are deleted; expression: those for which `expression` is true; index: those from index `first` to `last`, every `every`-th of them; box: those inside the box of `size` around `center`; sphere: those inside the ball of `radius` around `center`; random: a random share of them, `share` of all, the same for the same `seed` |
+| `expression` | text | `"weight <= 0.0"` |  | A WGSL expression worked out once per point; where it is true (or not 0) the point goes. It can name attributes (position, weight, P), index, count, index01, time, rand(k) and WGSL's functions: position.z < 0.0, rand(0) < 0.5, index % 2u == 0u. The default deletes the points of weight 0, such as the empty texels of pts.from_tex, and keeps every other point. Does something only with by expression. |
+| `first` | int | `0` | 0 to 10000 (soft, held within 0 to 4294967295) | index: the first index deleted. Does something only with by index. |
+| `last` | int | `0` | 0 to 10000 (soft, held within 0 to 4294967295) | index: the last index deleted, itself included. Does something only with by index. |
+| `every` | int | `1` | 1 to 16 (soft, held within 1 to 4294967295) | index: 1 deletes every point of the range, 2 every second one starting at `first`, and so on. Does something only with by index. |
+| `center` | vec3 | `[0, 0, 0]` | -1 to 1 (soft) | box and sphere: the middle, in metres. Does something only with by box or sphere. |
+| `size` | vec3 | `[1, 1, 1]` | 0 to 10 (soft) | box: its size along x, y and z, in metres. Does something only with by box. |
+| `radius` | float | `0.5` | 0 to 10 (soft, held within 0 to 1000000000) | sphere: its radius, in metres. Does something only with by sphere. |
+| `share` | float | `0.5` | 0 to 1 (soft) | random: the part of the points deleted, 0.25 for a quarter. Each point is drawn on its own, so the number varies a little. Does something only with by random. |
+| `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | random: another seed deletes other points. Does something only with by random. |
+| `invert` | bool | `false` |  | Keep the points the choice above names, and delete every other one |
+| `a` *(more)* | float | `0` | -1 to 1 (soft) | expression: a number the expression reads as a, such as a height in position.z < a. Bind it to a channel to move it. Does something only with by expression. |
+| `b` *(more)* | float | `0` | -1 to 1 (soft) | expression: a number the expression reads as b. Does something only with by expression. |
 
 ### pts.from_tex
 
@@ -2246,6 +2286,9 @@ Outputs:
 | `channel` | luminance \| red \| green \| blue \| alpha | `"luminance"` |  | height and depth: the channel that holds the number; luminance: the brightness of red, green and blue (Rec. 709 weights); red: red; green: green; blue: blue; alpha: alpha. Does something only with mode height or depth. |
 | `fov` | float | `60` | 20 to 120° (soft, held within 1 to 170°) | depth: the camera's vertical field of view. Depth cameras see about 45 to 60 degrees. Does something only with mode depth. |
 | `depth_scale` | float | `1` | 0 to 100 (soft) | depth: metres per unit of `channel`. A 16-bit depth picture in millimetres loads as 0 to 1 for 0 to 65.535 m: use 65.535. Does something only with mode depth. |
+| `near` | float | `0` | 0 to 10 m (soft, held within 0 to 1000000000 m) | depth: points nearer than this get weight 0, as empty texels do. Does something only with mode depth. |
+| `far` | float | `0` (no limit) | 0 to 10 m (soft, held within 0 to 1000000000 m) | depth: points farther than this get weight 0; 0: no limit. Does something only with mode depth. |
+| `delete_empty` | bool | `false` |  | Delete the points of weight 0: transparent texels, and in depth mode texels without a depth or outside near and far. The rest keep their order, but no longer form rows and columns, and their number is on the GPU (the viewer shows it a frame late) |
 
 ### pts.generate
 

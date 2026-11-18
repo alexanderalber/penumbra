@@ -176,6 +176,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("chan.from_table", &["dat to", "lookup", "select dat"]),
     ("chan.feedback", &["delay", "previous frame"]),
     ("chan.from_tex", &["top to chop", "analyze", "pixel", "texel", "sample", "readback"]),
+    ("chan.from_pts", &["pop to chop", "point count", "number of points"]),
     ("chan.http_in", &["web server", "websocket"]),
     ("chan.integrator", &["speed"]),
     ("chan.math", &["function", "limit", "quantize", "round", "ceil", "floor"]),
@@ -229,6 +230,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
             "particles",
         ],
     ),
+    ("pts.delete", &["delete pop", "remove points", "filter", "cull", "kill", "mask", "active"]),
     ("pts.lookup_tex", &["lookup texture pop", "sample", "texture", "colour from image", "uv"]),
     (
         "pts.math",
