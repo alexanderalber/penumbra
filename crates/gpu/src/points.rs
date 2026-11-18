@@ -938,6 +938,7 @@ fn copy_rows(gpu: &Gpu, src: &Buffer, count: u32, tex: &Tex) -> Result<(), Error
     }
 }
 
+pub mod append;
 pub mod compact;
 pub mod program;
 

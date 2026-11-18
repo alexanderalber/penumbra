@@ -169,7 +169,9 @@ on unchanged.
 **What `main` sees besides the attributes.** `index` (the point's place, from 0), `count`,
 `index01` (0 at the first point, 1 at the last), `time`, `dt` (the length of a frame in
 seconds), `frame`, `rand(k)` and `rand3(k)` (random numbers in 0..1, the same for a point and
-`k` every time), `params.<name>`, and from the prelude above `pn_noise`, `pn_hash` and the
+`k` every time), `rand_key(key, k)` and `rand3_key(key, k)` (the same, keyed by a whole number
+of yours instead of the place: `rand_key(id, 0u)` keeps a particle's number while the particles
+before it die), `params.<name>`, and from the prelude above `pn_noise`, `pn_hash` and the
 pictures on the inputs `pic0` and `pic1`: `textureSampleLevel(pic0, pn_clamp, uv, 0.0)`.
 
 **Limits.** Each attribute read takes one storage buffer, each one written another. A GPU gives

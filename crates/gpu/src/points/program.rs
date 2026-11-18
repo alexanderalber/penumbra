@@ -30,6 +30,9 @@
 //! frame: i32        // the show's frame
 //! fn rand(k: u32) -> f32     // a random number in 0..1, the same for this point and k every time
 //! fn rand3(k: u32) -> vec3f  // three of them
+//! fn rand_key(key: u32, k: u32) -> f32     // a random number in 0..1 for any whole number,
+//! fn rand3_key(key: u32, k: u32) -> vec3f  //   such as `id`: rand_key(id, 0u) stays with a
+//!                                          //   particle while the points before it die
 //! params.<name>              // the program's params, as in every shader
 //! pic0, pic1, pn_clamp       // pictures, sampled with textureSampleLevel(pic0, pn_clamp, uv, 0.0)
 //! pn_noise, pn_value_noise, pn_hash   // noise and hashes, as in every shader
@@ -62,7 +65,8 @@ pub const ENTRY: &str = "pn_points";
 pub const MAIN: &str = "main";
 
 /// Names the program gives `main` besides the attributes; no attribute can take them.
-pub const HELPERS: &[&str] = &["index", "count", "index01", "time", "dt", "frame", "rand", "rand3", MAIN];
+pub const HELPERS: &[&str] =
+    &["index", "count", "index01", "time", "dt", "frame", "rand", "rand3", "rand_key", "rand3_key", MAIN];
 
 /// Params every program gets: the count and the time step.
 const COUNT_PARAM: &str = "pn_count";
@@ -391,7 +395,7 @@ fn merge(decls: &[Decl]) -> Result<Vec<Decl>, Error> {
 }
 
 /// A WGSL literal of `ty` from the first components of `v`.
-fn literal(ty: AttrType, v: [f32; 4]) -> String {
+pub(super) fn literal(ty: AttrType, v: [f32; 4]) -> String {
     let f = |x: f32| format!("{x:?}");
     match ty {
         AttrType::F32 => format!("f32({})", f(v[0])),
@@ -409,7 +413,7 @@ fn literal(ty: AttrType, v: [f32; 4]) -> String {
 
 /// The element type of an attribute's buffer: a `vec3f` takes 16 bytes as a `vec4f` does, and
 /// is bound as one so the fourth float is written too.
-fn element(ty: AttrType) -> &'static str {
+pub(super) fn element(ty: AttrType) -> &'static str {
     match ty {
         AttrType::Vec3 => "vec4f",
         ty => ty.wgsl(),
@@ -490,6 +494,16 @@ fn rand3(k: u32) -> vec3f {
 
 fn rand(k: u32) -> f32 {
     return rand3(k).x;
+}
+
+// Keyed by a number of the caller's rather than the index: by `id`, a particle keeps its numbers
+// while the points before it die and it moves up.
+fn rand3_key(key: u32, k: u32) -> vec3f {
+    return vec3f(pn_hash(vec3u(key, k, 0x6a09e667u)) >> vec3u(8u)) * (1.0 / 16777216.0);
+}
+
+fn rand_key(key: u32, k: u32) -> f32 {
+    return rand3_key(key, k).x;
 }
 
 ";
