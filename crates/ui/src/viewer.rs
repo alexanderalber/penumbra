@@ -826,9 +826,12 @@ pub(crate) fn summary_lines(data: &Data) -> Option<Vec<String>> {
 /// What a set of points holds: how many, their order, each attribute with its type, the box
 /// around them where known.
 pub(crate) fn pts_lines(p: &penumbra_gpu::Points) -> Vec<String> {
-    let count = match p.count().known() {
-        Some(n) => format!("{n} point{}", if n == 1 { "" } else { "s" }),
-        None => format!("up to {} points", p.count().at_most()),
+    let plural = |n: u32| if n == 1 { "" } else { "s" };
+    // A count on the GPU shows as last read back, a frame or so late, without waiting for it.
+    let count = match (p.count().known(), p.count().seen()) {
+        (Some(n), _) => format!("{n} point{}", plural(n)),
+        (None, Some(n)) => format!("{n} of at most {} points", p.count().at_most()),
+        (None, None) => format!("up to {} points", p.count().at_most()),
     };
     let mut lines = vec![match p.dims() {
         Some([r, c, 1]) => format!("{count}, {r} x {c}"),

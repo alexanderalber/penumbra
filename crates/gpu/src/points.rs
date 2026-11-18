@@ -11,20 +11,24 @@
 //! TouchDesigner name means the same attribute ([`ALIASES`], [`canonical`]): `P` is `position`,
 //! `Color` is `color`, `PointScale` is `scale`.
 //!
-//! Every buffer holds [`Points::capacity`] elements; the first [`Points::count`] are points. A
-//! compute program runs over the capacity and returns for an index at or past the count. A
-//! missing attribute reads as its default ([`default_of`]): position 0, normal +z, colour white,
-//! scale 1.
+//! Every buffer holds [`Points::capacity`] elements; the first [`Points::count`] are points. The
+//! count is known on the CPU where a node made the points, or kept on the GPU where a node
+//! dropped some ([`Count::Gpu`], [`compact`]): then the CPU knows only how many there may be.
+//! A compute program runs over that many and returns for an index at or past the count. Nodes
+//! that make points give them a capacity rounded up ([`capacity_for`]), so the buffers keep
+//! their size while the count moves a little. A missing attribute reads as its default
+//! ([`default_of`]): position 0, normal +z, colour white, scale 1.
 //!
 //! Layout in the buffers, as WGSL's `array<T>` has it: `f32`, `vec2f` (8 bytes), `vec3f` (16
 //! bytes, the fourth float unused), `vec4f`, `u32`, `i32`.
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use penumbra_core::{Error, ParamSpec, Value};
 use penumbra_mesh::Bounds;
 
-use crate::{Buffer, BufferRing, Dispatch, FLOAT_FORMAT, Gpu, Out, Step, Tex, TexRing};
+use crate::{Buffer, BufferRead, BufferRing, Dispatch, FLOAT_FORMAT, Gpu, Out, Step, Tex, TexRing};
 
 /// The type of one element of an attribute.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -189,28 +193,188 @@ impl Attr {
     }
 }
 
+/// Bytes of the header that holds a count on the GPU: four `u32`, the first the count, the
+/// others 0.
+pub const HEADER_BYTES: u64 = 16;
+
 /// How many of the elements are points.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum Count {
     /// Known on the CPU, as a generator knows it.
     Known(u32),
+    /// Kept on the GPU, where a node that drops points wrote it: the first `u32` of `header`
+    /// ([`HEADER_BYTES`]). Never more than `at_most`, which bounds it on the CPU and sizes the
+    /// work over the points. `seen` is the count read back, a frame or more late, for display.
+    Gpu { header: Buffer, at_most: u32, seen: Seen },
 }
 
 impl Count {
+    /// The count on the GPU in `header`, at most `at_most`. Without room for any point it is
+    /// known to be 0.
+    pub fn gpu(header: Buffer, at_most: u32, seen: Seen) -> Result<Self, Error> {
+        if header.bytes() < HEADER_BYTES {
+            return Err(Error::new(format!(
+                "the header of a count holds {HEADER_BYTES} bytes, not {}",
+                header.bytes()
+            )));
+        }
+        Ok(if at_most == 0 { Count::Known(0) } else { Count::Gpu { header, at_most, seen } })
+    }
+
     /// The count where the CPU knows it.
-    pub fn known(self) -> Option<u32> {
+    pub fn known(&self) -> Option<u32> {
         match self {
-            Count::Known(n) => Some(n),
+            Count::Known(n) => Some(*n),
+            Count::Gpu { .. } => None,
         }
     }
 
-    /// No more than this many: the count itself where known.
-    pub fn at_most(self) -> u32 {
+    /// No more than this many: the count itself where known. Work over the points covers this
+    /// many and skips those past the count.
+    pub fn at_most(&self) -> u32 {
         match self {
-            Count::Known(n) => n,
+            Count::Known(n) | Count::Gpu { at_most: n, .. } => *n,
         }
     }
+
+    /// The count as last seen: the count itself where known, the last one read back from the
+    /// GPU otherwise (`None` before the first arrives). For display and for channels, never
+    /// for work on the GPU.
+    pub fn seen(&self) -> Option<u32> {
+        match self {
+            Count::Known(n) => Some(*n),
+            Count::Gpu { seen, at_most, .. } => seen.get().map(|n| n.min(*at_most)),
+        }
+    }
+
+    /// The header on the GPU, where the count is kept there.
+    pub fn header(&self) -> Option<&Buffer> {
+        match self {
+            Count::Known(_) => None,
+            Count::Gpu { header, .. } => Some(header),
+        }
+    }
+
+    /// The header a program reads the count from: this count's own, or for a count the CPU
+    /// knows one that bounds nothing (`u32::MAX`), so the program's own bound applies. Shared by
+    /// every program on `gpu`.
+    pub fn header_for(&self, gpu: &Gpu) -> Result<Buffer, Error> {
+        match self {
+            Count::Gpu { header, .. } => Ok(header.clone()),
+            Count::Known(_) => {
+                let mut slot = crate::lock(&gpu.inner.no_limit);
+                if let Some(b) = slot.as_ref() {
+                    return Ok(b.clone());
+                }
+                let b = Buffer::new(gpu, HEADER_BYTES, "pts no limit")?;
+                b.write(gpu, 0, &[u32::MAX; 4])?;
+                *slot = Some(b.clone());
+                Ok(b)
+            }
+        }
+    }
+}
+
+impl PartialEq for Count {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Count::Known(a), Count::Known(b)) => a == b,
+            (Count::Gpu { header: a, at_most: m, .. }, Count::Gpu { header: b, at_most: n, .. }) => {
+                a.same(b) && m == n
+            }
+            _ => false,
+        }
+    }
+}
+
+impl std::fmt::Debug for Count {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Count::Known(n) => write!(f, "Known({n})"),
+            Count::Gpu { at_most, seen, .. } => {
+                write!(f, "Gpu {{ at_most: {at_most}, seen: {:?} }}", seen.get())
+            }
+        }
+    }
+}
+
+/// A count on the GPU as read back: arrives a frame or more after it was written, without the
+/// CPU waiting for it. Clones share it, so every node downstream sees the value once it
+/// arrives. The engine polls the GPU every frame, which brings it in.
+#[derive(Clone, Default)]
+pub struct Seen(Arc<SeenInner>);
+
+struct SeenInner {
+    /// [`UNSEEN`] until a value arrived.
+    value: AtomicU32,
+    read: Mutex<Option<BufferRead>>,
+}
+
+impl Default for SeenInner {
+    fn default() -> Self {
+        Self { value: AtomicU32::new(UNSEEN), read: Mutex::new(None) }
+    }
+}
+
+const UNSEEN: u32 = u32::MAX;
+
+impl Seen {
+    /// Starts reading the count in `header` back. Until it arrives, [`Seen::get`] gives what
+    /// `before` (the count this one follows, a frame earlier) had seen, so a display does not
+    /// flicker. `before`'s finished readback is reused, so a readback per frame allocates
+    /// nothing.
+    pub fn reading(gpu: &Gpu, header: &Buffer, before: Option<&Seen>) -> Result<Self, Error> {
+        let value = before.and_then(Seen::get).unwrap_or(UNSEEN);
+        let spare = before.and_then(|b| {
+            let mut read = crate::lock(&b.0.read);
+            match read.as_ref().map(BufferRead::state) {
+                Some(crate::ReadState::Ready) => read.take(),
+                _ => None,
+            }
+        });
+        let read = header.read_async(gpu, spare)?;
+        Ok(Self(Arc::new(SeenInner { value: AtomicU32::new(value), read: Mutex::new(Some(read)) })))
+    }
+
+    /// The count as last read back; `None` before anything arrived.
+    pub fn get(&self) -> Option<u32> {
+        let mut read = crate::lock(&self.0.read);
+        if let Some(r) = read.as_ref() {
+            match r.state() {
+                crate::ReadState::Ready => {
+                    if let Some(n) = r.get::<u32>().ok().and_then(|w| w.first().copied()) {
+                        self.0.value.store(n.min(UNSEEN - 1), Ordering::Relaxed);
+                    }
+                }
+                crate::ReadState::Failed => *read = None,
+                crate::ReadState::Waiting => {}
+            }
+        }
+        drop(read);
+        let v = self.0.value.load(Ordering::Relaxed);
+        (v != UNSEEN).then_some(v)
+    }
+}
+
+/// The capacity a node gives points it makes when `count` of them are wanted: the count
+/// rounded up to a step of an eighth of the power of two at or above it, the step at least
+/// 1024. So a count that moves a little keeps its capacity and the buffers of a chain are
+/// reused instead of made again. Above 8192 points that is less than a quarter more than the
+/// count. Never above `most` (the largest number of elements a buffer holds), and never below
+/// the count.
+pub fn capacity_for(count: u32, most: u32) -> u32 {
+    if count == 0 {
+        return 0;
+    }
+    let step = (count.checked_next_power_of_two().unwrap_or(1 << 31) / 8).max(1024);
+    let rounded = u64::from(count).div_ceil(u64::from(step)) * u64::from(step);
+    u32::try_from(rounded).unwrap_or(u32::MAX).min(most).max(count)
+}
+
+/// The most elements of `ty` one buffer on `gpu` holds.
+pub fn most_elements(gpu: &Gpu, ty: AttrType) -> u32 {
+    u32::try_from(Buffer::max_bytes(gpu) / ty.stride()).unwrap_or(u32::MAX)
 }
 
 /// How points join into lines.
@@ -282,7 +446,24 @@ impl Points {
     }
 
     pub fn count(&self) -> Count {
-        self.count
+        self.count.clone()
+    }
+
+    /// These points with `count`. A count on the GPU drops `dims` and `strips`: they describe
+    /// an order that no longer holds. `Err` when it may be more than the capacity.
+    pub fn with_count(self, count: Count) -> Result<Self, Error> {
+        if count.at_most() > self.capacity {
+            return Err(Error::new(format!(
+                "{} points do not fit a capacity of {}",
+                count.at_most(),
+                self.capacity
+            )));
+        }
+        let gpu = count.known().is_none();
+        let dims = if gpu { None } else { self.dims };
+        let strips = if gpu { Strips::None } else { self.strips };
+        let out = Self { count, dims: None, strips, ..self };
+        Ok(out.with_dims(dims))
     }
 
     /// The box around every position, where the node that made them knows it.
@@ -341,12 +522,13 @@ impl Points {
     }
 
     /// The attribute `name` as a picture of [`FLOAT_FORMAT`], point `i` at texel
-    /// `(i % width, i / width)` ([`texel_size`]), for drawing and for nodes that read
-    /// pictures. A scalar becomes grey (`(v, v, v, 1)`), a `vec2f` red and green with alpha 1,
-    /// a `vec3f` rgb with whatever the fourth float holds as alpha. Texels past the count hold
-    /// nothing in particular. `None` where the points do not have the attribute or have no
-    /// points. `textures` keeps the node's pictures across cooks, `scratch` the buffers a
-    /// conversion needs.
+    /// `(i % width, i / width)` ([`texel_size`] of the capacity, so the picture keeps its size
+    /// while the count moves), for drawing and for nodes that read pictures. A scalar becomes
+    /// grey (`(v, v, v, 1)`), a `vec2f` red and green with alpha 1, a `vec3f` rgb with whatever
+    /// the fourth float holds as alpha. Texels past a count the CPU knows hold nothing in
+    /// particular; past a count on the GPU they are transparent black. `None` where the points
+    /// do not have the attribute or have no points. `textures` keeps the node's pictures across
+    /// cooks, `scratch` the buffers a conversion needs.
     pub fn attr_texture(
         &self,
         gpu: &Gpu,
@@ -359,12 +541,16 @@ impl Points {
         if count == 0 {
             return Ok(None);
         }
-        let (w, h) = texel_size(count);
+        let (w, h) = texel_size(self.capacity.max(count));
+        if self.count.header().is_some() {
+            // The copy below would bring the dead points along: write every texel instead.
+            return self.picture(gpu, attr.name(), (w, h), true, textures, scratch).map(Some);
+        }
         let tex = textures.next_in(gpu, w, h, FLOAT_FORMAT, &format!("pts {}", attr.name()))?;
         let texels = match attr.ty() {
             AttrType::Vec3 | AttrType::Vec4 => attr.buffer().clone(),
             ty => {
-                let out = scratch.next(gpu, u64::from(count) * 16, "pts texels")?;
+                let out = scratch.next(gpu, u64::from(self.capacity.max(count)) * 16, "pts texels")?;
                 expand(gpu, attr.buffer(), ty, count, (w, h), &out)?;
                 out
             }
@@ -374,10 +560,11 @@ impl Points {
     }
 
     /// The attribute `name` as a picture of `width` by `height` texels, point `i` at texel
-    /// `(i % width, i / width)`, every texel written: past the count it is transparent black.
-    /// A scalar becomes `(v, v, v, 1)`, a `vec2f` `(x, y, 0, 1)`, a `vec3f` `(x, y, z, 1)`; a
-    /// `vec4f` keeps its four numbers. So alpha is 1 where a point is, unless a `vec4f` says
-    /// otherwise. A standard attribute the points lack holds its default at every point.
+    /// `(i % width, i / width)`, every texel written: past the count it is transparent black,
+    /// also where the count is on the GPU. A scalar becomes `(v, v, v, 1)`, a `vec2f`
+    /// `(x, y, 0, 1)`, a `vec3f` `(x, y, z, 1)`; a `vec4f` keeps its four numbers. So alpha is 1
+    /// where a point is, unless a `vec4f` says otherwise. A standard attribute the points lack
+    /// holds its default at every point.
     ///
     /// The picture is [`FLOAT_FORMAT`] where the device filters 32-bit floats
     /// ([`Gpu::float_textures`]); elsewhere it is [`crate::FORMAT`], rounded to half floats, so
@@ -387,7 +574,20 @@ impl Points {
         &self,
         gpu: &Gpu,
         name: &str,
+        size: (u32, u32),
+        textures: &mut TexRing,
+        scratch: &mut BufferRing,
+    ) -> Result<Tex, Error> {
+        self.picture(gpu, name, size, gpu.float_textures(), textures, scratch)
+    }
+
+    /// [`Points::attr_picture`] in 32-bit floats (`float`) or half floats.
+    fn picture(
+        &self,
+        gpu: &Gpu,
+        name: &str,
         (width, height): (u32, u32),
+        float: bool,
         textures: &mut TexRing,
         scratch: &mut BufferRing,
     ) -> Result<Tex, Error> {
@@ -409,7 +609,6 @@ impl Points {
                 return Err(Error::new(format!("the points have no attribute `{}`", canonical(name))));
             }
         };
-        let float = gpu.float_textures();
         let (format, texel_bytes, align) =
             if float { (FLOAT_FORMAT, 16u32, 16u32) } else { (crate::FORMAT, 8, 32) };
         let stride = width.next_multiple_of(align);
@@ -423,6 +622,7 @@ impl Points {
             Some(a) if count > 0 => a.buffer().clone(),
             _ => Buffer::new(gpu, 16, "pts no attribute")?,
         };
+        let header = self.count.header_for(gpu)?;
         let program = gpu.cached_compute("pts picture", PICTURE, &picture_params())?;
         let param = |n: &str| match n {
             "kind" => Some(Value::Int(kind)),
@@ -436,7 +636,7 @@ impl Points {
             Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
         program.run_with(
             gpu,
-            &[&src, &out],
+            &[&src, &out, &header],
             &[Step { entry: "picture", out: Out::grid(width, height), input: &input }],
         )?;
         copy_picture(gpu, &out, stride * texel_bytes, &tex)?;
@@ -459,6 +659,8 @@ fn texel_of(ty: AttrType, v: [f32; 4]) -> [f32; 4] {
 const PICTURE: &str = "
 @group(2) @binding(0) var<storage, read> words: array<u32>;
 @group(2) @binding(1) var<storage, read_write> texels: array<u32>;
+// The count where it is on the GPU, else u32::MAX.
+@group(2) @binding(2) var<uniform> pts_header: vec4u;
 
 fn pts_word(i: u32) -> f32 {
     return bitcast<f32>(words[i]);
@@ -510,7 +712,7 @@ fn picture(@builtin(global_invocation_id) id: vec3u) {
     }
     let i = id.y * pn.size.x + id.x;
     var v = vec4f(0.0);
-    if i < u32(max(params.count, 0)) {
+    if i < min(u32(max(params.count, 0)), pts_header.x) {
         switch params.kind {
             case 0: {
                 v = vec4f(vec3f(pts_word(i)), 1.0);
@@ -736,6 +938,7 @@ fn copy_rows(gpu: &Gpu, src: &Buffer, count: u32, tex: &Tex) -> Result<(), Error
     }
 }
 
+pub mod compact;
 pub mod program;
 
 #[cfg(test)]

@@ -40,8 +40,11 @@
 //! the node's ([`Outputs`]); the others pass on as they are.
 //!
 //! The entry point runs over a grid of up to 65536 points per row, so counts beyond what one
-//! row of workgroups covers work. The count comes from one function, `pn_points_count`, so a
-//! count kept on the GPU replaces one line.
+//! row of workgroups covers work. It covers as many points as the count may be
+//! ([`super::Count::at_most`]); the count itself comes from one function, `pn_points_count`, which
+//! reads a header the size of a uniform: the count's own where it is on the GPU, one that bounds
+//! nothing where the CPU knows it. So one program serves both, and `main` never runs for a point
+//! past the count.
 
 use std::fmt::Write as _;
 
@@ -172,6 +175,8 @@ pub struct Generated {
     source: String,
     params: Vec<ParamSpec>,
     slots: Vec<Slot>,
+    /// The binding of the count's header, after every attribute's.
+    header: u32,
 }
 
 impl Generated {
@@ -189,7 +194,7 @@ impl Generated {
         &self.params
     }
 
-    /// Storage buffers the program binds.
+    /// Storage buffers the program binds; the count's header is a uniform besides them.
     pub fn bindings(&self) -> u32 {
         self.slots.iter().map(|s| u32::from(s.input.is_some()) + u32::from(s.output.is_some())).sum()
     }
@@ -336,8 +341,9 @@ pub fn generate(spec: &Spec, shape: &Shape, budget: u32) -> Result<Generated, Er
     }
     params.push(ParamSpec::int(COUNT_PARAM, 0));
     params.push(ParamSpec::float(DT_PARAM, 0.0));
-    let source = format!("{}\n{}", spec.source, around(&slots));
-    Ok(Generated { label: label.to_string(), source, params, slots })
+    let header = binding;
+    let source = format!("{}\n{}", spec.source, around(&slots, header));
+    Ok(Generated { label: label.to_string(), source, params, slots, header })
 }
 
 /// Whether `source` defines `fn main`.
@@ -411,8 +417,9 @@ fn element(ty: AttrType) -> &'static str {
 }
 
 /// Everything around the program's source: buffers, variables, helpers, the entry point.
-fn around(slots: &[Slot]) -> String {
+fn around(slots: &[Slot], header: u32) -> String {
     let mut s = String::from("// ---- penumbra points program ----\n");
+    let _ = writeln!(s, "@group(2) @binding({header}) var<uniform> pn_header: vec4u;");
     for slot in slots {
         let (name, el) = (&slot.name, element(slot.ty));
         if let Some(b) = slot.input {
@@ -471,8 +478,9 @@ var<private> time: f32;
 var<private> dt: f32;
 var<private> frame: i32;
 
+// The count: the header's where it is on the GPU, never more than the points the dispatch covers.
 fn pn_points_count() -> u32 {
-    return u32(max(params.pn_count, 0));
+    return min(pn_header.x, u32(max(params.pn_count, 0)));
 }
 
 fn rand3(k: u32) -> vec3f {
@@ -589,7 +597,9 @@ impl Program {
     }
 
     /// Runs the program over `input`: the written attributes in new buffers from `outputs`,
-    /// every other attribute passed on. Moving `position` drops the bounds, so a node that knows
+    /// every other attribute passed on. The work covers as many points as the count may be; a
+    /// count on the GPU stops `main` at the live count, and points past it keep whatever their
+    /// buffers held. Moving `position` drops the bounds, so a node that knows
     /// better sets them after. `Err` when `input` lacks attributes or types the program was made
     /// for ([`Generated::fits`]) and for any error of the dispatch.
     pub fn run(
@@ -623,6 +633,7 @@ impl Program {
                 bound.push((b, buffer));
             }
         }
+        bound.push((g.header, input.count().header_for(gpu)?));
         bound.sort_by_key(|(b, _)| *b);
         let buffers: Vec<&Buffer> = bound.iter().map(|(_, b)| b).collect();
         let dt = run.dt;

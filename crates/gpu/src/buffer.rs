@@ -212,6 +212,17 @@ impl Buffer {
     /// simulation reports every frame. `spare`, a finished earlier readback of the same size,
     /// gives its staging buffer back, so a readback per frame allocates nothing.
     pub fn read_async(&self, gpu: &Gpu, spare: Option<BufferRead>) -> Result<BufferRead, Error> {
+        self.read_async_notify(gpu, spare, None)
+    }
+
+    /// [`Buffer::read_async`] that calls `ready` once the bytes arrived (or the readback
+    /// failed), from whatever thread polls the GPU: to wake a node that waits for them.
+    pub fn read_async_notify(
+        &self,
+        gpu: &Gpu,
+        spare: Option<BufferRead>,
+        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Result<BufferRead, Error> {
         let device = gpu.device();
         let reuse = spare.filter(|s| s.bytes == self.0.bytes && s.state() == ReadState::Ready).map(|s| {
             s.staging.unmap();
@@ -239,6 +250,9 @@ impl Buffer {
         let set = state.clone();
         staging.map_async(wgpu::MapMode::Read, .., move |r| {
             set.store(if r.is_ok() { READY } else { FAILED }, Ordering::Release);
+            if let Some(ready) = &ready {
+                ready();
+            }
         });
         Ok(BufferRead { staging, bytes: self.0.bytes, index, state })
     }

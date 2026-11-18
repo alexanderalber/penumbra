@@ -64,6 +64,37 @@ pub(super) struct Calls {
 }
 
 impl Calls {
+    /// For each draw of copies whose number is kept on the GPU ([`Instances::live`]), the
+    /// arguments of an indirect draw, that number copied into them by `encoder`: the GPU draws
+    /// as many copies as there are, and none past them. `None` for every other draw.
+    pub(super) fn indirect(
+        &self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Vec<Option<wgpu::Buffer>> {
+        self.calls
+            .iter()
+            .map(|c| {
+                let live = c.instances.as_ref()?.live.as_ref()?;
+                if live.bytes() < 4 {
+                    return None;
+                }
+                // Vertices or indices, copies (filled in below), the first, then zeros.
+                let words: &[u32] =
+                    if c.wire { &[c.count, 0, c.first, 0] } else { &[c.count, 0, c.first, 0, 0] };
+                let args = gpu.device().create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("render indirect"),
+                    size: (words.len() * 4) as u64,
+                    usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                gpu.queue().write_buffer(&args, 0, bytemuck::cast_slice(words));
+                encoder.copy_buffer_to_buffer(live.buffer(), 0, &args, 4, 4);
+                Some(args)
+            })
+            .collect()
+    }
+
     /// One draw per run of a part and material of `geo`, seen through `view`; `texture` is the
     /// input texture for [`Surface::Texture`]. Uniform slots are `align` bytes apart.
     pub(super) fn new(
@@ -386,6 +417,9 @@ pub(super) struct Encoding<'a> {
     pub(super) light_group: wgpu::BindGroup,
     /// The colour pass's background.
     pub(super) background: wgpu::Color,
+    /// Per draw, the arguments of an indirect draw where the number of copies is kept on the
+    /// GPU ([`Calls::indirect`]).
+    pub(super) indirect: Vec<Option<wgpu::Buffer>>,
 }
 
 pub(super) fn view_entry(binding: u32, v: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
@@ -487,7 +521,13 @@ impl Encoding<'_> {
             rp.set_bind_group(1, draw_group, &[(u64::from(call.slot) * self.calls.align) as u32]);
             rp.set_bind_group(2, tg, &[]);
             let copies = call.instances.as_ref().map_or(1, |i| i.count());
-            if call.wire {
+            if let Some(Some(args)) = self.indirect.get(k) {
+                if call.wire {
+                    rp.draw_indirect(args, 0);
+                } else {
+                    rp.draw_indexed_indirect(args, 0);
+                }
+            } else if call.wire {
                 // The wireframe's corners lie in index order, three per triangle.
                 rp.draw(call.first..call.first + call.count, 0..copies);
             } else {

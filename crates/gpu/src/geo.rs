@@ -455,6 +455,10 @@ impl Item {
 pub struct Instances {
     /// How many copies: the first this many texels. `None`: one per texel of `position`.
     pub count: Option<u32>,
+    /// Where the number of copies is kept on the GPU: the first `u32` of this buffer, at most
+    /// [`Instances::count`] of them are drawn (an indirect draw, so no copy past it costs
+    /// anything). `None`: [`Instances::count`] copies.
+    pub live: Option<crate::Buffer>,
     /// Multiplies every copy's scale.
     pub size: f32,
     /// Each copy stands square to the view in place of `aim`, its front (-y) to the viewer and
@@ -477,6 +481,8 @@ pub struct Instances {
 }
 
 impl Instances {
+    /// How many copies at most: where [`Instances::live`] keeps the number on the GPU, fewer
+    /// may be drawn.
     pub fn count(&self) -> u32 {
         let texels = self.position.width().saturating_mul(self.position.height());
         self.count.map_or(texels, |n| n.min(texels))
@@ -487,6 +493,7 @@ impl Instances {
     pub fn of(position: Tex) -> Self {
         Self {
             count: None,
+            live: None,
             size: 1.0,
             face_camera: false,
             position,

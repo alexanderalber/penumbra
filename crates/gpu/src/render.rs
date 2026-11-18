@@ -1248,6 +1248,7 @@ impl Renderer {
                 lights.iter().filter_map(|l| l.projector.as_ref().and_then(|p| p.texture.as_ref()));
             let mipped =
                 self.mips.update(gpu, &pipelines.mips, &mut encoder, calls.textures().chain(pictures));
+            let indirect = calls.indirect(gpu, &mut encoder);
             let enc = Encoding {
                 device,
                 pipelines: &pipelines,
@@ -1274,6 +1275,7 @@ impl Renderer {
                     &mipped,
                 )?,
                 background: wgpu::Color { r, g, b, a },
+                indirect,
             };
             self.encode_shadows(&mut encoder, &enc, &pipes, layers);
             self.encode_ao(&mut encoder, &enc, &pipes);

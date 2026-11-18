@@ -1,7 +1,9 @@
 //! `tex.from_pts`: one attribute of points as a picture, one texel per point, TouchDesigner's
 //! POP to TOP. Points made as a grid keep its rows and columns; others fill rows of a chosen
 //! width. Alpha is 1 where a point is and 0 in the texels past the last point, so `tex.shader`,
-//! `tex.scatter` and `geo.tex_instance` can tell the two apart.
+//! `tex.scatter` and `geo.tex_instance` can tell the two apart. Where the count is on the GPU
+//! (after points were deleted) the picture is sized for as many as there may be, and the texels
+//! past the live count are transparent black.
 
 use penumbra_core::{Error, ParamSpec};
 use penumbra_gpu::{BufferRing, Points, TexRing};
