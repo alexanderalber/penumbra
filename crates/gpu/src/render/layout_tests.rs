@@ -79,7 +79,15 @@ fn frame_layout_matches_the_shader() {
         shadow_size: 1024,
         ao: None,
     };
-    let maps = Maps { shadow: 1024, tint: 512, tinted: true, ao: true, pixels: [640, 360], samples: 4 };
+    let maps = Maps {
+        shadow: 1024,
+        tint: 512,
+        tinted: true,
+        ao: true,
+        pixels: [640, 360],
+        samples: 4,
+        caster: false,
+    };
     let (l, p) = light();
     let b = frame_bytes(&view(), &look, maps, &[l], &[p]);
     assert_eq!(b.len() as u64, FRAME_BYTES);

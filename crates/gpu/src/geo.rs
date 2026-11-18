@@ -457,9 +457,10 @@ pub struct Instances {
     pub count: Option<u32>,
     /// Multiplies every copy's scale.
     pub size: f32,
-    /// Each copy turns its front (-y) to the eye, its +z kept up as far as it can be, in place
-    /// of `aim`: sprites. The copies' positions are still in the item's space, the turn and
-    /// size are in the world's.
+    /// Each copy stands square to the view in place of `aim`, its front (-y) to the viewer and
+    /// its +z along the picture's up: sprites. In a shadow map it stands square to the light.
+    /// The copies' positions are still in the item's space, the turn and size are in the
+    /// world's.
     pub face_camera: bool,
     /// rgb: where each copy goes.
     pub position: Tex,

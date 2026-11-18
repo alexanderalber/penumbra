@@ -1044,6 +1044,17 @@ fn shadow_clip(light: &Light, bounds: Option<&Bounds>) -> Option<Mat4> {
     m.iter().flatten().all(|v| v.is_finite()).then_some(m)
 }
 
+/// The view a light's shadow map is drawn from: its clip space, and where it looks from and
+/// along, so sprites in the shadow pass stand square to the light.
+fn light_view(light: &Light, clip: Mat4) -> View {
+    let f = unit(light.direction).unwrap_or([0.0, 0.0, -1.0]);
+    let eye = light.position;
+    let along = f[0] * eye[0] + f[1] * eye[1] + f[2] * eye[2];
+    // A clip space whose w does not grow with distance is a parallel one.
+    let parallel = clip[3][..3].iter().all(|v| *v == 0.0);
+    View { clip_from_world: clip, view_z: [f[0], f[1], f[2], -along], eye, parallel }
+}
+
 fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
@@ -1200,10 +1211,12 @@ impl Renderer {
             ao: ao.is_some(),
             pixels,
             samples: wanted.samples,
+            caster: false,
         };
-        for (p, buffer) in placed.iter().filter_map(|p| p.layer.map(|_| p)).zip(&self.shadow_frames) {
-            let from = View { clip_from_world: p.clip, view_z: [0.0; 4], eye: [0.0; 3], parallel: false };
-            let shadow = Maps { pixels: [shadow_size; 2], samples: 1, ..maps };
+        let casting = placed.iter().zip(lights).filter(|(p, _)| p.layer.is_some());
+        for ((p, light), buffer) in casting.zip(&self.shadow_frames) {
+            let from = light_view(light, p.clip);
+            let shadow = Maps { pixels: [shadow_size; 2], samples: 1, caster: true, ..maps };
             gpu.queue().write_buffer(buffer, 0, &frame_bytes(&from, look, shadow, &[], &[]));
         }
         gpu.queue().write_buffer(&shared.frame, 0, &frame_bytes(view, look, maps, lights, &placed));
@@ -1461,6 +1474,8 @@ struct Maps {
     ao: bool,
     pixels: [u32; 2],
     samples: u32,
+    /// A light's shadow or tint pass: sprites stand back from their place by their reach.
+    caster: bool,
 }
 
 /// Column-major `f32`s of a row-major matrix (WGSL's layout).
@@ -1514,7 +1529,7 @@ fn frame_bytes(view: &View, look: &Look, maps: Maps, lights: &[Light], placed: &
     for v in [maps.shadow as f32, maps.tint as f32, flag(maps.tinted), flag(maps.ao)] {
         b.extend_from_slice(&v.to_le_bytes());
     }
-    for v in [maps.pixels[0] as f32, maps.pixels[1] as f32, maps.samples as f32, 0.0] {
+    for v in [maps.pixels[0] as f32, maps.pixels[1] as f32, maps.samples as f32, flag(maps.caster)] {
         b.extend_from_slice(&v.to_le_bytes());
     }
     for (l, p) in lights.iter().zip(placed) {

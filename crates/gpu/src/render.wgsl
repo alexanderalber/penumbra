@@ -58,7 +58,8 @@ struct Frame {
     // x: texels across a shadow map; y: across a tint map; z: 1 where the tint maps hold
     // anything; w: 1 where ambient occlusion was drawn.
     shadow: vec4f,
-    // xy: the size in pixels of what the frame draws into; z: its samples per pixel.
+    // xy: the size in pixels of what the frame draws into; z: its samples per pixel; w: 1 for a
+    // light's shadow and tint passes.
     pixels: vec4f,
     lights: array<Light, 16>,
 };
@@ -149,6 +150,27 @@ fn instance_texel(t: texture_2d<f32>, i: u32, fallback: vec4f) -> vec4f {
     return textureLoad(t, at, 0);
 }
 
+// The turn that stands a sprite square to the view: columns right, forward (away from the
+// viewer) and up, as the picture has them. The forward is the view's own, the same for every
+// sprite, so a disc stays round and a square keeps its sides along the picture's.
+fn sprite_turn() -> mat3x3f {
+    let f = frame.view_z.xyz;
+    let length_f = length(f);
+    if !(length_f > 1e-12) || !(length_f < 1e30) {
+        return aim_turn(vec3f(0.0, 1.0, 0.0));
+    }
+    let forward = f / length_f;
+    // The picture's up: the clip space's y row, without its part along the view (a lens
+    // shift's).
+    let row_y = vec3f(frame.clip[0].y, frame.clip[1].y, frame.clip[2].y);
+    let up = row_y - dot(row_y, forward) * forward;
+    if !(dot(up, up) > 1e-24) {
+        return aim_turn(forward);
+    }
+    let u = normalize(up);
+    return mat3x3f(cross(forward, u), forward, u);
+}
+
 // A turn taking +y to `aim` with +z kept up as far as it can be: columns right, forward, up.
 fn aim_turn(aim: vec3f) -> mat3x3f {
     let len = length(aim);
@@ -184,14 +206,21 @@ fn place(p: vec3f, n: vec3f, uv: vec2f, i: u32) -> VOut {
         scale *= bitcast<f32>(draw.inst.z);
         let at = instance_texel(inst_position, i, vec4f(0.0)).xyz;
         if (has & 8u) != 0u {
-            // A sprite: its front (-y) turned to the eye in the world, its size in the world's
-            // units, whatever the item's placement does to its position.
+            // A sprite: square to the view, its front (-y) to the viewer, its +z along the
+            // picture's up, its size in the world's units, whatever the item's placement does
+            // to its position. From a light it stands square to the light, so it throws the
+            // shadow of a disc whatever the camera, and stands back along the light by its
+            // reach (the sprite meshes reach 0.71 of their size), so the sprite the camera
+            // sees is never in its own shadow.
             let centre = (draw.world * vec4f(at, 1.0)).xyz;
-            let to_eye = select(frame.eye.xyz, frame.eye.xyz - centre, frame.eye.w > 0.5);
-            let facing = aim_turn(-to_eye);
+            let facing = sprite_turn();
+            var back = vec3f(0.0);
+            if frame.pixels.w > 0.5 {
+                back = facing[1] * 0.7072 * max(max(abs(scale.x), abs(scale.y)), abs(scale.z));
+            }
             let inverse = select(vec3f(0.0), 1.0 / scale, abs(scale) > vec3f(1e-12));
             var o: VOut;
-            o.world = centre + facing * (p * scale);
+            o.world = centre + back + facing * (p * scale);
             o.pos = frame.clip * vec4f(o.world, 1.0);
             o.normal = facing * (n * inverse);
             o.uv = uv;
