@@ -322,3 +322,28 @@ fn a_picture_drops_its_empty_texels_on_request() {
     assert_eq!(depth, [2.0]);
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
+
+/// The default expression of `pts.delete` is compiled at start-up: a new node gives its points at
+/// its first cook, also behind pts.from_tex, whose points carry a `weight`.
+#[test]
+fn a_new_delete_of_the_default_expression_cooks_at_once() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create("/g", "pts.generate", &[("count", Value::Int(10))]),
+        create("/d", "pts.delete", &[]),
+        connect("/g", "/d", 0),
+        create("/w", "pts.math", &[("expression", "1.0".into()), ("result", "weight".into())]),
+        connect("/g", "/w", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    rig.types.get("pts.delete").unwrap().warm_up(&rig.gpu).unwrap();
+    rig.cook("/d");
+    let s = rig.cooker.status(rig.id("/d")).unwrap();
+    assert!(s.has_output && s.error.is_none(), "{s:?}");
+    // The same behind points with a weight.
+    let _ = super::pts::points(&mut rig, "/w");
+    rig.edit(&[create("/d2", "pts.delete", &[]), connect("/w", "/d2", 0)]);
+    rig.cook("/d2");
+    let s = rig.cooker.status(rig.id("/d2")).unwrap();
+    assert!(s.has_output && s.error.is_none(), "{s:?}");
+}
