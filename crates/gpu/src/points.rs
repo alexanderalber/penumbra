@@ -99,6 +99,10 @@ pub const STANDARD: &[Standard] = &[
     Standard { name: "mass", ty: AttrType::F32, default: [1.0, 0.0, 0.0, 0.0] },
     Standard { name: "drag", ty: AttrType::F32, default: [0.0; 4] },
     Standard { name: "weight", ty: AttrType::F32, default: [1.0, 0.0, 0.0, 0.0] },
+    // Multiplies the width of a line drawn through the point.
+    Standard { name: "width", ty: AttrType::F32, default: [1.0, 0.0, 0.0, 0.0] },
+    // Along a trail, 0 at its head (the point now) to 1 at its tail (the oldest place).
+    Standard { name: "trail", ty: AttrType::F32, default: [0.0; 4] },
 ];
 
 /// TouchDesigner's attribute names and the penumbra names they stand for.
@@ -116,6 +120,7 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("PartMass", "mass"),
     ("PartDrag", "drag"),
     ("Weight", "weight"),
+    ("LineWidth", "width"),
 ];
 
 /// The penumbra name of an attribute a user typed: a TouchDesigner name becomes the attribute
@@ -377,15 +382,32 @@ pub fn most_elements(gpu: &Gpu, ty: AttrType) -> u32 {
     u32::try_from(Buffer::max_bytes(gpu) / ty.stride()).unwrap_or(u32::MAX)
 }
 
-/// How points join into lines.
+/// How points join into lines (line strips): which point follows which along a line.
+/// `geo.from_pts` draws a segment from each point to the next one on its line.
+///
+/// A node that keeps the count and the order of the points keeps their strips; a node that drops
+/// points or changes their order drops them ([`Points::with_count`] with a count on the GPU,
+/// [`compact`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum Strips {
-    /// They do not: each point stands alone.
+    /// None given: each point stands alone. Drawn as lines, all the points make one line in
+    /// their order.
     #[default]
     None,
-    /// Every `len` points in a row are one line, in order.
-    Regular { len: u32 },
+    /// Every `len` points in a row are one line, in order: points 0 to `len - 1`, then `len` to
+    /// `2 len - 1`, and so on. `closed`: each line's last point joins its first again (a ring).
+    Regular { len: u32, closed: bool },
+    /// The points are a grid `cols` wide, row by row (as `dims` [rows, cols, 1] lays them out):
+    /// lines along its `rows`, along its `columns`, or both (a wireframe of the grid).
+    Grid { cols: u32, rows: bool, columns: bool },
+}
+
+impl Strips {
+    /// Open lines of `len` points each.
+    pub fn regular(len: u32) -> Self {
+        Strips::Regular { len, closed: false }
+    }
 }
 
 /// Points on the GPU (`pts` data). Cheap to clone; clones share the buffers.
@@ -941,6 +963,7 @@ fn copy_rows(gpu: &Gpu, src: &Buffer, count: u32, tex: &Tex) -> Result<(), Error
 pub mod append;
 pub mod compact;
 pub mod program;
+pub mod trail;
 
 #[cfg(test)]
 mod tests;

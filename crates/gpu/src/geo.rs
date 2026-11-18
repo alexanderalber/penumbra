@@ -422,20 +422,25 @@ impl Item {
 
     /// The model's box in the item's space; with instances, the extent grown by the model's
     /// reach from its origin in any direction (a copy may be turned and scaled). Sprites
-    /// ([`Instances::face_camera`]) are sized in the world's units, so their reach is left out
-    /// here: [`Item::sprite_reach`], which [`Geo::bounds`] adds in the world.
+    /// ([`Instances::face_camera`]) and lines ([`Instances::lines`]) are sized in the world's
+    /// units, so their reach is left out here: [`Item::sprite_reach`], which [`Geo::bounds`]
+    /// adds in the world.
     pub fn bounds(&self) -> Option<Bounds> {
         let b = self.model.bounds?;
         let Some(inst) = &self.instances else { return Some(b) };
-        let reach = if inst.face_camera { 0.0 } else { self.reach(b, inst) };
+        let reach = if inst.world_sized() { 0.0 } else { self.reach(b, inst) };
         let e = if inst.extent.is_finite() { inst.extent.max(0.0) } else { 0.0 } + reach;
         Some(Bounds { min: [-e; 3], max: [e; 3] })
     }
 
-    /// How far a sprite reaches from its point in any direction, in the world's units; 0 for
-    /// anything but sprites.
+    /// How far a sprite or a line reaches from its points in any direction, in the world's
+    /// units; 0 for anything else. A line reaches half its width, its mitred corners up to four
+    /// times that ([`MITRE_LIMIT`]).
     pub fn sprite_reach(&self) -> f32 {
         match (&self.instances, self.model.bounds) {
+            (Some(inst), _) if inst.lines.is_some() => {
+                0.5 * MITRE_LIMIT * if inst.size.is_finite() { inst.size.abs() } else { 1.0 }
+            }
             (Some(inst), Some(b)) if inst.face_camera => self.reach(b, inst),
             _ => 0.0,
         }
@@ -478,6 +483,35 @@ pub struct Instances {
     /// Half the side of a box around the item's origin that holds every copy, since the
     /// positions stay on the GPU: framing, shadow maps.
     pub extent: f32,
+    /// Lines through the points instead of a copy at each: see [`Lines`].
+    pub lines: Option<Lines>,
+}
+
+/// How far out a line's mitred corner may reach, in half widths; at sharper turns the corner is
+/// pulled in to this (render.wgsl has the same number).
+pub const MITRE_LIMIT: f32 = 4.0;
+
+/// Lines through the points of [`Instances`]: copy `i` of the model (a unit quad) becomes the
+/// segment from the point before `i` on its line to point `i`, a ribbon that faces the camera
+/// (the light in a shadow map), [`Instances::size`] wide in the world's units times the red of
+/// [`Instances::scale`] at each end, coloured by [`Instances::color`] blended along it. Where
+/// two segments meet, their corners meet too (a mitred joint, shortened at sharp turns).
+///
+/// The points along one line are `stride` apart in the list, `len` of them make a line: point
+/// `i` is number `(i / stride) % len` along its line. A first point has no segment, unless the
+/// line is `closed` and longer than two points: then its segment comes from the line's last
+/// point. `len` 0: one line through every point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lines {
+    pub len: u32,
+    pub stride: u32,
+    pub closed: bool,
+    /// The points past this many are none (the count where the CPU knows it, `u32::MAX`
+    /// where not): a line ends there.
+    pub limit: u32,
+    /// The count is on the GPU ([`Instances::live`]): a line also ends at a point whose
+    /// position texel is transparent, as the texels past such a count are.
+    pub live: bool,
 }
 
 impl Instances {
@@ -501,7 +535,14 @@ impl Instances {
             scale: None,
             color: None,
             extent: 0.0,
+            lines: None,
         }
+    }
+
+    /// Whether the copies are sized in the world's units whatever the item's placement does:
+    /// sprites and lines.
+    pub fn world_sized(&self) -> bool {
+        self.face_camera || self.lines.is_some()
     }
 }
 

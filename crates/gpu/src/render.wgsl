@@ -16,6 +16,9 @@
 // A triangle thinner on screen than its lines is widened in its own plane (vs_wire), so a far
 // thin prism stays a whole line instead of breaking into the pixels it happens to hit; its lines
 // reach a little beyond its edges there.
+// Lines through instances (geo::Lines) draw a unit quad per instance, which the vertex stage
+// turns into the segment ending at that instance's point: a ribbon facing the viewer, its corners
+// mitred with the neighbouring segments' (line_vertex).
 // Occluders draw first and write depth; they leave the colour as it is, or, as a black cover,
 // draw opaque black and write their distance in the data pass.
 
@@ -84,9 +87,14 @@ struct Draw {
     // The filled faces' colour, straight alpha.
     fill: vec4f,
     // x: 1 where drawn once per instance (geo::Instances); y: which instance textures are
-    // there, bit 0 aim, 1 scale, 2 colour, and bit 3 where each copy faces the camera; z: the
-    // bits of the f32 every copy's scale is multiplied by.
+    // there, bit 0 aim, 1 scale, 2 colour, bit 3 where each copy faces the camera, bit 4 where
+    // the copies are the segments of lines through the instances; z: the bits of the f32 every
+    // copy's scale (a line's width) is multiplied by.
     inst: vec4u,
+    // Lines through the instances (geo::Lines): x points per line (0: one line through all),
+    // y their distance in the list, z bit 0 closed lines, bit 1 a count on the GPU, w the most
+    // points.
+    lines: vec4u,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -186,12 +194,175 @@ fn aim_turn(aim: vec3f) -> mat3x3f {
     return mat3x3f(r, f, cross(r, f));
 }
 
+// Lines through the instances (geo::Lines). Instance i is the segment from the point before i
+// on its line to point i; the model is a unit quad, x 0 at the segment's start and 1 at its end,
+// z -0.5 and 0.5 its two sides.
+const NO_POINT: u32 = 0xffffffffu;
+// How far out a mitred corner may reach, in half widths (geo::MITRE_LIMIT).
+const MITRE_LIMIT: f32 = 4.0;
+
+// Point i's number along its line.
+fn line_along(i: u32) -> u32 {
+    let k = i / max(draw.lines.y, 1u);
+    if draw.lines.x == 0u {
+        return k;
+    }
+    return k % draw.lines.x;
+}
+
+fn line_closed() -> bool {
+    return (draw.lines.z & 1u) != 0u && draw.lines.x > 2u;
+}
+
+// Whether point j is one of the points: below the most, and alive where the count is on the GPU
+// (texels past it are transparent).
+fn line_exists(j: u32) -> bool {
+    if j >= draw.lines.w {
+        return false;
+    }
+    if (draw.lines.z & 2u) != 0u {
+        return instance_texel(inst_position, j, vec4f(0.0)).w > 0.0;
+    }
+    return true;
+}
+
+// The point before i on its line: a closed line's first point follows its last.
+fn line_before(i: u32) -> u32 {
+    let stride = max(draw.lines.y, 1u);
+    if line_along(i) > 0u {
+        return i - stride;
+    }
+    if line_closed() {
+        let j = i + (draw.lines.x - 1u) * stride;
+        if line_exists(j) {
+            return j;
+        }
+    }
+    return NO_POINT;
+}
+
+// The point after i on its line, if there is one.
+fn line_after(i: u32) -> u32 {
+    let stride = max(draw.lines.y, 1u);
+    var j = NO_POINT;
+    if draw.lines.x == 0u || line_along(i) + 1u < draw.lines.x {
+        if i <= NO_POINT - 1u - stride {
+            j = i + stride;
+        }
+    } else if line_closed() {
+        j = i - (draw.lines.x - 1u) * stride;
+    }
+    if j == NO_POINT || !line_exists(j) {
+        return NO_POINT;
+    }
+    return j;
+}
+
+fn line_point(j: u32) -> vec3f {
+    return (draw.world * vec4f(instance_texel(inst_position, j, vec4f(0.0)).xyz, 1.0)).xyz;
+}
+
+// The direction from p to the viewer (the light in a shadow pass).
+fn line_to_viewer(p: vec3f) -> vec3f {
+    var d = frame.eye.xyz;
+    if frame.eye.w > 0.5 {
+        d = frame.eye.xyz - p;
+    }
+    let len = length(d);
+    if !(len > 1e-12) || !(len < 1e30) {
+        return vec3f(0.0, 0.0, 1.0);
+    }
+    return d / len;
+}
+
+// The side of a ribbon along `t` seen along `v`: unit, square to both; zero where t is along v.
+fn line_side(t: vec3f, v: vec3f) -> vec3f {
+    let s = cross(t, v);
+    let len = length(s);
+    if !(len > 1e-9 * max(length(t), 1e-30)) {
+        return vec3f(0.0);
+    }
+    return s / len;
+}
+
+// A corner of segment i's ribbon: at its start (p.x 0) or end, on side p.z (-0.5 or 0.5). Every
+// segment of a joint works its corners out from the same three points, so they meet.
+fn line_vertex(p: vec3f, i: u32) -> VOut {
+    var o: VOut;
+    o.edge = vec4f(1.0, 1.0, 1.0, 0.0);
+    o.uv = vec2f(p.x, p.z + 0.5);
+    o.tint = vec3f(1.0);
+    o.world = vec3f(0.0);
+    o.normal = vec3f(0.0, 0.0, 1.0);
+    // Outside the picture: nothing is drawn of a segment that is none.
+    o.pos = vec4f(-2.0, -2.0, 0.5, 1.0);
+    let before = line_before(i);
+    if before == NO_POINT {
+        return o;
+    }
+    let a = line_point(before);
+    let b = line_point(i);
+    let d = b - a;
+    if !(dot(d, d) > 1e-20) {
+        return o;
+    }
+    let end = p.x > 0.5;
+    let here = select(before, i, end);
+    let at = select(a, b, end);
+    let v = line_to_viewer(at);
+    let s = line_side(d, v);
+    if dot(s, s) == 0.0 {
+        return o;
+    }
+    // The neighbouring segment at this end, where the line goes on.
+    var other = NO_POINT;
+    if end {
+        other = line_after(i);
+    } else {
+        other = line_before(before);
+        if other == i {
+            other = NO_POINT;
+        }
+    }
+    var side = s;
+    if other != NO_POINT {
+        let q = line_point(other);
+        let s2 = line_side(select(a - q, q - b, end), v);
+        let m = s + s2;
+        if dot(s2, s2) > 0.0 && dot(m, m) > 1e-6 {
+            let mn = normalize(m);
+            side = mn / max(dot(mn, s), 1.0 / MITRE_LIMIT);
+        }
+    }
+    let has = draw.inst.y;
+    var w = 0.5 * abs(bitcast<f32>(draw.inst.z));
+    if (has & 2u) != 0u {
+        w *= abs(instance_texel(inst_scale, here, vec4f(1.0)).x);
+    }
+    if (has & 4u) != 0u {
+        o.tint = max(instance_texel(inst_color, here, vec4f(1.0)).rgb, vec3f(0.0));
+    }
+    var world = at + side * (2.0 * p.z * w);
+    // From a light the ribbon stands back along the light by its half width, so the ribbon the
+    // camera sees is not in its own shadow.
+    if frame.pixels.w > 0.5 {
+        world -= v * w;
+    }
+    o.world = world;
+    o.pos = frame.clip * vec4f(world, 1.0);
+    o.normal = v;
+    return o;
+}
+
 fn place(p: vec3f, n: vec3f, uv: vec2f, i: u32) -> VOut {
     var model = p;
     var normal = n;
     var tint = vec3f(1.0);
     if draw.inst.x == 1u {
         let has = draw.inst.y;
+        if (has & 16u) != 0u {
+            return line_vertex(p, i);
+        }
         var turn = mat3x3f(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0), vec3f(0.0, 0.0, 1.0));
         var scale = vec3f(1.0);
         if (has & 1u) != 0u {

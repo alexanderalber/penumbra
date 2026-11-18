@@ -142,6 +142,22 @@ fn draw_layout_matches_the_shader() {
     assert_eq!(at("wire", 8), 1.0);
     assert_eq!(at("fill", 0), 0.625);
     assert_eq!(u32_at(&b, member(&m, "inst").offset), 0);
+    assert_eq!(u32_at(&b, member(&m, "lines").offset), 0);
+}
+
+#[test]
+fn lines_through_instances_reach_the_shader() {
+    let Some(gpu) = crate::testing::gpu() else { return };
+    let (_, m) = wgsl_struct(RENDER, "Draw");
+    let position = crate::Tex::new_float(&gpu, 1, 1, "position").unwrap();
+    let lines = crate::geo::Lines { len: 7, stride: 3, closed: true, limit: 21, live: true };
+    let inst = crate::geo::Instances { size: 0.5, lines: Some(lines), ..crate::geo::Instances::of(position) };
+    let normals = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let b = draw_slot(&mat(1.0), &normals, [1.0; 4], &Material::constant(), false, 0, Some(&inst));
+    let u = |name: &str, plus: u32| u32_at(&b, member(&m, name).offset + plus);
+    assert_eq!((u("inst", 0), u("inst", 4)), (1, 1 << 4));
+    assert_eq!(f32::from_bits(u("inst", 8)), 0.5);
+    assert_eq!([u("lines", 0), u("lines", 4), u("lines", 8), u("lines", 12)], [7, 3, 3, 21]);
 }
 
 #[test]

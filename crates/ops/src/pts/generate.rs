@@ -1,11 +1,12 @@
 //! `pts.generate`: points on a simple shape (a grid, a line, a circle, a sphere, a box), on its
 //! surface or inside it, evenly ordered or at random. Made on the CPU and uploaded once per
-//! change of a param.
+//! change of a param. Ordered lines, rings and grids come with their lines ([`Strips`]), so
+//! `geo.from_pts` in lines mode draws them as they are.
 
 use std::f32::consts::{PI, TAU};
 
 use penumbra_core::{Curve, Error, ParamSpec};
-use penumbra_gpu::points::{Attr, AttrType, Points, capacity_for, most_elements};
+use penumbra_gpu::points::{Attr, AttrType, Points, Strips, capacity_for, most_elements};
 use penumbra_gpu::{Buffer, BufferRing, Gpu};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
@@ -20,6 +21,7 @@ pub const KIND: &str = "pts.generate";
 pub const SHAPES: [&str; 5] = ["grid", "line", "circle", "sphere", "box"];
 pub const FILLS: [&str; 2] = ["surface", "inside"];
 pub const DISTRIBUTIONS: [&str; 2] = ["ordered", "random"];
+pub const GRID_LINES: [&str; 4] = ["both", "rows", "columns", "none"];
 
 /// Most points the node makes.
 pub const MAX_POINTS: u32 = 1 << 22;
@@ -82,6 +84,15 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("Grid: points from left to right")
                 .applies_when("shape", &["grid"]),
         )
+        .param(
+            ParamSpec::choice("lines", &GRID_LINES)
+                .doc("Ordered grid: which points join into lines, for geo.from_pts in lines mode. An ordered line is always one line, an ordered circle's outline one closed ring")
+                .choice_doc("both", "every row and every column: the grid's wireframe")
+                .choice_doc("rows", "each row from left to right")
+                .choice_doc("columns", "each column from top to bottom")
+                .choice_doc("none", "no lines: drawn as lines, all the points make one line, row after row")
+                .applies_when("shape", &["grid"]),
+        )
         .param(ParamSpec::vec3("size", [1.0; 3]).range(0.0, 10.0).doc(
             "Grid: x wide, z high. Line: x long. Circle and sphere: the diameter is x. Box: x, y, z. In metres",
         ))
@@ -93,7 +104,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .applies_when("distribution", &["random"]),
         )
         .output("out", DataKind::Pts)
-        .describe_output("out", "The points with `position`, and `normal` and `uv` where the shape gives them a meaning"),
+        .describe_output("out", "The points with `position`, and `normal` and `uv` where the shape gives them a meaning. Ordered lines, outlines of circles and grids come as lines (strips) that geo.from_pts draws in lines mode"),
         || Box::new(Generate::default()) as Box<dyn Operator>,
     ))
 }
@@ -108,6 +119,8 @@ pub struct Cloud {
     pub uv: Option<Vec<[f32; 2]>>,
     /// Rows, columns and slices of an ordered lattice.
     pub dims: Option<[u32; 3]>,
+    /// Which points join into lines.
+    pub strips: Strips,
 }
 
 /// What `pts.generate` makes of its params.
@@ -121,6 +134,8 @@ pub struct Shape<'a> {
     pub cols: u32,
     pub size: [f32; 3],
     pub seed: u64,
+    /// A grid's lines: `both`, `rows`, `columns` or `none` ([`GRID_LINES`]).
+    pub lines: &'a str,
 }
 
 /// The points of `s`. `Err` for more than [`MAX_POINTS`].
@@ -130,7 +145,7 @@ pub fn cloud(s: &Shape<'_>) -> Result<Cloud, Error> {
     let mut rng = Rng::new(s.seed);
     let count = s.count.clamp(1, MAX_POINTS);
     let out = match s.shape {
-        "grid" => grid(s.rows, s.cols, half, s.random.then_some(&mut rng))?,
+        "grid" => grid(s.rows, s.cols, half, s.random.then_some(&mut rng), s.lines)?,
         "line" => line(count, half[0], s.random.then_some(&mut rng)),
         "circle" => circle(count, half[0], s.inside, s.random.then_some(&mut rng)),
         "sphere" => sphere(count, half[0], s.inside, s.random.then_some(&mut rng)),
@@ -147,7 +162,7 @@ pub fn cloud(s: &Shape<'_>) -> Result<Cloud, Error> {
     Ok(out)
 }
 
-fn grid(rows: u32, cols: u32, half: [f32; 3], rng: Option<&mut Rng>) -> Result<Cloud, Error> {
+fn grid(rows: u32, cols: u32, half: [f32; 3], rng: Option<&mut Rng>, lines: &str) -> Result<Cloud, Error> {
     let (rows, cols) = (rows.clamp(1, MAX_SIDE), cols.clamp(1, MAX_SIDE));
     let n = rows * cols;
     if n > MAX_POINTS {
@@ -175,11 +190,23 @@ fn grid(rows: u32, cols: u32, half: [f32; 3], rng: Option<&mut Rng>) -> Result<C
             }
         }
     }
+    let (along_rows, along_columns) = match lines {
+        "both" => (true, true),
+        "rows" => (true, false),
+        "columns" => (false, true),
+        _ => (false, false),
+    };
+    let strips = match (ordered, along_rows, along_columns) {
+        (false, _, _) | (true, false, false) => Strips::None,
+        (true, true, false) => Strips::regular(cols),
+        (true, rows, columns) => Strips::Grid { cols, rows, columns },
+    };
     Ok(Cloud {
         normal: Some(vec![[0.0, -1.0, 0.0, 0.0]; position.len()]),
         position,
         uv: Some(uv),
         dims: ordered.then_some([rows, cols, 1]),
+        strips,
     })
 }
 
@@ -195,6 +222,7 @@ fn line(count: u32, half: f32, rng: Option<&mut Rng>) -> Cloud {
         normal: None,
         uv: Some(ts.iter().map(|t| [*t, 0.5]).collect()),
         dims: ordered.then_some([1, count, 1]),
+        strips: if ordered { Strips::regular(count) } else { Strips::None },
     }
 }
 
@@ -225,6 +253,7 @@ fn circle(count: u32, r: f32, inside: bool, mut rng: Option<&mut Rng>) -> Cloud 
         position,
         uv: Some(uv),
         dims: (ordered && !inside).then_some([1, count, 1]),
+        strips: if ordered && !inside { Strips::Regular { len: count, closed: true } } else { Strips::None },
     }
 }
 
@@ -271,7 +300,7 @@ fn sphere(count: u32, r: f32, inside: bool, mut rng: Option<&mut Rng>) -> Cloud 
         normal.push([d[0], d[1], d[2], 0.0]);
         uv.push(sphere_uv(d));
     }
-    Cloud { position, normal: Some(normal), uv: Some(uv), dims: None }
+    Cloud { position, normal: Some(normal), uv: Some(uv), dims: None, strips: Strips::None }
 }
 
 /// The six sides of a box: the axis each faces along, and its sign.
@@ -341,7 +370,7 @@ fn box_random(count: u32, half: [f32; 3], inside: bool, rng: &mut Rng) -> Cloud 
         }
         position.push([p[0], p[1], p[2], 1.0]);
     }
-    Cloud { position, normal: (!inside).then_some(normal), uv: None, dims: None }
+    Cloud { position, normal: (!inside).then_some(normal), uv: None, dims: None, strips: Strips::None }
 }
 
 /// Points along each axis of a lattice of about `count` points in a box of `half` sizes, the
@@ -401,6 +430,7 @@ fn box_lattice(count: u32, half: [f32; 3], inside: bool) -> Result<Cloud, Error>
         normal: (!inside).then_some(normal),
         uv: None,
         dims: inside.then_some([nz, nx, ny]),
+        strips: Strips::None,
     })
 }
 
@@ -453,7 +483,10 @@ pub fn upload(gpu: &Gpu, cloud: &Cloud, rings: &mut Rings) -> Result<Points, Err
         attrs.push(put(&mut rings.uv, "uv", AttrType::Vec2, uv.as_flattened())?);
     }
     let bounds = Bounds::of(cloud.position.iter().map(|p| [p[0], p[1], p[2]]));
-    Ok(Points::new(capacity, count, attrs)?.with_bounds(bounds).with_dims(cloud.dims))
+    Ok(Points::new(capacity, count, attrs)?
+        .with_bounds(bounds)
+        .with_dims(cloud.dims)
+        .with_strips(cloud.strips))
 }
 
 /// The buffers of one generator, one ring per attribute.
@@ -504,6 +537,7 @@ impl Operator for Generate {
             cols: int("cols")?,
             size,
             seed: u64::from(int("seed")?),
+            lines: cx.text("lines")?,
         };
         let cloud = cloud(&shape)?;
         let points = upload(gpu, &cloud, &mut self.rings)?;

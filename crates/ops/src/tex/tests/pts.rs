@@ -114,14 +114,17 @@ fn every_shape_makes_what_it_says() {
         cols: 3,
         size: [4.0, 2.0, 1.0],
         seed: 0,
+        lines: "both",
     };
     let line = cloud(&base).unwrap();
     let xs: Vec<f32> = line.position.iter().map(|p| p[0]).collect();
     assert_eq!(xs, [-2.0, -1.0, 0.0, 1.0, 2.0]);
     assert_eq!(line.dims, Some([1, 5, 1]));
+    assert_eq!(line.strips, penumbra_gpu::points::Strips::regular(5), "one line");
     assert!(line.normal.is_none());
     // A ring and a disc of diameter 4, upright.
     let ring = cloud(&Shape { shape: "circle", count: 8, ..base }).unwrap();
+    assert_eq!(ring.strips, penumbra_gpu::points::Strips::Regular { len: 8, closed: true }, "a ring");
     assert!(
         ring.position.iter().all(|p| ((p[0] * p[0] + p[2] * p[2]).sqrt() - 2.0).abs() < 1e-5 && p[1] == 0.0)
     );
@@ -163,6 +166,12 @@ fn every_shape_makes_what_it_says() {
     // A grid at random keeps rows times cols points and loses its order.
     let scattered = cloud(&Shape { shape: "grid", random: true, ..base }).unwrap();
     assert_eq!((scattered.position.len(), scattered.dims), (6, None));
+    assert_eq!(scattered.strips, penumbra_gpu::points::Strips::None, "no lines through random places");
+    let grid = |lines| cloud(&Shape { shape: "grid", lines, ..base }).unwrap().strips;
+    assert_eq!(grid("both"), penumbra_gpu::points::Strips::Grid { cols: 3, rows: true, columns: true });
+    assert_eq!(grid("rows"), penumbra_gpu::points::Strips::regular(3));
+    assert_eq!(grid("columns"), penumbra_gpu::points::Strips::Grid { cols: 3, rows: false, columns: true });
+    assert_eq!(grid("none"), penumbra_gpu::points::Strips::None);
     assert!(cloud(&Shape { shape: "grid", rows: 4096, cols: 4096, ..base }).is_err());
     assert!(
         cloud(&Shape { shape: "box", inside: true, count: MAX_POINTS, size: [1.0, 0.0, 0.0], ..base })
