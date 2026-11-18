@@ -144,8 +144,11 @@ The families:
   `color`, `PointScale` is `scale`. `pts.generate` puts points on a grid, a line, a circle, a
   sphere or a box, on the surface or inside, evenly or at random. `geo.from_pts` draws them
   with `tex.render`: a small disc facing the camera at every point, or a copy of a model at
-  every point. The viewer shows how many points there are, their attributes and the box around
-  them.
+  every point. `pts.noise`, `pts.transform`, `pts.math` and `pts.random` change attributes:
+  noise over space and time, a move and turn about a pivot, an expression typed as a param
+  (`position.z + sin(time) * 0.1`), random values. `pts.shader` runs a WGSL program of your own
+  per point ([Shaders](shaders.md#a-program-over-points-ptsshader)). The viewer shows how many
+  points there are, their attributes and the box around them.
 - **`vol`**: volumes, such as smoke. `vol.smoke` simulates smoke in a box: emitters blow hot
   smoke in, the smoke rises against `gravity`, swirls and fades. `vol.emitter` is one emitter;
   wire several into the `emitter` inputs of `vol.smoke`, 64 at most, later ones acting on what

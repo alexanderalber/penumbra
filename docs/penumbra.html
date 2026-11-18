@@ -106,7 +106,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><a href="#simulations">Simulations</a>: falling sand and the other simulations from the library: choosing a setup, tuning it, what to feed them in an installation.
 </li>
-<li><a href="#shaders">Shaders</a>: writing a <a class="ref" href="#tex.shader"><code>tex.shader</code></a> in WGSL, porting from Shadertoy, a shader in a feedback loop that follows the music.
+<li><a href="#shaders">Shaders</a>: writing a <a class="ref" href="#tex.shader"><code>tex.shader</code></a> in WGSL, porting from Shadertoy, a shader in a feedback loop that follows the music, a <a class="ref" href="#pts.shader"><code>pts.shader</code></a> that runs once per point.
 </li>
 <li><a href="#scripts">Scripts</a>: writing a <a class="ref" href="#script.python"><code>script.python</code></a> node.
 </li>
@@ -338,7 +338,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong><code>table</code></strong>: text tables, typed in or read from a file, for scripts and OSC. <a class="ref" href="#table.file"><code>table.file</code></a> reads a CSV, TSV or text file and reloads it when the file changes. <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a> turns a table of numbers into channels, a channel per column (or row), named by its first cell. A param bound to a channel follows the last value in that column (or row). <a class="ref" href="#table.from_chan"><code>table.from_chan</code></a> goes the other way: channels become the cells of a table, so an LFO or a tracker can place what a table places, such as the bodies of a <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a>. <a class="ref" href="#out.table"><code>out.table</code></a> writes a table to a CSV or TSV file. With <code>file</code> empty it writes <code>export/&lt;node name&gt;.csv</code> in the project folder. In mode <code>changes</code> it writes whenever the table differs from what the file holds; in mode <code>manual</code> it writes only on <a class="ref" href="#table_out.write"><code>table_out.write</code></a>. <code>overwrite</code> on replaces the file in place, for a program that keeps reading it; off, every write gets a new name with <code>_2</code>, <code>_3</code>, ...
 </li>
-<li><strong><code>pts</code></strong>: points on the GPU, penumbra's counterpart to TouchDesigner's POPs. Each point carries attributes: <code>position</code>, and where a node gives them <code>normal</code>, <code>color</code>, <code>scale</code>, <code>uv</code> and others. TouchDesigner's attribute names mean the same: <code>P</code> is <code>position</code>, <code>Color</code> is <code>color</code>, <code>PointScale</code> is <code>scale</code>. <a class="ref" href="#pts.generate"><code>pts.generate</code></a> puts points on a grid, a line, a circle, a sphere or a box, on the surface or inside, evenly or at random. <a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a> draws them with <a class="ref" href="#tex.render"><code>tex.render</code></a>: a small disc facing the camera at every point, or a copy of a model at every point. The viewer shows how many points there are, their attributes and the box around them.
+<li><strong><code>pts</code></strong>: points on the GPU, penumbra's counterpart to TouchDesigner's POPs. Each point carries attributes: <code>position</code>, and where a node gives them <code>normal</code>, <code>color</code>, <code>scale</code>, <code>uv</code> and others. TouchDesigner's attribute names mean the same: <code>P</code> is <code>position</code>, <code>Color</code> is <code>color</code>, <code>PointScale</code> is <code>scale</code>. <a class="ref" href="#pts.generate"><code>pts.generate</code></a> puts points on a grid, a line, a circle, a sphere or a box, on the surface or inside, evenly or at random. <a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a> draws them with <a class="ref" href="#tex.render"><code>tex.render</code></a>: a small disc facing the camera at every point, or a copy of a model at every point. <a class="ref" href="#pts.noise"><code>pts.noise</code></a>, <a class="ref" href="#pts.transform"><code>pts.transform</code></a>, <a class="ref" href="#pts.math"><code>pts.math</code></a> and <a class="ref" href="#pts.random"><code>pts.random</code></a> change attributes: noise over space and time, a move and turn about a pivot, an expression typed as a param (<code>position.z + sin(time) * 0.1</code>), random values. <a class="ref" href="#pts.shader"><code>pts.shader</code></a> runs a WGSL program of your own per point (<a href="#shaders-a-program-over-points-ptsshader">Shaders</a>). The viewer shows how many points there are, their attributes and the box around them.
 </li>
 <li><strong><code>vol</code></strong>: volumes, such as smoke. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> simulates smoke in a box: emitters blow hot smoke in, the smoke rises against <code>gravity</code>, swirls and fades. <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a> is one emitter; wire several into the <code>emitter</code> inputs of <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a>, 64 at most, later ones acting on what earlier ones left. Any table with columns x and y (see <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a>'s output) gives one emitter per row, so a computed table can move or multiply them. With no emitter the box stays empty. Fuel in the smoke burns once it is hot enough: it heats, makes more smoke and swells, so a jet of it widens like a flame. A <a class="ref" href="#vol.obstacle"><code>vol.obstacle</code></a> on the <code>obstacle</code> inputs is a still sphere or box the smoke flows around. <a class="ref" href="#tex.render_volume"><code>tex.render_volume</code></a> draws a volume as a picture, seen from the front through the whole box. Hot smoke glows with <code>glow</code>, in the colours of a palette picture on its <code>palette</code> input. Its <code>density</code> output shows how much smoke covers each pixel, as grey, for <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a>. Burning smoke is dense: a <code>thickness</code> well below 1 lets the eye see into it. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> keeps its smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean the same; how strongly a number acts was matched by eye to one Flow scene.
 </li>
@@ -2253,6 +2253,18 @@ fn pn_band(p: PnPalette, t: f32) -&gt; vec4f     // 0..1 in equal bands, one per
 <p>A shader that reads <code>pn_time</code> cooks every frame; one that does not cooks only when its inputs or params change.</p>
 <p><strong>Inputs.</strong> The node has up to 8 inputs, <code>in0</code> to <code>in7</code>. It shows every input up to the highest one that is wired or that the shader reads, and one free input after them. Wire the free input, and the next one appears. An input the shader reads stays visible while nothing is wired there, once the shader has compiled. An unwired input reads as transparent black.</p>
 <p><code>pn_hash</code> returns three numbers, a <code>vec3u</code>: <code>.w</code> does not compile. For more random numbers, hash its result again: <code>pn_hash(h ^ vec3u(7u))</code>.</p>
+<h3 id="shaders-a-program-over-points-ptsshader">A program over points (<a class="ref" href="#pts.shader"><code>pts.shader</code></a>)</h3>
+<p><a class="ref" href="#pts.shader"><code>pts.shader</code></a> runs a WGSL program once per point of a <code>pts</code> input, TouchDesigner's GLSL POP. It reloads when saved and keeps the last good version running, as <a class="ref" href="#tex.shader"><code>tex.shader</code></a> does. This file lifts a grid into a wave, <code>wave.wgsl</code>:</p>
+<pre><code class="lang-wgsl">// @write position
+// @param height float = 0.1
+fn main() {
+    position.z += sin(position.x * 6.283 + time) * params.height;
+}
+</code></pre>
+<p><strong>Attributes.</strong> <code>// @write position</code> names an attribute the program changes. Inside <code>main</code> it is a variable holding the point's value; what <code>main</code> leaves in it goes out. <code>// @read normal</code> names one the program only reads. TouchDesigner's names work too: <code>// @write P</code>. An attribute penumbra does not know needs a type and may have a default: <code>// @write heat float = 0</code>. Types are <code>float</code>, <code>vec2</code>, <code>vec3</code>, <code>vec4</code>, <code>int</code> and <code>uint</code>. A missing attribute reads as its default (position 0, color white, scale 1). The node passes every attribute the program does not write on unchanged.</p>
+<p><strong>What <code>main</code> sees besides the attributes.</strong> <code>index</code> (the point's place, from 0), <code>count</code>, <code>index01</code> (0 at the first point, 1 at the last), <code>time</code>, <code>dt</code> (the length of a frame in seconds), <code>frame</code>, <code>rand(k)</code> and <code>rand3(k)</code> (random numbers in 0..1, the same for a point and <code>k</code> every time), <code>params.&lt;name&gt;</code>, and from the prelude above <code>pn_noise</code>, <code>pn_hash</code> and the pictures on the inputs <code>pic0</code> and <code>pic1</code>: <code>textureSampleLevel(pic0, pn_clamp, uv, 0.0)</code>.</p>
+<p><strong>Limits.</strong> Each attribute read takes one storage buffer, each one written another. A GPU gives a program 7 to 15 of them; more is an error that says so. Names starting with <code>pn_</code> and the names in the list above cannot be attributes.</p>
+<p>For one line of arithmetic, <a class="ref" href="#pts.math"><code>pts.math</code></a> takes the expression as a param instead of a file.</p>
 <h3 id="shaders-on-windows-direct3d-12">On Windows (Direct3D 12)</h3>
 <p>On Windows penumbra draws with Direct3D 12. naga first checks the WGSL, then translates it to HLSL for Direct3D's compiler, FXC. Some shaders pass naga and fail in FXC or on the GPU:</p>
 <ul>
@@ -4199,7 +4211,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>format</code></td><td>16f | 32f</td><td><code>&quot;16f&quot;</code></td><td></td><td>Number format of the output, TouchDesigner's Pixel Format. Use 32f for simulation state that 16f rounds away. 32f takes twice the memory<ul><li><code>16f</code>: half floats, about 3 decimal digits, like every other picture</li><li><code>32f</code>: 32-bit floats, about 7 decimal digits, in every pass. A GPU that cannot filter 32-bit floats gets 16f and a warning</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#shaders">Shaders</a>, <a href="#shaders-several-steps-per-frame">Shaders › Several steps per frame</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#shaders">Shaders</a>, <a href="#shaders-a-program-over-points-ptsshader">Shaders › A program over points (pts.shader)</a>, <a href="#shaders-several-steps-per-frame">Shaders › Several steps per frame</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.shape_content"><summary><code class="name">tex.shape_content</code><span class="sum">Animates the shapes of a tex.shapes one by one: pulses, light running along the outlines, ripples</span></summary>
 <div class="body">
@@ -5839,7 +5851,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-pts">
 <h3>pts</h3>
-<p class="kinds"><a href="#pts.generate">pts.generate</a> <a href="#pts.null">pts.null</a></p>
+<p class="kinds"><a href="#pts.generate">pts.generate</a> <a href="#pts.math">pts.math</a> <a href="#pts.noise">pts.noise</a> <a href="#pts.null">pts.null</a> <a href="#pts.random">pts.random</a> <a href="#pts.shader">pts.shader</a> <a href="#pts.transform">pts.transform</a></p>
 <details class="entry node" id="pts.generate"><summary><code class="name">pts.generate</code><span class="sum">Points on a simple shape: a grid, a line, a circle, a sphere or a box, centred on the origin. On the surface or filling the inside, evenly spread or at random</span></summary>
 <div class="body">
 <p>Points on a simple shape: a grid, a line, a circle, a sphere or a box, centred on the origin. On the surface or filling the inside, evenly spread or at random</p>
@@ -5865,6 +5877,69 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
+<details class="entry node" id="pts.math"><summary><code class="name">pts.math</code><span class="sum">Computes an attribute per point from an expression you type, such as position.z + sin(time) * 0.1: arithmetic, limits, ranges, trigonometry</span></summary>
+<div class="body">
+<p>Computes an attribute per point from an expression you type, such as position.z + sin(time) * 0.1: arithmetic, limits, ranges, trigonometry</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span>: The points with the result attribute computed; the others pass on unchanged</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>expression</code></td><td>text</td><td><code>&quot;position&quot;</code></td><td></td><td>A WGSL expression, worked out once per point. It can name attributes (position, color, P, Color), index, count, index01 (0 at the first point, 1 at the last), time, dt, frame, rand(k) and rand3(k), a, b, c and d, and WGSL's functions: sin, clamp, mix, smoothstep, length, normalize, ... One number fills every number of the result</td></tr>
+<tr><td><code>result</code></td><td>text</td><td><code>&quot;position&quot;</code></td><td></td><td>The attribute the expression goes into, TouchDesigner's names too. A part of it after a dot: position.z, color.rgb. A new attribute is made</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>type</code></td><td>auto | float | vec2 | vec3 | vec4 | int | uint</td><td><code>&quot;auto&quot;</code></td><td></td><td>The type of the attribute when it is new: one the input has keeps its type, and so does one penumbra knows (position, color, scale, ...)<ul><li><code>auto</code>: a number (float) for a name penumbra does not know</li><li><code>float</code>: one number</li><li><code>vec2</code>: two numbers</li><li><code>vec3</code>: three numbers, such as a position or a direction</li><li><code>vec4</code>: four numbers, such as a colour</li><li><code>int</code>: a whole number</li><li><code>uint</code>: a whole number from 0</li></ul></td></tr>
+<tr><td><code>a</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>A number the expression reads as a. Bind it to a channel to steer the expression</td></tr>
+<tr><td><code>b</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>A number the expression reads as b</td></tr>
+<tr><td><code>c</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>A number the expression reads as c</td></tr>
+<tr><td><code>d</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>A number the expression reads as d</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#shaders-a-program-over-points-ptsshader">Shaders › A program over points (pts.shader)</a></p>
+</div></details>
+<details class="entry node" id="pts.noise"><summary><code class="name">pts.noise</code><span class="sum">Smooth random values over space and time, looked up at each point and added to an attribute: points that wobble, drift or flow, colours that vary</span></summary>
+<div class="body">
+<p>Smooth random values over space and time, looked up at each point and added to an attribute: points that wobble, drift or flow, colours that vary</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span>: The points with the attribute changed; the others pass on unchanged</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>flavour</code></td><td>scalar | vector | curl</td><td><code>&quot;scalar&quot;</code></td><td></td><td>What the noise gives each point<ul><li><code>scalar</code>: one number, the same in x, y and z: points move along a diagonal, or along the normal</li><li><code>vector</code>: three independent numbers: points move every which way</li><li><code>curl</code>: the curl of three noises: a flow that neither gathers nor spreads points, for smoke and swarms. Its size follows the period less tightly</li></ul></td></tr>
+<tr><td><code>basis</code></td><td>gradient | value</td><td><code>&quot;gradient&quot;</code></td><td></td><td>The kind of noise<ul><li><code>gradient</code>: smooth, round blobs (Perlin-like)</li><li><code>value</code>: blockier, with a visible grid of cells</li></ul></td></tr>
+<tr><td><code>amplitude</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>The noise (between -1 and 1) is multiplied by this, in the attribute's units: metres for a position</td></tr>
+<tr><td><code>period</code></td><td>float</td><td><code>1</code></td><td>0.01 to 10 (soft, held within 0.000001 to 1000000)</td><td>The size of one bump of the noise, in metres of the lookup attribute: smaller is finer</td></tr>
+<tr><td><code>speed</code></td><td>float</td><td><code>0</code></td><td>0 to 4 (soft)</td><td>How fast the noise changes, in bumps per second; 0 is still. It changes in place rather than sliding</td></tr>
+<tr><td><code>octaves</code></td><td>int</td><td><code>1</code></td><td>1 to 8</td><td>Layers of ever finer noise added up, TouchDesigner's Harmonics; 1 is smooth bumps only</td></tr>
+<tr><td><code>roughness</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1 (soft)</td><td>Strength of each octave relative to the one before, TouchDesigner's Harmonic Gain</td></tr>
+<tr><td><code>offset</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>Added to the noise after amplitude: with multiply, 1 keeps the attribute around its value</td></tr>
+<tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft, held within 0 to 1000000000)</td><td>Picks another noise of the same look</td></tr>
+<tr><td><code>lookup</code></td><td>text</td><td><code>&quot;position&quot;</code></td><td></td><td>The attribute the noise is looked up at, TouchDesigner's names too (P). Its first three numbers count, in metres</td></tr>
+<tr><td><code>attribute</code></td><td>text</td><td><code>&quot;position&quot;</code></td><td></td><td>The attribute the noise goes into, TouchDesigner's names too (P, Color, PointScale). A colour keeps its alpha. A new attribute is made</td></tr>
+<tr><td><code>operation</code></td><td>add | set | multiply</td><td><code>&quot;add&quot;</code></td><td></td><td>How the noise meets the attribute's value<ul><li><code>add</code>: the noise is added to it</li><li><code>set</code>: the noise takes its place</li><li><code>multiply</code>: it is multiplied by the noise</li></ul></td></tr>
+<tr><td><code>along_normal</code></td><td>bool</td><td><code>false</code></td><td></td><td>The noise moves the attribute along each point's <code>normal</code>: a scalar noise by its value, a vector or curl noise by its part along the normal. For a three-number attribute such as position</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>lacunarity</code></td><td>float</td><td><code>2</code></td><td>1 to 4 (soft)</td><td>How much finer each octave is than the one before, TouchDesigner's Harmonic Spread</td></tr>
+<tr><td><code>translate</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>-10 to 10 (soft)</td><td>Moves the noise along x, y, z, in metres of the lookup attribute</td></tr>
+<tr><td><code>type</code></td><td>auto | float | vec2 | vec3 | vec4 | int | uint</td><td><code>&quot;auto&quot;</code></td><td></td><td>The type of the attribute when it is new: one the input has keeps its type, and so does one penumbra knows (position, color, scale, ...)<ul><li><code>auto</code>: a number (float) for a name penumbra does not know</li><li><code>float</code>: one number</li><li><code>vec2</code>: two numbers</li><li><code>vec3</code>: three numbers, such as a position or a direction</li><li><code>vec4</code>: four numbers, such as a colour</li><li><code>int</code>: a whole number</li><li><code>uint</code>: a whole number from 0</li></ul></td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
 <details class="entry node" id="pts.null"><summary><code class="name">pts.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
 <div class="body">
 <p>Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</p>
@@ -5876,6 +5951,88 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <ul>
 <li><code>out</code> <span class="kind">pts</span></li>
 </ul>
+</div></details>
+<details class="entry node" id="pts.random"><summary><code class="name">pts.random</code><span class="sum">A random value per point into an attribute: random colours, sizes, directions or places, the same for the same seed</span></summary>
+<div class="body">
+<p>A random value per point into an attribute: random colours, sizes, directions or places, the same for the same seed</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span>: The points with the attribute set; the others pass on unchanged</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>attribute</code></td><td>text</td><td><code>&quot;color&quot;</code></td><td></td><td>The attribute the values go into, TouchDesigner's names too (Color, PointScale, P). A new attribute is made</td></tr>
+<tr><td><code>distribution</code></td><td>uniform | normal | direction | sphere</td><td><code>&quot;uniform&quot;</code></td><td></td><td>How the values spread<ul><li><code>uniform</code>: evenly between min and max, each number on its own</li><li><code>normal</code>: around mean, most within deviation of it (a bell curve)</li><li><code>direction</code>: a direction of length radius, evenly over all directions. A colour keeps its alpha</li><li><code>sphere</code>: a point inside a ball of radius around 0, evenly spread. A colour keeps its alpha</li></ul></td></tr>
+<tr><td><code>min</code></td><td>vec4</td><td><code>[0, 0, 0, 1]</code></td><td>-1 to 1 (soft)</td><td>uniform: the lowest value of each number. An attribute of fewer numbers takes the first ones</td></tr>
+<tr><td><code>max</code></td><td>vec4</td><td><code>[1, 1, 1, 1]</code></td><td>-1 to 1 (soft)</td><td>uniform: the highest value of each number</td></tr>
+<tr><td><code>mean</code></td><td>vec4</td><td><code>[0, 0, 0, 0]</code></td><td>-1 to 1 (soft)</td><td>normal: the middle of the values</td></tr>
+<tr><td><code>deviation</code></td><td>vec4</td><td><code>[1, 1, 1, 1]</code></td><td>0 to 1 (soft)</td><td>normal: how far the values spread, the standard deviation; about two in three lie within it</td></tr>
+<tr><td><code>radius</code></td><td>float</td><td><code>1</code></td><td>0 to 10 (soft)</td><td>direction and sphere: the length of the directions, the radius of the ball</td></tr>
+<tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft, held within 0 to 1000000000)</td><td>Another number gives every point another value</td></tr>
+<tr><td><code>operation</code></td><td>add | set | multiply</td><td><code>&quot;set&quot;</code></td><td></td><td>How the random value meets the attribute's value<ul><li><code>add</code>: the random value is added to it</li><li><code>set</code>: the random value takes its place</li><li><code>multiply</code>: it is multiplied by the random value</li></ul></td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>type</code></td><td>auto | float | vec2 | vec3 | vec4 | int | uint</td><td><code>&quot;auto&quot;</code></td><td></td><td>The type of the attribute when it is new: one the input has keeps its type, and so does one penumbra knows (position, color, scale, ...)<ul><li><code>auto</code>: a number (float) for a name penumbra does not know</li><li><code>float</code>: one number</li><li><code>vec2</code>: two numbers</li><li><code>vec3</code>: three numbers, such as a position or a direction</li><li><code>vec4</code>: four numbers, such as a colour</li><li><code>int</code>: a whole number</li><li><code>uint</code>: a whole number from 0</li></ul></td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
+<details class="entry node" id="pts.shader"><summary><code class="name">pts.shader</code><span class="sum">A program of your own that runs once per point, written in WGSL in a file; reloads when saved. Its header names the attributes it reads and writes, and its params</span></summary>
+<div class="body">
+<p>A program of your own that runs once per point, written in WGSL in a file; reloads when saved. Its header names the attributes it reads and writes, and its params</p>
+<p class="note">Declares further params per node, from its file or code.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span>: The points the program runs over</li>
+<li><code>pic0</code> <span class="kind">tex</span>: A picture the program samples as pic0, with textureSampleLevel(pic0, pn_clamp, uv, 0.0). Unwired it reads as transparent black</li>
+<li><code>pic1</code> <span class="kind">tex</span>: A second picture, pic1</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span>: The points with the attributes the program writes; the others pass on unchanged</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>file</code></td><td>file (wgsl)</td><td></td><td></td><td>The WGSL file, relative to the project directory; saving it reloads the node. <code>// @write position</code> lines name the attributes, <code>fn main()</code> runs once per point</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#shaders-a-program-over-points-ptsshader">Shaders › A program over points (pts.shader)</a></p>
+</div></details>
+<details class="entry node" id="pts.transform"><summary><code class="name">pts.transform</code><span class="sum">Moves, turns and scales points about a pivot; turns their normals with them</span></summary>
+<div class="body">
+<p>Moves, turns and scales points about a pivot; turns their normals with them</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span>: The points transformed, and the box around them with them</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>translate</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>-10 to 10 (soft)</td><td>Move along x, y, z (z up), in metres</td></tr>
+<tr><td><code>rotate</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>-180 to 180° (soft)</td><td>Turn about the pivot: about x, then y, then z</td></tr>
+<tr><td><code>scale</code></td><td>vec3</td><td><code>[1, 1, 1]</code></td><td>0 to 4 (soft)</td><td>Size along x, y, z around the pivot: 1 keeps the size, negative mirrors</td></tr>
+<tr><td><code>uniform</code></td><td>float</td><td><code>1</code></td><td>0.001 to 1000 (soft)</td><td>Times the scale along every axis: 0.001 turns millimetres into metres</td></tr>
+<tr><td><code>pivot</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>-10 to 10 (soft)</td><td>The point the turn and the scale happen about, in metres</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>order</code></td><td>srt | str | rst | rts | tsr | trs</td><td><code>&quot;srt&quot;</code></td><td></td><td>The order of scale, rotate and translate. Each step also acts on what the steps before it did<ul><li><code>srt</code>: scale, rotate, translate: the move follows the world axes, whatever the turn and size</li><li><code>str</code>: scale, translate, rotate: the move turns with rotate, so the cloud circles the pivot</li><li><code>rst</code>: rotate, scale, translate: a non-uniform scale stretches along the world axes and skews a turned cloud</li><li><code>rts</code>: rotate, translate, scale: the move grows with scale, and a non-uniform scale skews a turned cloud</li><li><code>tsr</code>: translate, scale, rotate: the move grows with scale and turns with rotate, circling the pivot</li><li><code>trs</code>: translate, rotate, scale: the move turns and grows, and a non-uniform scale skews a turned cloud</li></ul></td></tr>
+<tr><td><code>attribute</code></td><td>text</td><td><code>&quot;position&quot;</code></td><td></td><td>The attribute of three numbers that is transformed, TouchDesigner's names too (P, PartVel)</td></tr>
+<tr><td><code>meaning</code></td><td>point | direction</td><td><code>&quot;point&quot;</code></td><td></td><td>What the attribute's numbers are<ul><li><code>point</code>: a place: it moves, turns and scales about the pivot</li><li><code>direction</code>: a direction or a speed, such as velocity: it turns and scales, translate and pivot do not count</li></ul></td></tr>
+<tr><td><code>normals</code></td><td>bool</td><td><code>true</code></td><td></td><td>Turns <code>normal</code> with the points, where they have one, so lit copies and sprites stay right</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 </div>
 <div class="group" id="family-geo">
