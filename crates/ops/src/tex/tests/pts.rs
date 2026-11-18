@@ -261,3 +261,116 @@ fn points_draw_as_sprites_that_face_the_camera_and_as_copies() {
     assert!(s.error.as_deref().is_some_and(|e| e.contains("model")), "{s:?}");
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
+
+/// One point moved to `at`, drawn as a sprite of `size`.
+fn one_sprite(at: [f64; 3], size: f64, sprite: &str) -> Vec<penumbra_graph::Op> {
+    vec![
+        create("/one", "pts.generate", &[("rows", Value::Int(1)), ("cols", Value::Int(1))]),
+        create("/moved", "pts.transform", &[("translate", Value::Vec3(at))]),
+        connect("/one", "/moved", 0),
+        create("/sprite", "geo.from_pts", &[("size", Value::Float(size)), ("sprite", sprite.into())]),
+        connect("/moved", "/sprite", 0),
+        create("/white", "mat.constant", &[]),
+        create("/lit", "geo.assign_material", &[]),
+        connect("/sprite", "/lit", 0),
+        connect("/white", "/lit", 1),
+    ]
+}
+
+#[test]
+fn square_sprites_stay_square_to_a_camera_looking_down() {
+    let Some(gpu) = gpu() else { return };
+    let mut ops = one_sprite([0.8, 0.8, 0.0], 0.4, "square");
+    ops.extend([
+        render(
+            "/down",
+            &[
+                ("width", Value::Int(128)),
+                ("height", Value::Int(128)),
+                ("position", Value::Vec3([0.0, 0.0, 4.0])),
+                ("fov", Value::Float(50.0)),
+                ("antialias", Value::Bool(false)),
+            ],
+        ),
+        connect("/lit", "/down", 0),
+    ]);
+    let mut rig = rig(gpu, None, &ops);
+    let px = drawn(&mut rig, "/down");
+    let (n, b) = coverage(&px);
+    // Square to the picture: the square fills the box around it. Turned by 45 degrees about the
+    // view, as a sprite turned towards the eye with the world's up would be, it fills half.
+    let filled = n as f32 / ((b[2] - b[0] + 1) * (b[3] - b[1] + 1)) as f32;
+    assert!(n > 100 && filled > 0.9, "{n} pixels fill {filled} of their box {b:?}");
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
+
+#[test]
+fn sprites_cast_the_shadow_of_a_disc_facing_the_light() {
+    let Some(gpu) = gpu() else { return };
+    let ops = vec![
+        create(
+            "/grid",
+            "pts.generate",
+            &[("rows", Value::Int(3)), ("cols", Value::Int(3)), ("size", Value::Vec3([2.0, 1.0, 2.0]))],
+        ),
+        // Flat, a metre above the ground, away from the origin.
+        create(
+            "/flat",
+            "pts.transform",
+            &[("rotate", Value::Vec3([-90.0, 0.0, 0.0])), ("translate", Value::Vec3([3.0, 3.0, 1.0]))],
+        ),
+        connect("/grid", "/flat", 0),
+        create("/sprites", "geo.from_pts", &[("size", Value::Float(0.3))]),
+        connect("/flat", "/sprites", 0),
+        create("/red", "mat.constant", &[("color", Value::Vec4([1.0, 0.0, 0.0, 1.0]))]),
+        create("/red_sprites", "geo.assign_material", &[]),
+        connect("/sprites", "/red_sprites", 0),
+        connect("/red", "/red_sprites", 1),
+        create("/ground", "geo.primitive", &[("size", Value::Vec3([4.0, 4.0, 0.02]))]),
+        create("/ground_at", "geo.transform", &[("translate", Value::Vec3([3.0, 3.0, -0.01]))]),
+        connect("/ground", "/ground_at", 0),
+        create("/white", "mat.phong", &[]),
+        create("/lit_ground", "geo.assign_material", &[]),
+        connect("/ground_at", "/lit_ground", 0),
+        connect("/white", "/lit_ground", 1),
+        create("/scene", "geo.merge", &[]),
+        connect("/red_sprites", "/scene", 0),
+        connect("/lit_ground", "/scene", 1),
+        create(
+            "/sun",
+            "light.directional",
+            &[
+                ("position", Value::Vec3([5.0, 3.0, 4.0])),
+                ("target", Value::Vec3([3.0, 3.0, 0.0])),
+                ("shadows", Value::Bool(true)),
+            ],
+        ),
+        render(
+            "/down",
+            &[
+                ("width", Value::Int(192)),
+                ("height", Value::Int(192)),
+                ("position", Value::Vec3([3.0, 3.0, 6.0])),
+                ("target", Value::Vec3([3.0, 3.0, 0.0])),
+                ("fov", Value::Float(45.0)),
+                ("antialias", Value::Bool(false)),
+            ],
+        ),
+        connect("/scene", "/down", 0),
+        connect("/sun", "/down", 2),
+    ];
+    let mut rig = rig(gpu, None, &ops);
+    // The ground alone would do for `drawn`: wait for the points first.
+    points(&mut rig, "/flat");
+    let px = drawn(&mut rig, "/down");
+    let count = |f: &dyn Fn(&[f32; 4]) -> bool| px.data.iter().filter(|p| p[3] > 0.5 && f(p)).count();
+    let sprites = count(&|p| p[0] > 0.5 && p[1] < 0.2);
+    let shadow = count(&|p| p[0] < 0.2 && p[1] < 0.2 && p[2] < 0.2);
+    // Nine discs facing the light throw nine ellipses a little longer than the discs; from up
+    // here the discs, a metre nearer, look larger. Discs standing edge-on to the light would
+    // throw slivers.
+    assert!(sprites > 200, "{sprites}");
+    let ratio = shadow as f32 / sprites as f32;
+    assert!((0.5..1.2).contains(&ratio), "{shadow} shadow pixels for {sprites} sprite pixels");
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
