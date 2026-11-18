@@ -240,7 +240,7 @@ impl Operator for Transform {
             "n2" => Some(row3(n2)),
             _ => None,
         };
-        let out = self.own.run(cx, gpu, &spec, points, false, &param)?;
+        let out = self.own.run(cx, gpu, &spec, points, false, &param, &[])?;
         let bounds = match points.bounds() {
             Some(b) if target == "position" => moved(b, &m),
             b => b,

@@ -2898,6 +2898,7 @@ mod liquid;
 mod mesh_out;
 mod palettes;
 mod pts;
+mod pts_pictures;
 mod pts_programs;
 mod reduce;
 mod resample;

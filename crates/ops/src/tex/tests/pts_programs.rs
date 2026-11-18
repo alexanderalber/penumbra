@@ -49,7 +49,7 @@ fn fresh(rig: &mut Rig, path: &str, name: &str) -> Vec<[f32; 4]> {
 }
 
 /// Positions after the program, with no warning or error.
-fn clean(rig: &mut Rig, path: &str) -> Points {
+pub(super) fn clean(rig: &mut Rig, path: &str) -> Points {
     let (s, p) = settled(rig, path, |s| s.has_output);
     assert_eq!((s.error, s.warning), (None, None), "{path}");
     p.unwrap()

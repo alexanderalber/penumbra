@@ -292,7 +292,7 @@ impl Operator for Noise {
         let spec = spec(lookup, lookup_ty, target, ty, along);
         self.moving = cx.float("speed")? != 0.0;
         let param = |name: &str| cx.param(name).cloned();
-        let out = self.own.run(cx, gpu, &spec, points, self.moving, &param)?;
+        let out = self.own.run(cx, gpu, &spec, points, self.moving, &param, &[])?;
 
         // Added noise moves each position by at most |amplitude| + |offset| per axis; other
         // ways leave no box worth keeping.

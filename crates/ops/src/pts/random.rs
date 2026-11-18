@@ -186,7 +186,7 @@ impl Operator for Random {
             "high" => cx.param("max").cloned(),
             other => cx.param(other).cloned(),
         };
-        let out = self.own.run(cx, gpu, &spec, points, false, &param)?;
+        let out = self.own.run(cx, gpu, &spec, points, false, &param, &[])?;
 
         // The box the values lie in, where there is one: positions set lie in it, positions
         // added to move by at most it.
