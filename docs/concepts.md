@@ -147,8 +147,13 @@ The families:
   every point. `pts.noise`, `pts.transform`, `pts.math` and `pts.random` change attributes:
   noise over space and time, a move and turn about a pivot, an expression typed as a param
   (`position.z + sin(time) * 0.1`), random values. `pts.shader` runs a WGSL program of your own
-  per point ([Shaders](shaders.md#a-program-over-points-ptsshader)). The viewer shows how many
-  points there are, their attributes and the box around them.
+  per point ([Shaders](shaders.md#a-program-over-points-ptsshader)). `pts.from_tex` makes a
+  point per texel of a picture, or per cell when sampled down: coloured points on a grid, a
+  relief lifted by brightness, positions stored in a picture, or a depth picture as a point
+  cloud. `tex.from_pts` turns one attribute back into a picture, a texel per point, for
+  `tex.shader` and `geo.tex_instance`. `pts.lookup_tex` gives each point a value from a
+  picture, looked up at its `uv` or its position. The viewer shows how many points there are,
+  their attributes and the box around them.
 - **`vol`**: volumes, such as smoke. `vol.smoke` simulates smoke in a box: emitters blow hot
   smoke in, the smoke rises against `gravity`, swirls and fades. `vol.emitter` is one emitter;
   wire several into the `emitter` inputs of `vol.smoke`, 64 at most, later ones acting on what

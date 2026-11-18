@@ -100,6 +100,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("tex.feedback", &["substeps", "iterate", "passes", "repeat"]),
     ("tex.fluid", &["simulation", "physics", "smoke", "ink"]),
     ("tex.from_chan", &["chop to"]),
+    ("tex.from_pts", &["pop to top", "points to texture", "position map", "attribute texture"]),
     ("tex.hsv", &["hsv adjust"]),
     ("tex.image_file", &["movie file in"]),
     ("tex.level", &["math"]),
@@ -212,6 +213,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
             "planar",
         ],
     ),
+    ("pts.from_tex", &["top to pop", "image to points", "point cloud", "depth", "relief", "pixels"]),
     (
         "pts.generate",
         &[
@@ -227,6 +229,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
             "particles",
         ],
     ),
+    ("pts.lookup_tex", &["lookup texture pop", "sample", "texture", "colour from image", "uv"]),
     (
         "pts.math",
         &[

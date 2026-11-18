@@ -28,6 +28,22 @@ pub(crate) fn input<'a>(cx: &'a CookContext<'_>) -> Result<&'a Points, CookError
     }
 }
 
+/// The picture on input `index`, or why there is none: a wired picture still on its way is
+/// waited for.
+pub(crate) fn picture<'a>(cx: &'a CookContext<'_>, index: usize, name: &str) -> Result<&'a Tex, CookError> {
+    match cx.input_as::<Tex>(index) {
+        Some(t) => Ok(t),
+        None if cx.def().inputs.get(index).is_some_and(Option::is_some) => {
+            if cx.input_stuck(index) {
+                Err(CookError::failed(format!("the node wired to `{name}` has no picture")))
+            } else {
+                Err(CookError::Pending)
+            }
+        }
+        None => Err(CookError::failed(format!("connect a picture to `{name}`"))),
+    }
+}
+
 /// The show time, frame and the length of a frame in seconds, as a program sees them; zeros
 /// without reading the clock when the program does not use them.
 pub(crate) fn time(cx: &CookContext<'_>, timed: bool) -> (f64, i64, f64) {
@@ -50,7 +66,8 @@ pub(crate) struct Own {
 
 impl Own {
     /// Runs `spec` over `input`. `timed`: the program reads the time. `param`: the values of
-    /// the spec's params.
+    /// the spec's params. `pictures`: `pic0` and `pic1`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn run(
         &mut self,
         cx: &CookContext<'_>,
@@ -59,6 +76,7 @@ impl Own {
         input: &Points,
         timed: bool,
         param: &dyn Fn(&str) -> Option<Value>,
+        pictures: &[Option<&Tex>],
     ) -> Result<Points, CookError> {
         let generated = program::generate(spec, &Shape::of(input), program::storage_budget(gpu))?;
         let program = match self.program.take() {
@@ -66,7 +84,7 @@ impl Own {
             _ => Program::cached(gpu, generated)?,
         };
         let (seconds, frame, dt) = time(cx, timed);
-        let run = Run { seconds, frame, dt, param, pictures: &[] };
+        let run = Run { seconds, frame, dt, param, pictures };
         let out = program.run(gpu, input, &mut self.outputs, &run);
         self.program = Some(program);
         Ok(out?)

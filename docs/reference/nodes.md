@@ -8,7 +8,7 @@ Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [pts](#p
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.dilate](#texdilate), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.erode](#texerode), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.liquid](#texliquid), [tex.liquid_emitter](#texliquid_emitter), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.render_volume](#texrender_volume), [tex.resolution](#texresolution), [tex.scatter](#texscatter), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.dilate](#texdilate), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.erode](#texerode), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.from_pts](#texfrom_pts), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.liquid](#texliquid), [tex.liquid_emitter](#texliquid_emitter), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.render_volume](#texrender_volume), [tex.resolution](#texresolution), [tex.scatter](#texscatter), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
 
 *inputs:* [tex.ndi_in](#texndi_in), [tex.screen_in](#texscreen_in), [tex.spout_in](#texspout_in), [tex.video_in](#texvideo_in)
 
@@ -432,6 +432,24 @@ Outputs: `out` (tex).
 | `layout` | auto \| rows \| rgba | `"auto"` |  | How the channels become pixels; auto: rgba when the channels are exactly r, g, b (and a), as chan.from_tex names them, else rows; rows: one grey row per channel, as many pixels wide as there are samples; rgba: the first four channels as red, green, blue and alpha of one row (alpha 1 where missing) |
 | `low` | float | `0` | -1 to 1 (soft) | Channel value that becomes black (0); lower values go below 0 |
 | `high` | float | `1` | 0 to 2 (soft) | Channel value that becomes white (1); higher values go above 1 |
+
+### tex.from_pts
+
+One attribute of points as a picture of 32-bit floats, one texel per point: positions, colours or any other attribute for tex.shader, tex.scatter and geo.tex_instance
+
+Inputs:
+
+- `in` (pts)
+
+Outputs:
+
+- `out` (tex): The picture. Alpha is 1 at each point (a four-number attribute brings its own) and 0 in the texels past the last point
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `attribute` | text | `"position"` |  | The attribute that fills the picture, TouchDesigner's names too (P, Color, PointScale). One number becomes grey, two red and green, three red, green and blue. Four numbers fill alpha too |
+| `layout` | auto \| rows | `"auto"` |  | Where each point's texel lies; auto: points made as a grid keep its rows and columns: a grid of 100 rows and 200 columns gives a picture 200 wide and 100 high. Other points fill rows as `rows` does; rows: point 0 at the top left, then along the row, `width` texels to a row |
+| `width` | int | `0` (square) | 0 to 4096 (soft, held within 0 to 16384) | Texels in a row when the points fill rows. 0 makes the picture about square; 0: square |
 
 ### tex.hsv
 
@@ -2202,7 +2220,32 @@ Outputs: `out` (table).
 
 ## pts
 
-[pts.generate](#ptsgenerate), [pts.math](#ptsmath), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.transform](#ptstransform)
+[pts.from_tex](#ptsfrom_tex), [pts.generate](#ptsgenerate), [pts.lookup_tex](#ptslookup_tex), [pts.math](#ptsmath), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.transform](#ptstransform)
+
+### pts.from_tex
+
+One point per texel of a picture, or per cell when sampled down: coloured points on a grid, a relief lifted by brightness, positions stored in a picture, or a depth picture as a point cloud
+
+Inputs:
+
+- `in` (tex): The picture: 8-bit, half floats or 32-bit floats
+
+Outputs:
+
+- `out` (pts): The points in rows and columns, row 0 at the top of the picture, with `position`, `uv` and `weight`. color and height add `color` and `normal`
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `mode` | color \| height \| position \| depth | `"color"` |  | What the picture's channels mean; color: the points lie on a flat grid in the picture's shape, upright and facing -y like pts.generate's grid. `color` is the picture's rgba as stored (premultiplied); height: the grid of `color`, each point lifted towards -y by `channel` times `height`: an image as a relief of points; position: red, green and blue are x, y and z in metres, as a picture from tex.from_pts or a texel simulation holds them; depth: `channel` times `depth_scale` is the distance in metres along the view of a camera at the origin looking along +y, z up, with the vertical field of view `fov`. A depth of 0 gives weight 0 |
+| `sampling` | count \| step | `"count"` |  | How many points the picture gives; count: about `count` points, spread evenly in rows and columns in the picture's shape; step: a point for every `step` texels across and down; 1 is a point per texel |
+| `count` | int | `20000` | 100 to 1000000 (soft, held within 1 to 4194304) | About this many points; never more than the picture has texels. The viewer shows the count made. Does something only with sampling count. |
+| `step` | int | `4` | 1 to 64 (soft, held within 1 to 4096) | Texels from one point to the next, across and down: 4 makes a 1920x1080 picture 480x270 points. Does something only with sampling step. |
+| `filter` | nearest \| average | `"nearest"` |  | What a point takes from its cell of texels when the picture is sampled down; nearest: the texel at the cell's centre. Keeps positions and depths exact; average: the mean of the cell's texels, up to 8x8 of them: smoother colours, fewer flickering points in a moving picture. Blends positions and depths at edges |
+| `size` | float | `1` | 0.01 to 10 m (soft, held within 0 to 10000 m) | color and height: the width of the grid; its height follows the picture's shape. Does something only with mode color or height. |
+| `height` | float | `0.2` | -1 to 1 m (soft) | height: how far a value of 1 in `channel` lifts a point towards -y. Does something only with mode height. |
+| `channel` | luminance \| red \| green \| blue \| alpha | `"luminance"` |  | height and depth: the channel that holds the number; luminance: the brightness of red, green and blue (Rec. 709 weights); red: red; green: green; blue: blue; alpha: alpha. Does something only with mode height or depth. |
+| `fov` | float | `60` | 20 to 120° (soft, held within 1 to 170°) | depth: the camera's vertical field of view. Depth cameras see about 45 to 60 degrees. Does something only with mode depth. |
+| `depth_scale` | float | `1` | 0 to 100 (soft) | depth: metres per unit of `channel`. A 16-bit depth picture in millimetres loads as 0 to 1 for 0 to 65.535 m: use 65.535. Does something only with mode depth. |
 
 ### pts.generate
 
@@ -2224,6 +2267,35 @@ Outputs:
 | `cols` | int | `10` | 1 to 1000 (soft, held within 1 to 4096) | Grid: points from left to right. Does something only with shape grid. |
 | `size` | vec3 | `[1, 1, 1]` | 0 to 10 (soft) | Grid: x wide, z high. Line: x long. Circle and sphere: the diameter is x. Box: x, y, z. In metres |
 | `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | random: another number gives other places for the points. Does something only with distribution random. |
+
+### pts.lookup_tex
+
+Each point takes a value from a picture: colours from an image or a video, sizes or heights from brightness. Where it looks comes from `uv` or the point's position
+
+Inputs:
+
+- `in` (pts): The points
+- `picture` (tex): The picture the points sample: 8-bit, half floats or 32-bit floats
+
+Outputs:
+
+- `out` (pts): The points with the attribute set from the picture; the others pass on unchanged
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `lookup` | text | `"uv"` |  | The attribute that says where each point looks, TouchDesigner's names too (Tex, P). Two numbers are the place in the picture: 0, 0 top left, 1, 1 bottom right. Three numbers are a place in space, projected onto `plane` |
+| `plane` | xz \| xy \| yz | `"xz"` |  | A lookup of three numbers: the plane the picture lies in. The picture's top is towards the plane's second axis; xz: upright, facing -y, as a picture seen from the front: x to the right, z up; xy: flat, seen from above: x to the right, y up; yz: upright, facing x, seen from the side: y to the right, z up |
+| `fit` | bounds \| box | `"bounds"` |  | A lookup of three numbers: the box of space the picture covers; bounds: the box around the points, where the node before knows it; else the box of `center` and `extent`, with a warning; box: the box of `center` and `extent` |
+| `center` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | fit box: the middle of the box, in metres. Does something only with fit box. |
+| `extent` | vec3 | `[1, 1, 1]` | 0 to 10 (soft) | fit box: the size of the box along x, y and z, in metres; the two axes of `plane` count. Does something only with fit box. |
+| `filter` | linear \| nearest | `"linear"` |  | How a place between texels is read; linear: blended from the four nearest texels: smooth; nearest: the texel the place falls in: exact values, blocky |
+| `extend` | clamp \| repeat \| mirror \| zero | `"clamp"` |  | What a place outside the picture (below 0 or above 1) reads; clamp: the nearest edge texel; repeat: the picture again, tiled; mirror: the picture again, flipped at every edge; zero: transparent black |
+| `channels` | rgba \| rgb \| luminance \| red \| green \| blue \| alpha | `"rgba"` |  | What the picture gives the attribute. An attribute of one number takes luminance unless one channel is chosen; rgba: all four channels; rgb: red, green and blue; a colour keeps its alpha; luminance: the brightness of red, green and blue (Rec. 709) in every number; a colour keeps its alpha; red: red in every number; green: green in every number; blue: blue in every number; alpha: alpha in every number |
+| `from` *(more)* | vec2 | `[0, 1]` | -1 to 2 (soft) | The range of picture values that maps onto `to`: with from 0, 1 and to 1, 3 a black texel gives 1 and a white one 3 |
+| `to` *(more)* | vec2 | `[0, 1]` | -1 to 4 (soft) | The range `from` maps onto |
+| `attribute` | text | `"color"` |  | The attribute the value goes into, TouchDesigner's names too (Color, PointScale, P). A new attribute is made |
+| `operation` | add \| set \| multiply | `"set"` |  | How the picture's value meets the attribute's value; add: the picture's value is added to it; set: the picture's value takes its place; multiply: it is multiplied by the picture's value |
+| `type` *(more)* | auto \| float \| vec2 \| vec3 \| vec4 \| int \| uint | `"auto"` |  | The type of the attribute when it is new: one the input has keeps its type, and so does one penumbra knows (position, color, scale, ...); auto: a number (float) for a name penumbra does not know; float: one number; vec2: two numbers; vec3: three numbers, such as a position or a direction; vec4: four numbers, such as a colour; int: a whole number; uint: a whole number from 0 |
 
 ### pts.math
 

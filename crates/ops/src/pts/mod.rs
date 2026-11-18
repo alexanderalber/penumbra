@@ -1,17 +1,21 @@
 //! `pts` nodes: points on the GPU ([`penumbra_gpu::Points`]), a list of attributes with an
 //! element per point. A generator makes them (`pts.generate`); `geo.from_pts` turns them into
-//! geometry that `tex.render` draws.
+//! geometry that `tex.render` draws. `pts.from_tex` and `tex.from_pts` turn pictures into points
+//! and back; `pts.lookup_tex` colours points from a picture.
 
 use penumbra_core::Error;
 use penumbra_graph::{DataKind, FnNodeType, NodeDesc, NodeTypes, Operator};
 
+pub mod from_tex;
 pub mod generate;
+pub mod lookup_tex;
 pub mod math;
 pub mod noise;
 pub(crate) mod program;
 pub mod random;
 pub mod shader;
 pub(crate) mod to_geo;
+pub mod to_tex;
 pub mod transform;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
@@ -22,6 +26,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     transform::register(types)?;
     math::register(types)?;
     random::register(types)?;
+    from_tex::register(types)?;
+    to_tex::register(types)?;
+    lookup_tex::register(types)?;
     types.register(FnNodeType::new(
         NodeDesc::new("pts.null", "Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes")
             .input("in", DataKind::Pts)

@@ -366,6 +366,217 @@ impl Points {
         copy_rows(gpu, &texels, count, &tex)?;
         Ok(Some(tex))
     }
+
+    /// The attribute `name` as a picture of `width` by `height` texels, point `i` at texel
+    /// `(i % width, i / width)`, every texel written: past the count it is transparent black.
+    /// A scalar becomes `(v, v, v, 1)`, a `vec2f` `(x, y, 0, 1)`, a `vec3f` `(x, y, z, 1)`; a
+    /// `vec4f` keeps its four numbers. So alpha is 1 where a point is, unless a `vec4f` says
+    /// otherwise. A standard attribute the points lack holds its default at every point.
+    ///
+    /// The picture is [`FLOAT_FORMAT`] where the device filters 32-bit floats
+    /// ([`Gpu::float_textures`]); elsewhere it is [`crate::FORMAT`], rounded to half floats, so
+    /// that every node can sample it. `Err` for an attribute the points lack and penumbra does
+    /// not know, and for a picture too small for the points.
+    pub fn attr_picture(
+        &self,
+        gpu: &Gpu,
+        name: &str,
+        (width, height): (u32, u32),
+        textures: &mut TexRing,
+        scratch: &mut BufferRing,
+    ) -> Result<Tex, Error> {
+        let count = self.count.at_most();
+        if u64::from(width) * u64::from(height) < u64::from(count) || width == 0 || height == 0 {
+            return Err(Error::new(format!("{count} points do not fit a picture of {width}x{height}")));
+        }
+        let attr = self.attr(name);
+        let standard = default_of(name);
+        let (kind, fill) = match (attr.map(Attr::ty), standard) {
+            (Some(AttrType::F32), _) => (0, [0.0; 4]),
+            (Some(AttrType::Vec2), _) => (1, [0.0; 4]),
+            (Some(AttrType::U32), _) => (2, [0.0; 4]),
+            (Some(AttrType::I32), _) => (3, [0.0; 4]),
+            (Some(AttrType::Vec3), _) => (4, [0.0; 4]),
+            (Some(AttrType::Vec4), _) => (5, [0.0; 4]),
+            (None, Some(s)) => (6, texel_of(s.ty, s.default)),
+            (None, None) => {
+                return Err(Error::new(format!("the points have no attribute `{}`", canonical(name))));
+            }
+        };
+        let float = gpu.float_textures();
+        let (format, texel_bytes, align) =
+            if float { (FLOAT_FORMAT, 16u32, 16u32) } else { (crate::FORMAT, 8, 32) };
+        let stride = width.next_multiple_of(align);
+        let tex = textures.next_in(gpu, width, height, format, &format!("pts {}", canonical(name)))?;
+        let out = scratch.next(
+            gpu,
+            u64::from(stride) * u64::from(height) * u64::from(texel_bytes),
+            "pts picture",
+        )?;
+        let src = match attr {
+            Some(a) if count > 0 => a.buffer().clone(),
+            _ => Buffer::new(gpu, 16, "pts no attribute")?,
+        };
+        let program = gpu.cached_compute("pts picture", PICTURE, &picture_params())?;
+        let param = |n: &str| match n {
+            "kind" => Some(Value::Int(kind)),
+            "count" => Some(Value::Int(i64::from(count))),
+            "stride" => Some(Value::Int(i64::from(stride))),
+            "half" => Some(Value::Int(i64::from(!float))),
+            "fill" => Some(Value::Vec4(fill.map(f64::from))),
+            _ => None,
+        };
+        let input =
+            Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
+        program.run_with(
+            gpu,
+            &[&src, &out],
+            &[Step { entry: "picture", out: Out::grid(width, height), input: &input }],
+        )?;
+        copy_picture(gpu, &out, stride * texel_bytes, &tex)?;
+        Ok(tex)
+    }
+}
+
+/// The texel a value of type `ty` becomes in [`Points::attr_picture`].
+fn texel_of(ty: AttrType, v: [f32; 4]) -> [f32; 4] {
+    match ty {
+        AttrType::F32 | AttrType::U32 | AttrType::I32 => [v[0], v[0], v[0], 1.0],
+        AttrType::Vec2 => [v[0], v[1], 0.0, 1.0],
+        AttrType::Vec3 => [v[0], v[1], v[2], 1.0],
+        AttrType::Vec4 => v,
+    }
+}
+
+/// Writes every texel of a picture from the elements of an attribute, into a buffer laid out
+/// for a copy into a texture: rows of `params.stride` texels, 32-bit floats or half floats.
+const PICTURE: &str = "
+@group(2) @binding(0) var<storage, read> words: array<u32>;
+@group(2) @binding(1) var<storage, read_write> texels: array<u32>;
+
+fn pts_word(i: u32) -> f32 {
+    return bitcast<f32>(words[i]);
+}
+
+// A half float from a float, rounded to the nearest (ties to even). pack2x16float would do it,
+// but needs a shader capability not every device has.
+fn pts_half(f: f32) -> u32 {
+    let x = bitcast<u32>(f);
+    let sign = (x >> 16u) & 0x8000u;
+    if (x & 0x7fffffffu) > 0x7f800000u {
+        return sign | 0x7e00u;
+    }
+    let e = i32((x >> 23u) & 0xffu) - 112;
+    var m = x & 0x7fffffu;
+    if e >= 31 {
+        return sign | 0x7c00u;
+    }
+    if e <= 0 {
+        if e < -10 {
+            return sign;
+        }
+        m = m | 0x800000u;
+        let shift = u32(14 - e);
+        var r = m >> shift;
+        let rest = m & ((1u << shift) - 1u);
+        let mid = 1u << (shift - 1u);
+        if rest > mid || (rest == mid && (r & 1u) == 1u) {
+            r += 1u;
+        }
+        return sign | r;
+    }
+    var r = (u32(e) << 10u) | (m >> 13u);
+    let rest = m & 0x1fffu;
+    if rest > 0x1000u || (rest == 0x1000u && (r & 1u) == 1u) {
+        r += 1u;
+    }
+    return sign | r;
+}
+
+fn pts_pack(a: f32, b: f32) -> u32 {
+    return pts_half(a) | (pts_half(b) << 16u);
+}
+
+@compute @workgroup_size(64)
+fn picture(@builtin(global_invocation_id) id: vec3u) {
+    if id.x >= pn.size.x || id.y >= pn.size.y {
+        return;
+    }
+    let i = id.y * pn.size.x + id.x;
+    var v = vec4f(0.0);
+    if i < u32(max(params.count, 0)) {
+        switch params.kind {
+            case 0: {
+                v = vec4f(vec3f(pts_word(i)), 1.0);
+            }
+            case 1: {
+                v = vec4f(pts_word(2u * i), pts_word(2u * i + 1u), 0.0, 1.0);
+            }
+            case 2: {
+                v = vec4f(vec3f(f32(words[i])), 1.0);
+            }
+            case 3: {
+                v = vec4f(vec3f(f32(bitcast<i32>(words[i]))), 1.0);
+            }
+            case 4: {
+                v = vec4f(pts_word(4u * i), pts_word(4u * i + 1u), pts_word(4u * i + 2u), 1.0);
+            }
+            case 5: {
+                v = vec4f(pts_word(4u * i), pts_word(4u * i + 1u), pts_word(4u * i + 2u), pts_word(4u * i + 3u));
+            }
+            default: {
+                v = params.fill;
+            }
+        }
+    }
+    let o = id.y * u32(params.stride) + id.x;
+    if params.half == 1 {
+        texels[2u * o] = pts_pack(v.x, v.y);
+        texels[2u * o + 1u] = pts_pack(v.z, v.w);
+    } else {
+        texels[4u * o] = bitcast<u32>(v.x);
+        texels[4u * o + 1u] = bitcast<u32>(v.y);
+        texels[4u * o + 2u] = bitcast<u32>(v.z);
+        texels[4u * o + 3u] = bitcast<u32>(v.w);
+    }
+}
+";
+
+fn picture_params() -> [ParamSpec; 5] {
+    [
+        ParamSpec::int("kind", 0),
+        ParamSpec::int("count", 0),
+        ParamSpec::int("stride", 0),
+        ParamSpec::int("half", 0),
+        ParamSpec::vec4("fill", [0.0; 4]),
+    ]
+}
+
+/// Copies the whole of `tex` from `src`, rows `row_bytes` apart.
+fn copy_picture(gpu: &Gpu, src: &Buffer, row_bytes: u32, tex: &Tex) -> Result<(), Error> {
+    let (w, h) = tex.size();
+    let ((), error) = gpu.scoped(|| {
+        let mut encoder = gpu
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pts picture") });
+        encoder.copy_buffer_to_texture(
+            wgpu::TexelCopyBufferInfo {
+                buffer: src.buffer(),
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row_bytes),
+                    rows_per_image: None,
+                },
+            },
+            tex.texture().as_image_copy(),
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        gpu.submit([encoder.finish()]);
+    });
+    match error {
+        Some(e) => Err(Error::new(format!("cannot copy the points into a picture: {e}"))),
+        None => Ok(()),
+    }
 }
 
 /// Points per row of the pictures [`Points::attr_texture`] makes.
