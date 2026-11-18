@@ -1984,7 +1984,7 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 <li><a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a>, then a material (<a class="ref" href="#mat.constant"><code>mat.constant</code></a> through <a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a>), a light and a camera into <a class="ref" href="#tex.render"><code>tex.render</code></a>, as for any geometry.
 </li>
 </ol>
-<p>The viewer on <a class="ref" href="#pts.particles"><code>pts.particles</code></a> shows how many particles live, a frame late: &quot;15024 of at most 20000 points&quot;. <code>max</code> is the most at once; while that many live, births wait.</p>
+<p>The viewer on <a class="ref" href="#pts.particles"><code>pts.particles</code></a> shows how many particles live, a frame late: &quot;15024 of at most 15130 points&quot;. &quot;At most&quot; is the count read back a frame or two ago plus the births since: the work over the particles covers that many. <code>max</code> is the most particles at once. While that many live, the births of a step that do not fit are dropped, not saved for later.</p>
 <h3 id="particles-a-force-in-the-loop">A force in the loop</h3>
 <p>Wire the particles into the forces, and the last force into a <a class="ref" href="#pts.null"><code>pts.null</code></a>. Then wire the null back into the particles' <code>previous</code> input:</p>
 <pre><code>pts.generate -&gt; pts.particles -&gt; pts.noise -&gt; pts.force -&gt; pts.null --+
@@ -2001,12 +2001,20 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 </ul>
 <p>Each step <a class="ref" href="#pts.particles"><code>pts.particles</code></a> starts from what the null held a step ago. It gives <code>force</code> out as 0, and the loop adds the forces of this step. A particle gains <code>force / mass</code> in speed each second, loses some to <code>drag</code>, and moves by its speed. The loop must keep the particles as they are: a <a class="ref" href="#pts.delete"><code>pts.delete</code></a> in it is refused with a warning. To end particles from the loop, write a number above 0 into the attribute <code>kill</code> (<a class="ref" href="#pts.math"><code>pts.math</code></a>, result <code>kill</code>, expression <code>position.z &lt; 0.0</code>).</p>
 <p><strong>A mask:</strong> a <a class="ref" href="#pts.field"><code>pts.field</code></a> before the <a class="ref" href="#pts.force"><code>pts.force</code></a> writes <code>weight</code>, 1 inside its shape and 0 outside. The force multiplies by <code>weight</code>, so it acts only there.</p>
+<p><strong>Wind</strong> pulls each particle towards the wind's speed. However light the particle, it never passes that speed: <a class="ref" href="#pts.particles"><code>pts.particles</code></a> steps the wind's part of the speed so that it cannot overshoot. A negative strength pushes nothing.</p>
+<h4 id="particles-two-traps">Two traps</h4>
+<ul>
+<li><strong>What the loop writes stays.</strong> Every attribute but <code>force</code> comes back into the next step as the loop left it. A <a class="ref" href="#pts.field"><code>pts.field</code></a> with <code>combine</code> add, or a <a class="ref" href="#pts.math"><code>pts.math</code></a> that adds to an attribute, adds again at every step: the value grows frame after frame. Set the value (<code>combine</code> set, an expression that does not read the attribute), or reset it at the start of the loop.
+</li>
+<li><strong>An inherited <code>weight</code> masks every force.</strong> The particles take every attribute of their source point. Points from <a class="ref" href="#pts.from_tex"><code>pts.from_tex</code></a> carry <code>weight</code> (the picture's alpha), so a force with the default <code>mask</code> acts on each particle as strongly as its birth texel was opaque, and not at all where it was transparent. Clear <code>mask</code> on the force, or write <code>weight</code> in the loop.
+</li>
+</ul>
 <h3 id="particles-colour-over-life">Colour over life</h3>
 <p>Every particle has <code>age</code> (seconds since its birth) and <code>life</code> (the seconds it lives). <code>age / life</code> runs from 0 at birth to 1 at death. A <a class="ref" href="#pts.math"><code>pts.math</code></a> after the particles, <code>result</code> <code>color</code>:</p>
 <pre><code>vec4f(mix(vec3f(1.0, 0.95, 0.6), vec3f(0.95, 0.08, 0.02), age / life), 1.0)
 </code></pre>
 <p>turns them from pale yellow to red. The same works for <code>scale</code>: <code>1.0 - age / life</code> shrinks them as they age.</p>
-<p><strong>Random per particle:</strong> <code>rand_key(id, 0u)</code> gives each particle its own number in 0..1 that stays with it. <code>rand(0u)</code> is keyed by the place in the list, and the place changes when older particles die.</p>
+<p><strong>Random per particle:</strong> <code>rand_key(id, 0u)</code> gives each particle its own number in 0..1 that stays with it. <code>rand(0u)</code> is keyed by the place in the list, and the place changes when older particles die. <a class="ref" href="#pts.random"><code>pts.random</code></a> and <a class="ref" href="#pts.delete"><code>pts.delete</code></a> by random follow the <code>id</code> by themselves.</p>
 <h3 id="particles-trails">Trails</h3>
 <p><a class="ref" href="#pts.trail"><code>pts.trail</code></a> puts a line behind every particle through the places it had over the last frames. TouchDesigner's Trail POP with a Line MAT does the same.</p>
 <pre><code>pts.particles -&gt; pts.trail -&gt; pts.math -&gt; geo.from_pts (mode lines)
@@ -2021,7 +2029,7 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 </ol>
 <p>A new particle starts with a trail of its birth place, which grows from there. A trail ends with its particle. The trail carries <code>position</code>, <code>id</code>, <code>trail</code> and the attributes in <code>attributes</code> (<code>color width scale</code> by default): each place keeps the value the particle had then. Trails cost <code>length</code> points per particle: 100 000 particles with trails of 32 are 3.2 million points.</p>
 <h3 id="particles-time">Time</h3>
-<p>One step per frame, as long as the frame. While the show stands still the particles stand still. Stepped frame by frame (<a class="ref" href="#cook.step"><code>cook.step</code></a>), the same steps give the same particles. <code>reset</code> starts over, as does <a class="ref" href="#node.reset"><code>node.reset</code></a> and the <code>reset</code> of a component the particles sit in. <code>warm_up</code> simulates that many seconds at once at the start, without the loop's forces. <a class="ref" href="#pts.trail"><code>pts.trail</code></a> follows the same clock: a place per frame, none while time stands, <code>reset</code> and <a class="ref" href="#node.reset"><code>node.reset</code></a> start the trails over.</p>
+<p>One step per frame, as long as the frame. While the show stands still the particles stand still. Stepped frame by frame (<a class="ref" href="#cook.step"><code>cook.step</code></a>), the same steps give the same particles. <code>reset</code> starts over, as does <a class="ref" href="#node.reset"><code>node.reset</code></a> and the <code>reset</code> of a component the particles sit in. <code>warm_up</code> simulates that many seconds ahead at the start, without the loop's forces. While the show runs this takes about 4 ms of each frame, and no particles show until it is done; stepped, it all happens in the first frame. Stepped frames also wait for every program the loop's nodes compile, so a script needs no <code>wait</code> before <a class="ref" href="#cook.step"><code>cook.step</code></a>. <a class="ref" href="#pts.trail"><code>pts.trail</code></a> follows the same clock: a place per frame, none while time stands, <code>reset</code> and <a class="ref" href="#node.reset"><code>node.reset</code></a> start the trails over.</p>
 <h3 id="particles-what-each-particle-carries">What each particle carries</h3>
 <p><code>id</code> (a number no other particle of the run had; numbers start again at 0 after a reset, and after about four billion births), <code>age</code>, <code>life</code>, <code>velocity</code>, <code>force</code>, <code>position</code>, and every attribute of its source point: <code>color</code>, <code>scale</code>, <code>normal</code>, <code>uv</code>. Particles stay in the order they were born, oldest first. A <code>mass</code> or <code>drag</code> attribute, from the source or from a node in the loop, takes the place of the param for that particle.</p>
 </div></details>
@@ -3276,7 +3284,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </ul>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">tex</span>: The picture. Alpha is 1 at each point (a four-number attribute brings its own) and 0 in the texels past the last point</li>
+<li><code>out</code> <span class="kind">tex</span>: The picture. Alpha is 1 at each point (a four-number attribute brings its own) and 0 in the texels past the last point. Points whose number is on the GPU (after pts.delete, particles) fill a picture sized for their capacity</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
@@ -5961,14 +5969,14 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
 <tr><td><code>by</code></td><td>expression | index | box | sphere | random</td><td><code>&quot;expression&quot;</code></td><td></td><td>Which points are deleted<ul><li><code>expression</code>: those for which <code>expression</code> is true</li><li><code>index</code>: those from index <code>first</code> to <code>last</code>, every <code>every</code>-th of them</li><li><code>box</code>: those inside the box of <code>size</code> around <code>center</code></li><li><code>sphere</code>: those inside the ball of <code>radius</code> around <code>center</code></li><li><code>random</code>: a random share of them, <code>share</code> of all, the same for the same <code>seed</code></li></ul></td></tr>
-<tr><td><code>expression</code></td><td>text</td><td><code>&quot;weight &lt;= 0.0&quot;</code></td><td></td><td>A WGSL expression worked out once per point; where it is true (or not 0) the point goes. It can name attributes (position, weight, P), index, count, index01, time, rand(k) and WGSL's functions: position.z &lt; 0.0, rand(0) &lt; 0.5, index % 2u == 0u. The default deletes the points of weight 0, such as the empty texels of pts.from_tex, and keeps every other point</td></tr>
+<tr><td><code>expression</code></td><td>text</td><td><code>&quot;weight &lt;= 0.0&quot;</code></td><td></td><td>A WGSL expression worked out once per point; where it is true (or not 0) the point goes. It can name attributes (position, weight, P), index, count, index01, time, rand(k) (by index), rand_key(id, k) (by a particle's id, so it stays with the particle) and WGSL's functions: position.z &lt; 0.0, rand(0) &lt; 0.5, index % 2u == 0u. The default deletes the points of weight 0, such as the empty texels of pts.from_tex, and keeps every other point</td></tr>
 <tr><td><code>first</code></td><td>int</td><td><code>0</code></td><td>0 to 10000 (soft, held within 0 to 4294967295)</td><td>index: the first index deleted</td></tr>
 <tr><td><code>last</code></td><td>int</td><td><code>0</code></td><td>0 to 10000 (soft, held within 0 to 4294967295)</td><td>index: the last index deleted, itself included</td></tr>
 <tr><td><code>every</code></td><td>int</td><td><code>1</code></td><td>1 to 16 (soft, held within 1 to 4294967295)</td><td>index: 1 deletes every point of the range, 2 every second one starting at <code>first</code>, and so on</td></tr>
 <tr><td><code>center</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>-1 to 1 (soft)</td><td>box and sphere: the middle, in metres</td></tr>
 <tr><td><code>size</code></td><td>vec3</td><td><code>[1, 1, 1]</code></td><td>0 to 10 (soft)</td><td>box: its size along x, y and z, in metres</td></tr>
 <tr><td><code>radius</code></td><td>float</td><td><code>0.5</code></td><td>0 to 10 (soft, held within 0 to 1000000000)</td><td>sphere: its radius, in metres</td></tr>
-<tr><td><code>share</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1 (soft)</td><td>random: the part of the points deleted, 0.25 for a quarter. Each point is drawn on its own, so the number varies a little</td></tr>
+<tr><td><code>share</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1 (soft)</td><td>random: the part of the points deleted, 0.25 for a quarter. Each point is drawn on its own, so the number varies a little. Points with an <code>id</code> (particles) are drawn by their id, so a particle is kept or deleted for as long as it lives</td></tr>
 <tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft, held within 0 to 1000000000)</td><td>random: another seed deletes other points</td></tr>
 <tr><td><code>invert</code></td><td>bool</td><td><code>false</code></td><td></td><td>Keep the points the choice above names, and delete every other one</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
@@ -5976,7 +5984,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>b</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>expression: a number the expression reads as b</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a>, <a href="#particles-colour-over-life">Particles › Colour over life</a></p>
 </div></details>
 <details class="entry node" id="pts.feedback"><summary><code class="name">pts.feedback</code><span class="sum">Feeds a chain's points back into it the next frame: a simulation of your own, points that drift or pile up. Wire the end of the chain into <code>previous</code></span></summary>
 <div class="body">
@@ -6031,7 +6039,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>distance</code></td><td>text</td><td></td><td></td><td>Also writes each point's distance from the shape's edge into this attribute, in metres: negative inside. Empty: none</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles">Particles</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles">Particles</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a>, <a href="#particles-two-traps">Particles › Two traps</a></p>
 </div></details>
 <details class="entry node" id="pts.force"><summary><code class="name">pts.force</code><span class="sum">A push on every point, added to its force: towards a point or away, towards a line, around a line, one way for all, or wind. For the loop of pts.particles</span></summary>
 <div class="body">
@@ -6042,14 +6050,14 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </ul>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">pts</span>: The points with the force added; the others pass on unchanged</li>
+<li><code>out</code> <span class="kind">pts</span>: The points with the force added; the others pass on unchanged. Wind into <code>force</code> also adds to <code>pts_wind</code>, how hard it pulls each point: pts.particles reads it to step the speed without overshooting</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>kind</code></td><td>attract | repel | axis | vortex | direction | wind</td><td><code>&quot;attract&quot;</code></td><td></td><td>Which way the force pushes<ul><li><code>attract</code>: towards <code>center</code></li><li><code>repel</code>: away from <code>center</code></li><li><code>axis</code>: towards the line through <code>center</code> along <code>axis</code></li><li><code>vortex</code>: around the line through <code>center</code> along <code>axis</code>, anticlockwise seen from where <code>axis</code> points. A negative strength turns the other way</li><li><code>direction</code>: along <code>direction</code>, the same everywhere: gravity, a steady push</li><li><code>wind</code>: towards the speed <code>direction</code> (metres a second): each point is pulled to move with the wind, harder the more its <code>velocity</code> differs</li></ul></td></tr>
-<tr><td><code>strength</code></td><td>float</td><td><code>1</code></td><td>-10 to 10 (soft)</td><td>How hard it pushes, in newtons: a particle of mass 1 gains this many metres a second each second. Negative turns it round</td></tr>
+<tr><td><code>kind</code></td><td>attract | repel | axis | vortex | direction | wind</td><td><code>&quot;attract&quot;</code></td><td></td><td>Which way the force pushes<ul><li><code>attract</code>: towards <code>center</code></li><li><code>repel</code>: away from <code>center</code></li><li><code>axis</code>: towards the line through <code>center</code> along <code>axis</code></li><li><code>vortex</code>: around the line through <code>center</code> along <code>axis</code>, anticlockwise seen from where <code>axis</code> points. A negative strength turns the other way</li><li><code>direction</code>: along <code>direction</code>, the same everywhere: gravity, a steady push</li><li><code>wind</code>: towards the speed <code>direction</code> (metres a second): each point is pulled to move with the wind, harder the more its <code>velocity</code> differs. In pts.particles a particle never passes the wind's speed, however light it is. A negative strength pushes nothing</li></ul></td></tr>
+<tr><td><code>strength</code></td><td>float</td><td><code>1</code></td><td>-10 to 10 (soft)</td><td>How hard it pushes, in newtons: a particle of mass 1 gains this many metres a second each second. Negative turns it round, except for wind. For wind it is per metre a second of difference in speed</td></tr>
 <tr><td><code>center</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>-5 to 5 (soft)</td><td>The point the force comes from or goes to, and where its distance is measured from, in metres</td></tr>
 <tr><td><code>axis</code></td><td>vec3</td><td><code>[0, 0, 1]</code></td><td>-1 to 1 (soft)</td><td>axis and vortex: the line's direction through <code>center</code>; its length does not count</td></tr>
 <tr><td><code>direction</code></td><td>vec3</td><td><code>[0, 0, -1]</code></td><td>-10 to 10 (soft)</td><td>direction: the way it pushes; its length does not count. wind: the wind's speed, in metres a second</td></tr>
@@ -6057,7 +6065,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>radius</code></td><td>float</td><td><code>1</code></td><td>0.01 to 10 (soft, held within 0.000001 to 1000000)</td><td>The distance the falloff is measured in, in metres</td></tr>
 <tr><td><code>mask</code></td><td>text</td><td><code>&quot;weight&quot;</code></td><td></td><td>The force is multiplied by this attribute of each point: <code>weight</code> follows a pts.field. Points without it count as 1. Empty: no mask</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
-<tr><td><code>attribute</code></td><td>text</td><td><code>&quot;force&quot;</code></td><td></td><td>The attribute the force is added to. velocity changes the speed at once, by this much at every step</td></tr>
+<tr><td><code>attribute</code></td><td>text</td><td><code>&quot;force&quot;</code></td><td></td><td>The attribute the force is added to. velocity changes the speed at once, by this much at every step; wind then moves the speed at most all the way to the wind's</td></tr>
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles">Particles</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a></p>
@@ -6079,7 +6087,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tbody>
 <tr><td><code>mode</code></td><td>color | height | position | depth</td><td><code>&quot;color&quot;</code></td><td></td><td>What the picture's channels mean<ul><li><code>color</code>: the points lie on a flat grid in the picture's shape, upright and facing -y like pts.generate's grid. <code>color</code> is the picture's rgba as stored (premultiplied)</li><li><code>height</code>: the grid of <code>color</code>, each point lifted towards -y by <code>channel</code> times <code>height</code>: an image as a relief of points</li><li><code>position</code>: red, green and blue are x, y and z in metres, as a picture from tex.from_pts or a texel simulation holds them</li><li><code>depth</code>: <code>channel</code> times <code>depth_scale</code> is the distance in metres along the view of a camera at the origin looking along +y, z up, with the vertical field of view <code>fov</code>. A depth of 0 gives weight 0</li></ul></td></tr>
 <tr><td><code>sampling</code></td><td>count | step</td><td><code>&quot;count&quot;</code></td><td></td><td>How many points the picture gives<ul><li><code>count</code>: about <code>count</code> points, spread evenly in rows and columns in the picture's shape</li><li><code>step</code>: a point for every <code>step</code> texels across and down; 1 is a point per texel</li></ul></td></tr>
-<tr><td><code>count</code></td><td>int</td><td><code>20000</code></td><td>100 to 1000000 (soft, held within 1 to 4194304)</td><td>About this many points; never more than the picture has texels. The viewer shows the count made</td></tr>
+<tr><td><code>count</code></td><td>int</td><td><code>20000</code></td><td>100 to 1000000 (soft, held within 1 to 4194304)</td><td>About this many points and never more, nor more than the picture has texels. The viewer shows the count made</td></tr>
 <tr><td><code>step</code></td><td>int</td><td><code>4</code></td><td>1 to 64 (soft, held within 1 to 4096)</td><td>Texels from one point to the next, across and down: 4 makes a 1920x1080 picture 480x270 points</td></tr>
 <tr><td><code>filter</code></td><td>nearest | average</td><td><code>&quot;nearest&quot;</code></td><td></td><td>What a point takes from its cell of texels when the picture is sampled down<ul><li><code>nearest</code>: the texel at the cell's centre. Keeps positions and depths exact</li><li><code>average</code>: the mean of the cell's texels, up to 8x8 of them: smoother colours, fewer flickering points in a moving picture. Blends positions and depths at edges</li></ul></td></tr>
 <tr><td><code>size</code></td><td>float</td><td><code>1</code></td><td>0.01 to 10 m (soft, held within 0 to 10000 m)</td><td>color and height: the width of the grid; its height follows the picture's shape</td></tr>
@@ -6092,7 +6100,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>delete_empty</code></td><td>bool</td><td><code>false</code></td><td></td><td>Delete the points of weight 0: transparent texels, and in depth mode texels without a depth or outside near and far. The rest keep their order, but no longer form rows and columns, and their number is on the GPU (the viewer shows it a frame late)</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-two-traps">Particles › Two traps</a></p>
 </div></details>
 <details class="entry node" id="pts.generate"><summary><code class="name">pts.generate</code><span class="sum">Points on a simple shape: a grid, a line, a circle, a sphere or a box, centred on the origin. On the surface or filling the inside, evenly spread or at random</span></summary>
 <div class="body">
@@ -6179,7 +6187,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>d</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>A number the expression reads as d</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a>, <a href="#particles-colour-over-life">Particles › Colour over life</a>, <a href="#particles-trails">Particles › Trails</a>, <a href="#shaders-a-program-over-points-ptsshader">Shaders › A program over points (pts.shader)</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a>, <a href="#particles-two-traps">Particles › Two traps</a>, <a href="#particles-colour-over-life">Particles › Colour over life</a>, <a href="#particles-trails">Particles › Trails</a>, <a href="#shaders-a-program-over-points-ptsshader">Shaders › A program over points (pts.shader)</a></p>
 </div></details>
 <details class="entry node" id="pts.noise"><summary><code class="name">pts.noise</code><span class="sum">Smooth random values over space and time, looked up at each point and added to an attribute: points that wobble, drift or flow, colours that vary</span></summary>
 <div class="body">
@@ -6260,9 +6268,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>drag</code></td><td>float</td><td><code>0</code></td><td>0 to 10 (soft, held within 0 to 1000000)</td><td>How fast particles lose speed, as through air: 1 takes about two thirds of the speed away in a second. A <code>drag</code> attribute of the particles takes its place</td></tr>
 <tr><td><code>mass</code></td><td>float</td><td><code>1</code></td><td>0.01 to 10 (soft, held within 0.000001 to 1000000000)</td><td>Divides the <code>force</code> the loop adds: heavier particles follow it slower. Gravity pulls every mass alike. A <code>mass</code> attribute of the particles takes its place</td></tr>
 <tr><td><code>integrate</code></td><td>bool</td><td><code>true</code></td><td></td><td>Move the particles by their velocity and the forces. Off, they stay where they are unless a node in the loop moves them</td></tr>
-<tr><td><code>max</code></td><td>int</td><td><code>100000</code></td><td>1 to 1000000 (soft, held within 1 to 67108864)</td><td>The most particles there are at once. While that many live, the births wait. Changing it starts over</td></tr>
-<tr><td><code>warm_up</code></td><td>float</td><td><code>0</code></td><td>0 to 10 (soft, held within 0 to 30)</td><td>Seconds simulated at once when the node starts or starts over, so the particles are there from the first frame. The nodes of the loop take no part in them</td></tr>
-<tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft, held within 0 to 1000000000)</td><td>Another number gives other random lives, speeds and source points</td></tr>
+<tr><td><code>max</code></td><td>int</td><td><code>100000</code></td><td>1 to 1000000 (soft, held within 1 to 67108864)</td><td>The most particles there are at once. While that many live, the births that do not fit are dropped, not saved for later. Changing it starts over</td></tr>
+<tr><td><code>warm_up</code></td><td>float</td><td><code>0</code></td><td>0 to 10 (soft, held within 0 to 30)</td><td>Seconds simulated ahead when the node starts or starts over, so the particles are there in full when they appear. The nodes of the loop take no part in them. While the show runs, the pre-roll takes about 4 ms of each frame, and the node gives out no particles until it is done: 30 seconds took about 4 seconds on a fast desktop. Stepping and recording do it all in the first frame</td></tr>
+<tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft, held within 0 to 1000000000)</td><td>Another number gives other random lives, speeds and source points. Two nodes with the same seed and the same params give the same particles: give each its own</td></tr>
 <tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>No particles while on; they start over when it turns off</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>inherit</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Adds the source point's <code>velocity</code> times this, where the source points have one: particles take the speed of a moving emitter</td></tr>
@@ -6293,13 +6301,13 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>mean</code></td><td>vec4</td><td><code>[0, 0, 0, 0]</code></td><td>-1 to 1 (soft)</td><td>normal: the middle of the values</td></tr>
 <tr><td><code>deviation</code></td><td>vec4</td><td><code>[1, 1, 1, 1]</code></td><td>0 to 1 (soft)</td><td>normal: how far the values spread, the standard deviation; about two in three lie within it</td></tr>
 <tr><td><code>radius</code></td><td>float</td><td><code>1</code></td><td>0 to 10 (soft)</td><td>direction and sphere: the length of the directions, the radius of the ball</td></tr>
-<tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft, held within 0 to 1000000000)</td><td>Another number gives every point another value</td></tr>
+<tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft, held within 0 to 1000000000)</td><td>Another number gives every point another value. Points with an <code>id</code> (particles) keep their value as long as they live: the values follow the id, not the place in the list</td></tr>
 <tr><td><code>operation</code></td><td>add | set | multiply</td><td><code>&quot;set&quot;</code></td><td></td><td>How the random value meets the attribute's value<ul><li><code>add</code>: the random value is added to it</li><li><code>set</code>: the random value takes its place</li><li><code>multiply</code>: it is multiplied by the random value</li></ul></td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>type</code></td><td>auto | float | vec2 | vec3 | vec4 | int | uint</td><td><code>&quot;auto&quot;</code></td><td></td><td>The type of the attribute when it is new: one the input has keeps its type, and so does one penumbra knows (position, color, scale, ...)<ul><li><code>auto</code>: a number (float) for a name penumbra does not know</li><li><code>float</code>: one number</li><li><code>vec2</code>: two numbers</li><li><code>vec3</code>: three numbers, such as a position or a direction</li><li><code>vec4</code>: four numbers, such as a colour</li><li><code>int</code>: a whole number</li><li><code>uint</code>: a whole number from 0</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-colour-over-life">Particles › Colour over life</a></p>
 </div></details>
 <details class="entry node" id="pts.shader"><summary><code class="name">pts.shader</code><span class="sum">A program of your own that runs once per point, written in WGSL in a file; reloads when saved. Its header names the attributes it reads and writes, and its params</span></summary>
 <div class="body">

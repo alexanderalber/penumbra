@@ -443,7 +443,7 @@ Inputs:
 
 Outputs:
 
-- `out` (tex): The picture. Alpha is 1 at each point (a four-number attribute brings its own) and 0 in the texels past the last point
+- `out` (tex): The picture. Alpha is 1 at each point (a four-number attribute brings its own) and 0 in the texels past the last point. Points whose number is on the GPU (after pts.delete, particles) fill a picture sized for their capacity
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -2249,14 +2249,14 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `by` | expression \| index \| box \| sphere \| random | `"expression"` |  | Which points are deleted; expression: those for which `expression` is true; index: those from index `first` to `last`, every `every`-th of them; box: those inside the box of `size` around `center`; sphere: those inside the ball of `radius` around `center`; random: a random share of them, `share` of all, the same for the same `seed` |
-| `expression` | text | `"weight <= 0.0"` |  | A WGSL expression worked out once per point; where it is true (or not 0) the point goes. It can name attributes (position, weight, P), index, count, index01, time, rand(k) and WGSL's functions: position.z < 0.0, rand(0) < 0.5, index % 2u == 0u. The default deletes the points of weight 0, such as the empty texels of pts.from_tex, and keeps every other point. Does something only with by expression. |
+| `expression` | text | `"weight <= 0.0"` |  | A WGSL expression worked out once per point; where it is true (or not 0) the point goes. It can name attributes (position, weight, P), index, count, index01, time, rand(k) (by index), rand_key(id, k) (by a particle's id, so it stays with the particle) and WGSL's functions: position.z < 0.0, rand(0) < 0.5, index % 2u == 0u. The default deletes the points of weight 0, such as the empty texels of pts.from_tex, and keeps every other point. Does something only with by expression. |
 | `first` | int | `0` | 0 to 10000 (soft, held within 0 to 4294967295) | index: the first index deleted. Does something only with by index. |
 | `last` | int | `0` | 0 to 10000 (soft, held within 0 to 4294967295) | index: the last index deleted, itself included. Does something only with by index. |
 | `every` | int | `1` | 1 to 16 (soft, held within 1 to 4294967295) | index: 1 deletes every point of the range, 2 every second one starting at `first`, and so on. Does something only with by index. |
 | `center` | vec3 | `[0, 0, 0]` | -1 to 1 (soft) | box and sphere: the middle, in metres. Does something only with by box or sphere. |
 | `size` | vec3 | `[1, 1, 1]` | 0 to 10 (soft) | box: its size along x, y and z, in metres. Does something only with by box. |
 | `radius` | float | `0.5` | 0 to 10 (soft, held within 0 to 1000000000) | sphere: its radius, in metres. Does something only with by sphere. |
-| `share` | float | `0.5` | 0 to 1 (soft) | random: the part of the points deleted, 0.25 for a quarter. Each point is drawn on its own, so the number varies a little. Does something only with by random. |
+| `share` | float | `0.5` | 0 to 1 (soft) | random: the part of the points deleted, 0.25 for a quarter. Each point is drawn on its own, so the number varies a little. Points with an `id` (particles) are drawn by their id, so a particle is kept or deleted for as long as it lives. Does something only with by random. |
 | `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | random: another seed deletes other points. Does something only with by random. |
 | `invert` | bool | `false` |  | Keep the points the choice above names, and delete every other one |
 | `a` *(more)* | float | `0` | -1 to 1 (soft) | expression: a number the expression reads as a, such as a height in position.z < a. Bind it to a channel to move it. Does something only with by expression. |
@@ -2317,19 +2317,19 @@ Inputs:
 
 Outputs:
 
-- `out` (pts): The points with the force added; the others pass on unchanged
+- `out` (pts): The points with the force added; the others pass on unchanged. Wind into `force` also adds to `pts_wind`, how hard it pulls each point: pts.particles reads it to step the speed without overshooting
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `kind` | attract \| repel \| axis \| vortex \| direction \| wind | `"attract"` |  | Which way the force pushes; attract: towards `center`; repel: away from `center`; axis: towards the line through `center` along `axis`; vortex: around the line through `center` along `axis`, anticlockwise seen from where `axis` points. A negative strength turns the other way; direction: along `direction`, the same everywhere: gravity, a steady push; wind: towards the speed `direction` (metres a second): each point is pulled to move with the wind, harder the more its `velocity` differs |
-| `strength` | float | `1` | -10 to 10 (soft) | How hard it pushes, in newtons: a particle of mass 1 gains this many metres a second each second. Negative turns it round |
+| `kind` | attract \| repel \| axis \| vortex \| direction \| wind | `"attract"` |  | Which way the force pushes; attract: towards `center`; repel: away from `center`; axis: towards the line through `center` along `axis`; vortex: around the line through `center` along `axis`, anticlockwise seen from where `axis` points. A negative strength turns the other way; direction: along `direction`, the same everywhere: gravity, a steady push; wind: towards the speed `direction` (metres a second): each point is pulled to move with the wind, harder the more its `velocity` differs. In pts.particles a particle never passes the wind's speed, however light it is. A negative strength pushes nothing |
+| `strength` | float | `1` | -10 to 10 (soft) | How hard it pushes, in newtons: a particle of mass 1 gains this many metres a second each second. Negative turns it round, except for wind. For wind it is per metre a second of difference in speed |
 | `center` | vec3 | `[0, 0, 0]` | -5 to 5 (soft) | The point the force comes from or goes to, and where its distance is measured from, in metres |
 | `axis` | vec3 | `[0, 0, 1]` | -1 to 1 (soft) | axis and vortex: the line's direction through `center`; its length does not count. Does something only with kind axis or vortex. |
 | `direction` | vec3 | `[0, 0, -1]` | -10 to 10 (soft) | direction: the way it pushes; its length does not count. wind: the wind's speed, in metres a second. Does something only with kind direction or wind. |
 | `falloff` | none \| linear \| smooth \| inverse_square | `"none"` |  | How the force weakens with the distance from `center` (from the line for axis and vortex); none: as strong everywhere; linear: full at the centre, nothing from `radius` on, in a straight line between; smooth: as linear, with soft ends; inverse_square: half at `radius`, ever weaker beyond, never quite nothing |
 | `radius` | float | `1` | 0.01 to 10 (soft, held within 0.000001 to 1000000) | The distance the falloff is measured in, in metres. Does something only with falloff linear, smooth or inverse_square. |
 | `mask` | text | `"weight"` |  | The force is multiplied by this attribute of each point: `weight` follows a pts.field. Points without it count as 1. Empty: no mask |
-| `attribute` *(more)* | text | `"force"` |  | The attribute the force is added to. velocity changes the speed at once, by this much at every step |
+| `attribute` *(more)* | text | `"force"` |  | The attribute the force is added to. velocity changes the speed at once, by this much at every step; wind then moves the speed at most all the way to the wind's |
 
 ### pts.from_tex
 
@@ -2347,7 +2347,7 @@ Outputs:
 |---|---|---|---|---|
 | `mode` | color \| height \| position \| depth | `"color"` |  | What the picture's channels mean; color: the points lie on a flat grid in the picture's shape, upright and facing -y like pts.generate's grid. `color` is the picture's rgba as stored (premultiplied); height: the grid of `color`, each point lifted towards -y by `channel` times `height`: an image as a relief of points; position: red, green and blue are x, y and z in metres, as a picture from tex.from_pts or a texel simulation holds them; depth: `channel` times `depth_scale` is the distance in metres along the view of a camera at the origin looking along +y, z up, with the vertical field of view `fov`. A depth of 0 gives weight 0 |
 | `sampling` | count \| step | `"count"` |  | How many points the picture gives; count: about `count` points, spread evenly in rows and columns in the picture's shape; step: a point for every `step` texels across and down; 1 is a point per texel |
-| `count` | int | `20000` | 100 to 1000000 (soft, held within 1 to 4194304) | About this many points; never more than the picture has texels. The viewer shows the count made. Does something only with sampling count. |
+| `count` | int | `20000` | 100 to 1000000 (soft, held within 1 to 4194304) | About this many points and never more, nor more than the picture has texels. The viewer shows the count made. Does something only with sampling count. |
 | `step` | int | `4` | 1 to 64 (soft, held within 1 to 4096) | Texels from one point to the next, across and down: 4 makes a 1920x1080 picture 480x270 points. Does something only with sampling step. |
 | `filter` | nearest \| average | `"nearest"` |  | What a point takes from its cell of texels when the picture is sampled down; nearest: the texel at the cell's centre. Keeps positions and depths exact; average: the mean of the cell's texels, up to 8x8 of them: smoother colours, fewer flickering points in a moving picture. Blends positions and depths at edges |
 | `size` | float | `1` | 0.01 to 10 m (soft, held within 0 to 10000 m) | color and height: the width of the grid; its height follows the picture's shape. Does something only with mode color or height. |
@@ -2504,10 +2504,10 @@ Outputs:
 | `drag` | float | `0` | 0 to 10 (soft, held within 0 to 1000000) | How fast particles lose speed, as through air: 1 takes about two thirds of the speed away in a second. A `drag` attribute of the particles takes its place |
 | `mass` | float | `1` | 0.01 to 10 (soft, held within 0.000001 to 1000000000) | Divides the `force` the loop adds: heavier particles follow it slower. Gravity pulls every mass alike. A `mass` attribute of the particles takes its place |
 | `integrate` | bool | `true` |  | Move the particles by their velocity and the forces. Off, they stay where they are unless a node in the loop moves them |
-| `max` | int | `100000` | 1 to 1000000 (soft, held within 1 to 67108864) | The most particles there are at once. While that many live, the births wait. Changing it starts over |
+| `max` | int | `100000` | 1 to 1000000 (soft, held within 1 to 67108864) | The most particles there are at once. While that many live, the births that do not fit are dropped, not saved for later. Changing it starts over |
 | `kill` *(more)* | text | `"kill"` |  | A particle whose attribute of this name is above 0 dies at the next step: a node in the loop can end particles (pts.math, result kill, position.z < 0.0). Empty: only age kills |
-| `warm_up` | float | `0` | 0 to 10 (soft, held within 0 to 30) | Seconds simulated at once when the node starts or starts over, so the particles are there from the first frame. The nodes of the loop take no part in them |
-| `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | Another number gives other random lives, speeds and source points |
+| `warm_up` | float | `0` | 0 to 10 (soft, held within 0 to 30) | Seconds simulated ahead when the node starts or starts over, so the particles are there in full when they appear. The nodes of the loop take no part in them. While the show runs, the pre-roll takes about 4 ms of each frame, and the node gives out no particles until it is done: 30 seconds took about 4 seconds on a fast desktop. Stepping and recording do it all in the first frame |
+| `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | Another number gives other random lives, speeds and source points. Two nodes with the same seed and the same params give the same particles: give each its own |
 | `reset` | bool | `false` |  | No particles while on; they start over when it turns off |
 
 ### pts.random
@@ -2531,7 +2531,7 @@ Outputs:
 | `mean` | vec4 | `[0, 0, 0, 0]` | -1 to 1 (soft) | normal: the middle of the values. Does something only with distribution normal. |
 | `deviation` | vec4 | `[1, 1, 1, 1]` | 0 to 1 (soft) | normal: how far the values spread, the standard deviation; about two in three lie within it. Does something only with distribution normal. |
 | `radius` | float | `1` | 0 to 10 (soft) | direction and sphere: the length of the directions, the radius of the ball. Does something only with distribution direction or sphere. |
-| `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | Another number gives every point another value |
+| `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | Another number gives every point another value. Points with an `id` (particles) keep their value as long as they live: the values follow the id, not the place in the list |
 | `operation` | add \| set \| multiply | `"set"` |  | How the random value meets the attribute's value; add: the random value is added to it; set: the random value takes its place; multiply: it is multiplied by the random value |
 | `type` *(more)* | auto \| float \| vec2 \| vec3 \| vec4 \| int \| uint | `"auto"` |  | The type of the attribute when it is new: one the input has keeps its type, and so does one penumbra knows (position, color, scale, ...); auto: a number (float) for a name penumbra does not know; float: one number; vec2: two numbers; vec3: three numbers, such as a position or a direction; vec4: four numbers, such as a colour; int: a whole number; uint: a whole number from 0 |
 
