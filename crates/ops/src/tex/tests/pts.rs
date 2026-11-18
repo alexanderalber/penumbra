@@ -169,6 +169,20 @@ fn every_shape_makes_what_it_says() {
             .is_ok()
     );
     assert!(cloud(&Shape { shape: "cone", ..base }).is_err());
+    // A box flat in two directions is a line: its surface points spread along it, not all on
+    // one end.
+    let rod =
+        cloud(&Shape { shape: "box", count: 200, random: true, size: [2.0, 0.0, 0.0], ..base }).unwrap();
+    let ends = rod.position.iter().filter(|p| (p[0].abs() - 1.0).abs() < 1e-6).count();
+    assert!(ends < 200, "every point on an end");
+    assert!(rod.position.iter().any(|p| p[0].abs() < 0.5));
+    // As many points as allowed, in boxes of any proportions: the nearest lattice that fits.
+    for size in [[1.0, 1.0, 1.0], [1.0, 2.0, 3.0], [3.0, 1.0, 0.2], [1.0, 1.0, 0.0]] {
+        for inside in [true, false] {
+            let made = cloud(&Shape { shape: "box", inside, count: MAX_POINTS, size, ..base });
+            assert!(made.is_ok(), "{size:?} inside {inside}: {:?}", made.err());
+        }
+    }
 }
 
 /// Where the opaque pixels of `px` lie: their count and the box around them.

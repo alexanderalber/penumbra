@@ -570,3 +570,19 @@ fn a_new_program_of_a_built_in_compiles_off_the_cook_thread() {
     assert_eq!(read(&rig, &after, "position"), fresh(&mut rig, "/grid", "position"), "position passes on");
     assert!(after.bounds().is_some());
 }
+
+#[test]
+fn noise_along_missing_normals_says_so() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create("/line", "pts.generate", &[("shape", "line".into()), ("count", Value::Int(5))]),
+        create("/noise", "pts.noise", &[("along_normal", Value::Bool(true))]),
+        connect("/line", "/noise", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let (s, p) = settled(&mut rig, "/noise", |s| s.has_output);
+    assert!(s.warning.as_deref().is_some_and(|w| w.contains("no `normal`")), "{s:?}");
+    // They move along +z only.
+    let pos = read(&rig, &p.unwrap(), "position");
+    assert!(pos.iter().all(|q| q[1] == 0.0) && pos.iter().any(|q| q[2] != 0.0), "{pos:?}");
+}

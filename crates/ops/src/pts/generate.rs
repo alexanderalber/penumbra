@@ -302,7 +302,19 @@ fn box_random(count: u32, half: [f32; 3], inside: bool, rng: &mut Rng) -> Cloud 
         let others: Vec<f32> = (0..3).filter(|k| *k != axis).filter_map(|k| half.get(k).copied()).collect();
         others.iter().product::<f32>()
     };
-    let total: f32 = SIDES.iter().map(|(axis, _)| area(*axis)).sum();
+    let area_total: f32 = SIDES.iter().map(|(axis, _)| area(*axis)).sum();
+    // A box flat in two directions has sides of no area: then its surface is the line or point
+    // it is, and the sides across its zero sizes share the points alike.
+    let weight = |axis: usize| {
+        if area_total > 0.0 {
+            area(axis)
+        } else if half.get(axis).is_some_and(|h| *h == 0.0) {
+            1.0
+        } else {
+            0.0
+        }
+    };
+    let total: f32 = SIDES.iter().map(|(axis, _)| weight(*axis)).sum();
     for _ in 0..count {
         let mut p = [0.0; 3];
         for (c, h) in p.iter_mut().zip(half) {
@@ -313,7 +325,7 @@ fn box_random(count: u32, half: [f32; 3], inside: bool, rng: &mut Rng) -> Cloud 
             let mut side = SIDES[0];
             for s in SIDES {
                 side = s;
-                pick -= area(s.0);
+                pick -= weight(s.0);
                 if pick <= 0.0 {
                     break;
                 }
@@ -333,8 +345,9 @@ fn box_random(count: u32, half: [f32; 3], inside: bool, rng: &mut Rng) -> Cloud 
 }
 
 /// Points along each axis of a lattice of about `count` points in a box of `half` sizes, the
-/// spacing as even as the sides allow; only the shell where `inside` is false.
-fn lattice_sides(count: u32, half: [f32; 3], inside: bool) -> [u32; 3] {
+/// spacing as even as the sides allow; only the shell where `inside` is false. With the number
+/// of points it holds.
+fn lattice_sides(count: u32, half: [f32; 3], inside: bool) -> ([u32; 3], u64) {
     let points = |t: f64| -> ([u32; 3], u64) {
         let n = half
             .map(|h| ((f64::from(h) * 2.0 * t).round().max(0.0) as u32).saturating_add(1).min(MAX_POINTS));
@@ -355,12 +368,12 @@ fn lattice_sides(count: u32, half: [f32; 3], inside: bool) -> [u32; 3] {
     }
     let (a, b) = (points(lo), points(hi));
     let off = |n: u64| n.abs_diff(u64::from(count));
-    if off(a.1) < off(b.1) { a.0 } else { b.0 }
+    // The nearer of the two, unless it holds more points than allowed.
+    if off(a.1) < off(b.1) || b.1 > u64::from(MAX_POINTS) { a } else { b }
 }
 
 fn box_lattice(count: u32, half: [f32; 3], inside: bool) -> Result<Cloud, Error> {
-    let [nx, ny, nz] = lattice_sides(count, half, inside);
-    let total = u64::from(nx) * u64::from(ny) * u64::from(nz);
+    let ([nx, ny, nz], total) = lattice_sides(count, half, inside);
     if total > u64::from(MAX_POINTS) {
         return Err(Error::new(format!("{nx} x {ny} x {nz} points are more than the {MAX_POINTS} allowed")));
     }
@@ -368,13 +381,13 @@ fn box_lattice(count: u32, half: [f32; 3], inside: bool) -> Result<Cloud, Error>
     let mut position = Vec::new();
     let mut normal = Vec::new();
     // Slices from the front (-y) back, rows from the top down, columns from left to right.
+    let edge = |v: u32, n: u32| v == 0 || v + 1 == n;
     for j in 0..ny {
         for k in (0..nz).rev() {
-            for i in 0..nx {
-                let edge = |v: u32, n: u32| v == 0 || v + 1 == n;
-                if !inside && !(edge(i, nx) || edge(j, ny) || edge(k, nz)) {
-                    continue;
-                }
+            // Inside the shell a row has its two ends only: step over the rest.
+            let ends_only = !inside && !(edge(j, ny) || edge(k, nz));
+            let step = if ends_only { nx.saturating_sub(1).max(1) } else { 1 };
+            for i in (0..nx).step_by(step as usize) {
                 let p = [at(i, nx, half[0]), at(j, ny, half[1]), at(k, nz, half[2])];
                 position.push([p[0], p[1], p[2], 1.0]);
                 if !inside {

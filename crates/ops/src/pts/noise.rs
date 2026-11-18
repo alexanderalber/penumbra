@@ -293,6 +293,9 @@ impl Operator for Noise {
                 ty.wgsl()
             )));
         }
+        if along && points.attr("normal").is_none() {
+            cx.warn("along_normal: the points have no `normal`, so they move along +z, the default normal");
+        }
         let spec = spec(lookup, lookup_ty, target, ty, along);
         self.moving = cx.float("speed")? != 0.0;
         let param = |name: &str| cx.param(name).cloned();
