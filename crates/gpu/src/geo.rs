@@ -483,6 +483,9 @@ pub struct Instances {
     /// Half the side of a box around the item's origin that holds every copy, since the
     /// positions stay on the GPU: framing, shadow maps.
     pub extent: f32,
+    /// `extent` comes from a box read back from the GPU a frame or more late: about right, and
+    /// copies that moved since may lie outside it.
+    pub late: bool,
     /// Lines through the points instead of a copy at each: see [`Lines`].
     pub lines: Option<Lines>,
 }
@@ -535,6 +538,7 @@ impl Instances {
             scale: None,
             color: None,
             extent: 0.0,
+            late: false,
             lines: None,
         }
     }
