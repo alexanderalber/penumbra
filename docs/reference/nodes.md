@@ -2232,7 +2232,7 @@ Outputs: `out` (table).
 
 ## pts
 
-[pts.delete](#ptsdelete), [pts.from_tex](#ptsfrom_tex), [pts.generate](#ptsgenerate), [pts.lookup_tex](#ptslookup_tex), [pts.math](#ptsmath), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.transform](#ptstransform)
+[pts.delete](#ptsdelete), [pts.feedback](#ptsfeedback), [pts.field](#ptsfield), [pts.force](#ptsforce), [pts.from_tex](#ptsfrom_tex), [pts.generate](#ptsgenerate), [pts.lookup_tex](#ptslookup_tex), [pts.math](#ptsmath), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.particles](#ptsparticles), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.transform](#ptstransform)
 
 ### pts.delete
 
@@ -2261,6 +2261,75 @@ Outputs:
 | `invert` | bool | `false` |  | Keep the points the choice above names, and delete every other one |
 | `a` *(more)* | float | `0` | -1 to 1 (soft) | expression: a number the expression reads as a, such as a height in position.z < a. Bind it to a channel to move it. Does something only with by expression. |
 | `b` *(more)* | float | `0` | -1 to 1 (soft) | expression: a number the expression reads as b. Does something only with by expression. |
+
+### pts.feedback
+
+Feeds a chain's points back into it the next frame: a simulation of your own, points that drift or pile up. Wire the end of the chain into `previous`
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs:
+
+- `initial` (pts): Passed on until `previous` has points, and while `reset` is on: what the loop starts from
+- `previous` (pts): The end of the loop: what it held a frame ago is passed on. TouchDesigner calls it the target. Its points may differ from `initial` in number and attributes Sees the previous frame, so it may close a loop.
+
+Outputs: `out` (pts).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `reset` | bool | `false` |  | Pass `initial` instead, while on |
+| `repeat` | int | `1` | 1 to 8 (soft, held within 1 to 64) | How often the loop runs per frame. Every node between this one and the end wired into `previous` cooks this many times, each run reading the run before; nodes outside the loop cook once. Costs the loop's time this many times. The clock does not move between the runs |
+
+### pts.field
+
+A weight per point from a shape with a soft edge: 1 inside, 0 outside. Masks forces, colours and deletions
+
+Inputs:
+
+- `in` (pts)
+
+Outputs:
+
+- `out` (pts): The points with the weight; the others pass on unchanged
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `shape` | sphere \| box \| plane \| capsule | `"sphere"` |  | Where the weight is 1; sphere: inside the ball of `radius` around `center`; box: inside the box of `size` around `center`; plane: on the side `normal` points to of the plane through `center`; capsule: within `radius` of the line of `length` through `center` along `axis`: a rod with round ends |
+| `center` | vec3 | `[0, 0, 0]` | -5 to 5 (soft) | The middle of the shape, in metres |
+| `radius` | float | `0.5` | 0 to 5 (soft, held within 0 to 1000000) | sphere and capsule: the radius, in metres. Does something only with shape sphere or capsule. |
+| `size` | vec3 | `[1, 1, 1]` | 0 to 10 (soft) | box: its size along x, y and z, in metres. Does something only with shape box. |
+| `normal` | vec3 | `[0, 0, 1]` | -1 to 1 (soft) | plane: the side where the weight is 1; its length does not count. Does something only with shape plane. |
+| `axis` | vec3 | `[0, 0, 1]` | -1 to 1 (soft) | capsule: the direction of its line; its length does not count. Does something only with shape capsule. |
+| `length` | float | `1` | 0 to 10 (soft, held within 0 to 1000000) | capsule: the length of its line, without the round ends, in metres. Does something only with shape capsule. |
+| `falloff` | float | `0.2` | 0 to 2 (soft, held within 0 to 1000000) | The soft edge, in metres outside the shape: the weight goes smoothly from 1 at the shape to 0 this far out. 0 is a hard edge |
+| `invert` | bool | `false` |  | 1 outside the shape and 0 inside |
+| `combine` | set \| multiply \| add \| max \| min | `"set"` |  | How the shape's weight meets the weight the points have already (1 where they have none); set: it takes its place; multiply: multiplies it: only where both are; add: is added to it; max: the larger of the two: where either is; min: the smaller of the two |
+| `attribute` *(more)* | text | `"weight"` |  | The attribute the weight goes into, TouchDesigner's names too (Weight) |
+| `distance` *(more)* | text |  |  | Also writes each point's distance from the shape's edge into this attribute, in metres: negative inside. Empty: none |
+
+### pts.force
+
+A push on every point, added to its force: towards a point or away, towards a line, around a line, one way for all, or wind. For the loop of pts.particles
+
+Inputs:
+
+- `in` (pts)
+
+Outputs:
+
+- `out` (pts): The points with the force added; the others pass on unchanged
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `kind` | attract \| repel \| axis \| vortex \| direction \| wind | `"attract"` |  | Which way the force pushes; attract: towards `center`; repel: away from `center`; axis: towards the line through `center` along `axis`; vortex: around the line through `center` along `axis`, anticlockwise seen from where `axis` points. A negative strength turns the other way; direction: along `direction`, the same everywhere: gravity, a steady push; wind: towards the speed `direction` (metres a second): each point is pulled to move with the wind, harder the more its `velocity` differs |
+| `strength` | float | `1` | -10 to 10 (soft) | How hard it pushes, in newtons: a particle of mass 1 gains this many metres a second each second. Negative turns it round |
+| `center` | vec3 | `[0, 0, 0]` | -5 to 5 (soft) | The point the force comes from or goes to, and where its distance is measured from, in metres |
+| `axis` | vec3 | `[0, 0, 1]` | -1 to 1 (soft) | axis and vortex: the line's direction through `center`; its length does not count. Does something only with kind axis or vortex. |
+| `direction` | vec3 | `[0, 0, -1]` | -10 to 10 (soft) | direction: the way it pushes; its length does not count. wind: the wind's speed, in metres a second. Does something only with kind direction or wind. |
+| `falloff` | none \| linear \| smooth \| inverse_square | `"none"` |  | How the force weakens with the distance from `center` (from the line for axis and vortex); none: as strong everywhere; linear: full at the centre, nothing from `radius` on, in a straight line between; smooth: as linear, with soft ends; inverse_square: half at `radius`, ever weaker beyond, never quite nothing |
+| `radius` | float | `1` | 0.01 to 10 (soft, held within 0.000001 to 1000000) | The distance the falloff is measured in, in metres. Does something only with falloff linear, smooth or inverse_square. |
+| `mask` | text | `"weight"` |  | The force is multiplied by this attribute of each point: `weight` follows a pts.field. Points without it count as 1. Empty: no mask |
+| `attribute` *(more)* | text | `"force"` |  | The attribute the force is added to. velocity changes the speed at once, by this much at every step |
 
 ### pts.from_tex
 
@@ -2354,7 +2423,7 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `expression` | text | `"position"` |  | A WGSL expression, worked out once per point. It can name attributes (position, color, P, Color), index, count, index01 (0 at the first point, 1 at the last), time, dt, frame, rand(k) and rand3(k), a, b, c and d, and WGSL's functions: sin, clamp, mix, smoothstep, length, normalize, ... One number fills every number of the result |
+| `expression` | text | `"position"` |  | A WGSL expression, worked out once per point. It can name attributes (position, color, P, Color), index, count, index01 (0 at the first point, 1 at the last), time, dt, frame, rand(k) and rand3(k) (by index), rand_key(id, k) and rand3_key(id, k) (by a particle's id, so they stay with it), a, b, c and d, and WGSL's functions: sin, clamp, mix, smoothstep, length, normalize, ... One number fills every number of the result |
 | `result` | text | `"position"` |  | The attribute the expression goes into, TouchDesigner's names too. A part of it after a dot: position.z, color.rgb. A new attribute is made |
 | `type` *(more)* | auto \| float \| vec2 \| vec3 \| vec4 \| int \| uint | `"auto"` |  | The type of the attribute when it is new: one the input has keeps its type, and so does one penumbra knows (position, color, scale, ...); auto: a number (float) for a name penumbra does not know; float: one number; vec2: two numbers; vec3: three numbers, such as a position or a direction; vec4: four numbers, such as a colour; int: a whole number; uint: a whole number from 0 |
 | `a` *(more)* | float | `0` | -1 to 1 (soft) | A number the expression reads as a. Bind it to a channel to steer the expression |
@@ -2402,6 +2471,43 @@ Inputs:
 - `in` (pts)
 
 Outputs: `out` (pts).
+
+### pts.particles
+
+Particles: points born on the source points that move, age and die. Wire the end of a chain of forces back into `previous` to push them
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs:
+
+- `source` (pts): Where particles are born: a position and every attribute of a source point go to the particles born on it
+- `previous` (pts): The end of the loop: what it held a step ago is where the next step starts. TouchDesigner calls it the target. Nothing wired: the node steps on its own Sees the previous frame, so it may close a loop.
+
+Outputs:
+
+- `out` (pts): The particles, oldest first, with id, age, life, velocity, force (0), and the source's attributes. Their number is on the GPU: the viewer shows it a frame late, chan.from_pts makes it a channel
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `emission` | rate \| per_point | `"rate"` |  | How many particles are born; rate: `rate` particles a second in all, each from a source point picked at random; per_point: `rate` particles a second from every source point |
+| `rate` | float | `100` | 0 to 1000 (soft, held within 0 to 1000000000) | Births a second. Below one a frame works too: a birth comes every few frames |
+| `burst` | int | `0` | 0 to 10000 (soft, held within 0 to 1000000000) | Particles born at once each time `fire` turns on, as well as the `rate`. With per_point, that many from every source point |
+| `fire` | bool | `false` |  | Turning it on gives birth to `burst` particles. Bind it to a key or a beat |
+| `life` | float | `2` | 0 to 20 (soft, held within 0 to 1000000) | How long a particle lives, in seconds. Its `age` counts up from 0; it dies when the age reaches its `life` |
+| `life_variance` | float | `0` | 0 to 10 (soft, held within 0 to 1000000) | Each particle lives up to this many seconds more or less than `life`, at random |
+| `velocity` | vec3 | `[0, 0, 0]` | -5 to 5 (soft) | The speed a particle starts with, in metres a second along x, y, z. z is up |
+| `along_normal` | float | `0` | -5 to 5 (soft) | Adds this speed along the source point's `normal`, in metres a second: particles leave a sphere outwards. Without normals it points up (+z) |
+| `inherit` *(more)* | float | `1` | 0 to 2 (soft) | Adds the source point's `velocity` times this, where the source points have one: particles take the speed of a moving emitter |
+| `spread` | float | `0` | 0 to 5 (soft, held within 0 to 1000000) | Adds a random speed of up to this, in metres a second, in any direction: a fountain fans out |
+| `gravity` | vec3 | `[0, 0, 0]` | -20 to 20 (soft) | Pulls every particle the same way, in metres a second squared. [0, 0, -9.81] is the earth's |
+| `drag` | float | `0` | 0 to 10 (soft, held within 0 to 1000000) | How fast particles lose speed, as through air: 1 takes about two thirds of the speed away in a second. A `drag` attribute of the particles takes its place |
+| `mass` | float | `1` | 0.01 to 10 (soft, held within 0.000001 to 1000000000) | Divides the `force` the loop adds: heavier particles follow it slower. Gravity pulls every mass alike. A `mass` attribute of the particles takes its place |
+| `integrate` | bool | `true` |  | Move the particles by their velocity and the forces. Off, they stay where they are unless a node in the loop moves them |
+| `max` | int | `100000` | 1 to 1000000 (soft, held within 1 to 67108864) | The most particles there are at once. While that many live, the births wait. Changing it starts over |
+| `kill` *(more)* | text | `"kill"` |  | A particle whose attribute of this name is above 0 dies at the next step: a node in the loop can end particles (pts.math, result kill, position.z < 0.0). Empty: only age kills |
+| `warm_up` | float | `0` | 0 to 10 (soft, held within 0 to 30) | Seconds simulated at once when the node starts or starts over, so the particles are there from the first frame. The nodes of the loop take no part in them |
+| `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | Another number gives other random lives, speeds and source points |
+| `reset` | bool | `false` |  | No particles while on; they start over when it turns off |
 
 ### pts.random
 

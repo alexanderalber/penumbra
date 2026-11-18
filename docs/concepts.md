@@ -163,6 +163,12 @@ The families:
   draws exactly the points that are left, `tex.from_pts` leaves the texels past them
   transparent. The viewer shows the count a frame late, as "1204 of at most 20000 points".
   `chan.from_pts` turns it into a channel, also a frame late, so a network can react to it.
+
+  `pts.particles` makes points that are born on its source points, move, age and die. Forces
+  come from a loop: `pts.force` or `pts.noise` on `force` between the particles and a node
+  wired back into their `previous` input. `pts.field` gives the points a `weight` from a shape,
+  to mask a force. `pts.feedback` closes such a loop for any points. See
+  [Particles](particles.md).
 - **`vol`**: volumes, such as smoke. `vol.smoke` simulates smoke in a box: emitters blow hot
   smoke in, the smoke rises against `gravity`, swirls and fades. `vol.emitter` is one emitter;
   wire several into the `emitter` inputs of `vol.smoke`, 64 at most, later ones acting on what
