@@ -56,8 +56,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ))
 }
 
-/// `expression` with TouchDesigner's attribute names replaced by penumbra's, and the attributes
-/// it names: those `is_attr` accepts.
+/// `expression` with TouchDesigner's attribute names replaced by penumbra's and `a` to `d` by
+/// the params they are, and the attributes it names: those `is_attr` accepts.
 pub fn scan(expression: &str, is_attr: impl Fn(&str) -> bool) -> (String, Vec<String>) {
     let mut out = String::with_capacity(expression.len());
     let mut names: Vec<String> = Vec::new();
@@ -79,6 +79,11 @@ pub fn scan(expression: &str, is_attr: impl Fn(&str) -> bool) -> (String, Vec<St
             }
             let word = expression.get(start..end).unwrap_or("");
             if c.is_ascii_digit() || last == '.' {
+                out.push_str(word);
+            } else if VALUES.contains(&word) {
+                // The node's own numbers, read straight from the params: an attribute of the
+                // same name can still be the result.
+                out.push_str("params.");
                 out.push_str(word);
             } else {
                 let name = canonical(word);
@@ -128,6 +133,12 @@ fn split_result(result: &str) -> Result<(&str, Vec<usize>), Error> {
 /// numbers `picks` of it.
 fn body(expression: &str, name: &str, ty: AttrType, picks: &[usize]) -> Result<String, Error> {
     let width = ty.components() as usize;
+    if width == 1 && !picks.is_empty() {
+        return Err(Error::new(format!(
+            "`{name}` is {} and holds one number; write `{name}` without a part after the dot",
+            ty.wgsl()
+        )));
+    }
     if let Some(bad) = picks.iter().find(|p| **p >= width) {
         let what = if width == 1 { "one number" } else { "fewer numbers" };
         let c = ["x", "y", "z", "w"].get(*bad).copied().unwrap_or("?");
@@ -144,9 +155,6 @@ fn body(expression: &str, name: &str, ty: AttrType, picks: &[usize]) -> Result<S
         n => format!("vec{n}f"),
     };
     let mut s = String::from("fn main() {\n");
-    for v in VALUES {
-        s.push_str(&format!("    let {v} = params.{v};\n"));
-    }
     s.push_str(&format!("    let pts_v = {value_ty}(\n{expression}\n    );\n"));
     const AXES: [&str; 4] = ["x", "y", "z", "w"];
     match picks {
@@ -268,6 +276,10 @@ mod tests {
         assert!(split_result("position.xx").is_err());
         assert!(split_result("color.xg").is_err());
         assert!(body("1.0", "scale", AttrType::F32, &[1]).unwrap_err().0.contains("one number"));
+        assert!(body("1.0", "scale", AttrType::F32, &[0]).unwrap_err().0.contains("without a part"));
+        // The node's values are its params; after a dot `a` is alpha.
+        let (e, names) = scan("a * color.a + b", |n: &str| ["a", "color"].contains(&n));
+        assert_eq!((e.as_str(), names), ("params.a * color.a + params.b", vec!["color".to_string()]));
         let b = body("x", "color", AttrType::Vec4, &[0, 2]).unwrap();
         assert!(
             b.contains("pts_v = vec2f(\nx\n")

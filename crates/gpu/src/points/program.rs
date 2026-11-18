@@ -211,27 +211,47 @@ pub fn storage_budget(gpu: &Gpu) -> u32 {
     gpu.device().limits().max_storage_buffers_per_shader_stage.saturating_sub(PRELUDE_STORAGE_BUFFERS)
 }
 
-/// Whether `name` can name an attribute in a program: an identifier, not a word WGSL reserves,
-/// not one of the [`HELPERS`], not starting with `pn_`.
+/// The globals every program gets from the compute prelude, besides the [`HELPERS`].
+const PRELUDE_NAMES: &[&str] =
+    &["params", "pn", "pic0", "pic1", "vol0", "vol1", "vol2", "vol3", "vol_out", "pic_out", "Params"];
+
+/// Whether `name` is one of WGSL's own: a function, a type or one of its short names
+/// (`vec3f`, `mat4x4f`), an enumerant.
+fn wgsl_builtin(name: &str) -> bool {
+    if naga::keywords::wgsl::BUILTIN_IDENTIFIERS.contains(&name) {
+        return true;
+    }
+    let sized = |rest: &str| matches!(rest.as_bytes(), [b'2'..=b'4', b'f' | b'h' | b'i' | b'u']);
+    let matrix = |rest: &str| matches!(rest.as_bytes(), [b'2'..=b'4', b'x', b'2'..=b'4', b'f' | b'h']);
+    name.strip_prefix("vec").is_some_and(sized) || name.strip_prefix("mat").is_some_and(matrix)
+}
+
+/// Whether `name` can name an attribute in a program, where it becomes a variable of that name:
+/// an identifier, not a word WGSL reserves or has a function or type of, not a name every
+/// program has, not starting with `pn_`. The one check every attribute name in a program goes
+/// through, whether typed into a node or declared in a file.
 pub fn check_name(name: &str) -> Result<(), Error> {
-    if !valid_name(name) {
-        return Err(Error::new(format!(
-            "`{name}` cannot name an attribute: letters, digits and _ only, not starting with a digit"
-        )));
+    let refuse = |why: String| Err(Error::new(format!("{why}; choose another name")));
+    if !valid_name(name) || name == "_" || name.starts_with("__") {
+        return refuse(format!(
+            "`{name}` cannot name an attribute: letters, digits and _ only, up to 64, not starting with a digit or two _"
+        ));
     }
     if naga::keywords::wgsl::RESERVED.contains(&name) {
-        return Err(Error::new(format!(
-            "`{name}` is a reserved word in WGSL and cannot name an attribute in a program"
-        )));
+        return refuse(format!("`{name}` is a reserved word in WGSL"));
     }
-    if HELPERS.contains(&name) {
-        return Err(Error::new(format!(
-            "`{name}` is a name every program has ({}), so no attribute can take it in a program",
-            HELPERS.join(", ")
-        )));
+    if wgsl_builtin(name) {
+        return refuse(format!("`{name}` is a WGSL function or type"));
+    }
+    if HELPERS.contains(&name) || PRELUDE_NAMES.contains(&name) {
+        return refuse(format!(
+            "`{name}` is a name every program has ({}, {})",
+            HELPERS.join(", "),
+            PRELUDE_NAMES.join(", ")
+        ));
     }
     if name.starts_with("pn_") {
-        return Err(Error::new(format!("`{name}`: names starting with pn_ are penumbra's own")));
+        return refuse(format!("`{name}`: names starting with pn_ are penumbra's own"));
     }
     Ok(())
 }

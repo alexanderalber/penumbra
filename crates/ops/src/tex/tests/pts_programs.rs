@@ -298,7 +298,8 @@ fn math_computes_attributes_from_an_expression() {
     assert_eq!(p.unwrap().attr("scale").unwrap().buffer().read::<f32>(&rig.gpu).unwrap()[0], 0.0);
     // A result that cannot be is a warning too.
     rig.edit(&[set("/m.expression", "1.0".into()), set("/m.result", "scale.y".into())]);
-    let (s, _) = settled(&mut rig, "/m", |s| s.warning.as_deref().is_some_and(|w| w.contains("no .y")));
+    let (s, _) =
+        settled(&mut rig, "/m", |s| s.warning.as_deref().is_some_and(|w| w.contains("holds one number")));
     assert!(s.error.is_none());
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
@@ -422,6 +423,20 @@ fn colours_a_program_sets_arrive_in_the_picture() {
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
 
+/// The error of `path`, cooked until it has one.
+fn first_error(rig: &mut Rig, path: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        rig.clock.advance(1);
+        rig.cook(path);
+        if let Some(e) = rig.cooker.status(rig.id(path)).unwrap().error {
+            return e;
+        }
+        assert!(Instant::now() < deadline, "{path} never failed");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// The correlation of two lists of numbers.
 fn correlation(a: &[f32], b: &[f32]) -> f32 {
     let n = a.len() as f32;
@@ -498,5 +513,38 @@ fn transform_turns_normals_of_flattened_points_and_only_with_positions() {
     ]);
     let p = points(&mut rig, "/t");
     assert!(near(read(&rig, &p, "normal")[0], [0.0, -1.0, 0.0]), "{:?}", read(&rig, &p, "normal")[0]);
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
+
+#[test]
+fn math_names_values_results_and_parts_without_surprises() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        grid(1, 3),
+        create(
+            "/m",
+            "pts.math",
+            &[("expression", "a + 1.0".into()), ("result", "a".into()), ("a", Value::Float(0.5))],
+        ),
+        connect("/grid", "/m", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    // An attribute named like a value: the expression's `a` is the value, the result the
+    // attribute.
+    let p = clean(&mut rig, "/m");
+    assert_eq!(p.attr("a").unwrap().buffer().read::<f32>(&rig.gpu).unwrap()[..3], [1.5; 3]);
+    // A result named like a WGSL function is refused with a name to change.
+    let refused = |rig: &mut Rig, result: &str, needle: &str| {
+        rig.edit(&[
+            create("/fresh", "pts.math", &[("expression", "1.0".into()), ("result", result.into())]),
+            connect("/grid", "/fresh", 0),
+        ]);
+        let e = first_error(rig, "/fresh");
+        assert!(e.contains(needle), "{result}: {e}");
+        rig.edit(&[penumbra_graph::Op::Delete { path: "/fresh".parse().unwrap() }]);
+    };
+    refused(&mut rig, "distance", "WGSL function");
+    // A part of a number that has one only.
+    refused(&mut rig, "scale.x", "holds one number");
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
