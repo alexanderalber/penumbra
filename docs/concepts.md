@@ -98,6 +98,7 @@ kind, and the wire takes that kind's colour:
 | `light` | yellow | one or more lights | `light` |
 | `view` | silver | one camera | `view` |
 | `vol` | grey-blue | a volume: a grid of cells filling a box in space, on the GPU | `vol` |
+| `pts` | lime | points on the GPU: a list of attributes (position, colour, scale, ...) with a value per point | `pts` |
 | `bodies` | brick red | one group of rigid bodies: their starts, their model, what they collide as and what they are made of | `physics` |
 
 Some nodes take any number of inputs of one kind: `tex.composite`, `tex.switch`,
@@ -137,6 +138,14 @@ The families:
   holds; in mode `manual` it writes only on `table_out.write`. `overwrite` on replaces the file
   in place, for a program that keeps reading it; off, every write gets a new name with `_2`,
   `_3`, ...
+- **`pts`**: points on the GPU, penumbra's counterpart to TouchDesigner's POPs. Each point
+  carries attributes: `position`, and where a node gives them `normal`, `color`, `scale`, `uv`
+  and others. TouchDesigner's attribute names mean the same: `P` is `position`, `Color` is
+  `color`, `PointScale` is `scale`. `pts.generate` puts points on a grid, a line, a circle, a
+  sphere or a box, on the surface or inside, evenly or at random. `geo.from_pts` draws them
+  with `tex.render`: a small disc facing the camera at every point, or a copy of a model at
+  every point. The viewer shows how many points there are, their attributes and the box around
+  them.
 - **`vol`**: volumes, such as smoke. `vol.smoke` simulates smoke in a box: emitters blow hot
   smoke in, the smoke rises against `gravity`, swirls and fades. `vol.emitter` is one emitter;
   wire several into the `emitter` inputs of `vol.smoke`, 64 at most, later ones acting on what
@@ -649,7 +658,7 @@ moved or saved to a file.
 
 A `comp.base` holds nodes. Its input and output sockets are port nodes inside it, one pair per
 data kind: `tex.in` and `tex.out`, `chan.in` and `chan.out`, and so on for `table`, `geo`,
-`mat`, `light`, `view` and `vol` ([Component ports](reference/nodes.md#component-ports)). What is
+`mat`, `light`, `view`, `vol` and `pts` ([Component ports](reference/nodes.md#component-ports)). What is
 wired to the component outside comes out of its `tex.in` inside. The port nodes read or write
 no files or devices: that is the job of the `out` nodes and the sources. Wires cross a component's edge only through ports; bindings and node references may
 reach anywhere.

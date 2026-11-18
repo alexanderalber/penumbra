@@ -425,18 +425,28 @@ impl Item {
     pub fn bounds(&self) -> Option<Bounds> {
         let b = self.model.bounds?;
         let Some(inst) = &self.instances else { return Some(b) };
+        let size = if inst.size.is_finite() { inst.size.abs() } else { 1.0 };
         let reach =
-            b.corners().iter().map(|c| c.iter().map(|x| x * x).sum::<f32>().sqrt()).fold(0.0, f32::max);
+            b.corners().iter().map(|c| c.iter().map(|x| x * x).sum::<f32>().sqrt()).fold(0.0, f32::max)
+                * size;
         let e = if inst.extent.is_finite() { inst.extent.max(0.0) } else { 0.0 } + reach;
         Some(Bounds { min: [-e; 3], max: [e; 3] })
     }
 }
 
-/// Copies of a model placed by textures on the GPU, one per texel of `position`: instance `i`
-/// reads texel `(i % width, i / width)` of each texture. Each is scaled, then turned, then
-/// moved, inside the item's own placement.
+/// Copies of a model placed by textures on the GPU, one per texel of `position` (or the first
+/// `count`): instance `i` reads texel `(i % width, i / width)` of each texture. Each is scaled,
+/// then turned, then moved, inside the item's own placement.
 #[derive(Clone)]
 pub struct Instances {
+    /// How many copies: the first this many texels. `None`: one per texel of `position`.
+    pub count: Option<u32>,
+    /// Multiplies every copy's scale.
+    pub size: f32,
+    /// Each copy turns its front (-y) to the eye, its +z kept up as far as it can be, in place
+    /// of `aim`: sprites. The copies' positions are still in the item's space, the turn and
+    /// size are in the world's.
+    pub face_camera: bool,
     /// rgb: where each copy goes.
     pub position: Tex,
     /// rgb: the direction the model's +y turns to, its +z kept up as far as it can be; none,
@@ -453,7 +463,23 @@ pub struct Instances {
 
 impl Instances {
     pub fn count(&self) -> u32 {
-        self.position.width().saturating_mul(self.position.height())
+        let texels = self.position.width().saturating_mul(self.position.height());
+        self.count.map_or(texels, |n| n.min(texels))
+    }
+
+    /// Copies placed by `position`, one per texel, as they are: no count, size 1, not facing
+    /// the camera.
+    pub fn of(position: Tex) -> Self {
+        Self {
+            count: None,
+            size: 1.0,
+            face_camera: false,
+            position,
+            aim: None,
+            scale: None,
+            color: None,
+            extent: 0.0,
+        }
     }
 }
 

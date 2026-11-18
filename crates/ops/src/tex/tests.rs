@@ -610,6 +610,11 @@ fn every_builtin_cooks_without_warnings() {
         create("/audio_feed", "audio.device_in", &[("device", "test".into())]),
         create("/bodies_feed", crate::rigid::group::KIND, &[]),
         connect("/table_feed", "/bodies_feed", 0),
+        create(
+            "/pts_feed",
+            crate::pts::generate::KIND,
+            &[("shape", "sphere".into()), ("count", Value::Int(64))],
+        ),
     ];
     let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
     std::fs::write(dir.join("box.obj"), penumbra_mesh::write::to_obj(&cube, None)).unwrap();
@@ -719,6 +724,7 @@ fn every_builtin_cooks_without_warnings() {
                 penumbra_graph::DataKind::View => Some("/view_feed"),
                 penumbra_graph::DataKind::Vol => Some("/vol_feed"),
                 penumbra_graph::DataKind::Bodies => Some("/bodies_feed"),
+                penumbra_graph::DataKind::Pts => Some("/pts_feed"),
                 // Component ports and nulls pass on what they get and complain about nothing wired.
                 penumbra_graph::DataKind::Audio => Some("/audio_feed"),
                 penumbra_graph::DataKind::Chan
@@ -824,6 +830,7 @@ fn every_family_has_a_null_that_passes_its_input_itself() {
         "view" => "view.camera",
         "vol" => "vol.smoke",
         "physics" => crate::rigid::group::KIND,
+        "pts" => crate::pts::generate::KIND,
         other => panic!("no source for the family {other}"),
     };
     let mut ops = Vec::new();
@@ -2880,6 +2887,7 @@ mod layers;
 mod liquid;
 mod mesh_out;
 mod palettes;
+mod pts;
 mod reduce;
 mod resample;
 mod scatter;

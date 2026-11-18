@@ -27,6 +27,7 @@ pub mod header;
 pub mod image;
 pub mod layers;
 pub mod pass;
+pub mod points;
 pub mod projection;
 pub mod readback;
 pub mod render;
@@ -45,7 +46,7 @@ use std::time::{Duration, Instant};
 
 use penumbra_core::{Error, lock};
 
-pub use buffer::{Buffer, BufferRead};
+pub use buffer::{Buffer, BufferRead, BufferRing};
 pub use canvas::{Canvas, Paint};
 pub use compute::{
     BufferSlot, Compute, DataBlock, Dispatch, Medium, MediumShape, Out, Step, Target, VOLUME_FORMAT, Volume,
@@ -54,6 +55,7 @@ pub use compute::{
 pub use deferred::{Deferral, Done};
 pub use geo::{Geo, Mat};
 pub use pass::{Batch, Pass, PassInput};
+pub use points::Points;
 pub use projection::{MeshVertex, Projection};
 pub use readback::{PendingRead, Pixels, ReadPool, ReadState, RowsError, encode_png_rgba8};
 pub use render::Lights;
@@ -776,13 +778,21 @@ impl Gpu {
 /// sampled textures per shader stage (frame stacks bind one array texture per chunk, see
 /// [`stack`]), BC texture compression where the adapter has it (HAP, [`bc`]), filtering of
 /// 32-bit float textures where it has that ([`FLOAT_FORMAT`]), blending into them where it has
-/// that ([`scatter`]), otherwise wgpu's defaults. eframe gets the same in the app.
+/// that ([`scatter`]), up to 16 storage buffers per shader stage and storage buffers of up to
+/// 1 GiB where the adapter allows (points keep each attribute in a buffer of its own,
+/// [`points`]), otherwise wgpu's defaults. eframe gets the same in the app.
 pub fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
     let mut limits = wgpu::Limits::default();
     let offered = adapter.limits();
     limits.max_texture_dimension_2d = offered.max_texture_dimension_2d.clamp(8192, 16384);
     limits.max_sampled_textures_per_shader_stage =
         offered.max_sampled_textures_per_shader_stage.clamp(limits.max_sampled_textures_per_shader_stage, 64);
+    limits.max_storage_buffers_per_shader_stage =
+        offered.max_storage_buffers_per_shader_stage.clamp(limits.max_storage_buffers_per_shader_stage, 16);
+    const GIB: u64 = 1 << 30;
+    limits.max_buffer_size = offered.max_buffer_size.clamp(limits.max_buffer_size, GIB);
+    limits.max_storage_buffer_binding_size =
+        offered.max_storage_buffer_binding_size.clamp(limits.max_storage_buffer_binding_size, GIB);
     let required_features = adapter.features()
         & (wgpu::Features::TEXTURE_COMPRESSION_BC
             | wgpu::Features::FLOAT32_FILTERABLE

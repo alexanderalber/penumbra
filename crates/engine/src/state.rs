@@ -1084,6 +1084,9 @@ fn items_of(list: Vec<StateItem>, limits: &StateLimits) -> Result<Vec<(ItemEntry
                 DataKind::Bodies => {
                     return Err("groups of bodies are not kept (they come from their table again)".into());
                 }
+                DataKind::Pts => {
+                    return Err("points are not kept (they come from their params again)".into());
+                }
                 DataKind::Mat | DataKind::Light | DataKind::View => {
                     return Err(
                         "materials, lights and cameras are not kept (they come from their params again)"

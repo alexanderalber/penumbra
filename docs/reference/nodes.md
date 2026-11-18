@@ -4,7 +4,7 @@
 
 Every built-in node type with its inputs, outputs and params, by family. A param marked with a group, like *(more)*, sits in that folded section of the param panel. A param that does something only with some setting of another param, or only while an input is wired, says so; the panel greys it out while it does nothing. A soft range limits only the slider; typed values outside it are kept. For what the families are for, see [Concepts](../concepts.md).
 
-Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [vol](#vol), [physics](#physics), [script](#script), [out](#out), [comp](#comp), [node](#node), [ui](#ui), [Component ports](#component-ports)
+Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [pts](#pts), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [vol](#vol), [physics](#physics), [script](#script), [out](#out), [comp](#comp), [node](#node), [ui](#ui), [Component ports](#component-ports)
 
 ## tex
 
@@ -2200,9 +2200,44 @@ Outputs: `out` (table).
 | `text` | text |  |  | The table as text: one row per line, cells split as format says |
 | `format` | lines \| tsv \| csv | `"lines"` |  | How a line is split into cells; lines: not at all: one cell per row; tsv: at tabs; csv: at commas; "a, b" in quotes is one cell, "" a quote |
 
+## pts
+
+[pts.generate](#ptsgenerate), [pts.null](#ptsnull)
+
+### pts.generate
+
+Points on a simple shape: a grid, a line, a circle, a sphere or a box, centred on the origin. On the surface or filling the inside, evenly spread or at random
+
+Inputs: none.
+
+Outputs:
+
+- `out` (pts): The points with `position`, and `normal` and `uv` where the shape gives them a meaning
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `shape` | grid \| line \| circle \| sphere \| box | `"grid"` |  | Which shape the points lie on, centred on the origin; size sets its measures; grid: rows by columns of points on an upright rectangle facing -y, size x wide and size z high; line: points along x, size x long; circle: an upright circle facing -y, as wide as size x; sphere: a ball as wide as size x; box: a box of size x by y by z |
+| `fill` | surface \| inside | `"surface"` |  | Circle, sphere and box: where the points lie; surface: on the outline of the circle, on the sphere, on the six sides of the box; inside: all over the disc, the ball or the box. Does something only with shape circle, sphere or box. |
+| `distribution` | ordered \| random | `"ordered"` |  | How the points spread over the shape; ordered: evenly, in a fixed order: a lattice, rings or a spiral. The same params give the same points; random: at random places, the same ones for the same `seed` |
+| `count` | int | `1000` | 1 to 1000000 (soft, held within 1 to 4194304) | How many points. An ordered box comes as near as its lattice allows; the viewer shows the count made. Does something only with shape line, circle, sphere or box. |
+| `rows` | int | `10` | 1 to 1000 (soft, held within 1 to 4096) | Grid: points from top to bottom. Does something only with shape grid. |
+| `cols` | int | `10` | 1 to 1000 (soft, held within 1 to 4096) | Grid: points from left to right. Does something only with shape grid. |
+| `size` | vec3 | `[1, 1, 1]` | 0 to 10 (soft) | Grid: x wide, z high. Line: x long. Circle and sphere: the diameter is x. Box: x, y, z. In metres |
+| `seed` | int | `0` | 0 to 100 (soft, held within 0 to 1000000000) | random: another number gives other places for the points. Does something only with distribution random. |
+
+### pts.null
+
+Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes
+
+Inputs:
+
+- `in` (pts)
+
+Outputs: `out` (pts).
+
 ## geo
 
-[geo.assign_material](#geoassign_material), [geo.file](#geofile), [geo.instance](#geoinstance), [geo.merge](#geomerge), [geo.null](#geonull), [geo.primitive](#geoprimitive), [geo.tex_instance](#geotex_instance), [geo.text](#geotext), [geo.transform](#geotransform), [geo.uv_project](#geouv_project)
+[geo.assign_material](#geoassign_material), [geo.file](#geofile), [geo.from_pts](#geofrom_pts), [geo.instance](#geoinstance), [geo.merge](#geomerge), [geo.null](#geonull), [geo.primitive](#geoprimitive), [geo.tex_instance](#geotex_instance), [geo.text](#geotext), [geo.transform](#geotransform), [geo.uv_project](#geouv_project)
 
 ### geo.assign_material
 
@@ -2239,6 +2274,25 @@ Outputs:
 | `speed` | float | `1` | 0 to 4 (soft, held within 0 to 16) | Playback rate of the animation: 2 plays twice as fast |
 | `loop` | bool | `true` |  | Off stops the animation on its last frame |
 | `time` | float | `0` | 0 to 60 s (soft, held within -10000000 to 10000000 s) | Seconds into the animation, added to the seconds played. With `play` off, bind a channel here to drive the animation |
+
+### geo.from_pts
+
+Draws points with tex.render: a small disc or square facing the camera at every point, or a copy of a model at every point, all on the GPU
+
+Inputs:
+
+- `in` (pts): The points. `position` places each sprite or copy, `scale` sizes it, `color` multiplies its colour. Without `scale` every point counts as 1, without `color` as white
+- `model` (geo): copies: the geometry put at every point, as it stands around its origin
+
+Outputs: `out` (geo).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `mode` | sprites \| copies | `"sprites"` |  | What stands at each point; sprites: a flat disc or square that always faces the camera; copies: a copy of the geometry on the `model` input |
+| `size` | float | `0.02` | 0.001 to 1 (soft, held within 0 to 10000) | sprites: the width of each sprite in metres, times the point's `scale`. Does something only with mode sprites. |
+| `sprite` | disc \| square | `"disc"` |  | sprites: the sprite's outline; disc: a round disc, as wide as `size`; square: a square of side `size`. Does something only with mode sprites. |
+| `scale` | float | `1` | 0.01 to 10 (soft, held within 0 to 1000000) | copies: multiplies the model's size at every point, times the point's `scale`. Does something only with mode copies. |
+| `orient` | none \| normal | `"none"` |  | copies: how each copy is turned; none: every copy keeps the model's own turn; normal: each copy turns its +y to the point's `normal`, keeping +z up as far as it can. Does something only with mode copies. |
 
 ### geo.instance
 
@@ -3184,7 +3238,7 @@ Outputs: none.
 
 The input and output sockets of a component, one pair per data kind. They sit inside a `comp.base`. Whatever is wired to the component's socket outside comes out of its `in` node inside. Whatever is wired into an `out` node inside comes out of the component's socket. Grouping nodes into a component adds the ports where wires cross its edge.
 
-[tex.in](#texin), [tex.out](#texout), [chan.in](#chanin), [chan.out](#chanout), [audio.in](#audioin), [audio.out](#audioout), [table.in](#tablein), [table.out](#tableout), [geo.in](#geoin), [geo.out](#geoout), [mat.in](#matin), [mat.out](#matout), [light.in](#lightin), [light.out](#lightout), [view.in](#viewin), [view.out](#viewout), [vol.in](#volin), [vol.out](#volout), [physics.in](#physicsin), [physics.out](#physicsout)
+[tex.in](#texin), [tex.out](#texout), [chan.in](#chanin), [chan.out](#chanout), [audio.in](#audioin), [audio.out](#audioout), [table.in](#tablein), [table.out](#tableout), [pts.in](#ptsin), [pts.out](#ptsout), [geo.in](#geoin), [geo.out](#geoout), [mat.in](#matin), [mat.out](#matout), [light.in](#lightin), [light.out](#lightout), [view.in](#viewin), [view.out](#viewout), [vol.in](#volin), [vol.out](#volout), [physics.in](#physicsin), [physics.out](#physicsout)
 
 ### tex.in
 
@@ -3281,6 +3335,30 @@ Inputs:
 - `in` (table)
 
 Outputs: `out` (table).
+
+### pts.in
+
+Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes
+
+Inside a component: one of its inputs.
+
+Inputs:
+
+- `in` (pts)
+
+Outputs: `out` (pts).
+
+### pts.out
+
+Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the `out` nodes
+
+Inside a component: one of its outputs.
+
+Inputs:
+
+- `in` (pts)
+
+Outputs: `out` (pts).
 
 ### geo.in
 

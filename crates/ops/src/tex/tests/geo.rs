@@ -58,7 +58,7 @@ fn scene() -> Vec<penumbra_graph::Op> {
 /// A rig on `ops` with a camera for every render: each `tex.render` created there without a
 /// camera wired in gets a `view.camera` named `<render>_camera`, wired into `camera`, carrying
 /// the camera params given to the render (`position`, `fov`, ...).
-fn rig(gpu: penumbra_gpu::Gpu, dir: Option<&Path>, ops: &[penumbra_graph::Op]) -> Rig {
+pub(super) fn rig(gpu: penumbra_gpu::Gpu, dir: Option<&Path>, ops: &[penumbra_graph::Op]) -> Rig {
     Rig::new(gpu, dir, &with_cameras(ops))
 }
 
@@ -98,7 +98,7 @@ fn with_cameras(ops: &[penumbra_graph::Op]) -> Vec<penumbra_graph::Op> {
     out
 }
 
-fn render(path: &str, params: &[(&str, Value)]) -> penumbra_graph::Op {
+pub(super) fn render(path: &str, params: &[(&str, Value)]) -> penumbra_graph::Op {
     let mut p: Vec<(&str, Value)> = super::size().to_vec();
     p.extend(params.iter().cloned());
     create(path, "tex.render", &p)

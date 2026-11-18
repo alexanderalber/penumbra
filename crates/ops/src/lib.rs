@@ -21,6 +21,7 @@ pub mod note;
 pub mod osc;
 pub mod out;
 pub mod palette;
+pub mod pts;
 pub mod readback;
 pub mod res;
 pub mod rigid;
@@ -63,6 +64,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     osc::register(types)?;
     rigid::register(types)?;
     out::register(types)?;
+    pts::register(types)?;
     script::register(types)?;
     sequence::register(types)?;
     spacemouse::register(types)?;
@@ -182,6 +184,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("table.from_chan", &["chop to dat", "chop to", "chan to table", "channels to table"]),
     ("geo.assign_material", &["material"]),
     ("geo.file", &["file in"]),
+    ("geo.from_pts", &["pop to sop", "point sprite", "sprites", "instancing"]),
     ("geo.instance", &["instancing", "copy"]),
     ("geo.primitive", &["box", "sphere", "grid", "rectangle"]),
     ("geo.text", &["text 3d", "3d text", "lettering", "extrude"]),
@@ -209,6 +212,22 @@ pub const TAGS: &[(&str, &[&str])] = &[
             "planar",
         ],
     ),
+    (
+        "pts.generate",
+        &[
+            "point generator pop",
+            "grid pop",
+            "sphere pop",
+            "circle pop",
+            "line pop",
+            "box pop",
+            "rectangle pop",
+            "points",
+            "point cloud",
+            "particles",
+        ],
+    ),
+    ("pts.null", &["null pop"]),
     ("vol.emitter", &["nvidia flow emitter", "simulation"]),
     ("vol.obstacle", &["simulation", "collision"]),
     ("vol.smoke", &["nvidia flow", "simulation", "physics", "fire", "fluid 3d"]),
@@ -304,7 +323,7 @@ pub fn warm_up(types: &NodeTypes, gpu: &Gpu) {
 
 /// Passes its input on as it is, without a copy: the nulls of every family but `tex`
 /// (`chan.null`, `audio.null`, `table.null`, `geo.null`, `mat.null`, `light.null`, `view.null`, `vol.null`,
-/// `physics.null`).
+/// `physics.null`, `pts.null`).
 pub(crate) struct Null;
 
 impl Operator for Null {

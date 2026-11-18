@@ -59,6 +59,9 @@ pub enum DataKind {
     /// collide as and what they are made of (`physics.bodies`), for a solver to move
     /// (`physics.rigid_bodies`).
     Bodies,
+    /// Points on the GPU: a list of attributes (position, colour, scale, ...) with an element per
+    /// point (`pts.generate`), drawn through `geo.from_pts`.
+    Pts,
 }
 
 /// One cooked output. The payload type belongs to the crate that implements the family (a GPU

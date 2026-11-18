@@ -56,11 +56,12 @@ use crate::{automation, theme};
 /// Families always offered, by tab and in this order, even before they have node types; the
 /// tabs by topic follow, then `library`, then other families found in the registry,
 /// alphabetically, one tab each.
-const GROUPS: [&[&str]; 7] = [
+const GROUPS: [&[&str]; 8] = [
     &["tex"],
     &["chan"],
     &["audio"],
     &["table"],
+    &["pts"],
     &["geo", "mat", "light", "view"],
     &["out"],
     &["script", "comp", "ui"],
@@ -104,11 +105,12 @@ pub const LIBRARY: &str = "library";
 /// by it.
 const NAMES: [(&str, &str); 2] = [("geo", "rendering"), ("script", "system")];
 /// The headings over the families of a shared tab; a family missing here is headed by its name.
-const HEADINGS: [(&str, &str); 14] = [
+const HEADINGS: [(&str, &str); 15] = [
     ("tex", "pictures"),
     ("chan", "channels"),
     ("audio", "sound"),
     ("table", "tables"),
+    ("pts", "points"),
     ("out", "outputs"),
     (LIBRARY, "components"),
     ("geo", "geometry"),
@@ -1544,7 +1546,19 @@ mod tests {
         let tabs = tabs(&types, &[]);
         assert_eq!(
             keys(&tabs),
-            ["tex", "chan", "audio", "table", "geo", "out", "script", "mapping", "simulations", "library"],
+            [
+                "tex",
+                "chan",
+                "audio",
+                "table",
+                "pts",
+                "geo",
+                "out",
+                "script",
+                "mapping",
+                "simulations",
+                "library"
+            ],
             "no family is left without a tab"
         );
         let homes: Vec<Vec<String>> = tabs.iter().map(|t| tab_kinds(&types, t, &[])).collect();

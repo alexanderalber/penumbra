@@ -1806,7 +1806,7 @@ impl Editor {
                         light_body(painter, body_rect, lights, !g.inputs.is_empty(), zoom);
                     }
                 }
-                DataKind::Vol | DataKind::Bodies => {
+                DataKind::Vol | DataKind::Bodies | DataKind::Pts => {
                     if let Some(lines) = crate::viewer::summary_lines(first)
                         && zoom > 0.4
                     {
