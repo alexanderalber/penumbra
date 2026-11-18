@@ -313,10 +313,12 @@ fn bindings_and_dispatches_that_cannot_work_are_readable_errors() {
     assert!(e.contains("@group(3)"), "{e}");
     let e = compile(&format!("@group(2) @binding(1) var<storage, read> a: array<u32>;{entry}"));
     assert!(e.contains("binding 0 is missing"), "{e}");
-    let eight: String =
-        (0..8).map(|i| format!("@group(2) @binding({i}) var<storage, read> b{i}: array<u32>;\n")).collect();
-    let e = compile(&format!("{eight}{entry}"));
+    // As many as the device binds: one too many beside the prelude's own.
     let most = gpu.device().limits().max_storage_buffers_per_shader_stage;
+    let all: String = (0..most)
+        .map(|i| format!("@group(2) @binding({i}) var<storage, read> b{i}: array<u32>;\n"))
+        .collect();
+    let e = compile(&format!("{all}{entry}"));
     assert!(e.contains(&format!("at most {}", most - 1)), "{e}");
     let many: String =
         (0..10).map(|i| format!("@group(2) @binding({i}) var<uniform> u{i}: vec4f;\n")).collect();

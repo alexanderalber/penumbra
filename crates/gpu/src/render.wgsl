@@ -83,7 +83,8 @@ struct Draw {
     // The filled faces' colour, straight alpha.
     fill: vec4f,
     // x: 1 where drawn once per instance (geo::Instances); y: which instance textures are
-    // there, bit 0 aim, 1 scale, 2 colour.
+    // there, bit 0 aim, 1 scale, 2 colour, and bit 3 where each copy faces the camera; z: the
+    // bits of the f32 every copy's scale is multiplied by.
     inst: vec4u,
 };
 
@@ -180,7 +181,25 @@ fn place(p: vec3f, n: vec3f, uv: vec2f, i: u32) -> VOut {
         if (has & 4u) != 0u {
             tint = max(instance_texel(inst_color, i, vec4f(1.0)).rgb, vec3f(0.0));
         }
-        model = turn * (p * scale) + instance_texel(inst_position, i, vec4f(0.0)).xyz;
+        scale *= bitcast<f32>(draw.inst.z);
+        let at = instance_texel(inst_position, i, vec4f(0.0)).xyz;
+        if (has & 8u) != 0u {
+            // A sprite: its front (-y) turned to the eye in the world, its size in the world's
+            // units, whatever the item's placement does to its position.
+            let centre = (draw.world * vec4f(at, 1.0)).xyz;
+            let to_eye = select(frame.eye.xyz, frame.eye.xyz - centre, frame.eye.w > 0.5);
+            let facing = aim_turn(-to_eye);
+            let inverse = select(vec3f(0.0), 1.0 / scale, abs(scale) > vec3f(1e-12));
+            var o: VOut;
+            o.world = centre + facing * (p * scale);
+            o.pos = frame.clip * vec4f(o.world, 1.0);
+            o.normal = facing * (n * inverse);
+            o.uv = uv;
+            o.edge = vec4f(1.0, 1.0, 1.0, 0.0);
+            o.tint = tint;
+            return o;
+        }
+        model = turn * (p * scale) + at;
         // A flat scale squashes the normal to zero; the fragment stages then face the viewer.
         let inverse = select(vec3f(0.0), 1.0 / scale, abs(scale) > vec3f(1e-12));
         normal = turn * (n * inverse);

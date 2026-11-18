@@ -127,7 +127,7 @@ details.target { outline: 2px solid var(--accent); }
 </section>
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#glossary">Glossary</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#serial-udp-tcp">Serial, UDP and TCP</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#screen">Screen and window capture</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#mapping-without-camera">Mapping without a camera</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#simulations">Simulations</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
-<p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-audio">audio</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-vol">vol</a> <a href="#family-physics">physics</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-ui">ui</a> <a href="#family-component-ports">Component ports</a></p>
+<p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-audio">audio</a> <a href="#family-table">table</a> <a href="#family-pts">pts</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-vol">vol</a> <a href="#family-physics">physics</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-ui">ui</a> <a href="#family-component-ports">Component ports</a></p>
 <p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-app">app</a> <a href="#group-audio">audio</a> <a href="#group-audio_file_out">audio_file_out</a> <a href="#group-beats">beats</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-camera">camera</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-http">http</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-midi">midi</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-net">net</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-screen">screen</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
@@ -323,6 +323,7 @@ details.target { outline: 2px solid var(--accent); }
 <tr><td><code>light</code></td><td>yellow</td><td>one or more lights</td><td><code>light</code></td></tr>
 <tr><td><code>view</code></td><td>silver</td><td>one camera</td><td><code>view</code></td></tr>
 <tr><td><code>vol</code></td><td>grey-blue</td><td>a volume: a grid of cells filling a box in space, on the GPU</td><td><code>vol</code></td></tr>
+<tr><td><code>pts</code></td><td>lime</td><td>points on the GPU: a list of attributes (position, colour, scale, ...) with a value per point</td><td><code>pts</code></td></tr>
 <tr><td><code>bodies</code></td><td>brick red</td><td>one group of rigid bodies: their starts, their model, what they collide as and what they are made of</td><td><code>physics</code></td></tr>
 </tbody>
 </table>
@@ -336,6 +337,8 @@ details.target { outline: 2px solid var(--accent); }
 <li><strong><code>audio</code></strong>: sound. A device input, a test tone, a mix, ready-made instruments and drones. <a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> turns sound into channels (see <a href="#audio">Audio</a>).
 </li>
 <li><strong><code>table</code></strong>: text tables, typed in or read from a file, for scripts and OSC. <a class="ref" href="#table.file"><code>table.file</code></a> reads a CSV, TSV or text file and reloads it when the file changes. <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a> turns a table of numbers into channels, a channel per column (or row), named by its first cell. A param bound to a channel follows the last value in that column (or row). <a class="ref" href="#table.from_chan"><code>table.from_chan</code></a> goes the other way: channels become the cells of a table, so an LFO or a tracker can place what a table places, such as the bodies of a <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a>. <a class="ref" href="#out.table"><code>out.table</code></a> writes a table to a CSV or TSV file. With <code>file</code> empty it writes <code>export/&lt;node name&gt;.csv</code> in the project folder. In mode <code>changes</code> it writes whenever the table differs from what the file holds; in mode <code>manual</code> it writes only on <a class="ref" href="#table_out.write"><code>table_out.write</code></a>. <code>overwrite</code> on replaces the file in place, for a program that keeps reading it; off, every write gets a new name with <code>_2</code>, <code>_3</code>, ...
+</li>
+<li><strong><code>pts</code></strong>: points on the GPU, penumbra's counterpart to TouchDesigner's POPs. Each point carries attributes: <code>position</code>, and where a node gives them <code>normal</code>, <code>color</code>, <code>scale</code>, <code>uv</code> and others. TouchDesigner's attribute names mean the same: <code>P</code> is <code>position</code>, <code>Color</code> is <code>color</code>, <code>PointScale</code> is <code>scale</code>. <a class="ref" href="#pts.generate"><code>pts.generate</code></a> puts points on a grid, a line, a circle, a sphere or a box, on the surface or inside, evenly or at random. <a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a> draws them with <a class="ref" href="#tex.render"><code>tex.render</code></a>: a small disc facing the camera at every point, or a copy of a model at every point. The viewer shows how many points there are, their attributes and the box around them.
 </li>
 <li><strong><code>vol</code></strong>: volumes, such as smoke. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> simulates smoke in a box: emitters blow hot smoke in, the smoke rises against <code>gravity</code>, swirls and fades. <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a> is one emitter; wire several into the <code>emitter</code> inputs of <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a>, 64 at most, later ones acting on what earlier ones left. Any table with columns x and y (see <a class="ref" href="#vol.emitter"><code>vol.emitter</code></a>'s output) gives one emitter per row, so a computed table can move or multiply them. With no emitter the box stays empty. Fuel in the smoke burns once it is hot enough: it heats, makes more smoke and swells, so a jet of it widens like a flame. A <a class="ref" href="#vol.obstacle"><code>vol.obstacle</code></a> on the <code>obstacle</code> inputs is a still sphere or box the smoke flows around. <a class="ref" href="#tex.render_volume"><code>tex.render_volume</code></a> draws a volume as a picture, seen from the front through the whole box. Hot smoke glows with <code>glow</code>, in the colours of a palette picture on its <code>palette</code> input. Its <code>density</code> output shows how much smoke covers each pixel, as grey, for <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a>. Burning smoke is dense: a <code>thickness</code> well below 1 lets the eye see into it. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> keeps its smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean the same; how strongly a number acts was matched by eye to one Flow scene.
 </li>
@@ -516,7 +519,7 @@ water      15
 <p>Every node has a path: <code>/noise1</code> at the top level, <code>/scene/noise1</code> inside the component <code>scene</code>. A param is addressed as <code>/scene/noise1.speed</code>, one component of a vector as <code>/t.translate.0</code>.</p>
 <p>Where a path refers to another node (a wire's source in the project file, a binding, the <code>node</code> param of <a class="ref" href="#tex.select"><code>tex.select</code></a>), it is read from the level of the node it belongs to: <code>/a/b</code> is absolute, <code>x</code> is the node <code>x</code> beside it, <code>sub/x</code> is below that, <code>../x</code> one level up. So a component's inside refers to its own nodes by name and keeps working when the component is moved or saved to a file.</p>
 <h3 id="concepts-components">Components</h3>
-<p>A <a class="ref" href="#comp.base"><code>comp.base</code></a> holds nodes. Its input and output sockets are port nodes inside it, one pair per data kind: <a class="ref" href="#tex.in"><code>tex.in</code></a> and <a class="ref" href="#tex.out"><code>tex.out</code></a>, <a class="ref" href="#chan.in"><code>chan.in</code></a> and <a class="ref" href="#chan.out"><code>chan.out</code></a>, and so on for <code>table</code>, <code>geo</code>, <code>mat</code>, <code>light</code>, <code>view</code> and <code>vol</code> (<a href="#family-component-ports">Component ports</a>). What is wired to the component outside comes out of its <a class="ref" href="#tex.in"><code>tex.in</code></a> inside. The port nodes read or write no files or devices: that is the job of the <code>out</code> nodes and the sources. Wires cross a component's edge only through ports; bindings and node references may reach anywhere.</p>
+<p>A <a class="ref" href="#comp.base"><code>comp.base</code></a> holds nodes. Its input and output sockets are port nodes inside it, one pair per data kind: <a class="ref" href="#tex.in"><code>tex.in</code></a> and <a class="ref" href="#tex.out"><code>tex.out</code></a>, <a class="ref" href="#chan.in"><code>chan.in</code></a> and <a class="ref" href="#chan.out"><code>chan.out</code></a>, and so on for <code>table</code>, <code>geo</code>, <code>mat</code>, <code>light</code>, <code>view</code>, <code>vol</code> and <code>pts</code> (<a href="#family-component-ports">Component ports</a>). What is wired to the component outside comes out of its <a class="ref" href="#tex.in"><code>tex.in</code></a> inside. The port nodes read or write no files or devices: that is the job of the <code>out</code> nodes and the sources. Wires cross a component's edge only through ports; bindings and node references may reach anywhere.</p>
 <p>Commands name a component's sockets by the names of its port nodes. <a class="ref" href="#node.connect"><code>node.connect</code></a> wires them, and <a class="ref" href="#chan.read"><code>chan.read</code></a>, <a class="ref" href="#table.read"><code>table.read</code></a>, <a class="ref" href="#geo.info"><code>geo.info</code></a> and <a class="ref" href="#node.snapshot"><code>node.snapshot</code></a> read them, with <code>output</code> set to the port node's name (<code>/room</code> with <code>output: &quot;colours&quot;</code>). Without <code>output</code>, a read takes the first output of the kind it reads.</p>
 <ul>
 <li><strong>Group:</strong> select nodes and press Ctrl+G. Ports are added where wires cross.
@@ -5834,9 +5837,50 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p class="mentions">Mentioned in: <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a></p>
 </div></details>
 </div>
+<div class="group" id="family-pts">
+<h3>pts</h3>
+<p class="kinds"><a href="#pts.generate">pts.generate</a> <a href="#pts.null">pts.null</a></p>
+<details class="entry node" id="pts.generate"><summary><code class="name">pts.generate</code><span class="sum">Points on a simple shape: a grid, a line, a circle, a sphere or a box, centred on the origin. On the surface or filling the inside, evenly spread or at random</span></summary>
+<div class="body">
+<p>Points on a simple shape: a grid, a line, a circle, a sphere or a box, centred on the origin. On the surface or filling the inside, evenly spread or at random</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span>: The points with <code>position</code>, and <code>normal</code> and <code>uv</code> where the shape gives them a meaning</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>shape</code></td><td>grid | line | circle | sphere | box</td><td><code>&quot;grid&quot;</code></td><td></td><td>Which shape the points lie on, centred on the origin; size sets its measures<ul><li><code>grid</code>: rows by columns of points on an upright rectangle facing -y, size x wide and size z high</li><li><code>line</code>: points along x, size x long</li><li><code>circle</code>: an upright circle facing -y, as wide as size x</li><li><code>sphere</code>: a ball as wide as size x</li><li><code>box</code>: a box of size x by y by z</li></ul></td></tr>
+<tr><td><code>fill</code></td><td>surface | inside</td><td><code>&quot;surface&quot;</code></td><td></td><td>Circle, sphere and box: where the points lie<ul><li><code>surface</code>: on the outline of the circle, on the sphere, on the six sides of the box</li><li><code>inside</code>: all over the disc, the ball or the box</li></ul></td></tr>
+<tr><td><code>distribution</code></td><td>ordered | random</td><td><code>&quot;ordered&quot;</code></td><td></td><td>How the points spread over the shape<ul><li><code>ordered</code>: evenly, in a fixed order: a lattice, rings or a spiral. The same params give the same points</li><li><code>random</code>: at random places, the same ones for the same <code>seed</code></li></ul></td></tr>
+<tr><td><code>count</code></td><td>int</td><td><code>1000</code></td><td>1 to 1000000 (soft, held within 1 to 4194304)</td><td>How many points. An ordered box comes as near as its lattice allows; the viewer shows the count made</td></tr>
+<tr><td><code>rows</code></td><td>int</td><td><code>10</code></td><td>1 to 1000 (soft, held within 1 to 4096)</td><td>Grid: points from top to bottom</td></tr>
+<tr><td><code>cols</code></td><td>int</td><td><code>10</code></td><td>1 to 1000 (soft, held within 1 to 4096)</td><td>Grid: points from left to right</td></tr>
+<tr><td><code>size</code></td><td>vec3</td><td><code>[1, 1, 1]</code></td><td>0 to 10 (soft)</td><td>Grid: x wide, z high. Line: x long. Circle and sphere: the diameter is x. Box: x, y, z. In metres</td></tr>
+<tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft, held within 0 to 1000000000)</td><td>random: another number gives other places for the points</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
+<details class="entry node" id="pts.null"><summary><code class="name">pts.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
+<div class="body">
+<p>Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span></li>
+</ul>
+</div></details>
+</div>
 <div class="group" id="family-geo">
 <h3>geo</h3>
-<p class="kinds"><a href="#geo.assign_material">geo.assign_material</a> <a href="#geo.file">geo.file</a> <a href="#geo.instance">geo.instance</a> <a href="#geo.merge">geo.merge</a> <a href="#geo.null">geo.null</a> <a href="#geo.primitive">geo.primitive</a> <a href="#geo.tex_instance">geo.tex_instance</a> <a href="#geo.text">geo.text</a> <a href="#geo.transform">geo.transform</a> <a href="#geo.uv_project">geo.uv_project</a></p>
+<p class="kinds"><a href="#geo.assign_material">geo.assign_material</a> <a href="#geo.file">geo.file</a> <a href="#geo.from_pts">geo.from_pts</a> <a href="#geo.instance">geo.instance</a> <a href="#geo.merge">geo.merge</a> <a href="#geo.null">geo.null</a> <a href="#geo.primitive">geo.primitive</a> <a href="#geo.tex_instance">geo.tex_instance</a> <a href="#geo.text">geo.text</a> <a href="#geo.transform">geo.transform</a> <a href="#geo.uv_project">geo.uv_project</a></p>
 <details class="entry node" id="geo.assign_material"><summary><code class="name">geo.assign_material</code><span class="sum">Gives geometry a material: how it looks when rendered</span></summary>
 <div class="body">
 <p>Gives geometry a material: how it looks when rendered</p>
@@ -5877,6 +5921,31 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>up</code></td><td>auto | y | z</td><td><code>&quot;auto&quot;</code></td><td></td><td>Which axis is up in the file, turned into penumbra's z up<ul><li><code>auto</code>: y for glTF and OBJ, z for STL; FBX files say which way is up, and that is used</li><li><code>y</code>: the file's y is up (most modelling tools, glTF)</li><li><code>z</code>: the file's z is up already, as STL from CAD usually is</li></ul></td></tr>
 <tr><td><code>rings</code></td><td>int</td><td><code>1</code></td><td>1 to 16</td><td>smooth: rings of faces averaged around each corner; 3 to 6 for voxel or marching-cubes meshes</td></tr>
 <tr><td><code>crease</code></td><td>float</td><td><code>180</code></td><td>0 to 180°</td><td>smooth: edges sharper than this stay hard; 180 smooths everything</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
+<details class="entry node" id="geo.from_pts"><summary><code class="name">geo.from_pts</code><span class="sum">Draws points with tex.render: a small disc or square facing the camera at every point, or a copy of a model at every point, all on the GPU</span></summary>
+<div class="body">
+<p>Draws points with tex.render: a small disc or square facing the camera at every point, or a copy of a model at every point, all on the GPU</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span>: The points. <code>position</code> places each sprite or copy, <code>scale</code> sizes it, <code>color</code> multiplies its colour. Without <code>scale</code> every point counts as 1, without <code>color</code> as white</li>
+<li><code>model</code> <span class="kind">geo</span>: copies: the geometry put at every point, as it stands around its origin</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">geo</span></li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>mode</code></td><td>sprites | copies</td><td><code>&quot;sprites&quot;</code></td><td></td><td>What stands at each point<ul><li><code>sprites</code>: a flat disc or square that always faces the camera</li><li><code>copies</code>: a copy of the geometry on the <code>model</code> input</li></ul></td></tr>
+<tr><td><code>size</code></td><td>float</td><td><code>0.02</code></td><td>0.001 to 1 (soft, held within 0 to 10000)</td><td>sprites: the width of each sprite in metres, times the point's <code>scale</code></td></tr>
+<tr><td><code>sprite</code></td><td>disc | square</td><td><code>&quot;disc&quot;</code></td><td></td><td>sprites: the sprite's outline<ul><li><code>disc</code>: a round disc, as wide as <code>size</code></li><li><code>square</code>: a square of side <code>size</code></li></ul></td></tr>
+<tr><td><code>scale</code></td><td>float</td><td><code>1</code></td><td>0.01 to 10 (soft, held within 0 to 1000000)</td><td>copies: multiplies the model's size at every point, times the point's <code>scale</code></td></tr>
+<tr><td><code>orient</code></td><td>none | normal</td><td><code>&quot;none&quot;</code></td><td></td><td>copies: how each copy is turned<ul><li><code>none</code>: every copy keeps the model's own turn</li><li><code>normal</code>: each copy turns its +y to the point's <code>normal</code>, keeping +z up as far as it can</li></ul></td></tr>
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
@@ -7511,7 +7580,7 @@ node.bind {param: &quot;/sim.reset&quot;, from: &quot;/keys&quot;, channel: &quo
 <div class="group" id="family-component-ports">
 <h3>Component ports</h3>
 <p>The input and output sockets of a component, one pair per data kind. They sit inside a <a class="ref" href="#comp.base"><code>comp.base</code></a>. Whatever is wired to the component's socket outside comes out of its <code>in</code> node inside. Whatever is wired into an <code>out</code> node inside comes out of the component's socket. Grouping nodes into a component adds the ports where wires cross its edge.</p>
-<p class="kinds"><a href="#tex.in">tex.in</a> <a href="#tex.out">tex.out</a> <a href="#chan.in">chan.in</a> <a href="#chan.out">chan.out</a> <a href="#audio.in">audio.in</a> <a href="#audio.out">audio.out</a> <a href="#table.in">table.in</a> <a href="#table.out">table.out</a> <a href="#geo.in">geo.in</a> <a href="#geo.out">geo.out</a> <a href="#mat.in">mat.in</a> <a href="#mat.out">mat.out</a> <a href="#light.in">light.in</a> <a href="#light.out">light.out</a> <a href="#view.in">view.in</a> <a href="#view.out">view.out</a> <a href="#vol.in">vol.in</a> <a href="#vol.out">vol.out</a> <a href="#physics.in">physics.in</a> <a href="#physics.out">physics.out</a></p>
+<p class="kinds"><a href="#tex.in">tex.in</a> <a href="#tex.out">tex.out</a> <a href="#chan.in">chan.in</a> <a href="#chan.out">chan.out</a> <a href="#audio.in">audio.in</a> <a href="#audio.out">audio.out</a> <a href="#table.in">table.in</a> <a href="#table.out">table.out</a> <a href="#pts.in">pts.in</a> <a href="#pts.out">pts.out</a> <a href="#geo.in">geo.in</a> <a href="#geo.out">geo.out</a> <a href="#mat.in">mat.in</a> <a href="#mat.out">mat.out</a> <a href="#light.in">light.in</a> <a href="#light.out">light.out</a> <a href="#view.in">view.in</a> <a href="#view.out">view.out</a> <a href="#vol.in">vol.in</a> <a href="#vol.out">vol.out</a> <a href="#physics.in">physics.in</a> <a href="#physics.out">physics.out</a></p>
 <details class="entry node" id="tex.in"><summary><code class="name">tex.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
 <div class="body">
 <p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
@@ -7618,6 +7687,32 @@ node.bind {param: &quot;/sim.reset&quot;, from: &quot;/keys&quot;, channel: &quo
 <h4>Outputs</h4>
 <ul>
 <li><code>out</code> <span class="kind">table</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="pts.in"><summary><code class="name">pts.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
+<div class="body">
+<p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
+<p class="note">Inside a component: one of its inputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="pts.out"><summary><code class="name">pts.out</code><span class="sum">Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</span></summary>
+<div class="body">
+<p>Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</p>
+<p class="note">Inside a component: one of its outputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span></li>
 </ul>
 </div></details>
 <details class="entry node" id="geo.in"><summary><code class="name">geo.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>

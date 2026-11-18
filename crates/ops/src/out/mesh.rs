@@ -208,6 +208,10 @@ struct InstanceTextures {
     position: usize,
     aim: Option<usize>,
     scale: Option<usize>,
+    /// How many copies: the first this many texels.
+    count: u32,
+    /// Multiplies every copy's scale.
+    size: f64,
 }
 
 /// Everything a write needs besides the instance textures.
@@ -455,9 +459,15 @@ fn assemble(pieces: &[Piece], textures: &[Texels]) -> Result<(Mesh, Counts), Str
         let position = tex(inst.position)?;
         let aim = inst.aim.map(tex).transpose()?;
         let scale = inst.scale.map(tex).transpose()?;
-        let count = position.width.saturating_mul(position.height);
+        let count = position.width.saturating_mul(position.height).min(inst.count);
+        let size = [
+            [inst.size, 0.0, 0.0, 0.0],
+            [0.0, inst.size, 0.0, 0.0],
+            [0.0, 0.0, inst.size, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
         for i in 0..count {
-            let m = mul(&piece.world, &instance_matrix(i, position, aim, scale));
+            let m = mul(&piece.world, &mul(&instance_matrix(i, position, aim, scale), &size));
             if !m.iter().flatten().all(|x| x.is_finite()) {
                 counts.left_out += 1;
                 continue;
@@ -619,8 +629,11 @@ impl MeshOut {
                 color: i.material.as_ref().map(|m| m.color),
                 instances: i.instances.as_ref().filter(|_| expand).map(|inst| InstanceTextures {
                     position: index(&inst.position),
-                    aim: inst.aim.as_ref().map(&mut index),
+                    // Sprites face whoever looks: a file has no camera, so they stay unturned.
+                    aim: inst.aim.as_ref().filter(|_| !inst.face_camera).map(&mut index),
                     scale: inst.scale.as_ref().map(&mut index),
+                    count: inst.count(),
+                    size: if inst.size.is_finite() { f64::from(inst.size) } else { 1.0 },
                 }),
             })
             .collect();

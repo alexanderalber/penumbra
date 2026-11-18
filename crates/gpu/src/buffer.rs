@@ -86,6 +86,11 @@ impl Buffer {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
+    /// Held by someone besides the one asking (downstream data, a snapshot).
+    fn shared(&self) -> bool {
+        Arc::strong_count(&self.0) > 1
+    }
+
     /// Replaces elements `first..first + values.len()`, counted in elements of `T`, for the
     /// dispatches recorded after this. `Err` when they reach past the end, or start or end off
     /// a multiple of 4 bytes (wgpu copies whole words).
@@ -311,6 +316,53 @@ fn check_bytes(gpu: &Gpu, bytes: u64, label: &str) -> Result<(), Error> {
         )));
     }
     Ok(())
+}
+
+/// Most buffers a [`BufferRing`] keeps.
+const RING: usize = 3;
+
+/// The output buffers of one node, reused across cooks, as [`crate::TexRing`] does for
+/// textures: a buffer nobody else holds any more is written again instead of allocating a new
+/// one every cook. A reused buffer keeps whatever it held: the node overwrites what it uses.
+#[derive(Default)]
+pub struct BufferRing {
+    buffers: Vec<Buffer>,
+}
+
+impl BufferRing {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A buffer of `bytes` bytes that nobody else is reading. `Err` as for [`Buffer::new`].
+    pub fn next(&mut self, gpu: &Gpu, bytes: u64, label: &str) -> Result<Buffer, Error> {
+        self.buffers.retain(|b| b.bytes() == bytes);
+        if let Some(b) = self.buffers.iter().find(|b| !b.shared()) {
+            return Ok(b.clone());
+        }
+        let b = Buffer::new(gpu, bytes, label)?;
+        if self.buffers.len() >= RING {
+            // All held elsewhere: forget the oldest, its holders keep it alive.
+            self.buffers.remove(0);
+        }
+        self.buffers.push(b.clone());
+        Ok(b)
+    }
+
+    /// Forgets the buffers nobody else holds, keeping the ones still read.
+    pub fn trim(&mut self) {
+        self.buffers.retain(Buffer::shared);
+    }
+
+    /// Bytes on the GPU of the buffers the ring keeps.
+    pub fn bytes(&self) -> u64 {
+        self.buffers.iter().map(Buffer::bytes).sum()
+    }
+
+    /// The buffers the ring keeps.
+    pub fn iter(&self) -> impl Iterator<Item = &Buffer> {
+        self.buffers.iter()
+    }
 }
 
 /// The bytes of distinct buffers among `buffers`.

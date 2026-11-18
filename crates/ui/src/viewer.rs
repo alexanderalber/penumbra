@@ -268,6 +268,9 @@ impl Viewer {
                         g.triangle_count()
                     )
                 }),
+                Some(d) if d.kind() == DataKind::Pts => {
+                    d.get::<penumbra_gpu::Points>().and_then(|p| pts_lines(p).into_iter().next())
+                }
                 _ => None,
             };
             if let Some(size) = size {
@@ -479,7 +482,7 @@ impl Viewer {
                     }
                 }
             }
-            DataKind::Vol | DataKind::Bodies => {
+            DataKind::Vol | DataKind::Bodies | DataKind::Pts => {
                 if let Some(lines) = summary_lines(data) {
                     for (i, line) in lines.into_iter().enumerate() {
                         painter.text(
@@ -810,11 +813,34 @@ pub(crate) fn light_name(l: &penumbra_gpu::render::Light) -> &'static str {
 
 /// Three lines on a result that has no picture, as a viewer and a node body show it: a volume
 /// or a group of bodies. `None` for anything else.
-pub(crate) fn summary_lines(data: &Data) -> Option<[String; 3]> {
+pub(crate) fn summary_lines(data: &Data) -> Option<Vec<String>> {
     if let Some(m) = data.get::<penumbra_gpu::Medium>() {
-        return Some(vol_lines(m));
+        return Some(vol_lines(m).into());
     }
-    data.get::<penumbra_ops::rigid::group::Bodies>().map(bodies_lines)
+    if let Some(p) = data.get::<penumbra_gpu::Points>() {
+        return Some(pts_lines(p));
+    }
+    data.get::<penumbra_ops::rigid::group::Bodies>().map(|b| bodies_lines(b).into())
+}
+
+/// What a set of points holds: how many, their order, each attribute with its type, the box
+/// around them where known.
+pub(crate) fn pts_lines(p: &penumbra_gpu::Points) -> Vec<String> {
+    let count = match p.count().known() {
+        Some(n) => format!("{n} point{}", if n == 1 { "" } else { "s" }),
+        None => format!("up to {} points", p.count().at_most()),
+    };
+    let mut lines = vec![match p.dims() {
+        Some([r, c, 1]) => format!("{count}, {r} x {c}"),
+        Some([r, c, s]) => format!("{count}, {r} x {c} x {s}"),
+        None => count,
+    }];
+    lines.extend(p.attrs().iter().map(|a| format!("{} {}", a.name(), a.ty().wgsl())));
+    if let Some(b) = p.bounds() {
+        let f = |v: [f32; 3]| v.map(|c| format_value(f64::from(c))).join(", ");
+        lines.push(format!("from {} to {}", f(b.min), f(b.max)));
+    }
+    lines
 }
 
 /// What a volume holds: its cells and its box.

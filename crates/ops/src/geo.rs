@@ -873,11 +873,11 @@ impl Operator for TexInstance {
             }
         };
         let instances = Arc::new(Instances {
-            position: position.clone(),
             aim: optional(2)?,
             scale: optional(3)?,
             color: optional(4)?,
             extent: cx.float("extent")? as f32,
+            ..Instances::of(position.clone())
         });
         if input.items.iter().any(|i| i.instances.is_some()) {
             cx.warn("the input is instanced already: its instances are replaced");

@@ -1659,11 +1659,16 @@ fn draw_slot(
         let v = if v.is_finite() { v.clamp(0.0, 1e4) } else { 0.0 };
         b.extend_from_slice(&v.to_le_bytes());
     }
-    // Drawn per instance, and which of their textures are there.
+    // Drawn per instance, which of their textures are there, whether they face the camera,
+    // and the size every copy is scaled by.
     let has = instances.map_or(0u32, |i| {
-        u32::from(i.aim.is_some()) | u32::from(i.scale.is_some()) << 1 | u32::from(i.color.is_some()) << 2
+        u32::from(i.aim.is_some())
+            | u32::from(i.scale.is_some()) << 1
+            | u32::from(i.color.is_some()) << 2
+            | u32::from(i.face_camera) << 3
     });
-    for v in [u32::from(instances.is_some()), has, 0, 0] {
+    let size = instances.map_or(1.0f32, |i| if i.size.is_finite() { i.size } else { 1.0 });
+    for v in [u32::from(instances.is_some()), has, size.to_bits(), 0] {
         b.extend_from_slice(&v.to_le_bytes());
     }
     b.resize(DRAW_BYTES as usize, 0);
