@@ -741,6 +741,44 @@ fn hostile_input_leaves_the_liquid_finite() {
     assert!(particles(&all[2]) > 100.0, "{}", particles(&all[2]));
 }
 
+/// The short form of `slow::hostile_input_leaves_sand_and_snow_finite`, for the gate: the same
+/// hostile tables, fill and params on a small grid for a few frames each. Every output stays
+/// finite.
+#[test]
+fn hostile_input_leaves_sand_and_snow_finite_in_a_few_frames() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("liquid-hostile-granular-short");
+    std::fs::write(dir.join("hostile.wgsl"), HOSTILE).unwrap();
+    let rows = "x,y,width,vx,vy,on,material\n0.3,0.1,0.1,0,1,1,sand\n0.6,0.1,0.1,0,1,1,2\n\
+                0.5,0.5,1e9,-1e9,1e9,1,snow\n0.5,0.1,0.1,0,1,1,lava\n0.5,0.1,0.1,0,1,1,7\n";
+    let mut ops = vec![
+        liquid(&[
+            ("grid", Value::Int(16)),
+            ("particles", Value::Int(1024)),
+            ("fill_material", "sand".into()),
+        ]),
+        create(
+            "/bad",
+            "tex.shader",
+            &[("file", "hostile.wgsl".into()), ("width", Value::Int(128)), ("height", Value::Int(96))],
+        ),
+        create("/rows", "table.text", &[("text", rows.into()), ("format", "csv".into())]),
+        wire("/bad", 0, "/liquid", FILL),
+        wire("/rows", 0, "/liquid", 0),
+    ];
+    ops.extend(outputs());
+    ops.extend(drawn());
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.pixels("/bad");
+    assert!(run_drawn(&mut rig, 4).iter().all(finite));
+    rig.edit(&[
+        set("/liquid.gravity", Value::Vec2([0.0, 1000.0])),
+        set("/liquid.sand_angle", Value::Float(1e9)),
+        set("/liquid.snow_wetness", Value::Float(-1e9)),
+    ]);
+    assert!(run_drawn(&mut rig, 4).iter().all(finite));
+}
+
 /// The drawn outputs read through nulls: `/f` foam, `/g` grain, `/s` surface.
 fn drawn() -> [Op; 6] {
     [
