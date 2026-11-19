@@ -164,6 +164,38 @@ pub(super) fn idle(rig: &mut Rig, path: &str, frames: usize) -> (Option<String>,
     (s.warning, s.stats.cooks)
 }
 
+/// How long a test waits for a readback. Every test of the process shares one software GPU, so
+/// under a full test run a readback can take seconds behind the other tests' work.
+const READBACK_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// [`idle`] frames until `done` holds for the node's warning, or [`READBACK_WAIT`] passed.
+pub(super) fn idle_until(rig: &mut Rig, path: &str, done: impl Fn(Option<&str>) -> bool) -> Option<String> {
+    let deadline = std::time::Instant::now() + READBACK_WAIT;
+    loop {
+        let (warning, _) = idle(rig, path, 1);
+        if done(warning.as_deref()) || std::time::Instant::now() > deadline {
+            return warning;
+        }
+    }
+}
+
+/// [`idle`] frames until the node rests: no cook in 10 frames in a row. Its warning then; `None`
+/// as the second value while it still cooks after [`READBACK_WAIT`].
+pub(super) fn settle(rig: &mut Rig, path: &str) -> (Option<String>, Option<u64>) {
+    let deadline = std::time::Instant::now() + READBACK_WAIT;
+    let (_, mut before) = idle(rig, path, 10);
+    loop {
+        let (warning, cooks) = idle(rig, path, 10);
+        if cooks == before {
+            return (warning, Some(cooks));
+        }
+        if std::time::Instant::now() > deadline {
+            return (warning, None);
+        }
+        before = cooks;
+    }
+}
+
 /// A node that warns from a readback says so on points that never change, without anything
 /// cooking it again by hand; once the cause is fixed the warning goes for good; and the node
 /// stops cooking once it has said what it has to say.
@@ -199,18 +231,20 @@ fn warnings_from_readbacks_come_without_a_recook_and_follow_the_settings() {
         ("/count", set("/count.max_per_cell", Value::Int(4096)), "crowd their cube"),
     ] {
         rig.cook(path);
-        let (warning, _) = idle(&mut rig, path, 40);
+        let warning = idle_until(&mut rig, path, |w| w.is_some_and(|w| w.contains(word)));
         assert!(warning.as_deref().is_some_and(|w| w.contains(word)), "{path}: {warning:?}");
-        // Settled: no more cooks while nothing changes.
-        let (_, cooks) = idle(&mut rig, path, 10);
-        let (_, later) = idle(&mut rig, path, 10);
-        assert_eq!(cooks, later, "{path} keeps cooking with nothing changed");
-        // The cause fixed: the cook of the edit says nothing from the old settings, nor any later.
+        // Settled: no more cooks while nothing changes, and still the word.
+        let (warning, rests) = settle(&mut rig, path);
+        assert!(rests.is_some(), "{path} keeps cooking with nothing changed");
+        assert!(warning.as_deref().is_some_and(|w| w.contains(word)), "{path} settled: {warning:?}");
+        // The cause fixed: the cook of the edit says nothing from the old settings, nor any later
+        // once the readbacks of the new settings came in.
         rig.edit(&[fix]);
         rig.cook(path);
         let s = rig.cooker.status(rig.id(path)).unwrap();
         assert_eq!(s.warning, None, "{path}: the edit's own cook");
-        let (warning, _) = idle(&mut rig, path, 20);
+        let (warning, rests) = settle(&mut rig, path);
+        assert!(rests.is_some(), "{path} keeps cooking after the fix");
         assert_eq!(warning, None, "{path}");
     }
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
@@ -231,13 +265,14 @@ fn the_defaults_make_lines_and_no_lines_say_why() {
     let mut rig = Rig::new(gpu, None, &ops);
     let out = points(&mut rig, "/near");
     assert!(live(&rig, &out) > 100, "lines from the defaults: {}", live(&rig, &out));
-    let (warning, _) = idle(&mut rig, "/near", 5);
+    let (warning, rests) = settle(&mut rig, "/near");
+    assert!(rests.is_some(), "the lines of the defaults keep cooking");
     assert_eq!(warning, None);
     let near = points(&mut rig, "/count");
     assert!(values(&rig, &near, "neighbors").iter().all(|c| c[0] >= 2.0), "every point has neighbours");
     rig.edit(&[set("/near.distance", Value::Float(0.01))]);
     rig.cook("/near");
-    let (warning, _) = idle(&mut rig, "/near", 40);
+    let warning = idle_until(&mut rig, "/near", |w| w.is_some_and(|w| w.contains("no two points")));
     assert!(warning.as_deref().is_some_and(|w| w.contains("no two points")), "{warning:?}");
     rig.edit(&[set("/near.distance", Value::Float(0.5)), set("/near.min_distance", Value::Float(0.5))]);
     rig.cook("/near");
