@@ -151,50 +151,6 @@ fn warning(rig: &Rig) -> Option<String> {
     rig.cooker.status(rig.id("/liquid")).unwrap().warning
 }
 
-/// The dam of the compute fixture (`liquid_tests.rs` in the gpu crate), in picture units: a
-/// square of a third of the picture's height at the left of the floor, in a picture 4:3, on 128
-/// cells across, 4 particles per cell (4096). The fixture's numbers come from a room 3 m high and
-/// are converted: gravity 9.81 m/s^2 to 3.27, sound speed 12 m/s to 4, viscosity 0.002 m^2/s to
-/// 0.000222. The liquid comes to rest as in metres: a flat pool as high as its area over the
-/// width. A run in metres at 65536 particles and 512 cells across gave 0.2508 m against 0.2499,
-/// so 0.0836 against 0.0833 picture heights, and 0.016 m/s at 20 s, 0.0053 heights per second.
-#[test]
-fn a_filled_block_falls_and_rests_as_a_flat_pool_of_the_height_in_metres() {
-    let Some(gpu) = gpu() else { return };
-    let dir = scratch("liquid-dam");
-    let mut ops = vec![
-        liquid(&[("grid", Value::Int(128)), ("particles", Value::Int(8192))]),
-        mask("/dam", "dam.wgsl", &dir, "uv.x < 0.25 && uv.y > 2.0 / 3.0"),
-        wire("/dam", 0, "/liquid", FILL),
-    ];
-    ops.extend(outputs());
-    let mut rig = Rig::new(gpu, Some(&dir), &ops);
-    rig.pixels("/dam");
-    let (_, _, d0) = run(&mut rig, 1);
-    let start = particles(&d0);
-    let (out, v, d) = run(&mut rig, 900);
-    assert!(finite(&out) && finite(&v) && finite(&d));
-    assert_eq!((d.width, d.height), (128, 96));
-    // The fill: a third of a height squared, at four particles a cell of 1/96.
-    let area = 1.0 / 9.0;
-    assert!((start / (area * 4.0 * 96.0 * 96.0) - 1.0).abs() < 0.03, "{start} particles at the start");
-    let expected = area / (4.0 / 3.0);
-    let depths: Vec<f64> = (16..112).map(|i| depth(&d, i)).collect();
-    let mean = depths.iter().sum::<f64>() / depths.len() as f64;
-    let spread = depths.iter().fold(0.0f64, |a, h| a.max((h - mean).abs()));
-    let speed = mean_speed(&v, &d);
-    eprintln!(
-        "dam: pool {mean:.4} heights (expected {expected:.4}, 0.0836 in metres), spread {spread:.4}, mean speed \
-         {speed:.4} heights/s, particles {start:.0} then {:.0}",
-        particles(&d)
-    );
-    assert!((mean / expected - 1.0).abs() < 0.04, "pool {mean} against {expected}");
-    assert!(spread < 0.5 / 96.0, "not flat: {depths:?}");
-    // In metres: 0.016 m/s at 20 s, 0.0053 picture heights per second.
-    assert!(speed < 0.01, "still moving at {speed}");
-    assert_eq!(warning(&rig), None);
-}
-
 /// An emitter to the left of the middle pours to the right without gravity: the liquid comes
 /// in at its place, moves its way, at width times speed in area per second, and stops when
 /// `on` is off.
@@ -234,37 +190,6 @@ fn an_emitter_pours_at_its_place_its_way_and_its_rate_and_stops_when_off() {
     let (out, _, after) = run(&mut rig, 30);
     assert!((particles(&after) - particles(&before)).abs() < 0.02 * poured, "it pours on while off");
     assert!(finite(&out) && finite(&after));
-}
-
-/// With open edges a pour leaves at the bottom and the emitter takes the same particles again:
-/// the count settles and stays, without a warning, over a long run.
-#[test]
-fn open_edges_drain_and_the_count_stays_bounded() {
-    let Some(gpu) = gpu() else { return };
-    let mut ops = vec![
-        liquid(&[("edges", "open".into()), ("particles", Value::Int(2048))]),
-        create(
-            "/tap",
-            "tex.liquid_emitter",
-            &[("position", Value::Vec2([0.5, 0.05])), ("width", Value::Float(0.08))],
-        ),
-        wire("/tap", 0, "/liquid", 0),
-    ];
-    ops.extend(outputs());
-    let mut rig = Rig::new(gpu, None, &ops);
-    let mut counts = Vec::new();
-    for _ in 0..8 {
-        let (out, _, d) = run(&mut rig, 120);
-        assert!(finite(&out) && finite(&d));
-        counts.push(particles(&d));
-    }
-    eprintln!("in flight every 2 s: {counts:.0?}");
-    let late = &counts[2..];
-    let (lo, hi) = late.iter().fold((f64::MAX, 0.0f64), |(lo, hi), c| (lo.min(*c), hi.max(*c)));
-    assert!(lo > 100.0, "{counts:?}");
-    assert!(hi < 1.15 * lo, "the count does not settle: {counts:?}");
-    assert!(hi < 2048.0 * 0.5, "{counts:?}");
-    assert_eq!(warning(&rig), None);
 }
 
 /// A pour into a closed picture uses up its particles: the node warns, the emitter stops adding
@@ -939,58 +864,6 @@ fn splash(name: &str) -> (ScratchDir, Vec<Op>) {
     (dir, ops)
 }
 
-/// Foam starts where a falling block lands in a pool, and is gone once the pool calmed down.
-#[test]
-fn foam_appears_in_a_splash_and_fades_in_a_calm_pool() {
-    let Some(gpu) = gpu() else { return };
-    let (dir, ops) = splash("liquid-foam");
-    let mut rig = Rig::new(gpu, Some(&dir), &ops);
-    rig.pixels("/block");
-    let [first, _, _, f0, _, _] = run_drawn(&mut rig, 1);
-    let [_, _, _, landed, _, _] = run_drawn(&mut rig, 30);
-    let [_, _, _, calm, _, _] = run_drawn(&mut rig, 570);
-    let most = |f: &Pixels| f.data.iter().fold(0.0f32, |m, c| m.max(c[3]));
-    eprintln!(
-        "foam: {:.0} at the start, {:.0} (most {:.2}) as it lands, {:.1} (most {:.3}) after 10 s",
-        foam(&f0),
-        foam(&landed),
-        most(&landed),
-        foam(&calm),
-        most(&calm)
-    );
-    assert!(covered(&first) > 1000.0);
-    assert_eq!(foam(&f0), 0.0, "foam before anything moved");
-    assert!(foam(&landed) > 100.0 && most(&landed) > 0.5, "{}", foam(&landed));
-    assert!(most(&calm) < 0.05, "{}", most(&calm));
-}
-
-/// The same splash at 30, 60 and 144 frames per second: after the same show time the foam and
-/// the covered area are nearly the same. The smoothing and fading follow the time a substep
-/// stands for, not the number of frames. (At 30 and 60 the substeps happen to be the same, so
-/// those two agree exactly; 144 takes substeps of another length.)
-#[test]
-fn the_look_does_not_depend_on_the_frame_rate() {
-    let Some(gpu) = gpu() else { return };
-    let (dir, ops) = splash("liquid-rate");
-    let at = |fps: u32| {
-        let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
-        rig.clock.set_rate(penumbra_core::Rate::new(fps, 1).unwrap());
-        rig.pixels("/block");
-        let [out_a, _, _, foam_a, _, _] = run_drawn(&mut rig, fps as usize / 2);
-        let [out_b, _, _, foam_b, _, _] = run_drawn(&mut rig, fps as usize);
-        [(covered(&out_a), foam(&foam_a)), (covered(&out_b), foam(&foam_b))]
-    };
-    let (thirty, sixty, fast) = (at(30), at(60), at(144));
-    eprintln!("30 fps: {thirty:?}; 60 fps: {sixty:?}; 144 fps: {fast:?} (area, foam at 0.5 s and 1.5 s)");
-    for other in [thirty, fast] {
-        for ((area, foam), (area_60, foam_60)) in other.into_iter().zip(sixty) {
-            assert!((area / area_60 - 1.0).abs() < 0.03, "area {area}, {area_60} at 60 fps");
-            assert!(foam_60 > 20.0, "{foam_60}");
-            assert!((foam / foam_60 - 1.0).abs() < 0.25, "foam {foam}, {foam_60} at 60 fps");
-        }
-    }
-}
-
 /// The top of the liquid in each column of the density picture, picture heights above the floor.
 fn profile(d: &Pixels) -> Vec<f64> {
     (0..d.width).map(|i| depth(d, i)).collect()
@@ -1226,47 +1099,6 @@ fn sand_stays_on_a_shelf_and_snow_on_a_slope() {
     eprintln!("slope after 1 s: centre x of snow {snow:.3}, of liquid {water:.3}");
     // Both start with their centre at about 0.3 heights.
     assert!(snow < 0.4 && water > snow + 0.2, "{snow} {water}");
-}
-
-/// Emitter tables with sand, snow and unknown materials, a hostile fill of sand, absurd material
-/// params, and sand and snow squeezed by three hundred times the earth's gravity: every output
-/// stays finite.
-#[test]
-fn hostile_input_leaves_sand_and_snow_finite() {
-    let Some(gpu) = gpu() else { return };
-    let dir = scratch("liquid-hostile-granular");
-    std::fs::write(dir.join("hostile.wgsl"), HOSTILE).unwrap();
-    let rows = "x,y,width,vx,vy,on,material\n0.3,0.1,0.1,0,1,1,sand\n0.6,0.1,0.1,0,1,1,2\n\
-                0.5,0.5,1e9,-1e9,1e9,1,snow\n0.5,0.1,0.1,0,1,1,lava\n0.5,0.1,0.1,0,1,1,7\n";
-    let mut ops = vec![
-        liquid(&[("grid", Value::Int(32)), ("fill_material", "sand".into())]),
-        create(
-            "/bad",
-            "tex.shader",
-            &[("file", "hostile.wgsl".into()), ("width", Value::Int(128)), ("height", Value::Int(96))],
-        ),
-        create("/rows", "table.text", &[("text", rows.into()), ("format", "csv".into())]),
-        wire("/bad", 0, "/liquid", FILL),
-        wire("/rows", 0, "/liquid", 0),
-    ];
-    ops.extend(outputs());
-    ops.extend(drawn());
-    let mut rig = Rig::new(gpu, Some(&dir), &ops);
-    rig.pixels("/bad");
-    let all = run_drawn(&mut rig, 30);
-    assert!(all.iter().all(finite));
-    assert!(particles(&all[2]) > 100.0, "{}", particles(&all[2]));
-    rig.edit(&[
-        set("/liquid.gravity", Value::Vec2([0.0, 1000.0])),
-        set("/liquid.sand_angle", Value::Float(1e9)),
-        set("/liquid.snow_wetness", Value::Float(-1e9)),
-    ]);
-    let all = run_drawn(&mut rig, 30);
-    assert!(all.iter().all(finite));
-    rig.edit(&[set("/liquid.gravity", Value::Vec2([0.0, 3.27]))]);
-    let all = run_drawn(&mut rig, 60);
-    assert!(all.iter().all(finite));
-    assert!(particles(&all[2]) > 100.0, "{}", particles(&all[2]));
 }
 
 /// A picture of 128 x 96 in one colour: a force of `red` widths and `green` heights per frame.
@@ -1742,55 +1574,6 @@ fn obstacles_from_bodies(told: Told) -> Vec<Op> {
     ops
 }
 
-/// A box 0.2 m wide and 1.2 m tall that slides right at 1.5 m/s (half a height per second)
-/// through a pool 0.9 m deep, without gravity on it, pushes the liquid ahead of it when the
-/// liquid has its velocity. With the mask alone it only takes the liquid's place, and less of
-/// the liquid ends up ahead. Optical flow on the mask, measured as well, is printed.
-#[test]
-fn a_body_moving_through_a_pool_pushes_the_liquid_ahead_with_its_velocity() {
-    let Some(gpu) = gpu() else { return };
-    let dir = scratch("liquid-bodies-push");
-    let push = |told: Told| {
-        let mut ops = bodies(
-            "tx,tz,sx,sy,sz,vx\n-1.4,0.6,0.2,0.5,1.2,1.5",
-            &[("gravity", Value::Vec3([0.0; 3])), ("floor", false.into())],
-        );
-        ops.extend([
-            liquid(&[("particles", Value::Int(16384))]),
-            mask("/pool", "pool.wgsl", &dir, "uv.y > 0.7"),
-            wire("/pool", 0, "/liquid", FILL),
-        ]);
-        ops.extend(obstacles_from_bodies(told));
-        ops.extend(outputs());
-        let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
-        rig.pixels("/pool");
-        let (_, _, d) = run(&mut rig, 1);
-        let start = particles(&d);
-        let (out, v, d) = run(&mut rig, 80);
-        assert!(finite(&out) && finite(&v) && finite(&d));
-        // After 80 frames (79 steps: the first shows the start) the box is at x 0.575 m, 0.858
-        // heights, its front at 0.892 heights.
-        let ahead = particles_where(&d, |x, _| x > 0.892 + 0.035);
-        // The box less a cell (1/48 heights) all round, where the grid cannot tell.
-        let inside = particles_where(&d, |x, y| (x - 0.858).abs() < 0.033 - 0.021 && y > 0.6 + 0.021);
-        (start, ahead, inside, particles(&d))
-    };
-    let (start, ahead, inside, total) = push(Told::Velocity);
-    let (_, ahead_still, inside_still, _) = push(Told::Nothing);
-    let (_, ahead_flow, inside_flow, _) = push(Told::Flow);
-    eprintln!(
-        "bodies push: {start:.0} particles; with the velocity {ahead:.0} ahead, {inside:.1} inside, {total:.0} in all; \
-         mask alone {ahead_still:.0} ahead, {inside_still:.1} inside; optical flow {ahead_flow:.0} ahead, \
-         {inside_flow:.1} inside"
-    );
-    // At the start 30 % of the pool lies beyond 0.935 heights.
-    assert!(ahead > 0.45 * start, "{ahead} of {start} ahead");
-    assert!(ahead > ahead_still + 0.05 * start, "{ahead} with velocity, {ahead_still} without");
-    assert!(inside < 0.005 * start, "{inside} inside the box");
-    // Liquid pressed against the box draws a little thin.
-    assert!((total / start - 1.0).abs() < 0.02, "{total} of {start}");
-}
-
 /// The velocity picture says what the solver says: a box that slides at (1.2, -0.6) m/s moves
 /// 0.3 widths right and 0.2 heights down per second everywhere; a box that turns at 90 degrees
 /// a second about y moves at the turn times the way from its centre, square to it. Both without
@@ -1855,36 +1638,6 @@ fn the_velocity_picture_of_a_sliding_and_a_turning_body_is_what_the_solver_says(
     assert_eq!(m.get(sx as u32, sy as u32).unwrap(), [1.0; 4]);
     assert_eq!(m.get(64, 48).unwrap(), [0.0; 4]);
     assert_eq!(v.get(64, 48).unwrap(), [0.0; 4]);
-}
-
-/// A box dropped into a pool comes to rest on the floor with no liquid inside it, and no liquid
-/// is lost.
-#[test]
-fn no_liquid_ends_up_inside_a_body_at_rest() {
-    let Some(gpu) = gpu() else { return };
-    let dir = scratch("liquid-bodies-rest");
-    let mut ops = bodies("tx,tz,sx,sy,sz\n0,2.0,0.8,0.8,0.8", &[]);
-    ops.extend([
-        liquid(&[("particles", Value::Int(16384))]),
-        mask("/pool", "pool.wgsl", &dir, "uv.y > 0.6"),
-        wire("/pool", 0, "/liquid", FILL),
-    ]);
-    ops.extend(obstacles_from_bodies(Told::Velocity));
-    ops.extend(outputs());
-    let mut rig = Rig::new(gpu, Some(&dir), &ops);
-    rig.pixels("/pool");
-    let (_, _, d) = run(&mut rig, 1);
-    let start = particles(&d);
-    let (out, v, d) = run(&mut rig, 240);
-    assert!(finite(&out) && finite(&v) && finite(&d));
-    // At rest the box stands on the floor: x from -0.4 to 0.4 m, z up to 0.8 m. A cell (1/48
-    // heights) less all round.
-    let inside = |x: f64, y: f64| (x - 2.0 / 3.0).abs() < 0.4 / 3.0 - 0.021 && y > (3.0 - 0.8) / 3.0 + 0.021;
-    let left = particles_where(&d, inside);
-    let total = particles(&d);
-    eprintln!("bodies at rest: {start:.0} particles, {total:.0} after 4 s, {left:.1} inside the box");
-    assert!(left < 0.002 * start, "{left} particles inside the box");
-    assert!((total / start - 1.0).abs() < 0.01, "{total} of {start}");
 }
 
 /// Bodies far away, flying at absurd speeds and spins, with a cell that is not a number, then
@@ -1959,4 +1712,265 @@ fn a_fast_body_takes_more_substeps_and_the_liquid_stays_out_of_it() {
     eprintln!("fast body: {start:.0} particles, at worst {worst:.1} inside the box");
     assert!(worst < 60.0, "{worst} particles inside the box");
     assert_eq!(warning(&rig), None);
+}
+
+/// The tests that take long on the software GPU, which every test of a run shares: the gate
+/// leaves them out, `cargo xtask slow` runs them.
+mod slow {
+    use super::*;
+
+    /// The dam of the compute fixture (`liquid_tests.rs` in the gpu crate), in picture units: a
+    /// square of a third of the picture's height at the left of the floor, in a picture 4:3, on 128
+    /// cells across, 4 particles per cell (4096). The fixture's numbers come from a room 3 m high and
+    /// are converted: gravity 9.81 m/s^2 to 3.27, sound speed 12 m/s to 4, viscosity 0.002 m^2/s to
+    /// 0.000222. The liquid comes to rest as in metres: a flat pool as high as its area over the
+    /// width. A run in metres at 65536 particles and 512 cells across gave 0.2508 m against 0.2499,
+    /// so 0.0836 against 0.0833 picture heights, and 0.016 m/s at 20 s, 0.0053 heights per second.
+    #[test]
+    #[ignore = "long on the software GPU: cargo xtask slow"]
+    fn a_filled_block_falls_and_rests_as_a_flat_pool_of_the_height_in_metres() {
+        let Some(gpu) = gpu() else { return };
+        let dir = scratch("liquid-dam");
+        let mut ops = vec![
+            liquid(&[("grid", Value::Int(128)), ("particles", Value::Int(8192))]),
+            mask("/dam", "dam.wgsl", &dir, "uv.x < 0.25 && uv.y > 2.0 / 3.0"),
+            wire("/dam", 0, "/liquid", FILL),
+        ];
+        ops.extend(outputs());
+        let mut rig = Rig::new(gpu, Some(&dir), &ops);
+        rig.pixels("/dam");
+        let (_, _, d0) = run(&mut rig, 1);
+        let start = particles(&d0);
+        let (out, v, d) = run(&mut rig, 900);
+        assert!(finite(&out) && finite(&v) && finite(&d));
+        assert_eq!((d.width, d.height), (128, 96));
+        // The fill: a third of a height squared, at four particles a cell of 1/96.
+        let area = 1.0 / 9.0;
+        assert!((start / (area * 4.0 * 96.0 * 96.0) - 1.0).abs() < 0.03, "{start} particles at the start");
+        let expected = area / (4.0 / 3.0);
+        let depths: Vec<f64> = (16..112).map(|i| depth(&d, i)).collect();
+        let mean = depths.iter().sum::<f64>() / depths.len() as f64;
+        let spread = depths.iter().fold(0.0f64, |a, h| a.max((h - mean).abs()));
+        let speed = mean_speed(&v, &d);
+        eprintln!(
+            "dam: pool {mean:.4} heights (expected {expected:.4}, 0.0836 in metres), spread {spread:.4}, mean speed \
+             {speed:.4} heights/s, particles {start:.0} then {:.0}",
+            particles(&d)
+        );
+        assert!((mean / expected - 1.0).abs() < 0.04, "pool {mean} against {expected}");
+        assert!(spread < 0.5 / 96.0, "not flat: {depths:?}");
+        // In metres: 0.016 m/s at 20 s, 0.0053 picture heights per second.
+        assert!(speed < 0.01, "still moving at {speed}");
+        assert_eq!(warning(&rig), None);
+    }
+
+    /// Emitter tables with sand, snow and unknown materials, a hostile fill of sand, absurd material
+    /// params, and sand and snow squeezed by three hundred times the earth's gravity: every output
+    /// stays finite.
+    #[test]
+    #[ignore = "long on the software GPU: cargo xtask slow"]
+    fn hostile_input_leaves_sand_and_snow_finite() {
+        let Some(gpu) = gpu() else { return };
+        let dir = scratch("liquid-hostile-granular");
+        std::fs::write(dir.join("hostile.wgsl"), HOSTILE).unwrap();
+        let rows = "x,y,width,vx,vy,on,material\n0.3,0.1,0.1,0,1,1,sand\n0.6,0.1,0.1,0,1,1,2\n\
+                    0.5,0.5,1e9,-1e9,1e9,1,snow\n0.5,0.1,0.1,0,1,1,lava\n0.5,0.1,0.1,0,1,1,7\n";
+        let mut ops = vec![
+            liquid(&[("grid", Value::Int(32)), ("fill_material", "sand".into())]),
+            create(
+                "/bad",
+                "tex.shader",
+                &[("file", "hostile.wgsl".into()), ("width", Value::Int(128)), ("height", Value::Int(96))],
+            ),
+            create("/rows", "table.text", &[("text", rows.into()), ("format", "csv".into())]),
+            wire("/bad", 0, "/liquid", FILL),
+            wire("/rows", 0, "/liquid", 0),
+        ];
+        ops.extend(outputs());
+        ops.extend(drawn());
+        let mut rig = Rig::new(gpu, Some(&dir), &ops);
+        rig.pixels("/bad");
+        let all = run_drawn(&mut rig, 30);
+        assert!(all.iter().all(finite));
+        assert!(particles(&all[2]) > 100.0, "{}", particles(&all[2]));
+        rig.edit(&[
+            set("/liquid.gravity", Value::Vec2([0.0, 1000.0])),
+            set("/liquid.sand_angle", Value::Float(1e9)),
+            set("/liquid.snow_wetness", Value::Float(-1e9)),
+        ]);
+        let all = run_drawn(&mut rig, 30);
+        assert!(all.iter().all(finite));
+        rig.edit(&[set("/liquid.gravity", Value::Vec2([0.0, 3.27]))]);
+        let all = run_drawn(&mut rig, 60);
+        assert!(all.iter().all(finite));
+        assert!(particles(&all[2]) > 100.0, "{}", particles(&all[2]));
+    }
+
+    /// Foam starts where a falling block lands in a pool, and is gone once the pool calmed down.
+    #[test]
+    #[ignore = "long on the software GPU: cargo xtask slow"]
+    fn foam_appears_in_a_splash_and_fades_in_a_calm_pool() {
+        let Some(gpu) = gpu() else { return };
+        let (dir, ops) = splash("liquid-foam");
+        let mut rig = Rig::new(gpu, Some(&dir), &ops);
+        rig.pixels("/block");
+        let [first, _, _, f0, _, _] = run_drawn(&mut rig, 1);
+        let [_, _, _, landed, _, _] = run_drawn(&mut rig, 30);
+        let [_, _, _, calm, _, _] = run_drawn(&mut rig, 570);
+        let most = |f: &Pixels| f.data.iter().fold(0.0f32, |m, c| m.max(c[3]));
+        eprintln!(
+            "foam: {:.0} at the start, {:.0} (most {:.2}) as it lands, {:.1} (most {:.3}) after 10 s",
+            foam(&f0),
+            foam(&landed),
+            most(&landed),
+            foam(&calm),
+            most(&calm)
+        );
+        assert!(covered(&first) > 1000.0);
+        assert_eq!(foam(&f0), 0.0, "foam before anything moved");
+        assert!(foam(&landed) > 100.0 && most(&landed) > 0.5, "{}", foam(&landed));
+        assert!(most(&calm) < 0.05, "{}", most(&calm));
+    }
+
+    /// A box 0.2 m wide and 1.2 m tall that slides right at 1.5 m/s (half a height per second)
+    /// through a pool 0.9 m deep, without gravity on it, pushes the liquid ahead of it when the
+    /// liquid has its velocity. With the mask alone it only takes the liquid's place, and less of
+    /// the liquid ends up ahead. Optical flow on the mask, measured as well, is printed.
+    #[test]
+    #[ignore = "long on the software GPU: cargo xtask slow"]
+    fn a_body_moving_through_a_pool_pushes_the_liquid_ahead_with_its_velocity() {
+        let Some(gpu) = gpu() else { return };
+        let dir = scratch("liquid-bodies-push");
+        let push = |told: Told| {
+            let mut ops = bodies(
+                "tx,tz,sx,sy,sz,vx\n-1.4,0.6,0.2,0.5,1.2,1.5",
+                &[("gravity", Value::Vec3([0.0; 3])), ("floor", false.into())],
+            );
+            ops.extend([
+                liquid(&[("particles", Value::Int(16384))]),
+                mask("/pool", "pool.wgsl", &dir, "uv.y > 0.7"),
+                wire("/pool", 0, "/liquid", FILL),
+            ]);
+            ops.extend(obstacles_from_bodies(told));
+            ops.extend(outputs());
+            let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+            rig.pixels("/pool");
+            let (_, _, d) = run(&mut rig, 1);
+            let start = particles(&d);
+            let (out, v, d) = run(&mut rig, 80);
+            assert!(finite(&out) && finite(&v) && finite(&d));
+            // After 80 frames (79 steps: the first shows the start) the box is at x 0.575 m, 0.858
+            // heights, its front at 0.892 heights.
+            let ahead = particles_where(&d, |x, _| x > 0.892 + 0.035);
+            // The box less a cell (1/48 heights) all round, where the grid cannot tell.
+            let inside = particles_where(&d, |x, y| (x - 0.858).abs() < 0.033 - 0.021 && y > 0.6 + 0.021);
+            (start, ahead, inside, particles(&d))
+        };
+        let (start, ahead, inside, total) = push(Told::Velocity);
+        let (_, ahead_still, inside_still, _) = push(Told::Nothing);
+        let (_, ahead_flow, inside_flow, _) = push(Told::Flow);
+        eprintln!(
+            "bodies push: {start:.0} particles; with the velocity {ahead:.0} ahead, {inside:.1} inside, {total:.0} in all; \
+             mask alone {ahead_still:.0} ahead, {inside_still:.1} inside; optical flow {ahead_flow:.0} ahead, \
+             {inside_flow:.1} inside"
+        );
+        // At the start 30 % of the pool lies beyond 0.935 heights.
+        assert!(ahead > 0.45 * start, "{ahead} of {start} ahead");
+        assert!(ahead > ahead_still + 0.05 * start, "{ahead} with velocity, {ahead_still} without");
+        assert!(inside < 0.005 * start, "{inside} inside the box");
+        // Liquid pressed against the box draws a little thin.
+        assert!((total / start - 1.0).abs() < 0.02, "{total} of {start}");
+    }
+
+    /// With open edges a pour leaves at the bottom and the emitter takes the same particles again:
+    /// the count settles and stays, without a warning, over a long run.
+    #[test]
+    #[ignore = "long on the software GPU: cargo xtask slow"]
+    fn open_edges_drain_and_the_count_stays_bounded() {
+        let Some(gpu) = gpu() else { return };
+        let mut ops = vec![
+            liquid(&[("edges", "open".into()), ("particles", Value::Int(2048))]),
+            create(
+                "/tap",
+                "tex.liquid_emitter",
+                &[("position", Value::Vec2([0.5, 0.05])), ("width", Value::Float(0.08))],
+            ),
+            wire("/tap", 0, "/liquid", 0),
+        ];
+        ops.extend(outputs());
+        let mut rig = Rig::new(gpu, None, &ops);
+        let mut counts = Vec::new();
+        for _ in 0..8 {
+            let (out, _, d) = run(&mut rig, 120);
+            assert!(finite(&out) && finite(&d));
+            counts.push(particles(&d));
+        }
+        eprintln!("in flight every 2 s: {counts:.0?}");
+        let late = &counts[2..];
+        let (lo, hi) = late.iter().fold((f64::MAX, 0.0f64), |(lo, hi), c| (lo.min(*c), hi.max(*c)));
+        assert!(lo > 100.0, "{counts:?}");
+        assert!(hi < 1.15 * lo, "the count does not settle: {counts:?}");
+        assert!(hi < 2048.0 * 0.5, "{counts:?}");
+        assert_eq!(warning(&rig), None);
+    }
+
+    /// The same splash at 30, 60 and 144 frames per second: after the same show time the foam and
+    /// the covered area are nearly the same. The smoothing and fading follow the time a substep
+    /// stands for, not the number of frames. (At 30 and 60 the substeps happen to be the same, so
+    /// those two agree exactly; 144 takes substeps of another length.)
+    #[test]
+    #[ignore = "long on the software GPU: cargo xtask slow"]
+    fn the_look_does_not_depend_on_the_frame_rate() {
+        let Some(gpu) = gpu() else { return };
+        let (dir, ops) = splash("liquid-rate");
+        let at = |fps: u32| {
+            let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+            rig.clock.set_rate(penumbra_core::Rate::new(fps, 1).unwrap());
+            rig.pixels("/block");
+            let [out_a, _, _, foam_a, _, _] = run_drawn(&mut rig, fps as usize / 2);
+            let [out_b, _, _, foam_b, _, _] = run_drawn(&mut rig, fps as usize);
+            [(covered(&out_a), foam(&foam_a)), (covered(&out_b), foam(&foam_b))]
+        };
+        let (thirty, sixty, fast) = (at(30), at(60), at(144));
+        eprintln!("30 fps: {thirty:?}; 60 fps: {sixty:?}; 144 fps: {fast:?} (area, foam at 0.5 s and 1.5 s)");
+        for other in [thirty, fast] {
+            for ((area, foam), (area_60, foam_60)) in other.into_iter().zip(sixty) {
+                assert!((area / area_60 - 1.0).abs() < 0.03, "area {area}, {area_60} at 60 fps");
+                assert!(foam_60 > 20.0, "{foam_60}");
+                assert!((foam / foam_60 - 1.0).abs() < 0.25, "foam {foam}, {foam_60} at 60 fps");
+            }
+        }
+    }
+
+    /// A box dropped into a pool comes to rest on the floor with no liquid inside it, and no liquid
+    /// is lost.
+    #[test]
+    #[ignore = "long on the software GPU: cargo xtask slow"]
+    fn no_liquid_ends_up_inside_a_body_at_rest() {
+        let Some(gpu) = gpu() else { return };
+        let dir = scratch("liquid-bodies-rest");
+        let mut ops = bodies("tx,tz,sx,sy,sz\n0,2.0,0.8,0.8,0.8", &[]);
+        ops.extend([
+            liquid(&[("particles", Value::Int(16384))]),
+            mask("/pool", "pool.wgsl", &dir, "uv.y > 0.6"),
+            wire("/pool", 0, "/liquid", FILL),
+        ]);
+        ops.extend(obstacles_from_bodies(Told::Velocity));
+        ops.extend(outputs());
+        let mut rig = Rig::new(gpu, Some(&dir), &ops);
+        rig.pixels("/pool");
+        let (_, _, d) = run(&mut rig, 1);
+        let start = particles(&d);
+        let (out, v, d) = run(&mut rig, 240);
+        assert!(finite(&out) && finite(&v) && finite(&d));
+        // At rest the box stands on the floor: x from -0.4 to 0.4 m, z up to 0.8 m. A cell (1/48
+        // heights) less all round.
+        let inside =
+            |x: f64, y: f64| (x - 2.0 / 3.0).abs() < 0.4 / 3.0 - 0.021 && y > (3.0 - 0.8) / 3.0 + 0.021;
+        let left = particles_where(&d, inside);
+        let total = particles(&d);
+        eprintln!("bodies at rest: {start:.0} particles, {total:.0} after 4 s, {left:.1} inside the box");
+        assert!(left < 0.002 * start, "{left} particles inside the box");
+        assert!((total / start - 1.0).abs() < 0.01, "{total} of {start}");
+    }
 }
