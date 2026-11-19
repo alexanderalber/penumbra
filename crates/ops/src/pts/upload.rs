@@ -38,6 +38,19 @@ impl Column {
         }
     }
 
+    /// Appends one point's value from numbers of double precision: whole-number types take
+    /// them exactly (an id past 2^24 survives), the others as `f32`.
+    pub fn push_f64(&mut self, v: [f64; 4]) {
+        let whole = |x: f64, lo: f64, hi: f64| if x.is_finite() { x.round().clamp(lo, hi) } else { 0.0 };
+        match self.ty {
+            AttrType::U32 => self.words.push(whole(v[0], 0.0, f64::from(u32::MAX)) as u32),
+            AttrType::I32 => {
+                self.words.push(whole(v[0], f64::from(i32::MIN), f64::from(i32::MAX)) as i32 as u32);
+            }
+            _ => self.push(v.map(|x| x as f32)),
+        }
+    }
+
     /// Points it holds.
     pub fn len(&self) -> usize {
         self.words.len() / (self.ty.stride() / 4) as usize

@@ -11,13 +11,15 @@ use std::path::Path;
 
 use penumbra_core::{Error, ParamSpec};
 use penumbra_gpu::Points;
-use penumbra_gpu::points::{AttrType, MAX_ATTRS, valid_name};
+#[cfg(test)]
+use penumbra_gpu::points::MAX_ATTRS;
+use penumbra_gpu::points::{AttrType, valid_name};
 use penumbra_graph::{
     AsyncSlot, CookContext, CookError, Cooked, Data, DataKind, FileWatch, FnNodeType, JobStatus, NodeDesc,
     NodeTypes, Operator,
 };
 
-use super::from_values::columns;
+use super::from_values::Plan;
 use super::upload::{Column, Uploads, bounds_of};
 use crate::gpu;
 
@@ -29,6 +31,12 @@ pub const EXTENSIONS: &[&str] = &["ply", "xyz", "csv", "txt", "pts"];
 /// Most points a file gives.
 pub const MAX_POINTS: usize = 1 << 22;
 
+/// Most properties a PLY vertex may have.
+pub const MAX_PROPERTIES: usize = 1024;
+
+/// Most words (four bytes) of attribute values a file gives, all points together: 512 MB.
+pub const MAX_WORDS: usize = 1 << 27;
+
 /// Largest file read: 4 M points of a few dozen bytes each, with room to spare.
 const MAX_FILE_BYTES: u64 = 1 << 30;
 
@@ -39,12 +47,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "A point cloud from a file: .ply from a scanner or a 3D program, or .xyz and .csv text with a column per number. Updates when the file is saved",
         )
         .param(ParamSpec::file("file", EXTENSIONS).doc(
-            "The file, relative to the project directory. .ply: ASCII or binary little endian; x y z place the points, nx ny nz, red green blue (alpha) and every other number of a vertex become attributes. .xyz, .csv, .txt, .pts: a number per column, split at commas, spaces, tabs or semicolons; a first line of names says what each column is (x y z, r g b, nx ny nz, any name). Without names the columns are x y z r g b; four or seven columns are x y z intensity (r g b), as laser scanners write them, and a first line holding only the number of points is skipped",
+            "The file, relative to the project directory. .ply: ASCII or binary little endian; x y z place the points, nx ny nz, red green blue (alpha) and every other number of a vertex become attributes. .xyz, .csv, .txt, .pts: a number per column. A file uses one separator: tabs, semicolons, commas or spaces, found in its first lines. With tabs or semicolons a decimal comma reads as a point (1,5 is 1.5). An empty cell takes the attribute's default. A first line of names says what each column is (x y z, r g b, nx ny nz, any name). Without names the columns are x y z r g b; four or seven columns are x y z intensity (r g b), as laser scanners write them, and a first line holding only the number of points is skipped",
         ))
         .output("out", DataKind::Pts)
         .describe_output(
             "out",
-            "One point per vertex or line, in the file's order. Colours stored as bytes (0 to 255) are taken as sRGB and made linear, as penumbra's colours are. Exact bounds",
+            "One point per vertex or line, in the file's order. Colours stored as bytes (0 to 255) are taken as sRGB and made linear, as penumbra's colours are. Points hold at most 32 attributes: position, normal, colour and the other standard ones come first, then the file's others in their order, and the node warns about those left out. Exact bounds",
         ),
         || Box::new(PtsFile::default()) as Box<dyn Operator>,
     ))
@@ -256,6 +264,9 @@ fn ply(bytes: &[u8]) -> Result<Cloud, String> {
             }
             ["property", ty, name] if in_vertex => {
                 let num = Num::of(ty).ok_or_else(|| format!("property type `{ty}` is not known"))?;
+                if props.len() >= MAX_PROPERTIES {
+                    return Err(format!("a vertex has more than {MAX_PROPERTIES} properties"));
+                }
                 props.push(((*name).to_string(), num));
             }
             _ => {}
@@ -276,42 +287,6 @@ fn ply(bytes: &[u8]) -> Result<Cloud, String> {
         .iter()
         .map(|(name, num)| ply_target(name).map(|(a, k)| (a.clone(), k, a == "color" && *num == Num::U8)))
         .collect();
-    // A colour byte: red, green and blue in sRGB, alpha straight.
-    let byte = |v: f64, k: usize| if k == 3 { (v / 255.0).clamp(0.0, 1.0) } else { linear(v) };
-    let targets: Vec<Option<(String, usize, bool)>> = targets.into_iter().collect();
-    let mut rows: Vec<Vec<f64>> = Vec::new();
-    let wanted = claimed.min(MAX_POINTS);
-    if claimed > MAX_POINTS {
-        warnings.push(format!("{claimed} vertices; the first {MAX_POINTS} become points"));
-    }
-    if binary {
-        let stride: usize = props.iter().map(|(_, n)| n.size()).sum();
-        let there = body.len() / stride.max(1);
-        let n = wanted.min(there);
-        if n < wanted {
-            warnings.push(format!("the header claims {claimed} vertices, the file holds {there}"));
-        }
-        rows.reserve(n);
-        for v in 0..n {
-            let mut at = v * stride;
-            let mut row = Vec::with_capacity(props.len());
-            for (_, num) in &props {
-                row.push(body.get(at..).and_then(|b| num.read(b)).unwrap_or(0.0));
-                at += num.size();
-            }
-            rows.push(row);
-        }
-    } else {
-        let text = String::from_utf8_lossy(body);
-        for line in text.lines().filter(|l| !l.trim().is_empty()).take(wanted) {
-            let row: Vec<f64> =
-                line.split_whitespace().take(props.len()).map(|w| w.parse::<f64>().unwrap_or(0.0)).collect();
-            rows.push(row);
-        }
-        if rows.len() < wanted {
-            warnings.push(format!("the header claims {claimed} vertices, the file holds {}", rows.len()));
-        }
-    }
     let names: Vec<String> = targets
         .iter()
         .zip(&props)
@@ -324,18 +299,133 @@ fn ply(bytes: &[u8]) -> Result<Cloud, String> {
         })
         .collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let plan = Plan::new(&refs);
+    warnings.extend(plan.warnings.iter().cloned());
+    let most = claimed.min(MAX_POINTS);
+    if claimed > MAX_POINTS {
+        warnings.push(format!("{claimed} vertices; the first {MAX_POINTS} become points"));
+    }
+    let mut cells = Cells::new(&plan, props.len());
+    let wanted = cells.fit(most);
+    if wanted < most {
+        warnings
+            .push(format!("{} values per vertex: the first {wanted} vertices become points", plan.words()));
+    }
+    if binary {
+        let stride: usize = props.iter().map(|(_, n)| n.size()).sum();
+        let there = body.len() / stride.max(1);
+        let n = wanted.min(there);
+        if n < wanted {
+            warnings.push(format!("the header claims {claimed} vertices, the file holds {there}"));
+        }
+        cells.reserve(n);
+        for v in 0..n {
+            let mut at = v * stride;
+            cells.row();
+            for (i, (_, num)) in props.iter().enumerate() {
+                if cells.wants(i)
+                    && let Some(x) = body.get(at..).and_then(|b| num.read(b))
+                {
+                    cells.set(i, x);
+                }
+                at += num.size();
+            }
+        }
+    } else {
+        let text = String::from_utf8_lossy(body);
+        cells.reserve(wanted);
+        for line in text.lines().filter(|l| !l.trim().is_empty()).take(wanted) {
+            cells.row();
+            for (i, w) in line.split_whitespace().take(props.len()).enumerate() {
+                if cells.wants(i)
+                    && let Ok(x) = w.parse::<f64>()
+                {
+                    cells.set(i, x);
+                }
+            }
+        }
+        if cells.count() < wanted {
+            warnings.push(format!("the header claims {claimed} vertices, the file holds {}", cells.count()));
+        }
+    }
+    // A colour byte: red, green and blue in sRGB, alpha straight.
+    let byte = |v: f64, k: usize| if k == 3 { (v / 255.0).clamp(0.0, 1.0) } else { linear(v) };
     let value = |i: usize, p: usize| {
-        let v = rows.get(p).and_then(|r| r.get(i)).copied()?;
+        let v = cells.get(i, p)?;
         Some(match targets.get(i) {
             Some(Some((_, k, true))) => byte(v, *k),
             _ => v,
         })
     };
-    let count = rows.len();
-    let (cols, mut more) = columns(&refs, &value, count);
-    warnings.append(&mut more);
+    let count = cells.count();
+    let cols = plan.columns(&value, count);
     check(&cols)?;
     Ok(Cloud { count, columns: cols, warnings })
+}
+
+/// The numbers of the columns a [`Plan`] uses, point after point; every other column is skipped
+/// as it is read. Stored as `f32`, as the points hold them; NaN where a value is missing.
+struct Cells {
+    /// For each column of the file, its place among the used ones.
+    at: Vec<Option<usize>>,
+    width: usize,
+    /// Words of attribute values per point.
+    words: usize,
+    values: Vec<f32>,
+    count: usize,
+}
+
+impl Cells {
+    fn new(plan: &Plan, columns: usize) -> Self {
+        let used = plan.used();
+        let mut at = vec![None; columns];
+        for (k, i) in used.iter().enumerate() {
+            if let Some(a) = at.get_mut(*i) {
+                *a = Some(k);
+            }
+        }
+        Self { at, width: used.len(), words: plan.words().max(1), values: Vec::new(), count: 0 }
+    }
+
+    /// The most points of `wanted` whose values stay within [`MAX_WORDS`].
+    fn fit(&self, wanted: usize) -> usize {
+        wanted.min(MAX_WORDS / self.words)
+    }
+
+    fn reserve(&mut self, points: usize) {
+        self.values.reserve(points.saturating_mul(self.width));
+    }
+
+    /// Whether column `i` is used.
+    fn wants(&self, i: usize) -> bool {
+        self.at.get(i).is_some_and(Option::is_some)
+    }
+
+    /// Starts the next point, every value missing.
+    fn row(&mut self) {
+        self.values.extend(std::iter::repeat_n(f32::NAN, self.width));
+        self.count += 1;
+    }
+
+    /// Column `i` of the last point.
+    fn set(&mut self, i: usize, v: f64) {
+        let Some(Some(k)) = self.at.get(i) else { return };
+        let Some(base) = self.values.len().checked_sub(self.width) else { return };
+        if let Some(slot) = self.values.get_mut(base + k) {
+            *slot = v as f32;
+        }
+    }
+
+    /// Column `i` of point `p`; `None` where it is missing or unused.
+    fn get(&self, i: usize, p: usize) -> Option<f64> {
+        let k = (*self.at.get(i)?)?;
+        let v = *self.values.get(p.checked_mul(self.width)?.checked_add(k)?)?;
+        (!v.is_nan()).then_some(f64::from(v))
+    }
+
+    fn count(&self) -> usize {
+        self.count
+    }
 }
 
 /// Where `needle` first starts in `hay`.
@@ -343,86 +433,137 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
+/// How the cells of a text file's lines are told apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Separator {
+    /// Spaces and tabs; a run of them is one gap.
+    Space,
+    /// One character; two in a row leave an empty cell between them.
+    Char(char),
+}
+
+impl Separator {
+    /// The separator of a file whose first lines are `lines`: a tab, a semicolon or a comma,
+    /// the first of them that any of these lines holds, else spaces.
+    fn of(lines: &[&str]) -> Self {
+        ['\t', ';', ',']
+            .into_iter()
+            .find(|c| lines.iter().any(|l| l.contains(*c)))
+            .map_or(Separator::Space, Separator::Char)
+    }
+
+    /// The cells of `line`, quotes taken off.
+    fn cells<'a>(self, line: &'a str) -> Box<dyn Iterator<Item = &'a str> + 'a> {
+        let clean = |w: &'a str| w.trim().trim_matches('"').trim();
+        match self {
+            Separator::Space => Box::new(line.split_whitespace().map(clean)),
+            Separator::Char(c) => Box::new(line.split(c).map(clean)),
+        }
+    }
+
+    /// The number in `cell`. A file split by tabs or semicolons may write a decimal comma.
+    fn number(self, cell: &str) -> Option<f64> {
+        match self {
+            Separator::Char('\t' | ';') if cell.contains(',') => cell.replace(',', ".").parse().ok(),
+            _ => cell.parse().ok(),
+        }
+    }
+}
+
 /// A text file: a number per column, an optional first line of names.
 fn text(bytes: &[u8]) -> Result<Cloud, String> {
     let text = String::from_utf8_lossy(bytes);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    let split = |line: &str| -> Vec<String> {
-        line.split([',', ' ', '\t', ';'])
-            .map(|w| w.trim().trim_matches('"').trim())
-            .filter(|w| !w.is_empty())
-            .map(str::to_string)
-            .collect()
-    };
     let mut lines =
         text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("//"));
-    let mut first = lines.next().map(split).unwrap_or_default();
+    // Room for a count line and a line of names before the points.
+    let mut data: Vec<&str> = lines.by_ref().take(MAX_POINTS + 2).collect();
+    let more = lines.next().is_some();
+    let mut warnings = Vec::new();
+    let sep = Separator::of(data.get(..4).unwrap_or(&data));
     // A .pts file from a laser scanner starts with the number of points on a line of its own:
     // a claim, not a point.
-    if let [n] = first.as_slice()
+    if let Some(first) = data.first()
+        && let [n] = sep.cells(first).filter(|c| !c.is_empty()).take(2).collect::<Vec<_>>().as_slice()
         && n.parse::<u64>().is_ok()
     {
-        first = lines.next().map(split).unwrap_or_default();
+        data.remove(0);
     }
-    let named = first.iter().any(|w| w.parse::<f64>().is_err());
-    let mut warnings = Vec::new();
-    let mut rows: Vec<Vec<f64>> = Vec::new();
-    if !named && !first.is_empty() {
-        rows.push(first.iter().map(|w| w.parse::<f64>().unwrap_or(0.0)).collect());
+    let first: Vec<&str> =
+        data.first().map(|l| sep.cells(l).take(MAX_PROPERTIES + 1).collect()).unwrap_or_default();
+    let named = first.iter().any(|w| !w.is_empty() && sep.number(w).is_none());
+    if named {
+        data.remove(0);
     }
-    for line in lines {
-        if rows.len() >= MAX_POINTS {
-            warnings.push(format!("more than {MAX_POINTS} lines; the first {MAX_POINTS} become points"));
-            break;
-        }
-        rows.push(split(line).iter().map(|w| w.parse::<f64>().unwrap_or(0.0)).collect());
+    if data.len() > MAX_POINTS || more {
+        warnings.push(format!("more than {MAX_POINTS} lines; the first {MAX_POINTS} become points"));
+        data.truncate(MAX_POINTS);
     }
-    let count = rows.len();
-    let (names, bytes_colour): (Vec<String>, bool) = if named {
-        (first.clone(), false)
+    let widest = data.iter().map(|l| sep.cells(l).take(MAX_PROPERTIES + 1).count()).max().unwrap_or(0);
+    let columns = if named { first.len() } else { widest };
+    if columns > MAX_PROPERTIES {
+        warnings.push(format!("more than {MAX_PROPERTIES} columns: the rest are left out"));
+    }
+    let columns = columns.min(MAX_PROPERTIES);
+    let names: Vec<String> = if named {
+        first.iter().take(columns).map(|s| (*s).to_string()).collect()
     } else {
-        let widest = rows.iter().map(Vec::len).max().unwrap_or(0);
         // Four or seven columns, as laser scanners write them: an intensity after x y z.
         let order: &[&str] = match widest {
             4 => &["x", "y", "z", "intensity"],
             7 => &["x", "y", "z", "intensity", "r", "g", "b"],
             _ => &["x", "y", "z", "r", "g", "b"],
         };
-        let mut names: Vec<String> = order.iter().take(widest).map(|s| (*s).to_string()).collect();
-        if widest > order.len() {
+        let mut names: Vec<String> = order.iter().take(columns).map(|s| (*s).to_string()).collect();
+        if columns > order.len() {
             warnings.push(format!(
-                "{widest} columns without names: the first {} are {}, the rest are left out",
+                "{columns} columns without names: the first {} are {}, the rest are left out",
                 order.len(),
                 order.join(" ")
             ));
-            names.extend((order.len()..widest).map(|_| String::new()));
+            names.extend((order.len()..columns).map(|_| String::new()));
         }
-        // Colours of 0 to 255 are bytes in sRGB; up to 1 they are taken as they are.
-        let colour: Vec<usize> = names
-            .iter()
-            .enumerate()
-            .filter(|(_, n)| ["r", "g", "b"].contains(&n.as_str()))
-            .map(|(i, _)| i)
-            .collect();
-        let bytes = rows.iter().any(|r| colour.iter().any(|i| r.get(*i).is_some_and(|v| *v > 1.0)));
-        (names, bytes)
+        names
     };
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let is_colour = |i: usize| refs.get(i).is_some_and(|n| ["r", "g", "b"].contains(n));
-    let value = |i: usize, p: usize| {
-        let v = rows.get(p).and_then(|r| r.get(i)).copied()?;
-        Some(if bytes_colour && is_colour(i) { linear(v) } else { v })
+    let plan = Plan::new(&refs);
+    warnings.extend(plan.warnings.iter().cloned());
+    let mut cells = Cells::new(&plan, columns);
+    let fit = cells.fit(data.len());
+    if fit < data.len() {
+        warnings.push(format!("{} values per point: the first {fit} lines become points", plan.words()));
+        data.truncate(fit);
+    }
+    cells.reserve(data.len());
+    for line in &data {
+        cells.row();
+        for (i, w) in sep.cells(line).take(columns).enumerate() {
+            if cells.wants(i)
+                && let Some(x) = sep.number(w)
+            {
+                cells.set(i, x);
+            }
+        }
+    }
+    let count = cells.count();
+    // Colours of 0 to 255 are bytes in sRGB; up to 1 they are taken as they are. Only columns
+    // without names are guessed this way.
+    let colour: Vec<usize> = if named {
+        Vec::new()
+    } else {
+        refs.iter().enumerate().filter(|(_, n)| ["r", "g", "b"].contains(*n)).map(|(i, _)| i).collect()
     };
-    let (cols, mut more) = columns(&refs, &value, count);
-    warnings.append(&mut more);
+    let bytes_colour = (0..count).any(|p| colour.iter().any(|i| cells.get(*i, p).is_some_and(|v| v > 1.0)));
+    let value = |i: usize, p: usize| {
+        let v = cells.get(i, p)?;
+        Some(if bytes_colour && colour.contains(&i) { linear(v) } else { v })
+    };
+    let cols = plan.columns(&value, count);
     check(&cols)?;
     Ok(Cloud { count, columns: cols, warnings })
 }
 
 fn check(cols: &[Column]) -> Result<(), String> {
-    if cols.len() > MAX_ATTRS {
-        return Err(format!("{} attributes are more than the {MAX_ATTRS} points hold", cols.len()));
-    }
     if cols.iter().any(|c| c.ty == AttrType::Vec4 && c.name == "position") {
         return Err("position has three numbers".into());
     }
@@ -497,7 +638,9 @@ mod tests {
 
     #[test]
     fn text_files_take_names_or_x_y_z_r_g_b() {
-        let c = text(b"# a comment\n1 2 3 255 255 0\n4,5,6,0,0,0\n").unwrap();
+        let c = text(b"# a comment\n1 2 3 255 255 0\n4 5 6 0 0 0\n").unwrap();
+        assert_eq!(c.count, 2);
+        let c = text(b"1,2,3,255,255,0\n4,5,6,0,0,0\n").unwrap();
         assert_eq!(c.count, 2);
         assert_eq!(floats(col(&c, "position"))[4..7], [4.0, 5.0, 6.0]);
         assert_eq!(floats(col(&c, "color"))[..4], [1.0, 1.0, 0.0, 1.0]);
@@ -509,5 +652,92 @@ mod tests {
         assert_eq!(floats(col(&c, "position"))[..3], [1.0, 2.0, 3.0]);
         assert_eq!(floats(col(&c, "intensity")), [-500.0, 20.0]);
         assert_eq!(floats(col(&c, "color"))[4..8], [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    /// A few megabytes that name thousands of attributes for thousands of points: an answer
+    /// comes back at once, with no more attributes than points hold.
+    #[test]
+    fn hostile_names_and_lines_are_answered_quickly() {
+        let names = 2000;
+        let rows = 500_000;
+        let mut head = String::from("ply\nformat ascii 1.0\n");
+        head.push_str(&format!("element vertex {rows}\n"));
+        for k in 0..names {
+            head.push_str(&format!("property float p{k}\n"));
+        }
+        head.push_str("end_header\n");
+        head.push_str(&"1\n".repeat(rows));
+        let mut csv = (0..names).map(|k| format!("a{k}")).collect::<Vec<_>>().join(" ");
+        csv.push('\n');
+        csv.push_str(&"1\n".repeat(rows));
+        // One line of ten million numbers.
+        let long = "1 ".repeat(10_000_000);
+        for (what, bytes) in
+            [("ply", head.as_bytes()), ("text", csv.as_bytes()), ("long line", long.as_bytes())]
+        {
+            let start = std::time::Instant::now();
+            let c = if what == "ply" { ply(bytes) } else { text(bytes) };
+            let took = start.elapsed();
+            assert!(took < std::time::Duration::from_secs(2), "{what}: {took:?}");
+            if let Ok(c) = c {
+                assert!(c.columns.len() <= MAX_ATTRS, "{what}: {} attributes", c.columns.len());
+                let words: usize = c.columns.iter().map(|c| c.words.len()).sum();
+                assert!(words <= MAX_WORDS, "{what}: {words} words");
+            }
+        }
+        // More properties than a vertex may have: refused before anything is read.
+        let mut many = String::from("ply\nformat ascii 1.0\nelement vertex 1\n");
+        for k in 0..=MAX_PROPERTIES {
+            many.push_str(&format!("property float p{k}\n"));
+        }
+        many.push_str("end_header\n1\n");
+        assert!(ply(many.as_bytes()).is_err());
+    }
+
+    /// A file with more attributes than points hold keeps the standard ones and the first others,
+    /// and says what it left out.
+    #[test]
+    fn many_attributes_keep_the_standard_ones_and_warn() {
+        let mut file = String::from("ply\nformat ascii 1.0\nelement vertex 2\n");
+        let extra: Vec<String> = (0..40).map(|k| format!("f_rest_{k}")).collect();
+        for name in extra.iter().map(String::as_str).chain(["x", "y", "z", "red", "green", "blue"]) {
+            let ty = if ["red", "green", "blue"].contains(&name) { "uchar" } else { "float" };
+            file.push_str(&format!("property {ty} {name}\n"));
+        }
+        file.push_str("end_header\n");
+        let row = |x: f32| {
+            let mut r: Vec<String> = (0..40).map(|k| format!("{k}")).collect();
+            r.extend([format!("{x}"), "2".into(), "3".into(), "255".into(), "0".into(), "0".into()]);
+            r.join(" ") + "\n"
+        };
+        file.push_str(&row(1.0));
+        file.push_str(&row(4.0));
+        let c = ply(file.as_bytes()).unwrap();
+        assert_eq!(c.columns.len(), MAX_ATTRS);
+        assert_eq!(floats(col(&c, "position"))[4..7], [4.0, 2.0, 3.0]);
+        assert_eq!(floats(col(&c, "color"))[..4], [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(floats(col(&c, "f_rest_5")), [5.0, 5.0]);
+        assert!(c.columns.iter().all(|c| c.name != "f_rest_39"), "the last others are left out");
+        assert!(c.warnings.iter().any(|w| w.contains("f_rest_39")), "{:?}", c.warnings);
+    }
+
+    /// Text files: one separator per file. Empty cells stay empty, and a file split by
+    /// semicolons may write its decimals with a comma.
+    #[test]
+    fn text_cells_keep_their_columns() {
+        let c = text(b"x,y,z\n1,,3\n").unwrap();
+        assert_eq!(floats(col(&c, "position"))[..3], [1.0, 0.0, 3.0]);
+        let c = text(b"x;y;z\n1,5;2,25;3\n").unwrap();
+        assert_eq!(floats(col(&c, "position"))[..3], [1.5, 2.25, 3.0]);
+        let c = text(b"1,5;2,25;3\n4;5;6\n").unwrap();
+        assert_eq!((c.count, floats(col(&c, "position"))[..3].to_vec()), (2, vec![1.5, 2.25, 3.0]));
+        let c = text(b"x\ty\tz\n1,5\t\t3\n").unwrap();
+        assert_eq!(floats(col(&c, "position"))[..3], [1.5, 0.0, 3.0]);
+        // Spaces: runs of them are one gap.
+        let c = text(b"1   2  3\n").unwrap();
+        assert_eq!(floats(col(&c, "position"))[..3], [1.0, 2.0, 3.0]);
+        // An empty cell of a standard attribute takes its default: scale 1.
+        let c = text(b"x,scale\n1,\n2,0.5\n").unwrap();
+        assert_eq!(floats(col(&c, "scale")), [1.0, 0.5]);
     }
 }
