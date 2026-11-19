@@ -832,12 +832,32 @@ pub(crate) fn summary_lines(data: &Data) -> Option<Vec<String>> {
 /// What a set of points holds: how many, their order, each attribute with its type, the box
 /// around them where known.
 pub(crate) fn pts_lines(p: &penumbra_gpu::Points) -> Vec<String> {
+    use penumbra_gpu::points::Strips;
     let plural = |n: u32| if n == 1 { "" } else { "s" };
+    // Points that are lines count as lines: two points each, or `len` in a row.
+    let (per, what) = match p.strips() {
+        Strips::Pairs => (2, "line".to_string()),
+        Strips::Regular { len, closed } if len > 0 => {
+            (len, format!("{} of {len} points", if closed { "ring" } else { "line" }))
+        }
+        _ => (1, "point".to_string()),
+    };
+    let unit = |n: u32| match what.split_once(' ') {
+        Some((head, tail)) => format!("{head}{} {tail}", plural(n)),
+        None => format!("{what}{}", plural(n)),
+    };
     // A count on the GPU shows as last read back, a frame or so late, without waiting for it.
+    let most = p.count().at_most() / per;
     let count = match (p.count().known(), p.count().seen()) {
-        (Some(n), _) => format!("{n} point{}", plural(n)),
-        (None, Some(n)) => format!("{n} of at most {} points", p.count().at_most()),
-        (None, None) => format!("up to {} points", p.count().at_most()),
+        (Some(n), _) => format!("{} {}", n / per, unit(n / per)),
+        (None, Some(n)) => format!("{} of at most {most} {}", n / per, unit(most)),
+        (None, None) => format!("up to {most} {}", unit(most)),
+    };
+    let count = match p.strips() {
+        Strips::Grid { rows: true, columns: true, .. } => format!("{count}, lines along rows and columns"),
+        Strips::Grid { rows: true, .. } => format!("{count}, lines along rows"),
+        Strips::Grid { columns: true, .. } => format!("{count}, lines along columns"),
+        _ => count,
     };
     let mut lines = vec![match p.dims() {
         Some([r, c, 1]) => format!("{count}, {r} x {c}"),
