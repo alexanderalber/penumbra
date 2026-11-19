@@ -225,48 +225,6 @@ fn the_fixtures_constants_match_what_the_test_writes() {
     assert_eq!(crate::testing::wgsl_struct(&full, "P").0, (P * 4) as u32);
 }
 
-/// A dam break of 4,096 particles on a grid 128 cells across comes to rest as a flat pool of the
-/// height its area gives, without a particle leaving the room. A second of this simulation takes
-/// WARP about 2 seconds.
-#[test]
-fn a_dam_breaks_and_comes_to_rest_as_a_flat_pool() {
-    let Some(gpu) = gpu() else { return };
-    let sim = Sim::new(&gpu, 4096, 128, 0, 0.5);
-    let seconds = 15.0;
-    let started = Instant::now();
-    sim.run(&gpu, (seconds / DT).round() as usize);
-    let parts = sim.particles(&gpu);
-    let r = report(&parts, sim.spacing, sim.dx);
-    eprintln!(
-        "dam break, {} particles, grid {}x{}, {} substeps, {seconds} s in {:.1} s: nan {} outside {} mean speed \
-         {:.4} max {:.3} pool {:.4} m (expected {:.4})",
-        sim.count,
-        sim.gw,
-        sim.gh,
-        sim.substeps,
-        started.elapsed().as_secs_f64(),
-        r.nan,
-        r.outside,
-        r.mean_speed,
-        r.max_speed,
-        r.pool_height,
-        r.pool_expected
-    );
-    assert_eq!(parts.len(), 4096);
-    assert_eq!(r.nan, 0);
-    assert_eq!(r.outside, 0);
-    assert!(
-        r.mean_speed < 0.025 && r.max_speed < 0.25,
-        "still moving: mean {} m/s, max {}",
-        r.mean_speed,
-        r.max_speed
-    );
-    assert!(r.pool_expected > 0.24, "particles above the pool: expected height {}", r.pool_expected);
-    let error = (r.pool_height - r.pool_expected).abs() / r.pool_expected;
-    assert!(error < 0.04, "pool {} m against {} m", r.pool_height, r.pool_expected);
-    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
-}
-
 /// Two runs of the same scene give the same bits: the fixed-point sums do not depend on the order
 /// in which the particles add into a cell.
 #[test]
@@ -329,4 +287,53 @@ fn liquid_timing_at_the_default_size() {
          mean {rmean:.3} p95 {rp95:.3} max {rmax:.3}; back to back {throughput:.3} ms per frame; nan {} outside {} mean speed {:.3}",
         sim.gw, sim.gh, sim.substeps, r.nan, r.outside, r.mean_speed
     );
+}
+
+/// The tests that take long on the software GPU, which every test of a run shares: the gate
+/// leaves them out, `cargo xtask slow` runs them.
+mod slow {
+    use super::*;
+
+    /// A dam break of 4,096 particles on a grid 128 cells across comes to rest as a flat pool of the
+    /// height its area gives, without a particle leaving the room. A second of this simulation takes
+    /// WARP about 2 seconds.
+    #[test]
+    #[ignore = "long on the software GPU: cargo xtask slow"]
+    fn a_dam_breaks_and_comes_to_rest_as_a_flat_pool() {
+        let Some(gpu) = gpu() else { return };
+        let sim = Sim::new(&gpu, 4096, 128, 0, 0.5);
+        let seconds = 15.0;
+        let started = Instant::now();
+        sim.run(&gpu, (seconds / DT).round() as usize);
+        let parts = sim.particles(&gpu);
+        let r = report(&parts, sim.spacing, sim.dx);
+        eprintln!(
+            "dam break, {} particles, grid {}x{}, {} substeps, {seconds} s in {:.1} s: nan {} outside {} mean speed \
+             {:.4} max {:.3} pool {:.4} m (expected {:.4})",
+            sim.count,
+            sim.gw,
+            sim.gh,
+            sim.substeps,
+            started.elapsed().as_secs_f64(),
+            r.nan,
+            r.outside,
+            r.mean_speed,
+            r.max_speed,
+            r.pool_height,
+            r.pool_expected
+        );
+        assert_eq!(parts.len(), 4096);
+        assert_eq!(r.nan, 0);
+        assert_eq!(r.outside, 0);
+        assert!(
+            r.mean_speed < 0.025 && r.max_speed < 0.25,
+            "still moving: mean {} m/s, max {}",
+            r.mean_speed,
+            r.max_speed
+        );
+        assert!(r.pool_expected > 0.24, "particles above the pool: expected height {}", r.pool_expected);
+        let error = (r.pool_height - r.pool_expected).abs() / r.pool_expected;
+        assert!(error < 0.04, "pool {} m against {} m", r.pool_height, r.pool_expected);
+        assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+    }
 }

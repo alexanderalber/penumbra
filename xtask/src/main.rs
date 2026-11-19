@@ -7,8 +7,10 @@
 //! - `fmt`: `cargo fmt --check`.
 //! - `clippy`: clippy on all targets with `-D warnings`.
 //! - `test`: the workspace tests; those of `penumbra-ui` run one process per test.
-//! - `slow`: the tests of `chan.beat_grid` that run the beat network, minutes of CPU that `test`
-//!   leaves out. Not part of `ci`; run before a release.
+//! - `slow`: the tests `test` leaves out because they take minutes: those of `chan.beat_grid` that
+//!   run the beat network, and the ones in a module `slow` of `penumbra-ops` and `penumbra-gpu`
+//!   (simulations that run for many frames on the software GPU). Not part of `ci`; run before a
+//!   release.
 //! - `linux`: clippy for `x86_64-unknown-linux-gnu` from Windows, so Windows-only code cannot
 //!   creep in. Clippy includes `cargo check`.
 //! - `layers`: lower crates must not depend on GPU or UI crates.
@@ -223,7 +225,8 @@ fn ui_test_exe() -> Result<PathBuf, String> {
 }
 
 fn slow() -> Result<(), String> {
-    cargo(&["test", "-p", "penumbra-ops", "--lib", "audio::beat_grid_tests", "--", "--ignored"])
+    cargo(&["test", "-p", "penumbra-ops", "--lib", "--", "--ignored", "audio::beat_grid_tests", "::slow::"])?;
+    cargo(&["test", "-p", "penumbra-gpu", "--lib", "--", "--ignored", "::slow::"])
 }
 
 fn bless() -> Result<(), String> {
