@@ -234,6 +234,31 @@ fn feedback_carries_points_over_frames_whatever_the_loop_does_to_them() {
     );
 }
 
+/// A box that a loop grows every frame (noise added to the positions widens it by the amplitude
+/// each time) does not come round: what comes back has no box, so a picture of it is framed by
+/// the box read back from the GPU.
+#[test]
+fn a_loop_does_not_grow_its_box() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        line(),
+        create("/fb", "pts.feedback", &[]),
+        connect("/line", "/fb", 0),
+        create("/drift", "pts.noise", &[("amplitude", Value::Float(0.5)), ("speed", Value::Float(1.0))]),
+        connect("/fb", "/drift", 0),
+        connect("/drift", "/fb", 1),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let first = points(&mut rig, "/fb");
+    assert!(first.bounds().is_some(), "`initial` keeps its box");
+    for frame in 0..12 {
+        let p = points(&mut rig, "/drift");
+        // At most the line's box grown once by the amplitude.
+        let b = p.bounds().map(|b| b.max[0] - b.min[0]);
+        assert!(b.is_none_or(|w| w <= 5.0 + 1e-4), "frame {frame}: a box {b:?} m wide");
+    }
+}
+
 /// Particles from a point, fanned out, drawn as sprites: more of the picture covered as they
 /// spread; none drawn while `reset` holds them.
 #[test]
