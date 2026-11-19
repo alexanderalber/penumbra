@@ -164,6 +164,8 @@ impl Plan {
         let mut warnings = Vec::new();
         let mut found: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
         let mut ignored = Vec::new();
+        // Numbers that several columns give: (attribute, component, columns).
+        let mut twice: Vec<(String, usize, usize)> = Vec::new();
         for (i, name) in names.iter().enumerate() {
             let Some((attr, k)) = target(name) else {
                 if !name.trim().is_empty() && name.trim() != "index" {
@@ -172,12 +174,39 @@ impl Plan {
                 continue;
             };
             match found.iter_mut().find(|(a, _)| *a == attr) {
-                Some((_, list)) => list.push((k, i)),
+                // One source per number: the last column that gives it. So a file that names
+                // one column a thousand times keeps one of them, and the values read stay
+                // within what the attributes hold.
+                Some((_, list)) => match list.iter_mut().find(|(c, _)| *c == k) {
+                    Some(source) => {
+                        source.1 = i;
+                        match twice.iter_mut().find(|(a, c, _)| *a == attr && *c == k) {
+                            Some((_, _, n)) => *n += 1,
+                            None => twice.push((attr, k, 2)),
+                        }
+                    }
+                    None => list.push((k, i)),
+                },
                 None => found.push((attr, vec![(k, i)])),
             }
         }
         if !ignored.is_empty() {
             warnings.push(format!("{} name no attribute and are left out", listed(&ignored)));
+        }
+        if !twice.is_empty() {
+            let named: Vec<String> = twice
+                .iter()
+                .map(|(attr, k, n)| {
+                    let wide = default_of(attr).is_some_and(|s| s.ty.components() > 1) || *k > 0;
+                    let c = ["x", "y", "z", "w"].get(*k).copied().unwrap_or("x");
+                    if wide {
+                        format!("`{attr}.{c}` ({n} columns)")
+                    } else {
+                        format!("`{attr}` ({n} columns)")
+                    }
+                })
+                .collect();
+            warnings.push(format!("several columns give {}: the last of them is used", listed(&named)));
         }
         let along_x = !found.iter().any(|(a, _)| a == "position");
         // The standard attributes first, then the others in their order, as many as fit.

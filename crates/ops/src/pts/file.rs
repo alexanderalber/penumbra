@@ -387,9 +387,10 @@ impl Cells {
         Self { at, width: used.len(), words: plan.words().max(1), values: Vec::new(), count: 0 }
     }
 
-    /// The most points of `wanted` whose values stay within [`MAX_WORDS`].
+    /// The most points of `wanted` whose values stay within [`MAX_WORDS`]: the attributes made
+    /// of them, and the cells themselves while the file is read.
     fn fit(&self, wanted: usize) -> usize {
-        wanted.min(MAX_WORDS / self.words)
+        wanted.min(MAX_WORDS / self.words.max(self.width).max(1))
     }
 
     fn reserve(&mut self, points: usize) {
@@ -739,5 +740,32 @@ mod tests {
         // An empty cell of a standard attribute takes its default: scale 1.
         let c = text(b"x,scale\n1,\n2,0.5\n").unwrap();
         assert_eq!(floats(col(&c, "scale")), [1.0, 0.5]);
+    }
+
+    /// A file that names one column a thousand times (`x`, or `pos_x` and `P(0)` for the same
+    /// number) keeps the last of them: the numbers read stay within [`MAX_WORDS`], where every
+    /// column was kept before and a header of a few kilobytes asked for 16 GB.
+    #[test]
+    fn columns_named_alike_keep_the_values_read_within_max_words() {
+        for names in [vec!["x"; MAX_PROPERTIES], vec!["position.x"; MAX_PROPERTIES]] {
+            let plan = Plan::new(&names);
+            let mut cells = Cells::new(&plan, MAX_PROPERTIES);
+            let n = cells.fit(MAX_POINTS);
+            cells.reserve(n);
+            let bytes = cells.values.capacity() * std::mem::size_of::<f32>();
+            assert!(bytes <= MAX_WORDS * 4, "{n} points of {} cells: {bytes} bytes", cells.width);
+            assert!(plan.warnings.iter().any(|w| w.contains("1024 columns")), "{:?}", plan.warnings);
+        }
+        let mut head = format!("ply\nformat ascii 1.0\nelement vertex {MAX_POINTS}\n");
+        for _ in 0..MAX_PROPERTIES {
+            head.push_str("property float x\n");
+        }
+        head.push_str("end_header\n");
+        head.push_str(&(0..MAX_PROPERTIES).map(|k| k.to_string()).collect::<Vec<_>>().join(" "));
+        head.push('\n');
+        let c = ply(head.as_bytes()).unwrap();
+        assert_eq!(c.count, 1);
+        assert_eq!(floats(col(&c, "position"))[0], (MAX_PROPERTIES - 1) as f32, "the last column");
+        assert!(c.warnings.iter().any(|w| w.contains("the last of them")), "{:?}", c.warnings);
     }
 }
