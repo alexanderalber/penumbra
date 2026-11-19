@@ -236,6 +236,25 @@ fn seen_counts_arrive_as_their_own() {
     assert_eq!(Seen::default().arrived(), None);
 }
 
+/// A node that cooks every frame on a GPU that lags more frames behind than the readbacks it
+/// waits for still hears back: the oldest readback, the next to arrive, is kept, and its words
+/// count once it is there.
+#[test]
+fn readbacks_that_lag_many_frames_still_arrive() {
+    let mut reports = Reports::<u32>::new();
+    let started: Vec<Seen> = (0..3 * REPORTS_PENDING).map(|_| Seen::default()).collect();
+    for seen in &started {
+        reports.wait_for(seen.clone(), 1);
+        assert_eq!(reports.words(&1), None, "nothing arrived yet");
+    }
+    // The GPU catches up with the first of them.
+    started[0].arrive([4, 3, 2, 1]);
+    assert_eq!(reports.words(&1), Some([4, 3, 2, 1]));
+    // The newest is kept as well.
+    started[started.len() - 1].arrive([9, 0, 0, 0]);
+    assert_eq!(reports.words(&1), Some([9, 0, 0, 0]));
+}
+
 /// The half floats a picture is packed into by hand round as `half` rounds them: at the edges
 /// (no number, infinities, minus zero, the smallest and the largest).
 #[test]
