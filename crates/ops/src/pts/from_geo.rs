@@ -2,12 +2,16 @@
 //! Sprinkle POP (points scattered over its surface) make them. The way to emit particles from a
 //! model or a text: `geo.text` or `geo.file` into this node into `pts.particles`.
 //!
-//! Meshes live on the CPU, so the points are made there and uploaded once per change of the
-//! geometry or a param, in a job off the cook thread: a scatter of a million points over a large
-//! mesh takes a moment. Meanwhile the last points stay; under exact frames the cook waits.
+//! Meshes live on the CPU, so the points are made there, in each item's own space, once per
+//! change of a model or a param, in a job off the cook thread: a scatter of a million points
+//! over a large mesh takes a moment. Meanwhile the last points stay; under exact frames the cook
+//! waits. A job that runs is never thrown away: a newer request starts when it has ended.
 //!
-//! Points are in world space: each item's placement is applied, normals turned with it. Items
-//! drawn as instances (sprites, copies on points) are left out with a warning.
+//! Points are in world space: each item's placement is applied at every cook, normals turned
+//! with it, so a model that moves or turns needs no new job. The share of points each triangle
+//! gets follows its area under the placement at the time the points were made; a scale that
+//! changes later stretches the points with the mesh. Items drawn as instances (sprites, copies on
+//! points) are left out with a warning.
 
 use std::sync::Arc;
 
@@ -68,7 +72,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ))
 }
 
-/// What the points are made of: the items' models, placements and colours, and the params.
+/// What the points are made of: the items' models and colours, and the params. The items'
+/// placements are not part of it: they are applied to the points at every cook.
 #[derive(Clone)]
 struct Request {
     items: Vec<Source>,
@@ -80,6 +85,8 @@ struct Request {
 #[derive(Clone)]
 struct Source {
     model: Arc<Model>,
+    /// The placement when the points are made: it weighs the triangles by their area as they
+    /// stand.
     world: Mat4,
     /// The item's material colour, which replaces the file's.
     color: Option<[f32; 4]>,
@@ -95,24 +102,72 @@ impl PartialEq for Request {
                 .items
                 .iter()
                 .zip(&other.items)
-                .all(|(a, b)| Arc::ptr_eq(&a.model, &b.model) && a.world == b.world && a.color == b.color)
+                .all(|(a, b)| Arc::ptr_eq(&a.model, &b.model) && a.color == b.color)
     }
 }
 
-/// The points made, ready to upload.
+/// The points made, in each item's own space, ready to be placed.
 struct Made {
-    count: usize,
-    columns: Vec<Column>,
+    /// Per point: the item it lies on.
+    item: Vec<u32>,
+    position: Vec<[f32; 3]>,
+    normal: Vec<[f32; 3]>,
+    uv: Vec<[f32; 2]>,
+    /// Per point, when any item shows a colour other than plain white.
+    color: Option<Vec<[f32; 4]>>,
     /// Points left out past [`MAX_POINTS`].
     cut: usize,
+}
+
+impl Made {
+    /// The points' attributes with each item's placement in `worlds` applied (an item past the
+    /// end stays where its model has it).
+    fn columns(&self, worlds: &[Mat4]) -> Vec<Column> {
+        let n = self.item.len();
+        let turns: Vec<_> = worlds.iter().map(normal_matrix).collect();
+        let mut position = Column::new("position", AttrType::Vec3);
+        let mut normal = Column::new("normal", AttrType::Vec3);
+        let mut uv = Column::new("uv", AttrType::Vec2);
+        position.words.reserve(n * 4);
+        normal.words.reserve(n * 4);
+        uv.words.reserve(n * 2);
+        let f = |v: [f64; 3]| [v[0] as f32, v[1] as f32, v[2] as f32, 0.0];
+        for ((item, p), (nrm, t)) in
+            self.item.iter().zip(&self.position).zip(self.normal.iter().zip(&self.uv))
+        {
+            let p = p.map(f64::from);
+            let nrm = nrm.map(f64::from);
+            match (worlds.get(*item as usize), turns.get(*item as usize)) {
+                (Some(world), Some(turn)) => {
+                    position.push(f(transform(world, p)));
+                    normal.push(f(unit(turn.map(|row| row[0] * nrm[0] + row[1] * nrm[1] + row[2] * nrm[2]))));
+                }
+                _ => {
+                    position.push(f(p));
+                    normal.push(f(nrm));
+                }
+            }
+            uv.push([t[0], t[1], 0.0, 0.0]);
+        }
+        let mut columns = vec![position, normal, uv];
+        if let Some(colors) = &self.color {
+            let mut color = Column::new("color", AttrType::Vec4);
+            color.words.reserve(n * 4);
+            for c in colors {
+                color.push(*c);
+            }
+            columns.push(color);
+        }
+        columns
+    }
 }
 
 #[derive(Default)]
 struct FromGeo {
     slot: AsyncSlot<Arc<Made>>,
     asked: Option<Request>,
-    /// The request whose points went out last, and them.
-    sent: Option<(Request, penumbra_gpu::Points)>,
+    /// The points that went out last: what they were made from, the placements, and them.
+    sent: Option<(Arc<Made>, Vec<Mat4>, penumbra_gpu::Points)>,
     uploads: Uploads,
 }
 
@@ -149,11 +204,9 @@ impl Operator for FromGeo {
                 "{instanced} items drawn as instances are left out: their copies live on the GPU"
             ));
         }
+        let meshes = || geo.items.iter().filter(|i| i.instances.is_none());
         let request = Request {
-            items: geo
-                .items
-                .iter()
-                .filter(|i| i.instances.is_none())
+            items: meshes()
                 .map(|i| Source {
                     model: i.model.clone(),
                     world: i.world,
@@ -164,60 +217,53 @@ impl Operator for FromGeo {
             count: u32::try_from(cx.int("count")?.clamp(1, i64::from(MAX_POINTS))).unwrap_or(1),
             seed: u64::try_from(cx.int("seed")?.max(0)).unwrap_or(0),
         };
-        if self.sent.as_ref().is_some_and(|(r, _)| *r == request) {
+        let worlds: Vec<Mat4> = meshes().map(|i| i.world).collect();
+        let exact = cx.exact_frames();
+        let mut fresh = self.slot.poll();
+        // A job that runs is never thrown away: a newer request starts when it has ended.
+        if self.asked.as_ref() != Some(&request) {
+            if exact {
+                fresh |= super::program::finish(&mut self.slot);
+            }
+            if !self.slot.busy() {
+                self.asked = Some(request.clone());
+                let job = request;
+                self.slot.start(cx.spawn(move |_job| Ok(Arc::new(make(&job)))));
+            }
+        }
+        if exact {
+            fresh |= super::program::finish(&mut self.slot);
+        }
+        let Some(made) = self.slot.latest().cloned() else {
+            return match self.slot.error() {
+                Some(e) if !self.slot.busy() => Err(CookError::failed(e.to_string())),
+                _ => Err(CookError::Pending),
+            };
+        };
+        if let Some(e) = self.slot.error().filter(|_| !self.slot.busy()) {
+            return Err(CookError::failed(e.to_string()));
+        }
+        if made.cut > 0 {
+            cx.warn(format!("{} vertices past {MAX_POINTS} are left out", made.cut));
+        }
+        if !fresh
+            && let Some((before, placed, _)) = &self.sent
+            && Arc::ptr_eq(before, &made)
+            && *placed == worlds
+        {
             return Ok(Cooked::Unchanged);
         }
-        if self.asked.as_ref() != Some(&request) {
-            self.asked = Some(request.clone());
-            let job = request.clone();
-            self.slot.start(cx.spawn(move |_job| Ok(Arc::new(make(&job)))));
-        }
-        if cx.exact_frames() {
-            super::program::finish(&mut self.slot);
-        } else {
-            self.slot.poll();
-        }
-        let done = !self.slot.busy();
-        match self.slot.latest().cloned() {
-            Some(made) if done => {
-                if made.cut > 0 {
-                    cx.warn(format!("{} vertices past {MAX_POINTS} are left out", made.cut));
-                }
-                let bounds = made.columns.first().and_then(bounds_of);
-                let points = self.uploads.upload(gpu, made.count, &made.columns, bounds)?;
-                self.sent = Some((request, points.clone()));
-                Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, points)]))
-            }
-            _ => match (&self.sent, self.slot.error()) {
-                (_, Some(e)) if done => Err(CookError::failed(e.to_string())),
-                // The points before keep going out while the new ones are made.
-                (Some((_, points)), _) => Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, points.clone())])),
-                (None, _) => Err(CookError::Pending),
-            },
-        }
+        let columns = made.columns(&worlds);
+        let bounds = columns.first().and_then(bounds_of);
+        let points = self.uploads.upload(gpu, made.item.len(), &columns, bounds)?;
+        self.sent = Some((made, worlds, points.clone()));
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, points)]))
     }
 }
 
-/// A source's mesh in world space: positions, unit normals (none where the mesh's is zero) and
-/// texture coordinates per vertex, and each vertex's colour.
-struct Placed {
-    positions: Vec<[f64; 3]>,
-    normals: Vec<[f64; 3]>,
-    uvs: Vec<[f32; 2]>,
-}
-
-fn place(s: &Source) -> Placed {
-    let mesh = &s.model.mesh;
-    let n = normal_matrix(&s.world);
-    let turn = |v: [f32; 3]| {
-        let v = v.map(f64::from);
-        unit(n.map(|row| row[0] * v[0] + row[1] * v[1] + row[2] * v[2]))
-    };
-    Placed {
-        positions: mesh.vertices.iter().map(|v| transform(&s.world, v.position.map(f64::from))).collect(),
-        normals: mesh.vertices.iter().map(|v| turn(v.normal)).collect(),
-        uvs: mesh.vertices.iter().map(|v| v.uv).collect(),
-    }
+/// A source's mesh in world space, for the area of its triangles.
+fn placed(s: &Source) -> Vec<[f64; 3]> {
+    s.model.mesh.vertices.iter().map(|v| transform(&s.world, v.position.map(f64::from))).collect()
 }
 
 /// `w[0] a + w[1] b + w[2] c` for the corners `[a, b, c]`, component by component.
@@ -278,29 +324,30 @@ impl SplitMix {
 
 fn make(r: &Request) -> Made {
     let colour = coloured(&r.items);
-    let mut position = Column::new("position", AttrType::Vec3);
-    let mut normal = Column::new("normal", AttrType::Vec3);
-    let mut uv = Column::new("uv", AttrType::Vec2);
-    let mut color = Column::new("color", AttrType::Vec4);
-    let f = |v: [f64; 3]| [v[0] as f32, v[1] as f32, v[2] as f32, 0.0];
-    let mut count = 0usize;
-    let mut cut = 0usize;
+    let mut m = Made {
+        item: Vec::new(),
+        position: Vec::new(),
+        normal: Vec::new(),
+        uv: Vec::new(),
+        color: colour.then(Vec::new),
+        cut: 0,
+    };
+    let f = |v: [f64; 3]| [v[0] as f32, v[1] as f32, v[2] as f32];
     if r.surface {
-        // Every triangle of every source in world space, with its area added up as it goes.
-        let placed: Vec<Placed> = r.items.iter().map(place).collect();
+        // Every triangle of every source, weighed by its area in world space, added up as it goes.
         // (source, first index of the triangle, material, the area up to and with it)
         let mut tris: Vec<(usize, usize, u32, f64)> = Vec::new();
         let mut total = 0.0f64;
-        for (k, (s, p)) in r.items.iter().zip(&placed).enumerate() {
+        for (k, s) in r.items.iter().enumerate() {
+            let world = placed(s);
             let mesh = &s.model.mesh;
             for range in &mesh.ranges {
                 let first = range.first as usize;
                 let end = first.saturating_add(range.count as usize).min(mesh.indices.len());
                 let mut i = first;
                 while i + 3 <= end {
-                    let corner = |j: usize| {
-                        mesh.indices.get(i + j).and_then(|v| p.positions.get(*v as usize)).copied()
-                    };
+                    let corner =
+                        |j: usize| mesh.indices.get(i + j).and_then(|v| world.get(*v as usize)).copied();
                     if let (Some(a), Some(b), Some(c)) = (corner(0), corner(1), corner(2)) {
                         let n = cross(sub(b, a), sub(c, a));
                         let area = 0.5 * (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
@@ -314,46 +361,45 @@ fn make(r: &Request) -> Made {
             }
         }
         if tris.is_empty() || total <= 0.0 {
-            return Made { count: 0, columns: vec![position, normal, uv], cut: 0 };
+            m.color = None;
+            return m;
         }
+        let n = r.count as usize;
+        m.item.reserve(n);
+        m.position.reserve(n);
+        m.normal.reserve(n);
+        m.uv.reserve(n);
         let mut rng = SplitMix(r.seed ^ 0x5eed);
         for _ in 0..r.count {
             let at = rng.unit() * total;
             let t = tris.partition_point(|x| x.3 <= at).min(tris.len() - 1);
             let Some(&(k, i, material, _)) = tris.get(t) else { continue };
-            let (Some(s), Some(p)) = (r.items.get(k), placed.get(k)) else { continue };
+            let Some(s) = r.items.get(k) else { continue };
             let mesh = &s.model.mesh;
-            let idx = |j: usize| mesh.indices.get(i + j).map_or(0, |v| *v as usize);
-            let (ia, ib, ic) = (idx(0), idx(1), idx(2));
+            let vertex = |j: usize| mesh.indices.get(i + j).and_then(|v| mesh.vertices.get(*v as usize));
+            let (Some(va), Some(vb), Some(vc)) = (vertex(0), vertex(1), vertex(2)) else { continue };
             // Uniform over the triangle.
             let su = rng.unit().sqrt();
             let v = rng.unit();
             let w = [1.0 - su, su * (1.0 - v), su * v];
-            let at3 = |list: &Vec<[f64; 3]>| {
-                let g = |q: usize| list.get(q).copied().unwrap_or([0.0; 3]);
-                let (a, b, c) = (g(ia), g(ib), g(ic));
-                mix(w, [a, b, c])
-            };
-            let pos = at3(&p.positions);
-            let mut nrm = unit(at3(&p.normals));
+            let g = |x: [f32; 3]| x.map(f64::from);
+            let (a, b, c) = (g(va.position), g(vb.position), g(vc.position));
+            let pos = mix(w, [a, b, c]);
+            let mut nrm = unit(mix(w, [g(va.normal), g(vb.normal), g(vc.normal)]));
             if nrm == [0.0; 3] {
-                let g = |q: usize| p.positions.get(q).copied().unwrap_or([0.0; 3]);
-                nrm = unit(cross(sub(g(ib), g(ia)), sub(g(ic), g(ia))));
+                nrm = unit(cross(sub(b, a), sub(c, a)));
             }
-            let g = |q: usize| p.uvs.get(q).copied().unwrap_or([0.0; 2]);
-            let (ua, ub, uc) = (g(ia), g(ib), g(ic));
-            let t2 = mix([w[0] as f32, w[1] as f32, w[2] as f32], [ua, ub, uc]);
-            position.push(f(pos));
-            normal.push(f(nrm));
-            uv.push([t2[0], t2[1], 0.0, 0.0]);
-            if colour {
-                color.push(color_of(s, material));
+            let t2 = mix([w[0] as f32, w[1] as f32, w[2] as f32], [va.uv, vb.uv, vc.uv]);
+            m.item.push(k as u32);
+            m.position.push(f(pos));
+            m.normal.push(f(nrm));
+            m.uv.push(t2);
+            if let Some(colors) = &mut m.color {
+                colors.push(color_of(s, material));
             }
-            count += 1;
         }
     } else {
-        for s in &r.items {
-            let p = place(s);
+        for (k, s) in r.items.iter().enumerate() {
             let mesh = &s.model.mesh;
             // Each vertex's material: the first run of triangles that uses it.
             let mut material = vec![0u32; mesh.vertices.len()];
@@ -371,25 +417,20 @@ fn make(r: &Request) -> Made {
                     }
                 }
             }
-            for (v, pos) in p.positions.iter().enumerate() {
-                if count >= MAX_POINTS as usize {
-                    cut += 1;
+            for (v, vertex) in mesh.vertices.iter().enumerate() {
+                if m.item.len() >= MAX_POINTS as usize {
+                    m.cut += 1;
                     continue;
                 }
-                position.push(f(*pos));
-                normal.push(f(p.normals.get(v).copied().unwrap_or([0.0; 3])));
-                let t = p.uvs.get(v).copied().unwrap_or([0.0; 2]);
-                uv.push([t[0], t[1], 0.0, 0.0]);
-                if colour {
-                    color.push(color_of(s, material.get(v).copied().unwrap_or(0)));
+                m.item.push(k as u32);
+                m.position.push(vertex.position);
+                m.normal.push(f(unit(vertex.normal.map(f64::from))));
+                m.uv.push(vertex.uv);
+                if let Some(colors) = &mut m.color {
+                    colors.push(color_of(s, material.get(v).copied().unwrap_or(0)));
                 }
-                count += 1;
             }
         }
     }
-    let mut columns = vec![position, normal, uv];
-    if colour {
-        columns.push(color);
-    }
-    Made { count, columns, cut }
+    m
 }

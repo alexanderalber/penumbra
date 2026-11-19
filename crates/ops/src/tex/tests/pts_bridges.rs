@@ -236,6 +236,57 @@ fn points_come_from_a_meshes_vertices_and_surface() {
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
 
+/// A model that turns every frame (a `geo.transform` bound to time) gives points every frame,
+/// placed where the model stands now, while the show runs (no exact frames).
+#[test]
+fn points_follow_a_turning_model() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create("/box", "geo.primitive", &[("size", Value::Vec3([2.0, 1.0, 0.5]))]),
+        create("/turned", "geo.transform", &[]),
+        connect("/box", "/turned", 0),
+        create("/pts", "pts.from_geo", &[("mode", "surface".into()), ("count", Value::Int(2000))]),
+        connect("/turned", "/pts", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let id = rig.id("/pts");
+    let mut out = 0;
+    let mut last = None;
+    let mut version = 0;
+    for frame in 0..30 {
+        let angle = 7.0 * f64::from(frame + 1);
+        rig.edit(&[set("/turned.rotate", Value::Vec3([0.0, 0.0, angle]))]);
+        rig.clock.advance(1);
+        rig.cook("/pts");
+        let s = rig.cooker.status(id).unwrap();
+        assert_eq!(s.error, None);
+        if s.version != version
+            && let Some(d) = rig.cooker.output(Port { node: id, output: 0 })
+        {
+            version = s.version;
+            out += 1;
+            last = Some((angle, d.get::<Points>().unwrap().clone()));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(out >= 25, "new points came out on {out} of 30 frames");
+    // The last points lie on the box as it stands in the last frame: turned about z.
+    let (angle, p) = last.unwrap();
+    let (s, c) = angle.to_radians().sin_cos();
+    for v in xyz(&rig, &p) {
+        let (x, y) = (f64::from(v[0]), f64::from(v[1]));
+        let local = [c * x + s * y, -s * x + c * y, f64::from(v[2])];
+        let inside = (local[0].abs() <= 1.0 + 1e-4)
+            && (local[1].abs() <= 0.5 + 1e-4)
+            && (local[2].abs() <= 0.25 + 1e-4);
+        let on = (local[0].abs() - 1.0).abs() < 1e-3
+            || (local[1].abs() - 0.5).abs() < 1e-3
+            || (local[2].abs() - 0.25).abs() < 1e-3;
+        assert!(inside && on, "{v:?} is not on the box turned by {angle} degrees");
+    }
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
+
 /// The channels of `path` once it has them, and after `frames` more cooks.
 fn chans(rig: &mut Rig, path: &str) -> Chans {
     let deadline = Instant::now() + Duration::from_secs(30);
