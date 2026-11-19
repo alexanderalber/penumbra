@@ -2223,7 +2223,7 @@ Inputs:
 
 Outputs:
 
-- `out` (table): The first row names the columns: tx ty tz for position, nx ny nz for normal, r g b a for colour, u v for uv, <name>_x and so on for others, a one-number attribute by its name. Then one row per point, in order. pts.from_table reads it back
+- `out` (table): The first row names the columns: tx ty tz for position, nx ny nz for normal, r g b a for colour, u v for uv, <name>_x and so on for others, a one-number attribute by its name. Then one row per point, in order. pts.from_table reads it back into the same attributes, except one-number attributes named like a component (x, r, u, alpha, index, a name ending in _x or _0)
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -2388,7 +2388,7 @@ Inputs:
 
 Outputs:
 
-- `out` (pts): `position`, `normal` and `uv` in world space; `color` from the material where the geometry has one that is not plain white. Exact bounds
+- `out` (pts): `position`, `normal` and `uv` in world space; `color` from the material where the geometry has one that is not plain white. A model that moves or turns takes its points with it at every frame. Exact bounds
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|

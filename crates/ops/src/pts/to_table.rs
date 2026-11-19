@@ -46,7 +46,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("out", DataKind::Table)
         .describe_output(
             "out",
-            "The first row names the columns: tx ty tz for position, nx ny nz for normal, r g b a for colour, u v for uv, <name>_x and so on for others, a one-number attribute by its name. Then one row per point, in order. pts.from_table reads it back",
+            "The first row names the columns: tx ty tz for position, nx ny nz for normal, r g b a for colour, u v for uv, <name>_x and so on for others, a one-number attribute by its name. Then one row per point, in order. pts.from_table reads it back into the same attributes, except one-number attributes named like a component (x, r, u, alpha, index, a name ending in _x or _0)",
         ),
         || Box::new(ToTable::default()) as Box<dyn Operator>,
     ))
