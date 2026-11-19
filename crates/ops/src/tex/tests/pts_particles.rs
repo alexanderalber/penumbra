@@ -715,6 +715,54 @@ fn a_warm_up_spreads_over_frames_and_comes_whole_when_stepping() {
     assert_eq!(ids(&rig, &p).first().copied(), Some(300 - 60));
 }
 
+/// A warm-up goes on while the show time stands, and then the node rests; a change of
+/// `warm_up` while it runs starts it over with the new length.
+#[test]
+fn a_warm_up_goes_on_while_the_show_stands_and_follows_its_length() {
+    let ops = [
+        one_point(),
+        create(
+            "/p",
+            KIND,
+            &[("rate", Value::Float(60.0)), ("life", Value::Float(1.0)), ("warm_up", Value::Float(5.0))],
+        ),
+        connect("/src", "/p", 0),
+    ];
+    let Some(mut rig) = rig_of(&ops) else { return };
+    let id = rig.id("/p");
+    let running = |rig: &Rig| {
+        matches!(rig.cooker.status(id).unwrap().job, Some(penumbra_graph::JobStatus::Running { .. }))
+    };
+    rig.clock.advance(1);
+    rig.cook("/p");
+    assert!(running(&rig), "a warm-up of 5 s takes more than a frame");
+    // The show stands still from here.
+    let mut frames = 0;
+    while running(&rig) && frames < 400 {
+        super::pts_near::idle(&mut rig, "/p", 1);
+        frames += 1;
+    }
+    assert!(!running(&rig), "the warm-up ends while the show stands");
+    let n = live(&rig, &output(&rig, "/p"));
+    assert!((60..=61).contains(&n), "a second of particles at 60 a second: {n}");
+    let (_, cooks) = super::pts_near::idle(&mut rig, "/p", 5);
+    let (_, later) = super::pts_near::idle(&mut rig, "/p", 5);
+    assert_eq!(cooks, later, "and then rests");
+
+    // 30 s of warm-up, changed to none while it runs: no pre-roll.
+    rig.cooker.reset(id);
+    rig.edit(&[set("/p.warm_up", Value::Float(30.0))]);
+    rig.clock.advance(1);
+    rig.cook("/p");
+    assert!(running(&rig));
+    rig.edit(&[set("/p.warm_up", Value::Float(0.0))]);
+    rig.clock.advance(1);
+    rig.cook("/p");
+    assert!(!running(&rig), "warm_up 0 ends the warm-up");
+    let p = output(&rig, "/p");
+    assert!(live(&rig, &p) <= 2, "a frame of births, no pre-roll: {}", live(&rig, &p));
+}
+
 /// A node in the loop that fails after the loop ran: the warning says the loop did not run,
 /// not that a node changed the particles' number.
 #[test]

@@ -26,6 +26,7 @@ use penumbra_graph::{
 };
 use penumbra_mesh::{Builder, Limits, Mesh, Vertex, prim};
 
+use super::program::wake;
 use crate::gpu;
 
 pub const KIND: &str = "geo.from_pts";
@@ -314,7 +315,7 @@ impl Operator for FromPts {
         // Exact bounds where the points know them; else the box read back from the GPU, late.
         let late = match points.bounds() {
             Some(_) => None,
-            None => self.late.update(gpu, points)?,
+            None => self.late.update(gpu, points, Some(wake(cx)))?,
         };
         let extent = points
             .bounds()

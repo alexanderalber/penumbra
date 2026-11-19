@@ -28,7 +28,9 @@ use std::sync::{Arc, Mutex};
 use penumbra_core::{Error, ParamSpec, Value};
 use penumbra_mesh::Bounds;
 
-use crate::{Buffer, BufferRead, BufferRing, Dispatch, FLOAT_FORMAT, Gpu, Out, Step, Tex, TexRing};
+use crate::{
+    Buffer, BufferKey, BufferRead, BufferRing, Dispatch, FLOAT_FORMAT, Gpu, Out, Step, Tex, TexRing,
+};
 
 /// The type of one element of an attribute.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -362,6 +364,17 @@ impl Seen {
     /// flicker. `before`'s finished readback is reused, so a readback per frame allocates
     /// nothing.
     pub fn reading(gpu: &Gpu, header: &Buffer, before: Option<&Seen>) -> Result<Self, Error> {
+        Self::reading_notify(gpu, header, before, None)
+    }
+
+    /// [`Seen::reading`] that calls `ready` once the value arrived (or the readback failed):
+    /// to wake a node that says something about it.
+    pub fn reading_notify(
+        gpu: &Gpu,
+        header: &Buffer,
+        before: Option<&Seen>,
+        ready: Option<Wake>,
+    ) -> Result<Self, Error> {
         let spare = before.and_then(|b| {
             let mut read = crate::lock(&b.0.read);
             // Its value first, so a readback that arrives just now is not lost with it.
@@ -372,7 +385,7 @@ impl Seen {
             }
         });
         let value = before.and_then(Seen::get).unwrap_or(UNSEEN);
-        let read = header.read_async(gpu, spare)?;
+        let read = header.read_async_notify(gpu, spare, ready)?;
         Ok(Self(Arc::new(SeenInner {
             value: AtomicU32::new(value),
             read: Mutex::new(Some(read)),
@@ -402,6 +415,94 @@ impl Seen {
         let n = self.arrived()?;
         let [a, b, c] = &self.0.rest;
         Some([n, a.load(Ordering::Relaxed), b.load(Ordering::Relaxed), c.load(Ordering::Relaxed)])
+    }
+}
+
+/// What wakes a node from the thread that polls the GPU: it cooks again at the next frame.
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// Readbacks a node waits at once at most ([`Reports`]).
+const REPORTS_PENDING: usize = 8;
+
+/// Readbacks of a header for what a node says about its result (a warning about lines left out,
+/// crowded cubes), each tagged with the settings it was made under.
+///
+/// [`Reports::words`] gives the newest header that arrived for the settings of now: a frame or
+/// more late on points that move, never one made under settings the user has changed since.
+///
+/// A readback wakes the node when it arrives unless nothing has changed: the settings are those
+/// of the newest header, the points come from the same buffers as at the read before, and the
+/// newest header was the same as the one before it. So on points that stopped changing the node
+/// cooks once or twice more to say what it found, then rests.
+pub struct Reports<S> {
+    /// Oldest first, at most [`REPORTS_PENDING`]: under load one can take longer than a frame,
+    /// and the newest that arrived still counts.
+    pending: Vec<(Seen, S)>,
+    last: Option<Seen>,
+    newest: Option<([u32; 4], S)>,
+    /// A header that differs from the one before it arrived since the last read.
+    fresh: bool,
+    /// The buffers the points of the last read came from.
+    from: Vec<BufferKey>,
+}
+
+impl<S> Default for Reports<S> {
+    fn default() -> Self {
+        Self { pending: Vec::new(), last: None, newest: None, fresh: false, from: Vec::new() }
+    }
+}
+
+impl<S: Clone + PartialEq> Reports<S> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Starts reading `header` back, made under `settings` from points in the buffers `from`.
+    /// The [`Seen`] is for the count the node gives out (display); one that cannot start is
+    /// unseen.
+    pub fn read(
+        &mut self,
+        gpu: &Gpu,
+        header: &Buffer,
+        settings: &S,
+        from: &[&Buffer],
+        wake: Option<Wake>,
+    ) -> Seen {
+        self.settle();
+        let keys: Vec<BufferKey> = from.iter().map(|b| b.key()).collect();
+        let same =
+            !self.fresh && keys == self.from && self.newest.as_ref().is_some_and(|(_, s)| s == settings);
+        self.fresh = false;
+        self.from = keys;
+        let wake = wake.filter(|_| !same);
+        let seen = Seen::reading_notify(gpu, header, self.last.as_ref(), wake).unwrap_or_default();
+        self.last = Some(seen.clone());
+        self.pending.push((seen.clone(), settings.clone()));
+        if self.pending.len() > REPORTS_PENDING {
+            self.pending.remove(0);
+        }
+        seen
+    }
+
+    /// The newest header that arrived for `settings`; `None` before one did.
+    pub fn words(&mut self, settings: &S) -> Option<[u32; 4]> {
+        self.settle();
+        self.newest.as_ref().filter(|(_, s)| s == settings).map(|(w, _)| *w)
+    }
+
+    fn settle(&mut self) {
+        let mut newest = None;
+        self.pending.retain(|(seen, s)| match seen.arrived_words() {
+            Some(w) => {
+                newest = Some((w, s.clone()));
+                false
+            }
+            None => true,
+        });
+        if let Some(n) = newest {
+            self.fresh |= self.newest.as_ref() != Some(&n);
+            self.newest = Some(n);
+        }
     }
 }
 

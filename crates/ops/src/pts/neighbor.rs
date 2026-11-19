@@ -12,13 +12,13 @@
 use penumbra_core::{Curve, Error, ParamSpec, Value};
 use penumbra_gpu::points::near::{self, MAX_PER_CELL, NearGrid};
 use penumbra_gpu::points::program::check_name;
-use penumbra_gpu::points::{Attr, AttrType, Seen, canonical, default_of};
+use penumbra_gpu::points::{Attr, AttrType, Reports, canonical, default_of};
 use penumbra_gpu::{Buffer, BufferRing, Dispatch, Gpu, Out, Step};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
 
-use super::program::input;
+use super::program::{input, wake};
 use crate::{gpu, on_gpu};
 
 pub const KIND: &str = "pts.neighbor";
@@ -47,7 +47,7 @@ fn desc() -> NodeDesc {
         "Counts each point's neighbours within `distance` and averages over them: the way to their middle, a push away from the nearest, the mean of an attribute. The three rules of a flock (boids)",
     )
     .param(
-        ParamSpec::float("distance", 0.1)
+        ParamSpec::float("distance", super::proximity::DEFAULT_DISTANCE)
             .clamp(1e-6, 1e4)
             .range(0.001, 1.0)
             .curve(Curve::Log)
@@ -222,11 +222,9 @@ fn warm_up(gpu: &Gpu) -> Result<(), Error> {
 struct Neighbor {
     grid: NearGrid,
     rings: Vec<(String, BufferRing)>,
-    /// The count of points past the cap of their cube, read back for the warning.
-    last: Option<Seen>,
-    /// Readbacks not yet arrived, oldest first: under load one can take longer than a frame.
-    pending: Vec<Seen>,
-    crowded: Option<u32>,
+    /// The count of points past the cap of their cube, read back for the warning, by the search
+    /// it came from: the bits of `distance` and the cap.
+    crowded: Reports<(u32, u32)>,
 }
 
 impl Neighbor {
@@ -291,17 +289,6 @@ impl Operator for Neighbor {
         if !wanted.is_empty() {
             check_name(&out_name).map_err(|e| CookError::failed(format!("average: {}", e.0)))?;
         }
-        let mut newest = None;
-        self.pending.retain(|s| match s.arrived() {
-            Some(n) => {
-                newest = Some(n);
-                false
-            }
-            None => true,
-        });
-        if newest.is_some() {
-            self.crowded = newest;
-        }
         let capacity = u64::from(points.capacity().max(1));
         let count = self.next(gpu, COUNT, capacity * 4)?;
         let toward = self.next(gpu, COHESION, capacity * 16)?;
@@ -314,6 +301,7 @@ impl Operator for Neighbor {
         };
         self.rings.retain(|(n, _)| [COUNT, COHESION, SEPARATION, out_name.as_str()].contains(&n.as_str()));
         let near = self.grid.build(gpu, points, distance, cap)?;
+        let search = (distance.to_bits(), cap);
         if let Some(near) = &near {
             let n = near.at_most();
             let header = points.count().header_for(gpu)?;
@@ -345,14 +333,12 @@ impl Operator for Neighbor {
                 &[Step { entry: "neighbor", out: Out::grid(w, n.div_ceil(w)), input: &input }],
             )?;
             // For the warning only: one that cannot start says nothing.
-            let seen = Seen::reading(gpu, near.crowded(), self.last.as_ref()).unwrap_or_default();
-            self.last = Some(seen.clone());
-            self.pending.push(seen);
-            if self.pending.len() > 8 {
-                self.pending.remove(0);
-            }
+            let from = points.attr("position").map(|a| a.buffer().clone());
+            let mut keys: Vec<&Buffer> = vec![&header];
+            keys.extend(from.as_ref());
+            self.crowded.read(gpu, near.crowded(), &search, &keys, Some(wake(cx)));
         }
-        if let Some(crowded) = self.crowded.filter(|n| *n > 0) {
+        if let Some(crowded) = self.crowded.words(&search).map(|w| w[0]).filter(|n| *n > 0) {
             cx.warn(format!(
                 "{crowded} points crowd their cube beyond `max_per_cell`: no point looks at them, so the counts and means leave them out. Raise `max_per_cell` or lower `distance`"
             ));

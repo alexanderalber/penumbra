@@ -150,6 +150,102 @@ fn proximity_joins_each_point_to_its_nearest_once() {
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
 
+/// Frames with nothing changed, as the engine runs them: the GPU polled (which brings readbacks
+/// in and wakes the nodes that wait for them), then whatever is dirty cooked. The node's warning
+/// and its number of cooks afterwards.
+pub(super) fn idle(rig: &mut Rig, path: &str, frames: usize) -> (Option<String>, u64) {
+    for _ in 0..frames {
+        rig.gpu.poll();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        rig.gpu.poll();
+        rig.cook(path);
+    }
+    let s = rig.cooker.status(rig.id(path)).unwrap();
+    (s.warning, s.stats.cooks)
+}
+
+/// A node that warns from a readback says so on points that never change, without anything
+/// cooking it again by hand; once the cause is fixed the warning goes for good; and the node
+/// stops cooking once it has said what it has to say.
+#[test]
+fn warnings_from_readbacks_come_without_a_recook_and_follow_the_settings() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create(
+            "/grid",
+            "pts.generate",
+            &[("rows", Value::Int(30)), ("cols", Value::Int(30)), ("size", Value::Vec3([1.0; 3]))],
+        ),
+        create("/near", PROXIMITY, &[("distance", Value::Float(0.1)), ("max", Value::Int(10))]),
+        connect("/grid", "/near", 0),
+        // 300 points in a millimetre: one cube, over a cap of 8.
+        create(
+            "/clump",
+            "pts.generate",
+            &[
+                ("shape", "box".into()),
+                ("fill", "inside".into()),
+                ("distribution", "random".into()),
+                ("count", Value::Int(300)),
+                ("size", Value::Vec3([0.001; 3])),
+            ],
+        ),
+        create("/count", NEIGHBOR, &[("max_per_cell", Value::Int(8))]),
+        connect("/clump", "/count", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    for (path, fix, word) in [
+        ("/near", set("/near.max", Value::Int(1_000_000)), "`max` keeps 10"),
+        ("/count", set("/count.max_per_cell", Value::Int(4096)), "crowd their cube"),
+    ] {
+        rig.cook(path);
+        let (warning, _) = idle(&mut rig, path, 40);
+        assert!(warning.as_deref().is_some_and(|w| w.contains(word)), "{path}: {warning:?}");
+        // Settled: no more cooks while nothing changes.
+        let (_, cooks) = idle(&mut rig, path, 10);
+        let (_, later) = idle(&mut rig, path, 10);
+        assert_eq!(cooks, later, "{path} keeps cooking with nothing changed");
+        // The cause fixed: the cook of the edit says nothing from the old settings, nor any later.
+        rig.edit(&[fix]);
+        rig.cook(path);
+        let s = rig.cooker.status(rig.id(path)).unwrap();
+        assert_eq!(s.warning, None, "{path}: the edit's own cook");
+        let (warning, _) = idle(&mut rig, path, 20);
+        assert_eq!(warning, None, "{path}");
+    }
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
+
+/// The defaults join the default grid; no lines at all, and a `min_distance` that leaves no room,
+/// are said in words.
+#[test]
+fn the_defaults_make_lines_and_no_lines_say_why() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create("/grid", "pts.generate", &[]),
+        create("/near", PROXIMITY, &[]),
+        connect("/grid", "/near", 0),
+        create("/count", NEIGHBOR, &[]),
+        connect("/grid", "/count", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let out = points(&mut rig, "/near");
+    assert!(live(&rig, &out) > 100, "lines from the defaults: {}", live(&rig, &out));
+    let (warning, _) = idle(&mut rig, "/near", 5);
+    assert_eq!(warning, None);
+    let near = points(&mut rig, "/count");
+    assert!(values(&rig, &near, "neighbors").iter().all(|c| c[0] >= 2.0), "every point has neighbours");
+    rig.edit(&[set("/near.distance", Value::Float(0.01))]);
+    rig.cook("/near");
+    let (warning, _) = idle(&mut rig, "/near", 40);
+    assert!(warning.as_deref().is_some_and(|w| w.contains("no two points")), "{warning:?}");
+    rig.edit(&[set("/near.distance", Value::Float(0.5)), set("/near.min_distance", Value::Float(0.5))]);
+    rig.cook("/near");
+    let s = rig.cooker.status(rig.id("/near")).unwrap();
+    assert!(s.warning.as_deref().is_some_and(|w| w.contains("`min_distance`")), "{:?}", s.warning);
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
+
 #[test]
 fn lines_between_near_points_are_drawn() {
     let Some(gpu) = gpu() else { return };
