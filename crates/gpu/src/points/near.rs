@@ -444,7 +444,7 @@ fn scan_params() -> [ParamSpec; 3] {
 /// struct Near { index: u32, position: vec3f, distance: f32, ... }
 /// fn near_begin(p: vec3f, me: u32) -> Near   // a walk over the points near p, without point me
 /// fn near_next(n: ptr<function, Near>) -> bool  // the next one: false when there is none
-/// fn near_radius() -> f32                    // the radius the grid was built for
+/// fn near_radius() -> f32                    // the radius the grid was built for; 0: none
 /// ```
 ///
 /// `pn_near_points[k]` is the k-th point in the grid's order (position in xyz, its index as bits
@@ -478,7 +478,8 @@ pub fn near_loop(p: &str, me: &str, body: &str) -> String {
     let pn_mask = pn_near_cells[5];
     let pn_cap = clamp(pn_near_cells[6], 1u, PN_NEAR_MAX_CAP);
     let pn_radius = near_radius();
-    let pn_r2 = pn_radius * pn_radius;
+    // A radius of 0 (one that is no positive number) finds nothing, not even a point on top.
+    let pn_r2 = select(-1.0, pn_radius * pn_radius, pn_radius > 0.0);
     for (var pn_c = 0u; pn_c < 27u; pn_c++) {{
         let pn_target = pn_home + vec3i(i32(pn_c % 3u) - 1, i32((pn_c / 3u) % 3u) - 1, i32(pn_c / 9u) - 1);
         let pn_h = pn_near_bucket_of(pn_target, pn_mask);
@@ -559,7 +560,7 @@ fn near_begin(p: vec3f, me: u32) -> Near {
 
 fn near_next(n: ptr<function, Near>) -> bool {
     let radius = near_radius();
-    let r2 = radius * radius;
+    let r2 = select(-1.0, radius * radius, radius > 0.0);
     let mask = pn_near_cells[5];
     let cap = clamp(pn_near_cells[6], 1u, PN_NEAR_MAX_CAP);
     var found = false;
@@ -684,8 +685,9 @@ impl NearGrid {
     }
 
     /// The grid over `points` for a search within `radius` (metres), a bucket giving a query at
-    /// most `cap` points (1 to [`MAX_PER_CELL`]). `None` without points. `Err` for points without
-    /// `position`, a radius that is not a positive finite number, and anything the GPU refuses.
+    /// most `cap` points (1 to [`MAX_PER_CELL`]). `None` without points. A radius that is not a
+    /// positive finite number (a bound value passing through 0) gives a grid that finds nothing.
+    /// `Err` for points without `position`, and anything the GPU refuses.
     pub fn build(
         &mut self,
         gpu: &Gpu,
@@ -693,9 +695,10 @@ impl NearGrid {
         radius: f32,
         cap: u32,
     ) -> Result<Option<Near>, Error> {
-        if !(radius.is_finite() && radius > 0.0) {
-            return Err(Error::new(format!("the search radius must be a positive number, not {radius}")));
-        }
+        // A radius that finds nothing lays the grid out by a radius of 1 and keeps 0, which the
+        // walk takes as no radius at all.
+        let finds = radius.is_finite() && radius > 0.0 && (1.0 / (radius * CELL_MARGIN)).is_finite();
+        let (radius, layout) = if finds { (radius, radius) } else { (0.0, 1.0) };
         let n = points.count().at_most();
         if n == 0 {
             return Ok(None);
@@ -730,10 +733,7 @@ impl NearGrid {
         let crowded = sized(gpu, &mut self.crowded, 16, "pts near crowded")?;
         let dummy = sized(gpu, &mut self.dummy, 16, "pts near none")?;
         let header = points.count().header_for(gpu)?;
-        let inv = 1.0 / (radius * CELL_MARGIN);
-        if !inv.is_finite() {
-            return Err(Error::new(format!("the search radius {radius} is too small")));
-        }
+        let inv = 1.0 / (layout * CELL_MARGIN);
 
         let build = gpu.cached_compute("pts near build", &build_source(), &build_params())?;
         let param = |name: &str| match name {

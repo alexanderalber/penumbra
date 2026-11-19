@@ -396,8 +396,12 @@ fn none_one_and_two_points() {
     // A count on the GPU of none.
     let (got, _, _) = search(&gpu, &cloud(&gpu, &two, 0, true), 0.1, 64);
     assert_eq!(got, vec![Vec::<u32>::new(), Vec::new()]);
-    assert!(NearGrid::new().build(&gpu, &one, 0.0, 64).is_err(), "no radius");
-    assert!(NearGrid::new().build(&gpu, &one, f32::NAN, 64).is_err(), "no number");
+    // A radius of nothing finds nothing, also for points on top of each other.
+    let same = [[0.5, 0.5, 0.5]; 3];
+    for radius in [0.0, -1.0, f32::NAN, f32::INFINITY, 1e-45] {
+        let (got, _, _) = search(&gpu, &cloud(&gpu, &same, 3, false), radius, 64);
+        assert!(got.iter().all(Vec::is_empty), "radius {radius}: {got:?}");
+    }
 }
 
 #[test]

@@ -246,6 +246,48 @@ fn the_defaults_make_lines_and_no_lines_say_why() {
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
 
+/// A search radius that passes through 0 (an LFO bound to it) finds no neighbours for a moment
+/// and says so; the node keeps running.
+#[test]
+fn a_radius_of_nothing_finds_no_neighbours_without_failing() {
+    let Some(gpu) = gpu() else { return };
+    let dir = super::scratch("pts-near-zero");
+    let walk = "// @read position\n// @write heat float\n// @param reach float = 0.3\n// @neighbors reach\nfn main() {\n    var c = 0.0;\n    var n = near_begin(position, index);\n    while near_next(&n) {\n        c += 1.0;\n    }\n    heat = c;\n}\n";
+    std::fs::write(dir.join("walk.wgsl"), walk).unwrap();
+    let ops = [
+        ball(),
+        create("/walk", "pts.shader", &[("file", "walk.wgsl".into())]),
+        connect("/ball", "/walk", 0),
+        create("/near", PROXIMITY, &[("distance", Value::Float(0.3))]),
+        connect("/ball", "/near", 0),
+        create("/count", NEIGHBOR, &[("distance", Value::Float(0.3))]),
+        connect("/ball", "/count", 0),
+    ];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let walked = points(&mut rig, "/walk");
+    assert!(values(&rig, &walked, "heat").iter().any(|h| h[0] > 0.0));
+    points(&mut rig, "/near");
+    points(&mut rig, "/count");
+    rig.edit(&[
+        set("/walk.reach", Value::Float(0.0)),
+        set("/near.distance", Value::Float(0.0)),
+        set("/count.distance", Value::Float(0.0)),
+    ]);
+    for path in ["/walk", "/near", "/count"] {
+        rig.cook(path);
+        let s = rig.cooker.status(rig.id(path)).unwrap();
+        assert_eq!(s.error, None, "{path}");
+    }
+    let s = rig.cooker.status(rig.id("/walk")).unwrap();
+    assert!(s.warning.as_deref().is_some_and(|w| w.contains("no neighbours")), "{:?}", s.warning);
+    let walked = output(&rig, "/walk");
+    assert!(values(&rig, &walked, "heat").iter().all(|h| h[0] == 0.0));
+    assert_eq!(live(&rig, &output(&rig, "/near")), 0, "no lines");
+    let counted = output(&rig, "/count");
+    assert!(values(&rig, &counted, "neighbors").iter().all(|c| c[0] == 0.0));
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
+
 #[test]
 fn lines_between_near_points_are_drawn() {
     let Some(gpu) = gpu() else { return };
