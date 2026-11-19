@@ -662,6 +662,18 @@ impl Near {
     }
 }
 
+/// What a node says when `crowded` points crowd their cube beyond the cap: `missed` names what its
+/// result lacks for them. Where the cap was lowered for the number of points ([`lowered`]), a
+/// higher `max_per_cell` changes nothing, and the text says to lower `distance` only.
+pub fn crowded(crowded: u32, missed: &str, lowered: bool) -> String {
+    let fix = if lowered {
+        "Lower `distance`: `max_per_cell` is already as high as this many points allow"
+    } else {
+        "Raise `max_per_cell` or lower `distance`"
+    };
+    format!("{crowded} points crowd their cube beyond `max_per_cell`: {missed}. {fix}")
+}
+
 /// What a node says when the cap it asked for was lowered for `n` points ([`cap_for`]).
 pub fn lowered(asked: u32, n: u32) -> Option<String> {
     let took = cap_for(n);

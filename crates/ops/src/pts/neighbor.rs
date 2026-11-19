@@ -349,12 +349,16 @@ impl Operator for Neighbor {
             keys.extend(from.as_ref());
             self.crowded.read(gpu, near.crowded(), &search, &keys, Some(wake(cx)));
         }
-        if let Some(w) = near::lowered(cap, points.count().at_most()) {
+        let lowered = near::lowered(cap, points.count().at_most());
+        let was_lowered = lowered.is_some();
+        if let Some(w) = lowered {
             cx.warn(w);
         }
         if let Some(crowded) = self.crowded.words(&search).map(|w| w[0]).filter(|n| *n > 0) {
-            cx.warn(format!(
-                "{crowded} points crowd their cube beyond `max_per_cell`: no point looks at them, so the counts and means leave them out. Raise `max_per_cell` or lower `distance`"
+            cx.warn(near::crowded(
+                crowded,
+                "no point looks at them, so the counts and means leave them out",
+                was_lowered,
             ));
         }
         let mut out = points
