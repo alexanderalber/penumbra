@@ -1661,7 +1661,7 @@ Inputs:
 
 Outputs:
 
-- `out` (chan): `count`: the points there are. `capacity`: how many the buffers hold. With an attribute: its values and summary, one sample each. Components are named tx ty tz for position, nx ny nz for normal, r g b a for colour, u v for uv, <name>_x and so on for others; a one-number attribute by its name. What comes from the GPU follows a frame or two late
+- `out` (chan): `count`: the points there are. `capacity`: how many the buffers hold. With an attribute: its values and summary, one sample each. Components are named tx ty tz for position, nx ny nz for normal, r g b a for colour, u v for uv, <name>_x and so on for others; a one-number attribute by its name. An attribute name longer than 56 characters is cut to 56 in its channels. What comes from the GPU follows a frame or two late
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -2338,11 +2338,11 @@ Inputs: none.
 
 Outputs:
 
-- `out` (pts): One point per vertex or line, in the file's order. Colours stored as bytes (0 to 255) are taken as sRGB and made linear, as penumbra's colours are. Exact bounds
+- `out` (pts): One point per vertex or line, in the file's order. Colours stored as bytes (0 to 255) are taken as sRGB and made linear, as penumbra's colours are. Points hold at most 32 attributes: position, normal, colour and the other standard ones come first, then the file's others in their order, and the node warns about those left out. Exact bounds
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `file` | file (ply, xyz, csv, txt, pts) |  |  | The file, relative to the project directory. .ply: ASCII or binary little endian; x y z place the points, nx ny nz, red green blue (alpha) and every other number of a vertex become attributes. .xyz, .csv, .txt, .pts: a number per column, split at commas, spaces, tabs or semicolons; a first line of names says what each column is (x y z, r g b, nx ny nz, any name). Without names the columns are x y z r g b; four or seven columns are x y z intensity (r g b), as laser scanners write them, and a first line holding only the number of points is skipped |
+| `file` | file (ply, xyz, csv, txt, pts) |  |  | The file, relative to the project directory. .ply: ASCII or binary little endian; x y z place the points, nx ny nz, red green blue (alpha) and every other number of a vertex become attributes. .xyz, .csv, .txt, .pts: a number per column. A file uses one separator: tabs, semicolons, commas or spaces, found in its first lines. With tabs or semicolons a decimal comma reads as a point (1,5 is 1.5). An empty cell takes the attribute's default. A first line of names says what each column is (x y z, r g b, nx ny nz, any name). Without names the columns are x y z r g b; four or seven columns are x y z intensity (r g b), as laser scanners write them, and a first line holding only the number of points is skipped |
 
 ### pts.force
 
@@ -2803,7 +2803,7 @@ Outputs: `out` (geo).
 | `mode` | sprites \| copies \| lines | `"sprites"` |  | What stands at each point; sprites: a flat disc or square that always faces the camera; copies: a copy of the geometry on the `model` input; lines: a ribbon facing the camera from each point to the next along the points' lines (a trail, a generated line or circle). Points without lines make one line in their order |
 | `size` | float | `0.02` | 0.001 to 1 (soft, held within 0 to 10000) | sprites: the width of each sprite in metres, times the point's `scale`. Does something only with mode sprites. |
 | `sprite` | disc \| square | `"disc"` |  | sprites: the sprite's outline; disc: a round disc, as wide as `size`; square: a square of side `size`. Does something only with mode sprites. |
-| `softness` | float | `0` | 0 to 1 (soft) | sprites: how far in from the outline each sprite fades out. 0 is a hard edge. 1 fades all the way from the centre: a soft glowing dot, as a point sprite with a falloff texture in TouchDesigner. A soft edge is see-through, so it costs a second draw. Does something only with mode sprites. |
+| `softness` | float | `0` | 0 to 1 (soft) | sprites: how far in from the outline each sprite fades out. 0 is a hard edge. 1 fades all the way from the centre: a soft glowing dot, as a point sprite with a falloff texture in TouchDesigner. With `blend` over a soft edge is see-through: the sprites are drawn two or three times. With `blend` add they are drawn once. Does something only with mode sprites. |
 | `blend` | over \| add | `"over"` |  | How the copies meet what lies behind them; over: they cover it, as any surface: opaque where the colour is, see-through where its alpha or a soft edge says; add: their colour is added to it, so overlapping sprites or lines grow brighter: glow, sparks, light trails. Drawn after everything else, hidden by what stands in front, casting no shadow. They cover nothing: the render stays see-through there, and tex.composite over a picture adds their light to it |
 | `scale` | float | `1` | 0.01 to 10 (soft, held within 0 to 1000000) | copies: multiplies the model's size at every point, times the point's `scale`. Does something only with mode copies. |
 | `width` | float | `0.01` | 0.0005 to 0.5 (soft, held within 0 to 10000) | lines: the width of the ribbons in metres, times the points' `width` (LineWidth in TouchDesigner), blended between the two ends of each segment. Does something only with mode lines. |

@@ -77,7 +77,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::float("softness", 0.0)
                 .clamp(0.0, 1.0)
                 .range(0.0, 1.0)
-                .doc("sprites: how far in from the outline each sprite fades out. 0 is a hard edge. 1 fades all the way from the centre: a soft glowing dot, as a point sprite with a falloff texture in TouchDesigner. A soft edge is see-through, so it costs a second draw")
+                .doc("sprites: how far in from the outline each sprite fades out. 0 is a hard edge. 1 fades all the way from the centre: a soft glowing dot, as a point sprite with a falloff texture in TouchDesigner. With `blend` over a soft edge is see-through: the sprites are drawn two or three times. With `blend` add they are drawn once")
                 .applies_when("mode", &["sprites"]),
         )
         .param(
