@@ -197,6 +197,9 @@ impl Operator for Shader {
                         "@neighbors: the radius is {radius}, so no neighbours are found; it must be a positive number of metres"
                     ));
                 }
+                if let Some(w) = penumbra_gpu::points::near::lowered(decl.cap, points.count().at_most()) {
+                    cx.warn(format!("@neighbors: {}", w.replace("`max_per_cell`", "the cap")));
+                }
                 self.grid.build(gpu, points, radius as f32, decl.cap)?
             }
         };

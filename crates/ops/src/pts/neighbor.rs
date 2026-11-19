@@ -68,7 +68,7 @@ fn desc() -> NodeDesc {
             .clamp(1.0, f64::from(MAX_PER_CELL))
             .range(8.0, 1024.0)
             .curve(Curve::Log)
-            .doc("The search cuts space into cubes as wide as `distance`. A point looks at no more than this many points of each cube around it: a dense clump costs no more than that. The node warns when points are left out")
+            .doc("The search cuts space into cubes as wide as `distance`. A point looks at no more than this many points of each cube around it: a dense clump costs no more than that. The node warns when points are left out. Many points lower it, so a frame stays short: to 795 for 100 000 points, 79 for a million, with a warning")
             .more(),
     )
     .input("in", DataKind::Pts)
@@ -348,6 +348,9 @@ impl Operator for Neighbor {
             let mut keys: Vec<&Buffer> = vec![&header];
             keys.extend(from.as_ref());
             self.crowded.read(gpu, near.crowded(), &search, &keys, Some(wake(cx)));
+        }
+        if let Some(w) = near::lowered(cap, points.count().at_most()) {
+            cx.warn(w);
         }
         if let Some(crowded) = self.crowded.words(&search).map(|w| w[0]).filter(|n| *n > 0) {
             cx.warn(format!(

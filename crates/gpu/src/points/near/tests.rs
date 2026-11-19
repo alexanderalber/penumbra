@@ -517,3 +517,19 @@ fn a_moving_bound_keeps_the_buffers() {
     let (got, counts, _) = search(&gpu, &p, 0.1, 64);
     agrees(&got, &counts, &reference(&places, 1100, 0.1), "moved bound");
 }
+
+/// A search looks at no more than 27 cubes of `cap` points per point: the cap shrinks with the
+/// number of points, so a frame of a dense crowd stays short (2^31 looks at most).
+#[test]
+fn the_cap_shrinks_so_a_search_stays_short() {
+    let Some(gpu) = gpu() else { return };
+    let places = random(61, 200_000, [0.0; 3], 1.0);
+    let p = cloud(&gpu, &places, places.len(), false);
+    let near = NearGrid::new().build(&gpu, &p, 0.05, MAX_PER_CELL).unwrap().unwrap();
+    let looks = 27 * u64::from(near.cap()) * 200_000;
+    assert!(looks <= 1 << 31, "cap {}: {looks} looks", near.cap());
+    assert!(near.cap() >= 350, "no lower than it must: {}", near.cap());
+    assert_eq!(cloud(&gpu, &places[..1000], 1000, false).capacity(), 1000);
+    let few = NearGrid::new().build(&gpu, &cloud(&gpu, &places[..1000], 1000, false), 0.05, MAX_PER_CELL);
+    assert_eq!(few.unwrap().unwrap().cap(), MAX_PER_CELL, "few points keep the whole cap");
+}
