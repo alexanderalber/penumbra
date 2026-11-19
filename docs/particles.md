@@ -19,7 +19,7 @@ deaths.
 The viewer on `pts.particles` shows how many particles live, a frame late: "15024 of at most
 15130 points". "At most" is the count read back a frame or two ago plus the births since: the
 work over the particles covers that many. `max` is the most particles at once. While that many
-live, the births of a step that do not fit are dropped, not saved for later.
+live, the births of a step that do not fit are dropped. They do not wait for the next step.
 
 ### Emit from a model or a text
 
@@ -122,8 +122,17 @@ pts.particles -> pts.trail -> pts.math -> geo.from_pts (mode lines)
 
 A new particle starts with a trail of its birth place, which grows from there. A trail ends with
 its particle. The trail carries `position`, `id`, `trail` and the attributes in `attributes`
-(`color width scale` by default): each place keeps the value the particle had then. Trails cost
-`length` points per particle: 100 000 particles with trails of 32 are 3.2 million points.
+(`color width scale` by default): each place keeps the value the particle had then.
+
+**Memory:** the trails are sized for as many particles as there may be (the particles' `max`,
+at most the trail's `max`), however many live: 100 000 particles with trails of 32 are 3.2
+million points. One set of trails takes at most 512 MB, and the node keeps two. Longer trails
+than that leave the last particles without one, and the node says how much they would take.
+
+**Ids:** a trail finds its particle by `id`, and the ids must rise along the list, as
+`pts.particles` gives them. `pts.merge` keeps the ids of several particle systems apart for
+that. Where they do not rise (a node that writes `id`, a trail of trails), the node warns: the
+trails start over every frame. `match` empty follows the points by their index instead.
 
 ## Lines between near points (plexus)
 
@@ -149,9 +158,11 @@ points -> pts.proximity -> pts.math -> geo.from_pts (mode lines)
 distances change order. `choose` `random` gives each pair a number that stays with it, so lines
 come and go only as points come within `distance` or leave it.
 
-**Cost:** about 3.6 ms a frame for a million moving points with 1.8 million lines, plus about
-2.5 ns a line to draw (RTX 3090). `max` (a million lines by default) caps the lines; the node
-warns when it cuts some.
+**Cost:** about 3.6 ms a frame for a million moving points with 1.8 million lines (`max` raised
+to 4 million), plus about 2.5 ns a line to draw (RTX 3090). `max` caps the lines, a million by
+default; the node warns when it cuts some. The node also says when no two points lie within
+`distance`: the default `distance` of 0.15 m joins the points of a default `pts.generate`
+grid.
 
 ## A flock (boids)
 
@@ -171,8 +182,14 @@ pts.particles -> pts.neighbor -> pts.math (force) -> pts.null --+
 ```
 
 The first three terms keep the birds apart, fly them alike and keep them together;
-`- 0.35 * position` pulls the flock back to the middle. Particles with a long `life` and no
-`gravity` make a flock that lives on. `average` `color` blurs colours over neighbours instead.
+`- 0.35 * position` pulls the flock back to the middle. The neighbourhood sets the flock's
+size: for 600 birds born in a ball of 3 m (`pts.generate` sphere, `fill` inside, `distribution`
+random; `rate` 6000, `max` 600, `life` 1000, `velocity` [0.5, 0, 0], `spread` 1), set
+`pts.neighbor`'s `distance` to 0.5 and `separation` to 0.15. Within seconds they fly as one
+flock that turns as the middle pulls it back. With the defaults (0.15 and 0.05) they huddle into
+a dense ball. A `pts.math` after the null, `result` `color`,
+`vec4f(0.5 + 0.5 * normalize(velocity), 1.0)` colours each bird by its heading: a flock is one
+colour. `average` `color` blurs colours over neighbours instead.
 For rules of your own, `pts.shader` with `// @neighbors` walks the neighbours in a program
 (see [Shaders](shaders.md)).
 
