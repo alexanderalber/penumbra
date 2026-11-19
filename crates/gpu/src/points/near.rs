@@ -51,6 +51,20 @@ pub const MAX_TABLE_BITS: u32 = 22;
 /// The largest cap on the points one bucket gives a query.
 pub const MAX_PER_CELL: u32 = 4096;
 
+/// The most points all queries of one search look at together (27 cubes of the cap per point).
+/// A million points crowded 4600 to a cube, every cube full, with a cap of 4096 took 1.3 s a
+/// frame in `pts.proximity` (32 lines a point) on an RTX 3090, near the 2 s after which Windows
+/// resets the GPU; within this many, about 0.27 s, and 40 ms in `pts.neighbor`. [`cap_for`]
+/// keeps a search within it.
+pub const MAX_LOOKS: u64 = 1 << 31;
+
+/// The cap a search over `n` points gets at most: [`MAX_PER_CELL`], lowered so 27 cubes of it
+/// per point stay within [`MAX_LOOKS`] (795 for 100 000 points, 79 for a million).
+pub fn cap_for(n: u32) -> u32 {
+    let most = MAX_LOOKS / (27 * u64::from(n.max(1)));
+    u32::try_from(most).unwrap_or(MAX_PER_CELL).clamp(1, MAX_PER_CELL)
+}
+
 /// The cube's side over the radius: a little more than 1, so a pair at the radius that rounding
 /// puts a hair apart still lies in neighbouring cubes.
 pub const CELL_MARGIN: f32 = 1.0 + 1.0 / 256.0;
@@ -642,9 +656,20 @@ impl Near {
         self.radius
     }
 
+    /// The cap the search took: the one asked for, lowered by [`cap_for`] for many points.
     pub fn cap(&self) -> u32 {
         self.cap
     }
+}
+
+/// What a node says when the cap it asked for was lowered for `n` points ([`cap_for`]).
+pub fn lowered(asked: u32, n: u32) -> Option<String> {
+    let took = cap_for(n);
+    (asked.clamp(1, MAX_PER_CELL) > took).then(|| {
+        format!(
+            "`max_per_cell` {asked} is lowered to {took} for {n} points, so a frame of crowded points stays short"
+        )
+    })
 }
 
 /// What a node needs to search near points: the buffers of the build, kept across cooks.
@@ -685,7 +710,8 @@ impl NearGrid {
     }
 
     /// The grid over `points` for a search within `radius` (metres), a bucket giving a query at
-    /// most `cap` points (1 to [`MAX_PER_CELL`]). `None` without points. A radius that is not a
+    /// most `cap` points (1 to [`MAX_PER_CELL`], and at most [`cap_for`] the count: see
+    /// [`Near::cap`] for the cap it took). `None` without points. A radius that is not a
     /// positive finite number (a bound value passing through 0) gives a grid that finds nothing.
     /// `Err` for points without `position`, and anything the GPU refuses.
     pub fn build(
@@ -709,7 +735,7 @@ impl NearGrid {
         if position.ty() != AttrType::Vec3 {
             return Err(Error::new("`position` must be three numbers (vec3)"));
         }
-        let cap = cap.clamp(1, MAX_PER_CELL);
+        let cap = cap.clamp(1, MAX_PER_CELL).min(cap_for(n));
         let bits = table_bits(n);
         let table = 1u32 << bits;
         let tiles = n.div_ceil(TILE);
