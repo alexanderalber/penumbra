@@ -6138,7 +6138,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>file</code></td><td>file (ply, xyz, csv, txt, pts)</td><td></td><td></td><td>The file, relative to the project directory. .ply: ASCII or binary little endian; x y z place the points, nx ny nz, red green blue (alpha) and every other number of a vertex become attributes. .xyz, .csv, .txt, .pts: a number per column, split at commas, spaces, tabs or semicolons; a first line of names says what each column is (x y z, r g b, nx ny nz, any name), without one the columns are x y z and then r g b</td></tr>
+<tr><td><code>file</code></td><td>file (ply, xyz, csv, txt, pts)</td><td></td><td></td><td>The file, relative to the project directory. .ply: ASCII or binary little endian; x y z place the points, nx ny nz, red green blue (alpha) and every other number of a vertex become attributes. .xyz, .csv, .txt, .pts: a number per column, split at commas, spaces, tabs or semicolons; a first line of names says what each column is (x y z, r g b, nx ny nz, any name). Without names the columns are x y z r g b; four or seven columns are x y z intensity (r g b), as laser scanners write them, and a first line holding only the number of points is skipped</td></tr>
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>

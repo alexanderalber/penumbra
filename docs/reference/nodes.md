@@ -2342,7 +2342,7 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `file` | file (ply, xyz, csv, txt, pts) |  |  | The file, relative to the project directory. .ply: ASCII or binary little endian; x y z place the points, nx ny nz, red green blue (alpha) and every other number of a vertex become attributes. .xyz, .csv, .txt, .pts: a number per column, split at commas, spaces, tabs or semicolons; a first line of names says what each column is (x y z, r g b, nx ny nz, any name), without one the columns are x y z and then r g b |
+| `file` | file (ply, xyz, csv, txt, pts) |  |  | The file, relative to the project directory. .ply: ASCII or binary little endian; x y z place the points, nx ny nz, red green blue (alpha) and every other number of a vertex become attributes. .xyz, .csv, .txt, .pts: a number per column, split at commas, spaces, tabs or semicolons; a first line of names says what each column is (x y z, r g b, nx ny nz, any name). Without names the columns are x y z r g b; four or seven columns are x y z intensity (r g b), as laser scanners write them, and a first line holding only the number of points is skipped |
 
 ### pts.force
 
