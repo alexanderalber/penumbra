@@ -76,7 +76,7 @@ fn desc() -> NodeDesc {
     .output("out", DataKind::Pts)
     .describe_output(
         "out",
-        "The points with `neighbors` (how many lie within `distance`), `cohesion` (from the point to the mean position of its neighbours, 0 without any), `separation` (away from the neighbours nearer than `separation`: each pushes along the line between the two, 1 at no distance down to 0 at `separation`) and `near_<name>` (the mean of `average`)",
+        "The points with `neighbors` (how many lie within `distance`), `cohesion` (from the point to the mean position of its neighbours, 0 without any), `separation` (away from the neighbours nearer than `separation`: each pushes along the line between the two, 1 at no distance down to 0 at `separation`; two points on top of each other push each other opposite ways) and `near_<name>` (the mean of `average`)",
     )
 }
 
@@ -154,8 +154,19 @@ fn source(average: Average) -> String {
         &format!(
             "            c += 1u;
             toward += w.position - q.xyz;
-            if w.distance < apart && w.distance > 0.0 {{
-                push += (q.xyz - w.position) / w.distance * (1.0 - w.distance / apart);
+            if w.distance < apart {{
+                var away = (q.xyz - w.position) / max(w.distance, 1e-30);
+                if w.distance <= 0.0 {{
+                    // On top of each other: a way from the pair's indices, the other way for the
+                    // other point, so duplicates part.
+                    let h = (min(i, w.index) * 0x9e3779b1u) ^ (max(i, w.index) * 0x85ebca77u);
+                    var d = vec3f(f32(h & 1023u), f32((h >> 10u) & 1023u), f32((h >> 20u) & 1023u)) / 511.5 - 1.0;
+                    if dot(d, d) < 1e-6 {{
+                        d = vec3f(1.0, 0.0, 0.0);
+                    }}
+                    away = select(-1.0, 1.0, i < w.index) * normalize(d);
+                }}
+                push += away * (1.0 - w.distance / apart);
             }}
     {add}"
         ),

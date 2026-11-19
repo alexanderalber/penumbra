@@ -288,6 +288,30 @@ fn a_radius_of_nothing_finds_no_neighbours_without_failing() {
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
 
+/// Points on top of each other push apart, each the other way, by the full push.
+#[test]
+fn points_on_top_of_each_other_push_apart() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create(
+            "/two",
+            "pts.generate",
+            &[("shape", "line".into()), ("count", Value::Int(2)), ("size", Value::Vec3([0.0; 3]))],
+        ),
+        create("/near", NEIGHBOR, &[("distance", Value::Float(0.5)), ("separation", Value::Float(0.2))]),
+        connect("/two", "/near", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let out = points(&mut rig, "/near");
+    let push = values(&rig, &out, "separation");
+    let a = [push[0][0], push[0][1], push[0][2]];
+    let b = [push[1][0], push[1][1], push[1][2]];
+    let len = |v: [f32; 3]| v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    assert!((len(a) - 1.0).abs() < 1e-4 && (len(b) - 1.0).abs() < 1e-4, "{a:?} {b:?}");
+    assert!((0..3).all(|k| (a[k] + b[k]).abs() < 1e-5), "opposite: {a:?} {b:?}");
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
+
 #[test]
 fn lines_between_near_points_are_drawn() {
     let Some(gpu) = gpu() else { return };
@@ -413,6 +437,28 @@ fn neighbor_counts_and_averages_by_the_numbers() {
     rig.edit(&[set("/near.average", "".into())]);
     let out = points(&mut rig, "/near");
     assert!(out.attrs().iter().all(|a| !a.name().starts_with("near_")));
+    rig.edit(&[
+        create(
+            "/whole",
+            "pts.math",
+            &[("expression", "index".into()), ("result", "tag".into()), ("type", "uint".into())],
+        ),
+        connect("/tint", "/whole", 0),
+        connect("/whole", "/near", 0),
+        set("/near.average", "tag".into()),
+    ]);
+    rig.cook("/near");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let error = loop {
+        let s = rig.cooker.status(rig.id("/near")).unwrap();
+        if let Some(e) = s.error {
+            break e;
+        }
+        assert!(std::time::Instant::now() < deadline, "{s:?}");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        rig.cook("/near");
+    };
+    assert!(error.contains("whole numbers"), "{error}");
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
 
