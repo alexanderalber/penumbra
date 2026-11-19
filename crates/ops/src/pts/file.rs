@@ -137,9 +137,37 @@ pub(crate) fn read(path: &Path) -> Result<Cloud, String> {
     }
     let bytes = std::fs::read(path).map_err(|e| format!("{name}: {e}"))?;
     let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
-    let cloud =
-        if ext.as_deref() == Some("ply") || bytes.starts_with(b"ply") { ply(&bytes) } else { text(&bytes) };
-    cloud.map_err(|e| format!("{name}: {e}"))
+    parse(ext.as_deref(), &bytes).map_err(|e| format!("{name}: {e}"))
+}
+
+/// The points in `bytes` of a file with the extension `ext` (lower case): PLY for `.ply` and for
+/// a file whose first line is `ply`, text otherwise.
+fn parse(ext: Option<&str>, bytes: &[u8]) -> Result<Cloud, String> {
+    let first = bytes.split(|b| *b == b'\n').next().unwrap_or(&[]);
+    if ext == Some("ply") || first.trim_ascii() == b"ply" { ply(bytes) } else { text(bytes) }
+}
+
+/// The number written in `cell`, NaN and infinity also as C runtimes print them (`-nan(ind)`,
+/// `1.#INF`, `1.#QNAN`); `None` for anything else.
+fn number(cell: &str) -> Option<f64> {
+    if let Ok(v) = cell.parse::<f64>() {
+        return Some(v);
+    }
+    let low = cell.to_ascii_lowercase();
+    let (minus, body) = match low.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, low.strip_prefix('+').unwrap_or(&low)),
+    };
+    let nan = Some(f64::NAN);
+    if body.strip_prefix("nan(").is_some_and(|r| r.ends_with(')')) {
+        return nan;
+    }
+    let mark = body.strip_prefix("1.#")?.trim_end_matches('0');
+    match mark {
+        "inf" => Some(if minus { f64::NEG_INFINITY } else { f64::INFINITY }),
+        "ind" | "qnan" | "snan" | "nan" => nan,
+        _ => None,
+    }
 }
 
 /// A number type of a PLY property: its size in bytes and how to read it.
@@ -195,9 +223,9 @@ impl Num {
     }
 }
 
-/// An 8-bit sRGB value (0 to 255) as linear light.
-fn linear(v: f64) -> f64 {
-    let c = (v / 255.0).clamp(0.0, 1.0);
+/// An sRGB value stored as a whole number from 0 to `full` (255 for a byte) as linear light.
+fn linear(v: f64, full: f64) -> f64 {
+    let c = (v / full).clamp(0.0, 1.0);
     if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
 }
 
@@ -283,10 +311,20 @@ fn ply(bytes: &[u8]) -> Result<Cloud, String> {
     }
     let body = bytes.get(body_at..).unwrap_or(&[]);
     let mut warnings = Vec::new();
-    // Where each property goes, and whether it is a colour byte to make linear.
-    let targets: Vec<Option<(String, usize, bool)>> = props
+    // Where each property goes, and for a colour stored as whole numbers their full scale (255
+    // for bytes, 65535 for ushort), to make it linear.
+    let targets: Vec<Option<(String, usize, Option<f64>)>> = props
         .iter()
-        .map(|(name, num)| ply_target(name).map(|(a, k)| (a.clone(), k, a == "color" && *num == Num::U8)))
+        .map(|(name, num)| {
+            ply_target(name).map(|(a, k)| {
+                let full = match num {
+                    Num::U8 => Some(255.0),
+                    Num::U16 => Some(65535.0),
+                    _ => None,
+                };
+                (a.clone(), k, full.filter(|_| a == "color"))
+            })
+        })
         .collect();
     let names: Vec<String> = targets
         .iter()
@@ -339,7 +377,7 @@ fn ply(bytes: &[u8]) -> Result<Cloud, String> {
             cells.row();
             for (i, w) in line.split_whitespace().take(props.len()).enumerate() {
                 if cells.wants(i)
-                    && let Ok(x) = w.parse::<f64>()
+                    && let Some(x) = number(w)
                 {
                     cells.set(i, x);
                 }
@@ -349,12 +387,13 @@ fn ply(bytes: &[u8]) -> Result<Cloud, String> {
             warnings.push(format!("the header claims {claimed} vertices, the file holds {}", cells.count()));
         }
     }
-    // A colour byte: red, green and blue in sRGB, alpha straight.
-    let byte = |v: f64, k: usize| if k == 3 { (v / 255.0).clamp(0.0, 1.0) } else { linear(v) };
+    // A colour of whole numbers: red, green and blue in sRGB, alpha straight.
+    let whole =
+        |v: f64, k: usize, full: f64| if k == 3 { (v / full).clamp(0.0, 1.0) } else { linear(v, full) };
     let value = |i: usize, p: usize| {
         let v = cells.get(i, p)?;
         Some(match targets.get(i) {
-            Some(Some((_, k, true))) => byte(v, *k),
+            Some(Some((_, k, Some(full)))) => whole(v, *k, *full),
             _ => v,
         })
     };
@@ -468,8 +507,8 @@ impl Separator {
     /// The number in `cell`. A file split by tabs or semicolons may write a decimal comma.
     fn number(self, cell: &str) -> Option<f64> {
         match self {
-            Separator::Char('\t' | ';') if cell.contains(',') => cell.replace(',', ".").parse().ok(),
-            _ => cell.parse().ok(),
+            Separator::Char('\t' | ';') if cell.contains(',') => number(&cell.replace(',', ".")),
+            _ => number(cell),
         }
     }
 }
@@ -485,6 +524,17 @@ fn text(bytes: &[u8]) -> Result<Cloud, String> {
     let more = lines.next().is_some();
     let mut warnings = Vec::new();
     let sep = Separator::of(data.get(..4).unwrap_or(&data));
+    // Numbers split by spaces with decimal commas (`1,5 2,5`) look like a file split by commas.
+    let spaced = |cell: &str| {
+        let parts: Vec<&str> = cell.split_whitespace().collect();
+        parts.len() > 1 && parts.iter().all(|p| number(p).is_some())
+    };
+    if sep == Separator::Char(',') && data.iter().take(4).any(|l| sep.cells(l).any(spaced)) {
+        warnings.push(
+            "cells between commas hold numbers split by spaces, as `1,5 2,5` does: the file is read as split by commas, so its numbers are wrong. Write decimal points, or tabs or semicolons between the numbers"
+                .into(),
+        );
+    }
     // A .pts file from a laser scanner starts with the number of points on a line of its own:
     // a claim, not a point.
     if let Some(first) = data.first()
@@ -560,7 +610,7 @@ fn text(bytes: &[u8]) -> Result<Cloud, String> {
     let bytes_colour = (0..count).any(|p| colour.iter().any(|i| cells.get(*i, p).is_some_and(|v| v > 1.0)));
     let value = |i: usize, p: usize| {
         let v = cells.get(i, p)?;
-        Some(if bytes_colour && colour.contains(&i) { linear(v) } else { v })
+        Some(if bytes_colour && colour.contains(&i) { linear(v, 255.0) } else { v })
     };
     let cols = plan.columns(&value, count);
     check(&cols)?;
@@ -780,5 +830,54 @@ mod tests {
         let c = ply(b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty uint id\nend_header\n0 4000000001\n")
             .unwrap();
         assert_eq!(col(&c, "id").words, [4_000_000_001]);
+    }
+
+    /// Numbers split by spaces with decimal commas read as split by commas, and the node says so.
+    #[test]
+    fn spaces_and_decimal_commas_warn() {
+        let c = text(b"1,5 2,5 3,5\n4,5 5,5 6,5\n").unwrap();
+        assert!(c.warnings.iter().any(|w| w.contains("`1,5 2,5`")), "{:?}", c.warnings);
+        // A plain file split by commas, with spaces after them, says nothing.
+        let c = text(b"x, y, z\n1, 2, 3\n").unwrap();
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+    }
+
+    /// A text file whose first name starts with `ply` is text: only a first line `ply` alone
+    /// makes a PLY file.
+    #[test]
+    fn a_text_file_starting_with_ply_is_text() {
+        let c = parse(Some("csv"), b"plyId,x,y\n7,2,3\n").unwrap();
+        assert_eq!((c.count, floats(col(&c, "position"))[..2].to_vec()), (1, vec![2.0, 3.0]));
+        let ply = b"ply\r\nformat ascii 1.0\r\nelement vertex 1\r\nproperty float x\r\nend_header\r\n4\r\n";
+        let c = parse(Some("txt"), ply).unwrap();
+        assert_eq!(floats(col(&c, "position"))[0], 4.0);
+    }
+
+    /// Colours stored as ushort (0 to 65535) are made linear on their own scale.
+    #[test]
+    fn ushort_colours_reach_one() {
+        let file = b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty ushort red\n\
+                     property ushort green\nproperty ushort blue\nproperty ushort alpha\nend_header\n\
+                     0 65535 0 32768 65535\n";
+        let c = ply(file).unwrap();
+        let rgba = floats(col(&c, "color"));
+        assert_eq!((rgba[0], rgba[1], rgba[3]), (1.0, 0.0, 1.0));
+        assert!((rgba[2] - 0.214).abs() < 1e-3, "sRGB 0.5 is about 0.214 linear: {}", rgba[2]);
+    }
+
+    /// NaN and infinity as C runtimes print them are numbers: a first row holding them is data,
+    /// not names. A NaN takes the default; an infinity stays.
+    #[test]
+    fn nan_and_infinity_as_c_prints_them_are_numbers() {
+        let c = text(b"-nan(ind),1.#INF,3\n1,2,3\n").unwrap();
+        assert_eq!(c.count, 2, "{:?}", c.warnings);
+        let p = floats(col(&c, "position"));
+        assert_eq!((p[0], p[1], p[2]), (0.0, f32::INFINITY, 3.0));
+        for cell in ["nan", "-1.#IND", "1.#QNAN0", "-1.#INF00", "NaN(snan)", "inf"] {
+            assert!(number(cell).is_some(), "{cell}");
+        }
+        for cell in ["nancy", "1.#", "#inf", "info"] {
+            assert!(number(cell).is_none(), "{cell}");
+        }
     }
 }
