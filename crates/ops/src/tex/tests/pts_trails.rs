@@ -318,11 +318,8 @@ fn trails(rig: &Rig, p: &Points, len: usize) -> Vec<(u32, Vec<[f32; 3]>)> {
     let n = live(rig, p);
     assert_eq!(n % len, 0, "whole trails");
     let pos = values(rig, p, "position");
-    let ids: Vec<u32> = if p.attr("id").is_some() {
-        values(rig, p, "id").iter().map(|v| v[0] as u32).collect()
-    } else {
-        (0..n).map(|j| (j / len) as u32).collect()
-    };
+    let ids: Vec<u32> =
+        if p.attr("id").is_some() { raw_ids(rig, p, n) } else { (0..n).map(|j| (j / len) as u32).collect() };
     (0..n / len)
         .map(|t| {
             let id = ids[t * len];
@@ -354,10 +351,21 @@ fn model(
 }
 
 /// The points of `p` as (key, place): their id, or their index.
+/// The first `n` ids as stored: a picture of floats would round ids past 2^24.
+fn raw_ids(rig: &Rig, p: &Points, n: usize) -> Vec<u32> {
+    let a = p.attr("id").unwrap();
+    match a.ty() {
+        penumbra_gpu::points::AttrType::U32 => {
+            a.buffer().read::<u32>(&rig.gpu).unwrap().into_iter().take(n).collect()
+        }
+        _ => values(rig, p, "id").iter().map(|v| v[0] as u32).collect(),
+    }
+}
+
 fn keyed(rig: &Rig, p: &Points) -> Vec<(u32, [f32; 3])> {
     let pos = values(rig, p, "position");
     let ids: Vec<u32> = match p.attr("id") {
-        Some(_) => values(rig, p, "id").iter().map(|v| v[0] as u32).collect(),
+        Some(_) => raw_ids(rig, p, pos.len()),
         None => (0..pos.len() as u32).collect(),
     };
     ids.into_iter().zip(pos.iter().map(|v| [v[0], v[1], v[2]])).collect()
@@ -448,6 +456,120 @@ fn a_trail_follows_a_moving_set_by_index_every_step_or_fewer() {
         follow(&mut rig, "/trail", "/move", 5, 1, &mut cpu, &|_| true);
         cpu.clear();
     }
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
+
+/// Ids that do not rise along the list (turned around, or repeated by a trail before) keep no
+/// trail: the node says so. An attribute of floats to match by is no key: the trails follow
+/// the index, with a word.
+#[test]
+fn ids_that_do_not_rise_are_named() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create(
+            "/src",
+            "pts.generate",
+            &[("shape", "line".into()), ("count", Value::Int(1)), ("size", Value::Vec3([0.0; 3]))],
+        ),
+        create(
+            "/p",
+            crate::pts::particles::KIND,
+            &[
+                ("rate", Value::Float(600.0)),
+                ("velocity", Value::Vec3([1.0, 0.0, 0.0])),
+                ("max", Value::Int(500)),
+            ],
+        ),
+        connect("/src", "/p", 0),
+        create("/down", "pts.math", &[("expression", "4294967295u - id".into()), ("result", "id".into())]),
+        connect("/p", "/down", 0),
+        create("/turned", TRAIL, &[("length", Value::Int(4))]),
+        connect("/down", "/turned", 0),
+        create("/inner", TRAIL, &[("length", Value::Int(4))]),
+        connect("/p", "/inner", 0),
+        create("/outer", TRAIL, &[("length", Value::Int(4))]),
+        connect("/inner", "/outer", 0),
+        create("/row", "pts.generate", &[("shape", "line".into()), ("count", Value::Int(50))]),
+        create(
+            "/float",
+            "pts.math",
+            &[("expression", "f32(index)".into()), ("result", "tag".into()), ("type", "float".into())],
+        ),
+        connect("/row", "/float", 0),
+        create("/floats", TRAIL, &[("length", Value::Int(4)), ("match", "tag".into())]),
+        connect("/float", "/floats", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    for kind in [crate::pts::particles::KIND, TRAIL, "pts.math"] {
+        rig.types.get(kind).unwrap().warm_up(&rig.gpu).unwrap();
+    }
+    rig.cooker.set_exact_frames(true);
+    let mut said: HashMap<&str, String> = HashMap::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while said.len() < 3 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        rig.clock.advance(1);
+        for path in ["/turned", "/outer", "/floats"] {
+            rig.cook(path);
+            let s = rig.cooker.status(rig.id(path)).unwrap();
+            assert_eq!(s.error, None, "{path}");
+            if let Some(w) = s.warning {
+                said.insert(path, w);
+            }
+        }
+        rig.gpu.poll();
+    }
+    for path in ["/turned", "/outer"] {
+        assert!(said.get(path).is_some_and(|w| w.contains("do not rise")), "{path}: {said:?}");
+    }
+    assert!(said.get("/floats").is_some_and(|w| w.contains("by their index")), "{said:?}");
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
+
+/// Two particle systems merged keep ids apart that rise along the list: one trail node follows
+/// both without a word, and every trail stays with its particle.
+#[test]
+fn merged_particle_systems_trail_as_one() {
+    let Some(gpu) = gpu() else { return };
+    let system = |path: &str, x: f64| {
+        let src = format!("{path}_src");
+        vec![
+            create(
+                &src,
+                "pts.generate",
+                &[("shape", "line".into()), ("count", Value::Int(1)), ("size", Value::Vec3([0.0; 3]))],
+            ),
+            create(
+                path,
+                crate::pts::particles::KIND,
+                &[
+                    ("rate", Value::Float(120.0)),
+                    ("life", Value::Float(0.1)),
+                    ("velocity", Value::Vec3([x, 0.0, 1.0])),
+                    ("max", Value::Int(64)),
+                ],
+            ),
+            connect(&src, path, 0),
+        ]
+    };
+    let mut ops = system("/a", 1.0);
+    ops.extend(system("/b", -1.0));
+    ops.extend([
+        create("/m", "pts.merge", &[]),
+        connect("/a", "/m", 0),
+        connect("/b", "/m", 1),
+        create("/trail", TRAIL, &[("length", Value::Int(4))]),
+        connect("/m", "/trail", 0),
+    ]);
+    let mut rig = Rig::new(gpu, None, &ops);
+    for kind in [crate::pts::particles::KIND, TRAIL] {
+        rig.types.get(kind).unwrap().warm_up(&rig.gpu).unwrap();
+    }
+    let mut cpu = HashMap::new();
+    follow(&mut rig, "/trail", "/m", 4, 16, &mut cpu, &|_| true);
+    let ids: Vec<u32> = keyed(&rig, &output(&rig, "/m")).into_iter().map(|(id, _)| id).collect();
+    assert!(ids.windows(2).all(|w| w[0] < w[1]), "rising: {ids:?}");
+    assert!(ids.iter().any(|i| *i >= 1 << 31), "the second system's ids moved up: {ids:?}");
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
 

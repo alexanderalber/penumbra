@@ -13,11 +13,12 @@
 
 use penumbra_core::{Curve, Error, ParamSpec, Tick};
 use penumbra_gpu::points::trail::{self, Key, Settings, Trailer};
-use penumbra_gpu::points::{Points, canonical};
+use penumbra_gpu::points::{AttrType, Points, canonical};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
 
+use super::program::wake;
 use crate::tex::fluid::step;
 use crate::{gpu, on_gpu};
 
@@ -95,13 +96,22 @@ struct Trail {
 }
 
 impl Trail {
-    /// What the step left out, in words: points past `max`, or past what memory allows.
-    fn speak(&self, cx: &CookContext<'_>, input: &Points, max: u32) {
+    /// What the step left out, in words: points past `max`, or past what memory allows, and
+    /// trails lost to keys that do not rise.
+    fn speak(&mut self, cx: &CookContext<'_>, input: &Points, set: &Settings) {
+        let max = set.max;
         if let Some(why) = self.trailer.cut() {
             cx.warn(why);
         } else if let Some(n) = input.count().seen().filter(|n| *n > max) {
             cx.warn(format!(
                 "{n} points and `max` keeps {max} trails: the points past it have none. Raise `max`"
+            ));
+        }
+        if let Key::Attr(name) = &set.key
+            && self.trailer.unordered(&set.key)
+        {
+            cx.warn(format!(
+                "the points' `{name}` values do not rise along the list, so trails cannot find their points and start over every frame. This happens after pts.merge of particle systems whose ids overlap, after a node that writes `{name}`, and for a trail of trails. Set `match` empty to follow the points by their index"
             ));
         }
     }
@@ -132,8 +142,18 @@ impl Operator for Trail {
         let every = u64::try_from(cx.int("every")?.max(1)).unwrap_or(1);
         let max = u32::try_from(cx.int("max")?.clamp(1, i64::from(u32::MAX))).unwrap_or(DEFAULT_MAX);
         let wanted = canonical(cx.text("match")?).to_string();
-        let key =
-            if !wanted.is_empty() && input.attr(&wanted).is_some() { Key::Attr(wanted) } else { Key::Index };
+        let key = match input.attr(&wanted).map(|a| a.ty()) {
+            _ if wanted.is_empty() => Key::Index,
+            Some(AttrType::U32 | AttrType::I32) => Key::Attr(wanted),
+            Some(ty) => {
+                cx.warn(format!(
+                    "`{wanted}` holds {} numbers, and trails match by whole numbers (uint or int), so they follow the points by their index",
+                    ty.wgsl()
+                ));
+                Key::Index
+            }
+            None => Key::Index,
+        };
         let attrs: Vec<String> = cx
             .text("attributes")?
             .split(|c: char| c.is_whitespace() || c == ',')
@@ -146,8 +166,8 @@ impl Operator for Trail {
             self.steps = 0;
             self.last = Some(now.tick);
             let set = Settings { len, max, key, shift: true, attrs };
-            let out = self.trailer.step(gpu, input, None, &set)?;
-            self.speak(cx, input, max);
+            let out = self.trailer.step(gpu, input, None, &set, Some(wake(cx)))?;
+            self.speak(cx, input, &set);
             return Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out)]));
         }
         if dt == 0.0
@@ -164,8 +184,8 @@ impl Operator for Trail {
         let steps = if dt > 0.0 { self.steps + 1 } else { self.steps };
         let shift = dt > 0.0 && (steps - 1).is_multiple_of(every);
         let set = Settings { len, max, key, shift, attrs };
-        let out = self.trailer.step(gpu, input, self.before.as_ref(), &set)?;
-        self.speak(cx, input, max);
+        let out = self.trailer.step(gpu, input, self.before.as_ref(), &set, Some(wake(cx)))?;
+        self.speak(cx, input, &set);
         self.steps = steps;
         self.last = Some(now.tick);
         self.before = Some(out.clone());
