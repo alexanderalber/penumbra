@@ -66,7 +66,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("out", DataKind::Pts)
         .describe_output(
             "out",
-            "`position`, `normal` and `uv` in world space; `color` from the material where the geometry has one that is not plain white. Exact bounds",
+            "`position`, `normal` and `uv` in world space; `color` from the material where the geometry has one that is not plain white. A model that moves or turns takes its points with it at every frame. Exact bounds",
         ),
         || Box::new(FromGeo::default()) as Box<dyn Operator>,
     ))

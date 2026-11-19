@@ -141,69 +141,12 @@ The families:
 - **`pts`**: points on the GPU, penumbra's counterpart to TouchDesigner's POPs. Each point
   carries attributes: `position`, and where a node gives them `normal`, `color`, `scale`, `uv`
   and others. TouchDesigner's attribute names mean the same: `P` is `position`, `Color` is
-  `color`, `PointScale` is `scale`. `pts.generate` puts points on a grid, a line, a circle, a
-  sphere or a box, on the surface or inside, evenly or at random. `geo.from_pts` draws them
-  with `tex.render`: a small disc or square facing the camera at every point (a sprite; hard
-  edged or `softness` fading out, covering what lies behind or with `blend` add adding its
-  light), or a copy of a model at every point. `pts.noise`, `pts.transform`, `pts.math` and `pts.random` change attributes:
-  noise over space and time, a move and turn about a pivot, an expression typed as a param
-  (`position.z + sin(time) * 0.1`), random values. `pts.shader` runs a WGSL program of your own
-  per point ([Shaders](shaders.md#a-program-over-points-ptsshader)). `pts.from_tex` makes a
-  point per texel of a picture, or per cell when sampled down: coloured points on a grid, a
-  relief lifted by brightness, positions stored in a picture, or a depth picture as a point
-  cloud. `tex.from_pts` turns one attribute back into a picture, a texel per point, for
-  `tex.shader` and `geo.tex_instance`. `pts.lookup_tex` gives each point a value from a
-  picture, looked up at its `uv` or its position. The viewer shows how many points there are,
-  their attributes and the box around them.
-
-  **Bridges.** Points come from and go to the other kinds:
-
-  | from | to points | from points |
-  |---|---|---|
-  | pictures | `pts.from_tex` (TOP to POP) | `tex.from_pts` (POP to TOP) |
-  | geometry | `pts.from_geo`: the vertices, or points scattered over the surface (SOP to POP, Sprinkle POP) | `geo.from_pts`: sprites, copies, lines |
-  | channels | `pts.from_chan`: a point per sample (CHOP to POP) | `chan.from_pts`: the count, an attribute at the first points, its mean, minimum and maximum (POP to CHOP, Analyze POP) |
-  | tables | `pts.from_table`: a point per row (DAT to POP) | `table.from_pts`: the first points as rows (POP to DAT) |
-  | files | `pts.file`: `.ply`, `.xyz`, `.csv` (Point File In POP) | |
-
-  Channel and column names say where a number goes without any mapping: `x y z` or `tx ty tz`
-  place a point, `r g b a` colour it, `nx ny nz` and `u v` set its normal and texture
-  coordinates, `velocity_x` or TouchDesigner's `P(0)` name a component of any attribute, and a
-  plain name makes an attribute of one number. A table from `table.from_pts` reads back into
-  the same points through `pts.from_table`. The exceptions are attributes of one number named
-  like a component: `x`, `r`, `u`, `alpha`, `index`, or a name ending in `_x` or `_0`. `pts.merge` puts several sets of points one after the
-  other (an attribute one set lacks takes its default there); `pts.switch` passes one of them
-  on.
-
-  The number of points can change on the GPU. `pts.delete` drops points: those an expression
-  holds true for, a range of indices, those inside a box or a ball, or a random share. The rest
-  keep their order. `pts.from_tex` drops the points of empty texels when `delete_empty` is on.
-  After such a node the GPU knows how many points there are, and the CPU only how many there
-  may be. Every node downstream handles that: programs stop at the last point, `geo.from_pts`
-  draws exactly the points that are left, `tex.from_pts` leaves the texels past them
-  transparent. The viewer shows the count a frame late, as "1204 of at most 20000 points".
-  `chan.from_pts` turns it into a channel, also a frame late, so a network can react to it.
-
-  `pts.particles` makes points that are born on its source points, move, age and die. Forces
-  come from a loop: `pts.force` or `pts.noise` on `force` between the particles and a node
-  wired back into their `previous` input. `pts.field` gives the points a `weight` from a shape,
-  to mask a force. `pts.feedback` closes such a loop for any points. See
-  [Particles](particles.md).
-
-  **Lines.** Points can be joined into lines (line strips): a list of which point follows which.
-  `geo.from_pts` in `lines` mode draws a ribbon from each point to the next one on its line.
-  The ribbon faces the camera, is `width` metres wide times the point's `width` attribute
-  (`LineWidth`), and takes the points' `color`. An ordered line from `pts.generate` is one line,
-  an ordered circle a closed ring, a grid its rows, its columns or both. `pts.trail` makes a
-  line behind every point through the places it had. Nodes that keep the number and order of
-  the points (`pts.noise`, `pts.math`, `pts.transform`, ...) keep the lines. `pts.delete` and
-  `pts.particles` change the order, so their points come without lines. Points without lines
-  drawn in `lines` mode make one line through all of them, in their order.
-
-  **Neighbours.** `pts.proximity` joins near points with lines, two points per line: the plexus
-  look. `pts.neighbor` counts each point's neighbours within a distance and averages over them,
-  for flocks and for blurring an attribute. `pts.shader` with `// @neighbors` walks the
-  neighbours in a program. See [Particles](particles.md#lines-between-near-points-plexus).
+  `color`. `pts.generate` puts points on a shape, `pts.particles` makes points that are born,
+  move and die, and `geo.from_pts` draws points with `tex.render` as sprites, copies of a model
+  or lines. Nodes such as `pts.noise`, `pts.math`, `pts.trail` and `pts.proximity` change and
+  join them. Bridges lead to and from pictures, geometry, channels, tables and files. The page
+  [Points](points.md) explains all of it, with a table of TouchDesigner's POPs beside the nodes
+  that do their jobs.
 - **`vol`**: volumes, such as smoke. `vol.smoke` simulates smoke in a box: emitters blow hot
   smoke in, the smoke rises against `gravity`, swirls and fades. `vol.emitter` is one emitter;
   wire several into the `emitter` inputs of `vol.smoke`, 64 at most, later ones acting on what
