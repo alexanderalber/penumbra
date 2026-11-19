@@ -276,3 +276,40 @@ fn half_floats_round_at_their_edges_as_half_does() {
     }
     assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
 }
+
+#[test]
+fn a_probe_reads_the_first_values_and_sums_up_all() {
+    use super::probe::{Ask, Probe, Probed};
+    let Some(gpu) = gpu() else { return };
+    // 3000 points: more than one workgroup of the summary, x = i, weight = 2 at every point.
+    let n = 3000u32;
+    let pos: Vec<[f32; 4]> = (0..n).map(|i| [i as f32, -(i as f32), 1.0, 1.0]).collect();
+    let b = Buffer::of::<[f32; 4]>(&gpu, u64::from(n), "p").unwrap();
+    b.write(&gpu, 0, &pos).unwrap();
+    let p = Points::new(n, n, vec![Attr::new("position", AttrType::Vec3, b).unwrap()]).unwrap();
+    let mut probe = Probe::new();
+    let read = |probe: &mut Probe, p: &Points, name: &str| {
+        let out = probe.fill(&gpu, p, Ask { name, first: 3, summary: true }).unwrap();
+        Probed::of(&out.read::<[f32; 4]>(&gpu).unwrap()).unwrap()
+    };
+    let got = read(&mut probe, &p, "P");
+    assert_eq!(got.count, n);
+    assert_eq!(got.first, [[0.0, -0.0, 1.0, 1.0], [1.0, -1.0, 1.0, 1.0], [2.0, -2.0, 1.0, 1.0]]);
+    assert!((got.mean[0] - 1499.5).abs() < 0.01 && (got.mean[1] + 1499.5).abs() < 0.01, "{got:?}");
+    assert_eq!((got.min[0], got.max[0], got.min[1], got.max[1]), (0.0, 2999.0, -2999.0, 0.0));
+    // A standard attribute the points lack: its default everywhere.
+    let got = read(&mut probe, &p, "PointScale");
+    assert_eq!((got.first[0][0], got.mean[0], got.max[0]), (1.0, 1.0, 1.0));
+    // A count on the GPU of 10: the summary goes over those only.
+    let header = Buffer::new(&gpu, HEADER_BYTES, "h").unwrap();
+    header.write(&gpu, 0, &[10u32, 0, 0, 0]).unwrap();
+    let live = p.clone().with_count(Count::gpu(header.clone(), n, Seen::default()).unwrap()).unwrap();
+    let got = read(&mut probe, &live, "position");
+    assert_eq!((got.count, got.mean[0], got.max[0]), (10, 4.5, 9.0));
+    // None left: zeros.
+    header.write(&gpu, 0, &[0u32, 0, 0, 0]).unwrap();
+    let got = read(&mut probe, &live, "position");
+    assert_eq!((got.count, got.mean, got.first[0]), (0, [0.0; 4], [0.0; 4]));
+    assert!(probe.fill(&gpu, &p, Ask { name: "nothing", first: 1, summary: false }).is_err());
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}

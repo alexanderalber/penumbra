@@ -15,10 +15,13 @@ pub mod delete;
 pub mod feedback;
 pub mod field;
 pub mod force;
+pub mod from_geo;
 pub mod from_tex;
+pub mod from_values;
 pub mod generate;
 pub mod lookup_tex;
 pub mod math;
+pub mod merge;
 pub mod neighbor;
 pub mod noise;
 pub mod particles;
@@ -28,9 +31,11 @@ pub mod random;
 pub mod shader;
 pub mod to_chan;
 pub(crate) mod to_geo;
+pub mod to_table;
 pub mod to_tex;
 pub mod trail;
 pub mod transform;
+pub(crate) mod upload;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     generate::register(types)?;
@@ -52,6 +57,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     trail::register(types)?;
     proximity::register(types)?;
     neighbor::register(types)?;
+    merge::register(types)?;
+    from_geo::register(types)?;
+    from_values::register(types)?;
+    to_table::register(types)?;
     types.register(FnNodeType::new(
         NodeDesc::new("pts.null", "Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes")
             .input("in", DataKind::Pts)
