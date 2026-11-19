@@ -36,6 +36,8 @@ through `pts.merge`.
 rim, a soft dot; `blend` `add` adds its colour to what lies behind, so dense places glow
 brighter. That is the usual look for sparks and fire: a `mat.constant` of a dim colour (the
 sprites add up), `softness` 1, `blend` `add`. Added sprites write no depth and cast no shadow.
+They cover nothing either: where only they are, the render stays see-through, and
+`tex.composite` over a background adds their glow to it.
 A disc costs what a square costs: a million sprites draw in about 2 ms at 1920 x 1080 with 4x
 antialiasing on an RTX 3090, soft and added ones in about 1.2 ms.
 

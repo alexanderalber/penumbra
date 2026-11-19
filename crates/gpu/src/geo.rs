@@ -499,7 +499,8 @@ pub struct Instances {
     pub softness: f32,
     /// The copies add their colour to what lies behind them instead of covering it (glow,
     /// sparks): drawn after everything else, depth tested but not written, casting no shadow,
-    /// and left out of the data pass.
+    /// and left out of the data pass. They leave the alpha as it is: light covers nothing, so
+    /// a render of them alone stays see-through and adds its glow to whatever it is laid over.
     pub add: bool,
 }
 

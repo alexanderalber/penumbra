@@ -268,7 +268,7 @@ enum Pass {
     /// writing depth.
     Blend,
     /// The colour pass's copies that add their colour to what lies behind them
-    /// ([`crate::geo::Instances::add`]), last, without writing depth.
+    /// ([`crate::geo::Instances::add`]), last, without writing depth or alpha.
     Add,
     Data,
     Measure,
@@ -317,14 +317,20 @@ impl Pass {
     fn blend(self) -> Option<wgpu::BlendState> {
         match self {
             Pass::Solid | Pass::Blend => Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-            // Colour: added to what is there; alpha: over it, as a see-through surface's.
+            // Colour: added to what is there. Alpha stays as it is: light covers nothing, so a
+            // render laid over a picture adds its glow there instead of darkening it where the
+            // glow is faint.
             Pass::Add => Some(wgpu::BlendState {
                 color: wgpu::BlendComponent {
                     src_factor: wgpu::BlendFactor::One,
                     dst_factor: wgpu::BlendFactor::One,
                     operation: wgpu::BlendOperation::Add,
                 },
-                alpha: wgpu::BlendComponent::OVER,
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Zero,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
             }),
             // Colour: what is there times what this surface lets through; alpha: the nearest
             // depth.

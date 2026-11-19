@@ -142,12 +142,16 @@ fn sprites_that_add_grow_brighter_where_they_overlap() {
     let mid = |px: &Pixels| px.get(48, 48).unwrap_or([0.0; 4]);
     assert!((mid(&over)[0] - 0.3).abs() < 0.02, "over: the nearer covers, {:?}", mid(&over));
     rig.edit(&[set("/sprites.blend", "add".into())]);
-    let added = drawn(&mut rig, "/look");
+    // Added light covers nothing, so the picture's alpha stays 0: take the next version.
+    let v = rig.cooker.status(rig.id("/look")).map_or(0, |s| s.version);
+    let tex = rig.cook_until_new("/look", v);
+    let added = rig.gpu.read(&tex).unwrap();
     assert!((mid(&added)[0] - 0.6).abs() < 0.03, "add: both count, {:?}", mid(&added));
     // Where one sprite is alone it adds its own colour once.
-    let (n, b) = coverage(&added);
+    let (_, b) = coverage(&over);
     let side = added.get(b[0] + 2, 48).unwrap_or([0.0; 4]);
-    assert!(n > 100 && (side[0] - 0.3).abs() < 0.03, "{side:?}");
-    assert!((mid(&added)[3] - 1.0).abs() < 0.01, "alpha is laid over: {:?}", mid(&added));
+    assert!((side[0] - 0.3).abs() < 0.03, "{side:?}");
+    // Light covers nothing: the transparent background stays transparent.
+    assert!(mid(&added)[3].abs() < 0.01, "the alpha behind stays: {:?}", mid(&added));
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
