@@ -53,6 +53,9 @@ pub struct Picture {
     pub clip_from_world: Mat4,
     /// Where the free view starts: the render's own camera, or the geometry framed.
     pub home: Orbit,
+    /// `home` frames a stand-in box: some of the geometry's extent is not known yet (points
+    /// whose box has not been read back). A viewer frames again once it is known.
+    pub guess: bool,
     /// Cameras, projectors and lights.
     pub lines: Vec<Line>,
 }
@@ -107,6 +110,7 @@ impl FreeView {
         let w = request.size.0.clamp(16, MAX_SIDE);
         let h = request.size.1.clamp(16, MAX_SIDE);
         let mut lines = Vec::new();
+        let mut guess = false;
         let input = |i: usize| node.inputs.get(i).copied().flatten().and_then(|p| cooker.output(p));
         let (geo, texture, scene_lights, look, home) = if node.kind == RENDER {
             let scene =
@@ -135,6 +139,7 @@ impl FreeView {
                 framing(data.bounds(), (w, h), FOV).ok_or_else(|| Error::new("cannot frame the geometry"))?;
             let target = data.bounds().map_or([0.0; 3], |b| center(&b));
             let home = Orbit { eye: camera.position(), target, roll: 0.0, fov: FOV, ortho: None };
+            guess = data.items.iter().filter_map(|i| i.instances.as_deref()).any(|i| i.guess);
             let look = Look {
                 surface: Surface::Material,
                 shade_all: true,
@@ -168,6 +173,7 @@ impl FreeView {
             camera,
             clip_from_world: view.clip_from_world,
             home,
+            guess,
             lines,
         })
     }

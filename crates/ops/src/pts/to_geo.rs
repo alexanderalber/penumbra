@@ -337,6 +337,7 @@ impl Operator for FromPts {
             color,
             extent,
             late: late.is_some(),
+            guess: points.bounds().is_none() && late.is_none(),
             round: !copies && !lines && cx.text("sprite")? == "disc",
             softness: if copies || lines { 0.0 } else { cx.float("softness")? as f32 },
             add: cx.text("blend")? == "add",

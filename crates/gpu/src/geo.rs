@@ -487,6 +487,9 @@ pub struct Instances {
     /// `extent` comes from a box read back from the GPU a frame or more late: about right, and
     /// copies that moved since may lie outside it.
     pub late: bool,
+    /// No box is known yet (none given, none read back so far): `extent` is a stand-in, and
+    /// whatever frames the item by it should frame it again once one arrives.
+    pub guess: bool,
     /// Lines through the points instead of a copy at each: see [`Lines`].
     pub lines: Option<Lines>,
     /// Sprites ([`Instances::face_camera`]): a disc is cut out of the model's square in the
@@ -559,6 +562,7 @@ impl Instances {
             color: None,
             extent: 0.0,
             late: false,
+            guess: false,
             lines: None,
             round: false,
             softness: 0.0,
