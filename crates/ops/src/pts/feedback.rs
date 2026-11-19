@@ -5,11 +5,13 @@
 //! `initial` is what the loop starts from, and what it starts from again after a reset; the end
 //! of the chain wired into `previous` comes back a frame later. The chain may change anything:
 //! the number of points (a `pts.delete` in the loop), their attributes. What comes back is
-//! passed on as it is.
+//! passed on as it is, without its box.
 
 use penumbra_core::{Error, ParamSpec};
 use penumbra_gpu::Points;
-use penumbra_graph::{CookContext, CookError, Cooked, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator};
+use penumbra_graph::{
+    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
+};
 
 use crate::waiting;
 
@@ -54,12 +56,26 @@ impl Operator for Feedback {
         let previous = if cx.bool("reset")? { None } else { cx.input(1) };
         let chosen = match (previous, cx.input(0)) {
             (Some(p), _) => p,
-            (None, Some(i)) => i,
+            (None, Some(i)) => return passed(i),
             (None, None) => return Err(waiting(cx)),
         };
-        if chosen.get::<Points>().is_none() {
+        let Some(points) = chosen.get::<Points>() else {
             return Err(CookError::failed("not points"));
+        };
+        // A box that comes round grows with every step of a loop that widens it (noise added
+        // to the positions, a turn), and never shrinks again: what comes back has none, and
+        // what draws it reads the points' real box from the GPU.
+        if points.bounds().is_none() {
+            return Ok(Cooked::Outputs(vec![chosen.clone()]));
         }
-        Ok(Cooked::Outputs(vec![chosen.clone()]))
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, points.clone().with_bounds(None))]))
     }
+}
+
+/// `initial`, passed on as it is.
+fn passed(initial: &Data) -> Result<Cooked, CookError> {
+    if initial.get::<Points>().is_none() {
+        return Err(CookError::failed("not points"));
+    }
+    Ok(Cooked::Outputs(vec![initial.clone()]))
 }
