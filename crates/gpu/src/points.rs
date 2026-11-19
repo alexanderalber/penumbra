@@ -418,6 +418,18 @@ impl Seen {
     }
 }
 
+#[cfg(test)]
+impl Seen {
+    /// A readback that arrives with `words` when the test says so.
+    pub(crate) fn arrive(&self, words: [u32; 4]) {
+        for (slot, w) in self.0.rest.iter().zip(&words[1..]) {
+            slot.store(*w, Ordering::Relaxed);
+        }
+        self.0.own.store(words[0], Ordering::Relaxed);
+        self.0.value.store(words[0], Ordering::Relaxed);
+    }
+}
+
 /// What wakes a node from the thread that polls the GPU: it cooks again at the next frame.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
@@ -477,11 +489,20 @@ impl<S: Clone + PartialEq> Reports<S> {
         let wake = wake.filter(|_| !same);
         let seen = Seen::reading_notify(gpu, header, self.last.as_ref(), wake).unwrap_or_default();
         self.last = Some(seen.clone());
-        self.pending.push((seen.clone(), settings.clone()));
-        if self.pending.len() > REPORTS_PENDING {
-            self.pending.remove(0);
-        }
+        self.wait_for(seen.clone(), settings.clone());
         seen
+    }
+
+    /// Keeps `seen` among the readbacks waited for. Readbacks arrive in the order they started, so
+    /// the oldest is the next to come. When more than [`REPORTS_PENDING`] are on their way, the
+    /// newest before this one goes: dropping the oldest instead would drop each readback just
+    /// before it arrives while the node cooks every frame on a GPU that lags behind, and the node
+    /// would never say anything.
+    fn wait_for(&mut self, seen: Seen, settings: S) {
+        if self.pending.len() >= REPORTS_PENDING {
+            self.pending.pop();
+        }
+        self.pending.push((seen, settings));
     }
 
     /// The newest header that arrived for `settings`; `None` before one did.
