@@ -216,7 +216,6 @@ pub const TAGS: &[(&str, &[&str])] = &[
             "ribbon",
             "line strip",
             "line width",
-            "wireframe",
         ],
     ),
     ("geo.instance", &["instancing", "copy"]),
