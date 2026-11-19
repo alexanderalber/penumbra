@@ -30,6 +30,11 @@ const ROW: u32 = 1 << 16;
 /// The attribute along a trail: 0 at the head, 1 at the tail.
 pub const ALONG: &str = "trail";
 
+/// The most bytes one set of trails takes, every attribute together. The node keeps two sets
+/// (the trails it gives out and the ones a step before), so about twice this at most. Beyond
+/// it, fewer points get a trail.
+pub const BUDGET: u64 = 512 << 20;
+
 /// Pairs each point with its old trail, and writes the count of the new trails.
 const PAIR: &str = "
 @group(2) @binding(0) var<storage, read> keys_now: array<u32>;
@@ -155,10 +160,29 @@ fn gather_params() -> [ParamSpec; 4] {
     [ParamSpec::int("n", 0), ParamSpec::int("len", 1), ParamSpec::int("s", 1), ParamSpec::int("shift", 0)]
 }
 
+/// The attribute along the trails ([`ALONG`]): each place's step from the head times `step`.
+const ALONG_FILL: &str = "
+@group(2) @binding(0) var<storage, read_write> out: array<f32>;
+
+@compute @workgroup_size(64)
+fn along(@builtin(global_invocation_id) id: vec3u) {
+    let j = id.y * pn.size.x + id.x;
+    if id.x >= pn.size.x || j >= u32(max(params.n, 0)) {
+        return;
+    }
+    out[j] = f32(j % u32(max(params.len, 1))) * params.step;
+}
+";
+
+fn along_params() -> [ParamSpec; 3] {
+    [ParamSpec::int("n", 0), ParamSpec::int("len", 1), ParamSpec::float("step", 0.0)]
+}
+
 /// Compiles the trailer's passes, so the first trail does not wait for them.
 pub fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     gpu.cached_compute("pts trail pair", PAIR, &pair_params())?;
     gpu.cached_compute("pts trail gather", GATHER, &gather_params())?;
+    gpu.cached_compute("pts trail along", ALONG_FILL, &along_params())?;
     Ok(())
 }
 
@@ -196,6 +220,8 @@ pub struct Trailer {
     /// Keys of none, bound where the points have no key.
     none: Option<Buffer>,
     last: Option<Seen>,
+    /// Why the last step gave fewer points a trail than `max` allows: memory.
+    cut: Option<String>,
 }
 
 impl Trailer {
@@ -231,14 +257,22 @@ impl Trailer {
             },
         };
         let before = before.filter(|b| fits(b, len, &attrs));
-        let trails_cap = now.capacity().max(now.count().at_most()).min(set.max);
-        let trails = now.count().at_most().min(set.max);
-        let capacity = trails_cap.checked_mul(len).filter(|c| *c <= most_elements(gpu, AttrType::Vec4));
-        let Some(capacity) = capacity else {
-            return Err(Error::new(format!(
-                "{trails_cap} trails of {len} points are more than a buffer holds; lower `max` or `length`"
-            )));
-        };
+        let wanted = now.capacity().max(now.count().at_most()).min(set.max);
+        // Bytes per trail: every attribute at every place, and the place along the trail.
+        let per_trail = u64::from(len) * (attrs.iter().map(|(_, ty)| ty.stride()).sum::<u64>() + 4);
+        let by_buffer = most_elements(gpu, AttrType::Vec4) / len;
+        let by_budget = u32::try_from(BUDGET / per_trail.max(1)).unwrap_or(u32::MAX);
+        let trails_cap = wanted.min(by_buffer).min(by_budget);
+        self.cut = (trails_cap < wanted).then(|| {
+            let mb = |b: u64| (b + (1 << 20) - 1) >> 20;
+            format!(
+                "trails of {len} points for {wanted} points would take {} MB, more than the {} MB a set of trails may: only the first {trails_cap} points get one. Lower `length` or `max`, or carry fewer `attributes`",
+                mb(u64::from(wanted) * per_trail),
+                mb(BUDGET.min(u64::from(by_buffer) * per_trail)),
+            )
+        });
+        let trails = now.count().at_most().min(trails_cap);
+        let capacity = trails_cap * len;
         let n = trails * len;
 
         let pairs = sized(gpu, &mut self.pairs, u64::from(trails_cap.max(1)) * 4, "pts trail pairs")?;
@@ -268,7 +302,7 @@ impl Trailer {
             "now" => Some(Value::Int(i64::from(now.count().at_most()))),
             "before" => Some(Value::Int(i64::from(before_n))),
             "len" => Some(Value::Int(i64::from(len))),
-            "max" => Some(Value::Int(i64::from(set.max))),
+            "max" => Some(Value::Int(i64::from(trails_cap))),
             "by" => Some(Value::Int(by)),
             _ => None,
         };
@@ -369,7 +403,14 @@ impl Trailer {
         Ok(b)
     }
 
+    /// Why the last step gave fewer points a trail than `max` allows, in words: the memory
+    /// trails of that length would take. `None` when every point within `max` got one.
+    pub fn cut(&self) -> Option<&str> {
+        self.cut.as_deref()
+    }
+
     /// `trail` for trails of `len` in buffers of `capacity`: 0 at each head to 1 at each tail.
+    /// Written on the GPU, once per length and capacity.
     fn along(&mut self, gpu: &Gpu, len: u32, capacity: u32) -> Result<Buffer, Error> {
         if let Some((l, c, b)) = &self.along
             && *l == len
@@ -378,9 +419,21 @@ impl Trailer {
             return Ok(b.clone());
         }
         let step = 1.0 / (len.max(2) - 1) as f32;
-        let values: Vec<f32> = (0..capacity.max(1)).map(|j| (j % len) as f32 * step).collect();
         let b = Buffer::new(gpu, u64::from(capacity.max(1)) * 4, "pts trail")?;
-        b.write(gpu, 0, &values)?;
+        let program = gpu.cached_compute("pts trail along", ALONG_FILL, &along_params())?;
+        let param = |name: &str| match name {
+            "n" => Some(Value::Int(i64::from(capacity))),
+            "len" => Some(Value::Int(i64::from(len))),
+            "step" => Some(Value::Float(f64::from(step))),
+            _ => None,
+        };
+        let input =
+            Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
+        program.run_with(
+            gpu,
+            &[&b],
+            &[Step { entry: "along", out: grid(capacity.max(1)), input: &input }],
+        )?;
         self.along = Some((len, capacity, b.clone()));
         Ok(b)
     }
@@ -395,6 +448,8 @@ impl Trailer {
 
     /// Lets go of the buffers nobody downstream holds.
     pub fn trim(&mut self) {
+        self.pairs = None;
+        self.along = self.along.take().filter(|(_, _, b)| b.shared());
         self.headers.trim();
         for (_, r) in &mut self.rings {
             r.trim();

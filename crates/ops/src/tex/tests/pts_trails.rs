@@ -451,6 +451,33 @@ fn a_trail_follows_a_moving_set_by_index_every_step_or_fewer() {
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
 
+/// Long trails behind many particles would take more memory than a set of trails may: fewer
+/// particles get one, and the node says how much it would have taken.
+#[test]
+fn trails_too_long_for_memory_are_cut_with_a_word() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create(
+            "/src",
+            "pts.generate",
+            &[("shape", "line".into()), ("count", Value::Int(1)), ("size", Value::Vec3([0.0; 3]))],
+        ),
+        create("/p", crate::pts::particles::KIND, &[("max", Value::Int(40_000))]),
+        connect("/src", "/p", 0),
+        create("/trail", TRAIL, &[("length", Value::Int(1024))]),
+        connect("/p", "/trail", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    rig.clock.advance(1);
+    rig.cook("/trail");
+    let s = rig.cooker.status(rig.id("/trail")).unwrap();
+    assert_eq!(s.error, None);
+    assert!(s.warning.as_deref().is_some_and(|w| w.contains("MB")), "{:?}", s.warning);
+    // A set of 512 MB at most, the trails given out (no set before at the first step).
+    assert!(s.gpu_bytes <= (512 << 20) + (1 << 20), "{}", s.gpu_bytes);
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
+
 #[test]
 fn trails_of_particles_stay_with_their_particle_as_others_are_born_and_die() {
     let Some(gpu) = gpu() else { return };
