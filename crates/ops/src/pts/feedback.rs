@@ -5,13 +5,15 @@
 //! `initial` is what the loop starts from, and what it starts from again after a reset; the end
 //! of the chain wired into `previous` comes back a frame later. The chain may change anything:
 //! the number of points (a `pts.delete` in the loop), their attributes. What comes back is
-//! passed on as it is, without its box.
+//! passed on as it is. Its box stays where it lies inside the box of `initial` or of what the
+//! node gave out the frame before; a box that grows is dropped.
 
 use penumbra_core::{Error, ParamSpec};
 use penumbra_gpu::Points;
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
+use penumbra_mesh::Bounds;
 
 use crate::waiting;
 
@@ -42,40 +44,55 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .output("out", DataKind::Pts)
         .time_dependent(),
-        || Box::new(Feedback) as Box<dyn Operator>,
+        || Box::new(Feedback::default()) as Box<dyn Operator>,
     ))
 }
 
 /// Passes on `previous`, `initial` before it has points and while `reset` is on. The cooker
 /// shows it nothing on `previous` after a reset (`node.reset`, a component's reset), so the
 /// loop starts from `initial` again.
-struct Feedback;
+#[derive(Default)]
+struct Feedback {
+    /// The box of what the node gave out last.
+    gave: Option<Bounds>,
+}
 
 impl Operator for Feedback {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let previous = if cx.bool("reset")? { None } else { cx.input(1) };
-        let chosen = match (previous, cx.input(0)) {
+        let initial = cx.input(0);
+        let chosen = match (previous, initial) {
             (Some(p), _) => p,
-            (None, Some(i)) => return passed(i),
+            (None, Some(i)) => {
+                let Some(points) = i.get::<Points>() else {
+                    return Err(CookError::failed("not points"));
+                };
+                self.gave = points.bounds();
+                return Ok(Cooked::Outputs(vec![i.clone()]));
+            }
             (None, None) => return Err(waiting(cx)),
         };
         let Some(points) = chosen.get::<Points>() else {
             return Err(CookError::failed("not points"));
         };
         // A box that comes round grows with every step of a loop that widens it (noise added
-        // to the positions, a turn), and never shrinks again: what comes back has none, and
-        // what draws it reads the points' real box from the GPU.
-        if points.bounds().is_none() {
+        // to the positions, a turn), and never shrinks again. Such a box is dropped, and what
+        // draws the points reads their real box from the GPU. A box that stays inside the one
+        // the loop started from, or the one of the frame before, cannot grow and is kept.
+        let start = initial.and_then(|i| i.get::<Points>()).and_then(Points::bounds);
+        let came = points.bounds();
+        let kept = came.filter(|b| [start, self.gave].iter().flatten().any(|outer| inside(b, outer)));
+        self.gave = kept;
+        if kept == came {
             return Ok(Cooked::Outputs(vec![chosen.clone()]));
         }
-        Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, points.clone().with_bounds(None))]))
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, points.clone().with_bounds(kept))]))
     }
 }
 
-/// `initial`, passed on as it is.
-fn passed(initial: &Data) -> Result<Cooked, CookError> {
-    if initial.get::<Points>().is_none() {
-        return Err(CookError::failed("not points"));
-    }
-    Ok(Cooked::Outputs(vec![initial.clone()]))
+/// Whether `b` lies inside `outer` or on its edge.
+fn inside(b: &Bounds, outer: &Bounds) -> bool {
+    let low = b.min.iter().zip(&outer.min).all(|(v, o)| v >= o);
+    let high = b.max.iter().zip(&outer.max).all(|(v, o)| v <= o);
+    low && high
 }

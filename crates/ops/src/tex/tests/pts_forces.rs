@@ -259,6 +259,42 @@ fn a_loop_does_not_grow_its_box() {
     }
 }
 
+/// A loop that keeps its points where they are keeps their exact box frame after frame, so a
+/// node after it that fits the box (pts.lookup_tex) has it to fit. One that shrinks the box keeps
+/// the smaller box.
+#[test]
+fn a_loop_that_keeps_its_box_passes_it_on() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        line(),
+        create("/fb", "pts.feedback", &[]),
+        connect("/line", "/fb", 0),
+        create("/still", "pts.null", &[]),
+        connect("/fb", "/still", 0),
+        connect("/still", "/fb", 1),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    for frame in 0..6 {
+        let p = points(&mut rig, "/fb");
+        let b = p.bounds().map(|b| (b.min[0], b.max[0]));
+        assert_eq!(b, Some((-2.0, 2.0)), "frame {frame}");
+    }
+    let ops = [
+        line(),
+        create("/fb", "pts.feedback", &[]),
+        connect("/line", "/fb", 0),
+        create("/shrink", "pts.transform", &[("scale", Value::Vec3([0.5; 3]))]),
+        connect("/fb", "/shrink", 0),
+        connect("/shrink", "/fb", 1),
+    ];
+    let mut rig = Rig::new(rig.gpu.clone(), None, &ops);
+    for frame in 0..6 {
+        let p = points(&mut rig, "/fb");
+        let w = p.bounds().map(|b| b.max[0] - b.min[0]);
+        assert!(w.is_some_and(|w| w <= 4.0 + 1e-4), "frame {frame}: {w:?}");
+    }
+}
+
 /// Particles from a point, fanned out, drawn as sprites: more of the picture covered as they
 /// spread; none drawn while `reset` holds them.
 #[test]
