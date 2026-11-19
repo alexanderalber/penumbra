@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use super::*;
+use crate::points::Seen;
 use crate::testing::gpu;
 
 /// Points at `places` with ids `ids`, in buffers of `capacity`; their count on the GPU when
@@ -96,7 +97,7 @@ fn a_fixed_set_trails_its_places_by_index() {
         let input = set(&gpu, &places, &[0, 1, 2], 3, false);
         let shift = step % 3 != 2;
         let set = Settings { attrs: vec!["id".into()], ..settings(len as u32, Key::Index, shift) };
-        let out = t.step(&gpu, &input, before.as_ref(), &set).unwrap();
+        let out = t.step(&gpu, &input, before.as_ref(), &set, None).unwrap();
         let want = model(&cpu, &now, len, shift);
         assert_eq!(read(&gpu, &out, len), want, "step {step}");
         assert_eq!(
@@ -137,7 +138,7 @@ fn points_that_come_and_go_keep_their_own_trails_by_id() {
         let places: Vec<[f32; 3]> = now.iter().map(|(_, p)| *p).collect();
         let input = set(&gpu, &places, &alive, 16, true);
         let out = t
-            .step(&gpu, &input, before.as_ref(), &settings(len as u32, Key::Attr("id".into()), true))
+            .step(&gpu, &input, before.as_ref(), &settings(len as u32, Key::Attr("id".into()), true), None)
             .unwrap();
         let got = read(&gpu, &out, len);
         let want = model(&cpu, &now, len, true);
@@ -154,14 +155,14 @@ fn points_that_come_and_go_keep_their_own_trails_by_id() {
     // At most `max` trails: the first points keep theirs.
     let input = set(&gpu, &[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]], &[0, 1, 2], 3, false);
     let capped = Settings { max: 2, ..settings(3, Key::Attr("id".into()), true) };
-    let out = t.step(&gpu, &input, None, &capped).unwrap();
+    let out = t.step(&gpu, &input, None, &capped, None).unwrap();
     assert_eq!((out.count().known(), out.capacity()), (Some(6), 6));
     assert_eq!(read(&gpu, &out, 3)[1], (1, vec![[2.0, 0.0, 0.0]; 3]));
     // A key that is no whole number is refused in words.
     let mut floats = input.clone();
     let b = Buffer::of::<f32>(&gpu, 3, "f").unwrap();
     floats = floats.with_attr(Attr::new("id", AttrType::F32, b).unwrap()).unwrap();
-    let e = t.step(&gpu, &floats, None, &capped).err().unwrap();
+    let e = t.step(&gpu, &floats, None, &capped, None).err().unwrap();
     assert!(e.0.contains("whole number"), "{}", e.0);
     assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
 }

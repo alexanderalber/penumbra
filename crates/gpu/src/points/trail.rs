@@ -10,7 +10,8 @@
 //!
 //! The lookup by key first tries the same index, then a binary search over the old trails: it
 //! finds every key where the keys rise along the list, as `pts.particles` gives its ids, and where
-//! each point keeps its index.
+//! each point keeps its index. Keys that do not rise (turned around, repeated) are flagged in
+//! the header's second word, read back for [`Trailer::unordered`].
 //!
 //! A step that does not `shift` moves only the heads to the points' places and keeps the rest:
 //! a trail that samples every few steps, or a change while time stands.
@@ -21,7 +22,7 @@
 
 use penumbra_core::{Error, ParamSpec, Value};
 
-use super::{Attr, AttrType, Count, HEADER_BYTES, Points, Seen, Strips, most_elements};
+use super::{Attr, AttrType, Count, HEADER_BYTES, Points, Reports, Strips, Wake, most_elements};
 use crate::{Buffer, BufferRing, Dispatch, Gpu, Out, Step};
 
 /// Points per row of a dispatch grid.
@@ -35,12 +36,13 @@ pub const ALONG: &str = "trail";
 /// it, fewer points get a trail.
 pub const BUDGET: u64 = 512 << 20;
 
-/// Pairs each point with its old trail, and writes the count of the new trails.
+/// Pairs each point with its old trail, and writes the count of the new trails and whether the
+/// keys rise.
 const PAIR: &str = "
 @group(2) @binding(0) var<storage, read> keys_now: array<u32>;
 @group(2) @binding(1) var<storage, read> keys_before: array<u32>;
 @group(2) @binding(2) var<storage, read_write> pairs: array<u32>;
-@group(2) @binding(3) var<storage, read_write> header: array<u32>;
+@group(2) @binding(3) var<storage, read_write> header: array<atomic<u32>>;
 // The counts where they are on the GPU, else u32::MAX.
 @group(2) @binding(4) var<uniform> count_now: vec4u;
 @group(2) @binding(5) var<uniform> count_before: vec4u;
@@ -68,19 +70,23 @@ fn pts_less(a: u32, b: u32) -> bool {
 }
 
 @compute @workgroup_size(64)
+fn clear(@builtin(global_invocation_id) id: vec3u) {
+    if id.x == 0u {
+        atomicStore(&header[0], pts_trails() * pts_len());
+        atomicStore(&header[1], 0u);
+        atomicStore(&header[2], 0u);
+        atomicStore(&header[3], 0u);
+    }
+}
+
+@compute @workgroup_size(64)
 fn pair(@builtin(global_invocation_id) id: vec3u) {
     let i = id.y * pn.size.x + id.x;
-    if id.x >= pn.size.x {
+    if id.x >= pn.size.x || i >= pts_trails() {
         return;
     }
-    if i == 0u {
-        header[0] = pts_trails() * pts_len();
-        header[1] = 0u;
-        header[2] = 0u;
-        header[3] = 0u;
-    }
-    if i >= pts_trails() {
-        return;
+    if params.by != 0 && i > 0u && !pts_less(keys_now[i - 1u], keys_now[i]) {
+        atomicOr(&header[1], 1u);
     }
     let n = pts_trails_before();
     let len = pts_len();
@@ -219,7 +225,8 @@ pub struct Trailer {
     along: Option<(u32, u32, Buffer)>,
     /// Keys of none, bound where the points have no key.
     none: Option<Buffer>,
-    last: Option<Seen>,
+    /// The headers read back: the count for display, and whether the keys rose.
+    reports: Reports<Key>,
     /// Why the last step gave fewer points a trail than `max` allows: memory.
     cut: Option<String>,
 }
@@ -231,14 +238,16 @@ impl Trailer {
 
     /// The trails of `now` after one step from `before` (the trails this trailer made a step
     /// ago; `None`, or trails of another shape, start every trail afresh). `Err` for points
-    /// without `position`, a key of a type other than `u32` or `i32`, more trail points than a
-    /// buffer holds, and anything the GPU refuses.
+    /// without `position`, a key of a type other than `u32` or `i32`, and anything the GPU
+    /// refuses. `wake` is called when the header read back for [`Trailer::unordered`] arrives
+    /// with news ([`Reports`]).
     pub fn step(
         &mut self,
         gpu: &Gpu,
         now: &Points,
         before: Option<&Points>,
         set: &Settings,
+        wake: Option<Wake>,
     ) -> Result<Points, Error> {
         let len = set.len.max(2);
         let attrs = self.carried(now, set)?;
@@ -312,7 +321,10 @@ impl Trailer {
         pair.run_with(
             gpu,
             &[&keys_now, &keys_before, &pairs, &header, &count_now, &count_before],
-            &[Step { entry: "pair", out: grid(trails.max(1)), input: &input }],
+            &[
+                Step { entry: "clear", out: Out::range(1), input: &input },
+                Step { entry: "pair", out: grid(trails.max(1)), input: &input },
+            ],
         )?;
 
         self.rings.retain(|(name, _)| attrs.iter().any(|(a, _)| a == name));
@@ -354,16 +366,16 @@ impl Trailer {
 
         let points = Points::new(capacity, 0, out)?;
         let strips = Strips::regular(len);
-        let points = match now.count() {
-            Count::Known(_) => {
-                points.with_count(Count::Known(n))?.with_dims(Some([trails, len, 1])).with_strips(strips)
-            }
-            Count::Gpu { .. } => {
-                // For display only: one that cannot start leaves the count unseen.
-                let seen = Seen::reading(gpu, &header, self.last.as_ref()).unwrap_or_default();
-                self.last = Some(seen.clone());
+        let gpu_count = matches!(now.count(), Count::Gpu { .. });
+        // For display, and for the word about keys that do not rise: one that cannot start
+        // leaves the count unseen.
+        let seen = (gpu_count || by != 0)
+            .then(|| self.reports.read(gpu, &header, &set.key, &[&keys_now, &count_now], wake));
+        let points = match (now.count(), seen) {
+            (Count::Gpu { .. }, Some(seen)) => {
                 points.with_count(Count::gpu(header, n, seen)?)?.with_strips(strips)
             }
+            _ => points.with_count(Count::Known(n))?.with_dims(Some([trails, len, 1])).with_strips(strips),
         };
         Ok(points)
     }
@@ -401,6 +413,12 @@ impl Trailer {
         let b = ring.next(gpu, bytes, &label)?;
         self.rings.push((name.to_string(), ring));
         Ok(b)
+    }
+
+    /// Whether the keys of the points did not rise along the list at the newest step read back
+    /// with `key`: trails then cannot find their points and start over.
+    pub fn unordered(&mut self, key: &Key) -> bool {
+        self.reports.words(key).is_some_and(|w| w[1] != 0)
     }
 
     /// Why the last step gave fewer points a trail than `max` allows, in words: the memory

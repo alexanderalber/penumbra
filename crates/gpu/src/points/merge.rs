@@ -10,6 +10,10 @@
 //! side), each set's points go to where the sets before it end, and a last pass writes the total
 //! into the result's header. Nothing waits for the GPU.
 //!
+//! Where every set has an `id` of `u32` (particles) and there are several, the ids of set `k` are
+//! moved up by `k` times `2^32 / sets` (wrapping): particle systems count their ids from 0 each, and
+//! moved apart they stay unique and rise along the list, which trails need ([`super::trail`]).
+//!
 //! The capacity is the sum of the sets' capacities, so it keeps its size while their counts move.
 //! The bounds are the box around the sets' boxes, where every set has one. `dims` go. Lines stay
 //! where every set has the same regular lines ([`Strips::Regular`]) whole, or every set is lines
@@ -58,6 +62,8 @@ fn pts_merge(@builtin(global_invocation_id) gid: vec3u) {
         for (var w = 0u; w < words; w++) {
             pts_dst[o + w] = pts_src[i + w];
         }
+        // Ids moved up into the set's own band.
+        pts_dst[o] = pts_src[i] + bitcast<u32>(params.band);
     } else {
         for (var w = 0u; w < words; w++) {
             pts_dst[o + w] = bitcast<u32>(params.fill[w]);
@@ -96,7 +102,7 @@ fn pts_total(@builtin(global_invocation_id) gid: vec3u) {
 }
 ";
 
-fn params() -> [ParamSpec; 6] {
+fn params() -> [ParamSpec; 7] {
     [
         ParamSpec::int("input", 0),
         ParamSpec::int("words", 1),
@@ -104,6 +110,7 @@ fn params() -> [ParamSpec; 6] {
         ParamSpec::vec4("fill", [0.0; 4]),
         ParamSpec::int("inputs", 0),
         ParamSpec::int("pairs", 0),
+        ParamSpec::int("band", 0),
     ]
 }
 
@@ -216,6 +223,13 @@ impl Merger {
             }
         };
         let program = gpu.cached_compute("pts merge", MERGE, &params())?;
+        let banded =
+            sets.len() > 1 && sets.iter().all(|(_, p)| p.attr("id").is_some_and(|a| a.ty() == AttrType::U32));
+        let band = |k: usize| -> i64 {
+            let step = (1u64 << 32) / sets.len().max(1) as u64;
+            // The low 32 bits as WGSL's i32 holds them; the program reads them back as u32.
+            i64::from((step * k as u64) as u32 as i32)
+        };
         for (k, (_, p)) in sets.iter().enumerate() {
             let n = p.count().at_most();
             if n == 0 {
@@ -231,6 +245,7 @@ impl Merger {
                     "words" => Some(Value::Int(words)),
                     "copy" => Some(Value::Int(i64::from(copy))),
                     "fill" => Some(Value::Vec4(fill.map(f64::from))),
+                    "band" => Some(Value::Int(if banded && name == "id" { band(k) } else { 0 })),
                     _ => None,
                 };
                 let input = Dispatch {
