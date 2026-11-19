@@ -14,6 +14,7 @@ saves into it.)
 | example | shows | look at | needs |
 |---|---|---|---|
 | [curl-noise](curl-noise/README.md) | 65 536 sticks drifting through a flow field, simulated on the GPU and drawn instanced | `/out` | |
+| [particles](particles/README.md) | sparks rise from a word: particles born on the letters, stirred by curl noise and wind, coloured over their life, drawn as glowing dots, trails and a plexus of lines; the particle recipe of TouchDesigner's POPs | `/out` | |
 | [feedback](feedback/README.md) | a loop that feeds each frame back into the next: trails, zoom, drifting colour | `/show` | |
 | [show](show/README.md) | a show as a list of cues: five looks with fades, stepped by the space key, a GO button on the show screen or OSC, a caption per cue from a table | `/out` | |
 | [control-page](control-page/README.md) | a web page that moves the project's sliders, switches and buttons from a phone or a browser, made to be copied into your own project | `/show` | (for a phone: the same network as this computer) |
