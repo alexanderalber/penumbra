@@ -201,7 +201,11 @@ the particles to 0.2: they leave the letters outwards. The points lie where `tex
 draw the mesh. A `geo.transform` between the text and `pts.from_geo` turns the emitter with the
 text: bind its `rotate` z to a `chan.lfo` with `amplitude` 30, and the sparks leave a swaying
 word.
-Several emitters go into one `source` through `pts.merge`.
+Several emitters go into one `source` through `pts.merge`. Each system counts its ids from 0, so
+`pts.merge` moves the ids of its second input up by half their range (a third for three inputs,
+and so on). Ids that already lie in their input's part stay as they are. So points that come
+round a `pts.feedback` loop into the same input keep their ids, and trails and random numbers
+keyed by id hold.
 
 ## Trails
 
