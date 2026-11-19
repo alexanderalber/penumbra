@@ -31,6 +31,13 @@ pub(crate) fn input<'a>(cx: &'a CookContext<'_>) -> Result<&'a Points, CookError
     }
 }
 
+/// What wakes the cooking node from the thread that polls the GPU, for a readback it says
+/// something about: it cooks again at the next frame, also while the show time stands.
+pub(crate) fn wake(cx: &CookContext<'_>) -> penumbra_gpu::points::Wake {
+    let waker = cx.waker();
+    Arc::new(move || waker.wake())
+}
+
 /// The picture on input `index`, or why there is none: a wired picture still on its way is
 /// waited for.
 pub(crate) fn picture<'a>(cx: &'a CookContext<'_>, index: usize, name: &str) -> Result<&'a Tex, CookError> {

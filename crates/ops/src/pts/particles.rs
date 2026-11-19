@@ -396,6 +396,9 @@ struct Particles {
 /// A warm-up under way: `done` of `steps` steps of `length` seconds.
 struct Warming {
     capacity: u32,
+    /// What the plan was made for: the length of the warm-up (its bits) and the seed. Another
+    /// starts it over; other params apply from the next step on, as they do while the show runs.
+    plan: (u64, u32),
     ids: Buffer,
     carry: f64,
     bound: Bound,
@@ -765,13 +768,15 @@ impl Operator for Particles {
             }
             None => {
                 // A new start: the ids from 0, the warm-up first, in steps of at most MAX_DT.
+                let warm = cx.float("warm_up")?.clamp(0.0, MAX_WARM_UP);
+                let plan = (warm.to_bits(), set.salt);
                 let warming = match self.warming.take() {
-                    Some(w) if w.capacity == capacity => w,
+                    Some(w) if w.capacity == capacity && w.plan == plan => w,
                     _ => {
-                        let warm = cx.float("warm_up")?.clamp(0.0, MAX_WARM_UP);
                         let length = period.min(MAX_DT);
                         Warming {
                             capacity,
+                            plan,
                             ids: Buffer::new(gpu, 16, "pts particle ids")?,
                             carry: 0.0,
                             bound: Bound::default(),
@@ -784,9 +789,11 @@ impl Operator for Particles {
                 };
                 let w = self.warm(cx, gpu, source, &set, warming)?;
                 if w.done < w.steps {
-                    // Not there yet: no particles meanwhile, and the rest at the next frames.
+                    // Not there yet: no particles meanwhile, and the rest at the next frames,
+                    // also while the show time stands.
                     self.last = Some(now.tick);
                     self.warming = Some(w);
+                    cx.waker().wake();
                     return self.nothing(gpu, source, capacity);
                 }
                 state = w.out.clone();

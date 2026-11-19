@@ -20,7 +20,7 @@ use penumbra_core::{Error, ParamSpec, Value};
 
 use super::compact::{attrs_per_pass, gather_params, gather_source};
 use super::near::{self, NearGrid, grid, sized};
-use super::{Attr, AttrType, Count, HEADER_BYTES, Points, Seen, Strips};
+use super::{Attr, AttrType, Count, HEADER_BYTES, Points, Reports, Strips, Wake};
 use crate::{Buffer, BufferRing, Dispatch, Gpu, Out, Step};
 
 /// The length of a line in metres.
@@ -28,9 +28,6 @@ pub const SPAN: &str = "span";
 
 /// The length of a line over the search distance: 0 to 1.
 pub const SPAN01: &str = "span01";
-
-/// Readbacks of the header a [`Pairer`] waits for at once.
-const PENDING: usize = 8;
 
 /// The most lines one point chooses.
 pub const MAX_LINES: u32 = 32;
@@ -313,12 +310,8 @@ pub struct Pairer {
     none: Option<Buffer>,
     headers: BufferRing,
     rings: Vec<(String, BufferRing)>,
-    last: Option<Seen>,
-    /// Readbacks not yet arrived, oldest first, at most [`PENDING`]: under load a readback can
-    /// take longer than a frame, and the newest one that arrived still counts.
-    pending: Vec<Seen>,
-    /// The header of the newest lines read back so far.
-    words: Option<[u32; 4]>,
+    /// The headers read back, for the count shown and for what the node says.
+    reports: Reports<Settings>,
 }
 
 impl Pairer {
@@ -328,16 +321,28 @@ impl Pairer {
 
     /// The lines between the near points of `points`. `Err` for points without `position`, a
     /// distance that is not a positive number, more line ends than a buffer holds, and anything
-    /// the GPU refuses.
-    pub fn pairs(&mut self, gpu: &Gpu, points: &Points, set: &Settings) -> Result<Points, Error> {
-        self.settle();
+    /// the GPU refuses. `wake` is called when the header of these lines arrives where
+    /// [`Pairer::words`] has none yet for these settings and these points ([`Reports`]).
+    pub fn pairs(
+        &mut self,
+        gpu: &Gpu,
+        points: &Points,
+        set: &Settings,
+        wake: Option<Wake>,
+    ) -> Result<Points, Error> {
         let n = points.count().at_most();
         let most = set.most.clamp(1, MAX_LINES);
         let carried = carried(points, set)?;
         let ends_most = u64::from(super::most_elements(gpu, AttrType::Vec4));
-        let lines_cap = (u64::from(n) * u64::from(most)).min(u64::from(set.max)).min(ends_most / 2);
-        let lines_cap = u32::try_from(lines_cap).unwrap_or(0);
-        let capacity = (2 * lines_cap).max(2);
+        let lines_of = |points: u32| {
+            let lines = (u64::from(points) * u64::from(most)).min(u64::from(set.max)).min(ends_most / 2);
+            u32::try_from(lines).unwrap_or(0)
+        };
+        // Buffers are sized by the points' capacity and the work covers their count, so a count
+        // that moves from frame to frame (particles) keeps the buffers.
+        let room = points.capacity().max(n);
+        let lines_cap = lines_of(n);
+        let capacity = (2 * lines_of(room)).max(2);
         let near = self.grid.build(gpu, points, set.distance, set.cap)?;
         let header = self.headers.next(gpu, HEADER_BYTES, "pts count")?;
         let span = self.next(gpu, SPAN, u64::from(capacity) * 4)?;
@@ -357,9 +362,9 @@ impl Pairer {
         };
         let position = points.attr("position").ok_or_else(|| Error::new("the points have no `position`"))?;
         let chosen =
-            sized(gpu, &mut self.chosen, u64::from(n) * u64::from(most) * 4, "pts proximity chosen")?;
-        let chosen_n = sized(gpu, &mut self.chosen_n, u64::from(n) * 4, "pts proximity chosen count")?;
-        let counts = sized(gpu, &mut self.counts, u64::from(n) * 4, "pts proximity counts")?;
+            sized(gpu, &mut self.chosen, u64::from(room) * u64::from(most) * 4, "pts proximity chosen")?;
+        let chosen_n = sized(gpu, &mut self.chosen_n, u64::from(room) * 4, "pts proximity chosen count")?;
+        let counts = sized(gpu, &mut self.counts, u64::from(room) * 4, "pts proximity counts")?;
         let map = sized(gpu, &mut self.map, u64::from(capacity) * 4, "pts proximity ends")?;
         let none = sized(gpu, &mut self.none, 16, "pts proximity no keys")?;
         let count_now = points.count().header_for(gpu)?;
@@ -407,16 +412,11 @@ impl Pairer {
             &[&total, near.crowded(), &header],
             &[Step { entry: "finish", out: Out::range(1), input: &input }],
         )?;
-        self.gather(gpu, &carried, points, &map, &header, 2 * lines_cap, &mut out)?;
+        self.gather(gpu, &carried, points, &map, &header, (2 * lines_cap, capacity), &mut out)?;
         out.push(Attr::new(SPAN, AttrType::F32, span)?);
         out.push(Attr::new(SPAN01, AttrType::F32, span01)?);
         // For display, and for what the node says about crowded cubes and lines left out.
-        let seen = Seen::reading(gpu, &header, self.last.as_ref()).unwrap_or_default();
-        self.last = Some(seen.clone());
-        self.pending.push(seen.clone());
-        if self.pending.len() > PENDING {
-            self.pending.remove(0);
-        }
+        let seen = self.reports.read(gpu, &header, set, &[position.buffer(), &count_now], wake);
         let count = Count::gpu(header, 2 * lines_cap, seen)?;
         Ok(Points::new(capacity, 0, out)?
             .with_bounds(points.bounds())
@@ -424,30 +424,15 @@ impl Pairer {
             .with_strips(Strips::Pairs))
     }
 
-    /// The header of the newest lines read back so far, a frame or more late: the line ends, the
-    /// lines, the points past the cap of their cube, the lines wanted before `max`. `None` before
-    /// the first arrives.
-    pub fn words(&mut self) -> Option<[u32; 4]> {
-        self.settle();
-        self.words
+    /// The header of the newest lines read back for `set`, a frame or more late: the line ends,
+    /// the lines, the points past the cap of their cube, the lines wanted before `max`. `None`
+    /// before the first arrives, and for lines made under other settings.
+    pub fn words(&mut self, set: &Settings) -> Option<[u32; 4]> {
+        self.reports.words(set)
     }
 
-    /// Takes in the readbacks that arrived; the newest of them gives [`Pairer::words`].
-    fn settle(&mut self) {
-        let mut newest = None;
-        self.pending.retain(|s| match s.arrived_words() {
-            Some(w) => {
-                newest = Some(w);
-                false
-            }
-            None => true,
-        });
-        if newest.is_some() {
-            self.words = newest;
-        }
-    }
-
-    /// The attributes `carried` of each end's point, through `map`, into `out`.
+    /// The attributes `carried` of each end's point, through `map`, into `out`: `ends` of them at
+    /// most, in buffers of `capacity` ends.
     #[allow(clippy::too_many_arguments)]
     fn gather(
         &mut self,
@@ -456,10 +441,10 @@ impl Pairer {
         points: &Points,
         map: &Buffer,
         header: &Buffer,
-        ends: u32,
+        (ends, capacity): (u32, u32),
         out: &mut Vec<Attr>,
     ) -> Result<(), Error> {
-        let capacity = u64::from(ends.max(2));
+        let capacity = u64::from(capacity.max(ends).max(2));
         let (w, h) = (ends.clamp(1, 1 << 16), ends.div_ceil(ends.clamp(1, 1 << 16)));
         for group in carried.chunks(attrs_per_pass(gpu)) {
             let mut buffers: Vec<Buffer> = vec![map.clone(), header.clone()];

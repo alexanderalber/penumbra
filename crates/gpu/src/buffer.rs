@@ -9,7 +9,7 @@
 //! [`Buffer::read_async`] does not wait, for a few numbers every frame.
 
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Weak, mpsc};
 use std::time::Duration;
 
 use bytemuck::Pod;
@@ -27,6 +27,30 @@ struct Inner {
 /// small enough. Cheap to clone; clones share the buffer.
 #[derive(Clone)]
 pub struct Buffer(Arc<Inner>);
+
+/// A buffer's identity ([`Buffer::key`]): equal for keys of the same buffer, never for two
+/// buffers, even after the first is gone. It does not keep the buffer.
+#[derive(Clone)]
+pub struct BufferKey(Weak<Inner>);
+
+impl BufferKey {
+    /// Whether this is the key of `buffer`.
+    pub fn is(&self, buffer: &Buffer) -> bool {
+        std::ptr::eq(self.0.as_ptr(), Arc::as_ptr(&buffer.0))
+    }
+}
+
+impl PartialEq for BufferKey {
+    fn eq(&self, other: &Self) -> bool {
+        Weak::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for BufferKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BufferKey({:p})", self.0.as_ptr())
+    }
+}
 
 impl Buffer {
     /// A buffer of `bytes` bytes, all zero. `Err` for 0 bytes, a size that is not a multiple of
@@ -86,8 +110,14 @@ impl Buffer {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
+    /// What tells this buffer apart from every other one, without holding it: a node can
+    /// remember which buffer a result was made from and still let a ring hand that buffer out.
+    pub fn key(&self) -> BufferKey {
+        BufferKey(Arc::downgrade(&self.0))
+    }
+
     /// Held by someone besides the one asking (downstream data, a snapshot).
-    fn shared(&self) -> bool {
+    pub(crate) fn shared(&self) -> bool {
         Arc::strong_count(&self.0) > 1
     }
 

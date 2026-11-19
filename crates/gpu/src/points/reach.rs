@@ -12,8 +12,8 @@ use std::collections::VecDeque;
 use penumbra_core::{Error, ParamSpec, Value};
 use penumbra_mesh::Bounds;
 
-use super::Points;
-use crate::{Buffer, BufferRead, Dispatch, Gpu, Out, ReadState, Step};
+use super::{Points, Wake};
+use crate::{Buffer, BufferKey, BufferRead, Dispatch, Gpu, Out, ReadState, Step};
 
 /// Points per row of the dispatch grid.
 const ROW: u32 = 1 << 16;
@@ -103,6 +103,10 @@ pub struct LateBounds {
     reads: VecDeque<BufferRead>,
     spare: Option<BufferRead>,
     last: Option<Bounds>,
+    /// A box that differs from the one before it arrived since the last reduction.
+    fresh: bool,
+    /// The buffers of the points of the last reduction: `position` and the count's header.
+    from: Option<[BufferKey; 2]>,
 }
 
 impl LateBounds {
@@ -112,9 +116,17 @@ impl LateBounds {
 
     /// The box around the positions of `points` as last read back, grown by [`MARGIN`]: a frame
     /// or more late, `None` before the first arrives or where no point has a finite position.
-    /// Starts the next reduction unless [`IN_FLIGHT`] readbacks still wait. `Err` for anything
-    /// the GPU refuses.
-    pub fn update(&mut self, gpu: &Gpu, points: &Points) -> Result<Option<Bounds>, Error> {
+    /// Starts the next reduction unless [`IN_FLIGHT`] readbacks still wait. `wake` is called when
+    /// its box arrives, unless nothing changed: the points come from the same buffers as at the
+    /// last reduction and the last box that arrived was the same as the one before. So a node on
+    /// points that stopped changing cooks once or twice more to take their box, then rests.
+    /// `Err` for anything the GPU refuses.
+    pub fn update(
+        &mut self,
+        gpu: &Gpu,
+        points: &Points,
+        wake: Option<Wake>,
+    ) -> Result<Option<Bounds>, Error> {
         self.settle();
         let n = points.count().at_most();
         let Some(position) = points.attr("position").filter(|a| a.ty() == super::AttrType::Vec3) else {
@@ -132,6 +144,11 @@ impl LateBounds {
             }
         };
         let header = points.count().header_for(gpu)?;
+        let keys = [position.buffer().key(), header.key()];
+        let same = !self.fresh && self.last.is_some() && self.from.as_ref() == Some(&keys);
+        self.fresh = false;
+        self.from = Some(keys);
+        let wake = wake.filter(|_| !same);
         let program = gpu.cached_compute("pts box", REDUCE, &[ParamSpec::int("n", 0)])?;
         let param = |name: &str| (name == "n").then_some(Value::Int(i64::from(n)));
         let input =
@@ -145,7 +162,7 @@ impl LateBounds {
                 Step { entry: "reduce", out: Out::grid(w, h), input: &input },
             ],
         )?;
-        self.reads.push_back(target.read_async(gpu, self.spare.take())?);
+        self.reads.push_back(target.read_async_notify(gpu, self.spare.take(), wake)?);
         Ok(self.last.map(grown))
     }
 
@@ -158,7 +175,9 @@ impl LateBounds {
             let Some(read) = self.reads.pop_front() else { break };
             if state == ReadState::Ready {
                 if let Ok(words) = read.get::<u32>() {
-                    self.last = box_of(&words);
+                    let b = box_of(&words);
+                    self.fresh |= b != self.last;
+                    self.last = b;
                 }
                 self.spare = Some(read);
             }
@@ -205,11 +224,11 @@ mod tests {
         let attrs = vec![Attr::new("position", AttrType::Vec3, buffer).unwrap()];
         let all = Points::new(5, 4, attrs.clone()).unwrap();
         let mut late = LateBounds::new();
-        assert_eq!(late.update(&gpu, &all).unwrap(), None, "nothing read back yet");
+        assert_eq!(late.update(&gpu, &all, None).unwrap(), None, "nothing read back yet");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         let b = loop {
             gpu.poll();
-            if let Some(b) = late.update(&gpu, &all).unwrap() {
+            if let Some(b) = late.update(&gpu, &all, None).unwrap() {
                 break b;
             }
             assert!(std::time::Instant::now() < deadline);
@@ -227,7 +246,7 @@ mod tests {
         let mut late = LateBounds::new();
         let b = loop {
             gpu.poll();
-            if let Some(b) = late.update(&gpu, &some).unwrap() {
+            if let Some(b) = late.update(&gpu, &some, None).unwrap() {
                 break b;
             }
             assert!(std::time::Instant::now() < deadline);

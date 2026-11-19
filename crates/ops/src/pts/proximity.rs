@@ -18,13 +18,17 @@ use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
 
-use super::program::input;
+use super::program::{input, wake};
 use crate::{gpu, on_gpu};
 
 pub const KIND: &str = "pts.proximity";
 
 /// Choices of `choose`.
 pub const CHOOSE: [&str; 2] = ["nearest", "random"];
+
+/// The default of `distance`: wide enough to join the neighbours of a default `pts.generate`
+/// grid (10 x 10 over a metre, about 0.11 m apart).
+pub const DEFAULT_DISTANCE: f64 = 0.15;
 
 /// The default of `max`: the most lines.
 pub const DEFAULT_MAX: u32 = 1_000_000;
@@ -49,7 +53,7 @@ fn desc() -> NodeDesc {
         "Lines between near points: the plexus look. Each point joins up to `max_lines` of its neighbours within `distance`. geo.from_pts draws the lines in lines mode",
     )
     .param(
-        ParamSpec::float("distance", 0.1)
+        ParamSpec::float("distance", DEFAULT_DISTANCE)
             .clamp(1e-6, 1e4)
             .range(0.001, 1.0)
             .curve(Curve::Log)
@@ -156,8 +160,18 @@ impl Operator for Proximity {
                 .unwrap_or(DEFAULT_PER_CELL),
             attrs,
         };
-        let out = self.pairer.pairs(gpu, points, &set)?;
-        if let Some([_, lines, crowded, wanted]) = self.pairer.words() {
+        let out = self.pairer.pairs(gpu, points, &set, Some(wake(cx)))?;
+        if set.min_distance >= set.distance {
+            cx.warn(
+                "`min_distance` is at or above `distance`: no two points can be joined. Lower `min_distance`",
+            );
+        } else if let Some([_, lines, crowded, wanted]) = self.pairer.words(&set) {
+            if wanted == 0 && points.count().seen().is_some_and(|n| n > 1) {
+                cx.warn(format!(
+                    "no two points lie within `distance` ({} m) of each other, so there are no lines. Raise `distance`",
+                    set.distance
+                ));
+            }
             if wanted > lines {
                 cx.warn(format!(
                     "{wanted} lines are wanted and `max` keeps {lines}: raise `max`, or lower `max_lines` or `distance`"

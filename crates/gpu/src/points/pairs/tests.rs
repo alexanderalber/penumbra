@@ -120,7 +120,7 @@ fn each_point_joins_its_nearest_and_a_pair_is_one_line() {
         let mut pairer = Pairer::new();
         for (most, both) in [(3u32, false), (3, true), (1, false), (8, false)] {
             let set = Settings { both, ..settings(0.2, most) };
-            let out = pairer.pairs(&gpu, &input, &set).unwrap();
+            let out = pairer.pairs(&gpu, &input, &set, None).unwrap();
             assert_eq!(out.strips(), Strips::Pairs);
             assert_eq!(
                 lines(&gpu, &out),
@@ -138,7 +138,7 @@ fn each_end_carries_its_point_and_the_length_of_its_line() {
     let places = random(7, 300);
     let input = cloud(&gpu, &places, places.len(), false);
     let set = Settings { min_distance: 0.08, ..settings(0.25, 4) };
-    let out = Pairer::new().pairs(&gpu, &input, &set).unwrap();
+    let out = Pairer::new().pairs(&gpu, &input, &set, None).unwrap();
     let got = lines(&gpu, &out);
     assert_eq!(got, model(&places, places.len(), &set));
     let pos = out.attr("position").unwrap().buffer().read::<[f32; 4]>(&gpu).unwrap();
@@ -167,7 +167,7 @@ fn the_most_lines_cut_the_rest_and_say_how_many_were_wanted() {
     let all = model(&places, places.len(), &settings(0.2, 3));
     assert!(all.len() > 100);
     let set = Settings { max: 100, ..settings(0.2, 3) };
-    let out = Pairer::new().pairs(&gpu, &input, &set).unwrap();
+    let out = Pairer::new().pairs(&gpu, &input, &set, None).unwrap();
     assert_eq!(out.capacity(), 200);
     assert_eq!(lines(&gpu, &out), all[..100]);
     let words = out.count().header().unwrap().read::<u32>(&gpu).unwrap();
@@ -179,19 +179,20 @@ fn a_count_on_the_gpu_and_none_one_two_points() {
     let Some(gpu) = gpu() else { return };
     let places = random(5, 500);
     let set = settings(0.2, 3);
-    let out = Pairer::new().pairs(&gpu, &cloud(&gpu, &places, 320, true), &set).unwrap();
+    let out = Pairer::new().pairs(&gpu, &cloud(&gpu, &places, 320, true), &set, None).unwrap();
     assert_eq!(lines(&gpu, &out), model(&places, 320, &set));
     let mut pairer = Pairer::new();
-    let none = pairer.pairs(&gpu, &cloud(&gpu, &places, 0, false), &set).unwrap();
+    let none = pairer.pairs(&gpu, &cloud(&gpu, &places, 0, false), &set, None).unwrap();
     assert_eq!((none.count().known(), none.strips()), (Some(0), Strips::Pairs));
     assert!(none.attr(SPAN).is_some() && none.attr("tag").is_some(), "the attributes are there all the same");
-    let one = pairer.pairs(&gpu, &cloud(&gpu, &places[..1], 1, false), &set).unwrap();
+    let one = pairer.pairs(&gpu, &cloud(&gpu, &places[..1], 1, false), &set, None).unwrap();
     assert!(lines(&gpu, &one).is_empty());
     let two = [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]];
-    let out = pairer.pairs(&gpu, &cloud(&gpu, &two, 2, false), &set).unwrap();
+    let out = pairer.pairs(&gpu, &cloud(&gpu, &two, 2, false), &set, None).unwrap();
     assert_eq!(lines(&gpu, &out), vec![(0, 1)]);
-    let out =
-        pairer.pairs(&gpu, &cloud(&gpu, &two, 2, false), &Settings { both: true, ..set.clone() }).unwrap();
+    let out = pairer
+        .pairs(&gpu, &cloud(&gpu, &two, 2, false), &Settings { both: true, ..set.clone() }, None)
+        .unwrap();
     assert_eq!(lines(&gpu, &out), vec![(0, 1), (1, 0)]);
     assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
 }
@@ -202,13 +203,13 @@ fn a_random_choice_stays_with_the_pair() {
     let places = random(6, 300);
     let set = Settings { choose: Choose::Random { seed: 3 }, ..settings(0.3, 2) };
     let mut pairer = Pairer::new();
-    let a = lines(&gpu, &pairer.pairs(&gpu, &cloud(&gpu, &places, 300, false), &set).unwrap());
+    let a = lines(&gpu, &pairer.pairs(&gpu, &cloud(&gpu, &places, 300, false), &set, None).unwrap());
     // Every point moved a hair: the nearest would change here and there, the random choice not.
     let moved: Vec<[f32; 3]> = places.iter().map(|p| [p[0] + 1e-4, p[1] - 1e-4, p[2]]).collect();
-    let b = lines(&gpu, &pairer.pairs(&gpu, &cloud(&gpu, &moved, 300, false), &set).unwrap());
+    let b = lines(&gpu, &pairer.pairs(&gpu, &cloud(&gpu, &moved, 300, false), &set, None).unwrap());
     assert_eq!(a, b);
     let other = Settings { choose: Choose::Random { seed: 4 }, ..set };
-    let c = lines(&gpu, &pairer.pairs(&gpu, &cloud(&gpu, &places, 300, false), &other).unwrap());
+    let c = lines(&gpu, &pairer.pairs(&gpu, &cloud(&gpu, &places, 300, false), &other, None).unwrap());
     assert_ne!(a, c, "another seed chooses others");
 }
 
@@ -222,8 +223,8 @@ fn the_same_points_give_the_same_lines_bit_for_bit() {
     }
     let input = cloud(&gpu, &places, places.len(), false);
     let set = Settings { cap: 32, ..settings(0.15, 5) };
-    let a = Pairer::new().pairs(&gpu, &input, &set).unwrap();
-    let b = Pairer::new().pairs(&gpu, &input, &set).unwrap();
+    let a = Pairer::new().pairs(&gpu, &input, &set, None).unwrap();
+    let b = Pairer::new().pairs(&gpu, &input, &set, None).unwrap();
     for name in ["position", "tag", "color", SPAN, SPAN01] {
         let x = a.attr(name).unwrap().buffer().read::<u32>(&gpu).unwrap();
         let y = b.attr(name).unwrap().buffer().read::<u32>(&gpu).unwrap();
@@ -232,4 +233,31 @@ fn the_same_points_give_the_same_lines_bit_for_bit() {
     let words = a.count().header().unwrap().read::<u32>(&gpu).unwrap();
     assert_eq!(words, b.count().header().unwrap().read::<u32>(&gpu).unwrap());
     assert!(words[2] > 0, "the clump is over the cap: {words:?}");
+}
+
+/// `p` with its count on the GPU bounded by `at_most` instead of its capacity, as particles'
+/// count is.
+fn bounded(p: &Points, at_most: u32) -> Points {
+    let header = p.count().header().unwrap().clone();
+    p.clone().with_count(Count::gpu(header, at_most, Seen::default()).unwrap()).unwrap()
+}
+
+/// A count whose bound moves from step to step, as particles' does, keeps the buffers of the
+/// lines: the next lines take the same buffers once the last ones are let go.
+#[test]
+fn a_moving_bound_keeps_the_buffers_of_the_lines() {
+    let Some(gpu) = gpu() else { return };
+    let places = random(9, 600);
+    let input = cloud(&gpu, &places, 500, true);
+    let set = settings(0.2, 3);
+    let mut pairer = Pairer::new();
+    let a = pairer.pairs(&gpu, &bounded(&input, 500), &set, None).unwrap();
+    let keys: Vec<(String, crate::BufferKey)> =
+        a.attrs().iter().map(|x| (x.name().to_string(), x.buffer().key())).collect();
+    drop(a);
+    let b = pairer.pairs(&gpu, &bounded(&input, 520), &set, None).unwrap();
+    for (name, key) in &keys {
+        assert!(key.is(b.attr(name).unwrap().buffer()), "{name} was made anew");
+    }
+    assert_eq!(lines(&gpu, &b), model(&places, 500, &set));
 }
