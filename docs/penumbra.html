@@ -2178,7 +2178,7 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 <ul>
 <li><strong>Drawing is the cost.</strong> The programs over points are cheap: noise over a million points takes about 0.2 ms a frame. A million sprites take about 2 ms, soft and added ones about 1.2 ms. Sprites of many pixels each are bound by fill rate: a million discs of about 16 pixels took 22 ms. All at 1920 x 1080 with 4x antialiasing, on an RTX 3090 at a 280 W power limit. The show laptop's RTX 3060 mobile is presumably three to four times slower.
 </li>
-<li><strong>Each node costs CPU time.</strong> Every node in a chain takes some 0.05 to 1 ms of CPU time per frame whatever the number of points: the <a href="../examples/particles/README.md">particles</a> example, 25 nodes, takes 5.6 ms a frame on the desktop above, most of it CPU.
+<li><strong>Each node costs CPU time.</strong> Every node in a chain takes some 0.05 to 1 ms of CPU time per frame whatever the number of points: the <a href="../examples/particles/README.md">particles</a> example, 25 nodes, takes 4 to 6 ms a frame on the desktop above, most of it CPU.
 </li>
 <li><strong>A crowd slows the neighbour search.</strong> <a class="ref" href="#pts.proximity"><code>pts.proximity</code></a> and <a class="ref" href="#pts.neighbor"><code>pts.neighbor</code></a> look at no more than <code>max_per_cell</code> points of each cube around a point; a million points in a small box still take tens to hundreds of milliseconds a frame. The nodes lower the cap themselves for large counts, with a warning.
 </li>

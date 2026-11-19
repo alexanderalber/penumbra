@@ -31,7 +31,7 @@ Three ways to draw them, added together in `/render`:
 render alone stays see-through; the composite gives it its background.
 
 About 16 000 sparks live at once, and their trails hold about 190 000 points. On an RTX 3090
-at a 280 W power limit the network takes about 5.6 ms a frame at 1920 x 1080 (stepped, all GPU
+at a 280 W power limit the network takes 4 to 6 ms a frame at 1920 x 1080 (stepped, all GPU
 work included). Most of it is the CPU cooking 25 nodes; the GPU is busy about a quarter of the
 time. The show laptop (RTX 3060 mobile) has not run it yet.
 

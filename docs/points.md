@@ -313,7 +313,7 @@ without the loop's forces.
   limit. The show laptop's RTX 3060 mobile is presumably three to four times slower.
 - **Each node costs CPU time.** Every node in a chain takes some 0.05 to 1 ms of CPU time per
   frame whatever the number of points: the [particles](../examples/particles/README.md) example, 25
-  nodes, takes 5.6 ms a frame on the desktop above, most of it CPU.
+  nodes, takes 4 to 6 ms a frame on the desktop above, most of it CPU.
 - **A crowd slows the neighbour search.** `pts.proximity` and `pts.neighbor` look at no more than
   `max_per_cell` points of each cube around a point; a million points in a small box still
   take tens to hundreds of milliseconds a frame. The nodes lower the cap themselves for large counts, with a
