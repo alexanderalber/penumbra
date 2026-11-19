@@ -1482,6 +1482,82 @@ mod tests {
         assert!(inside.hit("tex.in", "tex.in"));
     }
 
+    /// What a follower of a TouchDesigner POP tutorial types finds the node that does the job, and
+    /// what has no counterpart finds no points node.
+    #[test]
+    fn touchdesigner_pop_names_find_the_points_nodes() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let found = |typed: &str, kind: &str| {
+            let search = types.search(typed);
+            let u = Usable { types: &types, in_component: false, library: &[], family: search.family };
+            u.hit(kind, &search.text.to_lowercase())
+        };
+        for (typed, kind) in [
+            ("particle pop", "pts.particles"),
+            ("particle", "pts.particles"),
+            ("proximity pop", "pts.proximity"),
+            ("plexus", "pts.proximity"),
+            ("noise pop", "pts.noise"),
+            ("feedback pop", "pts.feedback"),
+            ("math mix pop", "pts.math"),
+            ("math combine pop", "pts.math"),
+            ("attribute pop", "pts.math"),
+            ("pattern pop", "pts.math"),
+            ("limit pop", "pts.math"),
+            ("lookup texture pop", "pts.lookup_tex"),
+            ("neighbor pop", "pts.neighbor"),
+            ("trail pop", "pts.trail"),
+            ("line mat", "geo.from_pts"),
+            ("point sprite mat", "geo.from_pts"),
+            ("glsl pop", "pts.shader"),
+            ("top to pop", "pts.from_tex"),
+            ("pop to top", "tex.from_pts"),
+            ("sop to pop", "pts.from_geo"),
+            ("sprinkle pop", "pts.from_geo"),
+            ("pop to sop", "geo.from_pts"),
+            ("chop to pop", "pts.from_chan"),
+            ("pop to chop", "chan.from_pts"),
+            ("analyze pop", "chan.from_pts"),
+            ("dat to pop", "pts.from_table"),
+            ("pop to dat", "table.from_pts"),
+            ("point file in pop", "pts.file"),
+            ("field pop", "pts.field"),
+            ("force pop", "pts.force"),
+            ("force radial pop", "pts.force"),
+            ("transform pop", "pts.transform"),
+            ("random pop", "pts.random"),
+            ("delete pop", "pts.delete"),
+            ("merge pop", "pts.merge"),
+            ("switch pop", "pts.switch"),
+            ("null pop", "pts.null"),
+            ("grid pop", "pts.generate"),
+            ("sphere pop", "pts.generate"),
+            ("box pop", "pts.generate"),
+            ("circle pop", "pts.generate"),
+            ("line pop", "pts.generate"),
+            ("rectangle pop", "pts.generate"),
+            ("point generator pop", "pts.generate"),
+        ] {
+            assert!(found(typed, kind), "`{typed}` does not find {kind}");
+        }
+        assert!(!found("particle", "pts.generate"), "a generator makes no particles");
+        let pts: Vec<String> = types.kinds().filter(|k| k.starts_with("pts.")).map(str::to_string).collect();
+        for typed in [
+            "ray pop",
+            "polygonize pop",
+            "extrude pop",
+            "skin pop",
+            "copy pop",
+            "cache pop",
+            "sort pop",
+            "group pop",
+        ] {
+            for kind in &pts {
+                assert!(!found(typed, kind), "`{typed}` finds {kind}, which does not do its job");
+            }
+        }
+    }
+
     #[test]
     fn a_tag_finds_a_type_its_name_does_not() {
         let types = penumbra_ops::builtin_types().unwrap();
