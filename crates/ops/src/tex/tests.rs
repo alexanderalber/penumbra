@@ -747,6 +747,7 @@ fn main() {
                         || passes_on(kind)
                         || kind == "tex.from_chan"
                         || kind == crate::table::FROM_CHAN
+                        || kind == crate::pts::from_values::FROM_CHAN
                         || kind == "tex.sequence" =>
                 {
                     Some("/chan_feed")
@@ -756,7 +757,8 @@ fn main() {
                         || passes_on(kind)
                         || kind == "geo.instance"
                         || kind == crate::rigid::group::KIND
-                        || kind == crate::table::FROM_TABLE =>
+                        || kind == crate::table::FROM_TABLE
+                        || kind == crate::pts::from_values::FROM_TABLE =>
                 {
                     Some("/table_feed")
                 }
@@ -2903,6 +2905,7 @@ mod liquid;
 mod mesh_out;
 mod palettes;
 mod pts;
+mod pts_bridges;
 mod pts_count;
 mod pts_forces;
 mod pts_near;

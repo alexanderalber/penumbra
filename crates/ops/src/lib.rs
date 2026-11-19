@@ -176,7 +176,19 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("chan.from_table", &["dat to", "lookup", "select dat"]),
     ("chan.feedback", &["delay", "previous frame"]),
     ("chan.from_tex", &["top to chop", "analyze", "pixel", "texel", "sample", "readback"]),
-    ("chan.from_pts", &["pop to chop", "point count", "number of points"]),
+    (
+        "chan.from_pts",
+        &[
+            "pop to chop",
+            "analyze pop",
+            "point count",
+            "number of points",
+            "attribute",
+            "mean",
+            "average",
+            "bounds",
+        ],
+    ),
     ("chan.http_in", &["web server", "websocket"]),
     ("chan.integrator", &["speed"]),
     ("chan.math", &["function", "limit", "quantize", "round", "ceil", "floor"]),
@@ -184,6 +196,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("audio.file", &["audio file in"]),
     ("table.file", &["file in"]),
     ("table.from_chan", &["chop to dat", "chop to", "chan to table", "channels to table"]),
+    ("table.from_pts", &["pop to dat", "points to table", "attributes", "spreadsheet", "inspect"]),
     ("geo.assign_material", &["material"]),
     ("geo.file", &["file in"]),
     (
@@ -191,7 +204,12 @@ pub const TAGS: &[(&str, &[&str])] = &[
         &[
             "pop to sop",
             "point sprite",
+            "point sprite mat",
             "sprites",
+            "soft",
+            "falloff",
+            "glow",
+            "additive",
             "instancing",
             "line mat",
             "lines",
@@ -228,6 +246,22 @@ pub const TAGS: &[(&str, &[&str])] = &[
             "planar",
         ],
     ),
+    ("pts.from_chan", &["chop to pop", "channels to points", "spectrum", "blobs"]),
+    (
+        "pts.from_geo",
+        &[
+            "sop to pop",
+            "sprinkle pop",
+            "sprinkle",
+            "scatter",
+            "point generator pop",
+            "emit from surface",
+            "emit from model",
+            "mesh to points",
+            "vertices",
+        ],
+    ),
+    ("pts.from_table", &["dat to pop", "table to points", "csv", "coordinates"]),
     ("pts.from_tex", &["top to pop", "image to points", "point cloud", "depth", "relief", "pixels"]),
     (
         "pts.generate",
@@ -293,6 +327,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
             "attribute",
         ],
     ),
+    ("pts.merge", &["merge pop", "combine", "append", "join"]),
     (
         "pts.neighbor",
         &[
@@ -345,6 +380,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ),
     ("pts.random", &["random pop", "jitter"]),
     ("pts.shader", &["glsl pop", "glsl", "compute shader", "custom"]),
+    ("pts.switch", &["switch pop", "select", "choose"]),
     (
         "pts.trail",
         &["trail pop", "trails", "motion trail", "history", "ribbon", "line strip", "streak", "tail"],

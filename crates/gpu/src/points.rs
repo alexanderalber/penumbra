@@ -1010,8 +1010,10 @@ fn copy_rows(gpu: &Gpu, src: &Buffer, count: u32, tex: &Tex) -> Result<(), Error
 
 pub mod append;
 pub mod compact;
+pub mod merge;
 pub mod near;
 pub mod pairs;
+pub mod probe;
 pub mod program;
 pub mod reach;
 pub mod trail;
