@@ -6,14 +6,17 @@
 //! Names say where a number goes ([`target`]), with no typing for the usual ones: `x y z`,
 //! `tx ty tz` and `px py pz` are the position, `r g b a` the colour, `nx ny nz` the normal, `u v`
 //! the texture coordinates. `<name>_x`, `<name>.y`, `<name>(2)` and `<name>[2]` name a component
-//! of any attribute (TouchDesigner's `P(0)` included), a plain name a one-number attribute. So
-//! what `table.from_pts` and `chan.from_pts` write reads back the same.
+//! of any attribute (TouchDesigner's `P(0)` included), a plain name a one-number attribute. A
+//! table from `table.from_pts` reads back into the same attributes, except one-number attributes
+//! whose names look like a component (`x`, `r`, `u`, `alpha`, `index`, a name ending in `_x` or
+//! `_0`). Channels from `chan.from_pts` carry the point's number in their names (`tx0`), so they
+//! do not read back.
 //!
 //! Without a position column the points lie along x from 0 to 1 in their order, so a spectrum
 //! makes a line that `pts.math` can lift by its values.
 
 use penumbra_core::{Chans, Error, Table};
-use penumbra_gpu::points::{AttrType, canonical, default_of, valid_name};
+use penumbra_gpu::points::{AttrType, MAX_ATTRS, canonical, default_of, valid_name};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
@@ -130,6 +133,145 @@ fn type_of(name: &str, highest: usize) -> AttrType {
     }
 }
 
+/// At most this many names of a kind are listed in a warning.
+const LISTED: usize = 8;
+
+/// `names` as a list for a warning: the first [`LISTED`], then how many more.
+fn listed(names: &[String]) -> String {
+    let mut text = names.iter().take(LISTED).map(String::as_str).collect::<Vec<_>>().join(", ");
+    if names.len() > LISTED {
+        text.push_str(&format!(" and {} more", names.len() - LISTED));
+    }
+    text
+}
+
+/// Where a number of an attribute comes from: (its component, the column's index).
+type Source = (usize, usize);
+
+/// Which named columns become which attributes: at most [`MAX_ATTRS`] attributes, the standard
+/// ones first. Worked out from the names alone, before any value is read, so a file that names
+/// thousands of columns costs nothing for those left out.
+pub(crate) struct Plan {
+    /// (attribute, its type, its sources), in the order of the names.
+    attrs: Vec<(String, AttrType, Vec<Source>)>,
+    /// No column places the points: they lie along x.
+    along_x: bool,
+    pub warnings: Vec<String>,
+}
+
+impl Plan {
+    pub fn new(names: &[&str]) -> Self {
+        let mut warnings = Vec::new();
+        let mut found: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
+        let mut ignored = Vec::new();
+        for (i, name) in names.iter().enumerate() {
+            let Some((attr, k)) = target(name) else {
+                if !name.trim().is_empty() && name.trim() != "index" {
+                    ignored.push(name.trim().to_string());
+                }
+                continue;
+            };
+            match found.iter_mut().find(|(a, _)| *a == attr) {
+                Some((_, list)) => list.push((k, i)),
+                None => found.push((attr, vec![(k, i)])),
+            }
+        }
+        if !ignored.is_empty() {
+            warnings.push(format!("{} name no attribute and are left out", listed(&ignored)));
+        }
+        let along_x = !found.iter().any(|(a, _)| a == "position");
+        // The standard attributes first, then the others in their order, as many as fit.
+        let room = MAX_ATTRS - usize::from(along_x);
+        if found.len() > room {
+            let total = found.len() + usize::from(along_x);
+            let others = found.iter().filter(|(a, _)| default_of(a).is_none()).count();
+            let standard = found.len() - others;
+            let keep_others = room.saturating_sub(standard);
+            let mut seen = 0;
+            let mut dropped = Vec::new();
+            found.retain(|(a, _)| {
+                if default_of(a).is_some() {
+                    return true;
+                }
+                seen += 1;
+                if seen > keep_others {
+                    dropped.push(a.clone());
+                }
+                seen <= keep_others
+            });
+            found.truncate(room);
+            warnings.push(format!(
+                "{} attributes are more than points hold ({MAX_ATTRS}): {} are left out",
+                total,
+                listed(&dropped)
+            ));
+        }
+        let mut attrs = Vec::with_capacity(found.len());
+        for (attr, sources) in found {
+            let highest = sources.iter().map(|(k, _)| *k).max().unwrap_or(0);
+            let ty = type_of(&attr, highest);
+            let wide = ty.components() as usize;
+            let past: Vec<String> = sources
+                .iter()
+                .filter(|(k, _)| *k >= wide)
+                .filter_map(|(_, i)| names.get(*i).map(|n| (*n).to_string()))
+                .collect();
+            if !past.is_empty() {
+                warnings.push(format!("`{attr}` has {wide} numbers: {} left out", listed(&past)));
+            }
+            let sources = sources.into_iter().filter(|(k, _)| *k < wide).collect();
+            attrs.push((attr, ty, sources));
+        }
+        Self { attrs, along_x, warnings }
+    }
+
+    /// The columns whose values are used, in increasing order.
+    pub fn used(&self) -> Vec<usize> {
+        let mut used: Vec<usize> =
+            self.attrs.iter().flat_map(|(_, _, s)| s.iter().map(|(_, i)| *i)).collect();
+        used.sort_unstable();
+        used.dedup();
+        used
+    }
+
+    /// Words (four bytes) of attribute values per point.
+    pub fn words(&self) -> usize {
+        let own: u64 = self.attrs.iter().map(|(_, ty, _)| ty.stride() / 4).sum();
+        usize::try_from(own).unwrap_or(usize::MAX).saturating_add(if self.along_x { 4 } else { 0 })
+    }
+
+    /// The attributes of `count` points, `value(column, point)` giving each number (`None`
+    /// where it is missing: the attribute's default stays).
+    pub fn columns(&self, value: &dyn Fn(usize, usize) -> Option<f64>, count: usize) -> Vec<Column> {
+        let mut out = Vec::with_capacity(self.attrs.len() + 1);
+        if self.along_x {
+            let mut c = Column::new("position", AttrType::Vec3);
+            c.words.reserve(count.saturating_mul(4));
+            for p in 0..count {
+                let x = if count > 1 { p as f32 / (count - 1) as f32 } else { 0.0 };
+                c.push([x, 0.0, 0.0, 0.0]);
+            }
+            out.push(c);
+        }
+        for (attr, ty, sources) in &self.attrs {
+            let default = default_of(attr).map_or([0.0; 4], |s| s.default).map(f64::from);
+            let mut c = Column::new(attr, *ty);
+            c.words.reserve(count.saturating_mul((ty.stride() / 4) as usize));
+            for p in 0..count {
+                let mut v = default;
+                for (k, i) in sources {
+                    if let (Some(slot), Some(x)) = (v.get_mut(*k), value(*i, p)) {
+                        *slot = x;
+                    }
+                }
+                c.push_f64(v);
+            }
+            out.push(c);
+        }
+        out
+    }
+}
+
 /// Points from named columns of numbers, each `count` long (`None` where a value is missing),
 /// and what to warn about.
 pub(crate) fn columns(
@@ -137,58 +279,9 @@ pub(crate) fn columns(
     value: &dyn Fn(usize, usize) -> Option<f64>,
     count: usize,
 ) -> (Vec<Column>, Vec<String>) {
-    let mut warnings = Vec::new();
-    // (attribute, its sources: (component, column index))
-    let mut attrs: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
-    let mut ignored = Vec::new();
-    for (i, name) in names.iter().enumerate() {
-        let Some((attr, k)) = target(name) else {
-            if !name.trim().is_empty() && name.trim() != "index" {
-                ignored.push(name.trim().to_string());
-            }
-            continue;
-        };
-        match attrs.iter_mut().find(|(a, _)| *a == attr) {
-            Some((_, list)) => list.push((k, i)),
-            None => attrs.push((attr, vec![(k, i)])),
-        }
-    }
-    if !ignored.is_empty() {
-        warnings.push(format!("{} name no attribute and are left out", ignored.join(", ")));
-    }
-    let mut out = Vec::new();
-    let has_position = attrs.iter().any(|(a, _)| a == "position");
-    if !has_position {
-        let mut c = Column::new("position", AttrType::Vec3);
-        for p in 0..count {
-            let x = if count > 1 { p as f32 / (count - 1) as f32 } else { 0.0 };
-            c.push([x, 0.0, 0.0, 0.0]);
-        }
-        out.push(c);
-    }
-    for (attr, sources) in &attrs {
-        let highest = sources.iter().map(|(k, _)| *k).max().unwrap_or(0);
-        let ty = type_of(attr, highest);
-        let wide = ty.components() as usize;
-        let past: Vec<&str> =
-            sources.iter().filter(|(k, _)| *k >= wide).filter_map(|(_, i)| names.get(*i).copied()).collect();
-        if !past.is_empty() {
-            warnings.push(format!("`{attr}` has {wide} numbers: {} left out", past.join(", ")));
-        }
-        let default = default_of(attr).map_or([0.0; 4], |s| s.default);
-        let mut c = Column::new(attr, ty);
-        for p in 0..count {
-            let mut v = default;
-            for (k, i) in sources {
-                if let (Some(slot), Some(x)) = (v.get_mut(*k), value(*i, p)) {
-                    *slot = x as f32;
-                }
-            }
-            c.push(v);
-        }
-        out.push(c);
-    }
-    (out, warnings)
+    let plan = Plan::new(names);
+    let cols = plan.columns(value, count);
+    (cols, plan.warnings)
 }
 
 #[derive(Default)]
@@ -240,5 +333,21 @@ impl Operator for FromValues {
         let bounds = cols.iter().find(|c| c.name == "position").and_then(bounds_of);
         let points = self.uploads.upload(gpu, count.1, &cols, bounds)?;
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, points)]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Whole numbers past 2^24 (particle ids late in a show) come through exactly.
+    #[test]
+    fn large_ids_stay_exact() {
+        let ids = [16_777_217.0, 4_000_000_001.0];
+        let value = |_: usize, p: usize| ids.get(p).copied();
+        let (cols, _) = columns(&["id"], &value, 2);
+        let id = cols.iter().find(|c| c.name == "id").unwrap();
+        assert_eq!(id.ty, AttrType::U32);
+        assert_eq!(id.words, [16_777_217, 4_000_000_001]);
     }
 }

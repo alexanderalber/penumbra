@@ -169,8 +169,9 @@ The families:
   Channel and column names say where a number goes without any mapping: `x y z` or `tx ty tz`
   place a point, `r g b a` colour it, `nx ny nz` and `u v` set its normal and texture
   coordinates, `velocity_x` or TouchDesigner's `P(0)` name a component of any attribute, and a
-  plain name makes an attribute of one number. What `table.from_pts` writes,
-  `pts.from_table` reads back the same. `pts.merge` puts several sets of points one after the
+  plain name makes an attribute of one number. A table from `table.from_pts` reads back into
+  the same points through `pts.from_table`. The exceptions are attributes of one number named
+  like a component: `x`, `r`, `u`, `alpha`, `index`, or a name ending in `_x` or `_0`. `pts.merge` puts several sets of points one after the
   other (an attribute one set lacks takes its default there); `pts.switch` passes one of them
   on.
 
