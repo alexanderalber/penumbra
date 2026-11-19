@@ -34,7 +34,8 @@ pub const MAX_POINTS: usize = 1 << 22;
 /// Most properties a PLY vertex may have.
 pub const MAX_PROPERTIES: usize = 1024;
 
-/// Most words (four bytes) of attribute values a file gives, all points together: 512 MB.
+/// Most words (four bytes) of attribute values a file gives, all points together: 512 MB. The
+/// numbers read on the way there (eight bytes each) stay within it as well.
 pub const MAX_WORDS: usize = 1 << 27;
 
 /// Largest file read: 4 M points of a few dozen bytes each, with room to spare.
@@ -364,14 +365,15 @@ fn ply(bytes: &[u8]) -> Result<Cloud, String> {
 }
 
 /// The numbers of the columns a [`Plan`] uses, point after point; every other column is skipped
-/// as it is read. Stored as `f32`, as the points hold them; NaN where a value is missing.
+/// as it is read. Stored as `f64`, so whole numbers past 2^24 (ids) stay exact until the
+/// attributes take them; NaN where a value is missing.
 struct Cells {
     /// For each column of the file, its place among the used ones.
     at: Vec<Option<usize>>,
     width: usize,
     /// Words of attribute values per point.
     words: usize,
-    values: Vec<f32>,
+    values: Vec<f64>,
     count: usize,
 }
 
@@ -388,9 +390,10 @@ impl Cells {
     }
 
     /// The most points of `wanted` whose values stay within [`MAX_WORDS`]: the attributes made
-    /// of them, and the cells themselves while the file is read.
+    /// of them, and the cells themselves (two words each) while the file is read.
     fn fit(&self, wanted: usize) -> usize {
-        wanted.min(MAX_WORDS / self.words.max(self.width).max(1))
+        let per_point = self.words.max(self.width.saturating_mul(2)).max(1);
+        wanted.min(MAX_WORDS / per_point)
     }
 
     fn reserve(&mut self, points: usize) {
@@ -404,7 +407,7 @@ impl Cells {
 
     /// Starts the next point, every value missing.
     fn row(&mut self) {
-        self.values.extend(std::iter::repeat_n(f32::NAN, self.width));
+        self.values.extend(std::iter::repeat_n(f64::NAN, self.width));
         self.count += 1;
     }
 
@@ -413,7 +416,7 @@ impl Cells {
         let Some(Some(k)) = self.at.get(i) else { return };
         let Some(base) = self.values.len().checked_sub(self.width) else { return };
         if let Some(slot) = self.values.get_mut(base + k) {
-            *slot = v as f32;
+            *slot = v;
         }
     }
 
@@ -421,7 +424,7 @@ impl Cells {
     fn get(&self, i: usize, p: usize) -> Option<f64> {
         let k = (*self.at.get(i)?)?;
         let v = *self.values.get(p.checked_mul(self.width)?.checked_add(k)?)?;
-        (!v.is_nan()).then_some(f64::from(v))
+        (!v.is_nan()).then_some(v)
     }
 
     fn count(&self) -> usize {
@@ -752,7 +755,7 @@ mod tests {
             let mut cells = Cells::new(&plan, MAX_PROPERTIES);
             let n = cells.fit(MAX_POINTS);
             cells.reserve(n);
-            let bytes = cells.values.capacity() * std::mem::size_of::<f32>();
+            let bytes = cells.values.capacity() * std::mem::size_of::<f64>();
             assert!(bytes <= MAX_WORDS * 4, "{n} points of {} cells: {bytes} bytes", cells.width);
             assert!(plan.warnings.iter().any(|w| w.contains("1024 columns")), "{:?}", plan.warnings);
         }
@@ -767,5 +770,15 @@ mod tests {
         assert_eq!(c.count, 1);
         assert_eq!(floats(col(&c, "position"))[0], (MAX_PROPERTIES - 1) as f32, "the last column");
         assert!(c.warnings.iter().any(|w| w.contains("the last of them")), "{:?}", c.warnings);
+    }
+
+    /// Whole numbers past 2^24, where a float loses the last digits, come through exact.
+    #[test]
+    fn large_ids_from_a_file_stay_exact() {
+        let c = text(b"x,id\n0,16777217\n0,4000000001\n").unwrap();
+        assert_eq!(col(&c, "id").words, [16_777_217, 4_000_000_001]);
+        let c = ply(b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty uint id\nend_header\n0 4000000001\n")
+            .unwrap();
+        assert_eq!(col(&c, "id").words, [4_000_000_001]);
     }
 }
