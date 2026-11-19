@@ -625,6 +625,13 @@ fn main() {
             &[("shape", "sphere".into()), ("count", Value::Int(64))],
         ),
     ];
+    std::fs::write(
+        dir.join("cloud.xyz"),
+        "0 0 0
+1 0 0 255 0 0
+",
+    )
+    .unwrap();
     let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
     std::fs::write(dir.join("box.obj"), penumbra_mesh::write::to_obj(&cube, None)).unwrap();
     std::fs::write(dir.join("poster.psd"), layers::psd()).unwrap();
@@ -676,6 +683,7 @@ fn main() {
             "tex.face_content" => params.push(("face", "1".into())),
             "tex.shader" => params.push(("file", "rings.wgsl".into())),
             "pts.shader" => params.push(("file", "lift.wgsl".into())),
+            "pts.file" => params.push(("file", "cloud.xyz".into())),
             "tex.video_file" => params.push(("file", "bars.mp4".into())),
             "audio.file" => params.push(("file", "tone.wav".into())),
             "tex.noise" => params.push(("speed", Value::Float(0.5))),
@@ -1203,6 +1211,13 @@ fn files_load_once_the_gpu_arrives() {
     let Some(gpu) = gpu() else { return };
     let dir = scratch("late_gpu");
     write_png16(&dir.join("ramp.png"));
+    std::fs::write(
+        dir.join("cloud.xyz"),
+        "0 0 0
+1 0 0 255 0 0
+",
+    )
+    .unwrap();
     let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
     std::fs::write(dir.join("box.obj"), penumbra_mesh::write::to_obj(&cube, None)).unwrap();
     let types = Arc::new(builtin_types().unwrap());

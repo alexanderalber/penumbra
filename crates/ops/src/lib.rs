@@ -246,6 +246,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
             "planar",
         ],
     ),
+    ("pts.file", &["point file in pop", "point cloud", "scan", "lidar", "photogrammetry"]),
     ("pts.from_chan", &["chop to pop", "channels to points", "spectrum", "blobs"]),
     (
         "pts.from_geo",
