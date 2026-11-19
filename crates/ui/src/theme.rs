@@ -114,8 +114,8 @@ pub fn kind_color(kind: DataKind) -> Color32 {
         DataKind::Vol => Color32::from_rgb(150, 165, 190),
         // Brick red: away from geo's orange and mat's pink, the two kinds its nodes sit between.
         DataKind::Bodies => Color32::from_rgb(210, 100, 75),
-        // Lime: between chan's green and light's yellow, brighter and more saturated than both.
-        DataKind::Pts => Color32::from_rgb(180, 235, 60),
+        // Petrol: between chan's green and audio's cyan, darker than chan, which pts sits beside most.
+        DataKind::Pts => Color32::from_rgb(40, 200, 165),
     }
 }
 
