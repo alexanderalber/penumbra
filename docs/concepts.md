@@ -98,7 +98,7 @@ kind, and the wire takes that kind's colour:
 | `light` | yellow | one or more lights | `light` |
 | `view` | silver | one camera | `view` |
 | `vol` | grey-blue | a volume: a grid of cells filling a box in space, on the GPU | `vol` |
-| `pts` | lime | points on the GPU: a list of attributes (position, colour, scale, ...) with a value per point | `pts` |
+| `pts` | petrol | points on the GPU: a list of attributes (position, colour, scale, ...) with a value per point | `pts` |
 | `bodies` | brick red | one group of rigid bodies: their starts, their model, what they collide as and what they are made of | `physics` |
 
 Some nodes take any number of inputs of one kind: `tex.composite`, `tex.switch`,
