@@ -176,7 +176,9 @@ impl Operator for Trail {
             && !cx.inputs_changed()
             && !cx.first_cook()
         {
-            // The show stands still: so do the trails.
+            // The show stands still: so do the trails. The cook replaces the warning, so the
+            // last step's is said again, with what its readbacks brought in since.
+            self.speak(cx, input, &Settings { len, max, key, shift: false, attrs });
             return Ok(Cooked::Unchanged);
         }
         // Time moves: a step, which keeps a place every `every` of them. Time that stands

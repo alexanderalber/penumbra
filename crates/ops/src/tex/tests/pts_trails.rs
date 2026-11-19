@@ -691,3 +691,38 @@ fn nodes_that_keep_count_and_order_keep_the_lines() {
     rig.edit(&[set("/ring.distribution", "random".into())]);
     assert_eq!(points(&mut rig, "/ring").strips(), Strips::None);
 }
+
+/// While the show stands still, a trail that warned keeps its warning: the readback of its step
+/// wakes it, and the cook that follows says again what the step left out.
+#[test]
+fn a_paused_trail_keeps_its_warning() {
+    use super::pts_near::idle;
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create(
+            "/src",
+            "pts.generate",
+            &[("shape", "line".into()), ("count", Value::Int(1)), ("size", Value::Vec3([0.0; 3]))],
+        ),
+        create("/p", crate::pts::particles::KIND, &[("max", Value::Int(40_000))]),
+        connect("/src", "/p", 0),
+        create("/trail", TRAIL, &[("length", Value::Int(1024))]),
+        connect("/p", "/trail", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    rig.clock.advance(1);
+    rig.cook("/trail");
+    let s = rig.cooker.status(rig.id("/trail")).unwrap();
+    assert!(s.warning.as_deref().is_some_and(|w| w.contains("MB")), "{:?}", s.warning);
+    let stepped = s.stats.cooks;
+    // Time stands; the GPU catches up and the readback wakes the node.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let (mut warning, mut cooks) = (s.warning, stepped);
+    while cooks == stepped && std::time::Instant::now() < deadline {
+        (warning, cooks) = idle(&mut rig, "/trail", 1);
+    }
+    assert!(cooks > stepped, "the readback never woke the trail");
+    assert!(warning.as_deref().is_some_and(|w| w.contains("MB")), "woken while paused: {warning:?}");
+    let (warning, _) = idle(&mut rig, "/trail", 5);
+    assert!(warning.as_deref().is_some_and(|w| w.contains("MB")), "paused: {warning:?}");
+}
