@@ -2517,7 +2517,7 @@ Inputs:
 
 Outputs:
 
-- `out` (pts): Every input's points one after the other. An attribute two inputs give different types is an error. A count kept on the GPU (after pts.delete, from pts.particles) stays there. Lines stay where every input has the same lines; rows and columns of a grid go
+- `out` (pts): Every input's points one after the other. An attribute two inputs give different types is an error. A count kept on the GPU (after pts.delete, from pts.particles) stays there. Lines stay where every input has the same lines; rows and columns of a grid go. Where every input has an `id` of whole numbers (particle systems, which each count from 0), the ids of the second input are moved up by half of their range, and so on, so they stay apart and rise along the list as pts.trail needs; random numbers keyed by id change with them
 
 ### pts.neighbor
 
@@ -2529,14 +2529,14 @@ Inputs:
 
 Outputs:
 
-- `out` (pts): The points with `neighbors` (how many lie within `distance`), `cohesion` (from the point to the mean position of its neighbours, 0 without any), `separation` (away from the neighbours nearer than `separation`: each pushes along the line between the two, 1 at no distance down to 0 at `separation`) and `near_<name>` (the mean of `average`)
+- `out` (pts): The points with `neighbors` (how many lie within `distance`), `cohesion` (from the point to the mean position of its neighbours, 0 without any), `separation` (away from the neighbours nearer than `separation`: each pushes along the line between the two, 1 at no distance down to 0 at `separation`; two points on top of each other push each other opposite ways) and `near_<name>` (the mean of `average`)
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `distance` | float | `0.1` | 0.001 to 1 (soft, held within 0.000001 to 10000) | How far a point looks for neighbours, in metres |
+| `distance` | float | `0.15` | 0.001 to 1 (soft, held within 0.000001 to 10000) | How far a point looks for neighbours, in metres |
 | `separation` | float | `0.05` | 0 to 1 (soft, held within 0 to 10000) | Neighbours nearer than this, in metres, push the point away: the `separation` attribute. 0: no push. Beyond `distance` it acts as `distance` |
 | `average` | text | `"velocity"` |  | An attribute averaged over the neighbours into `near_<name>`: velocity for a flock that flies alike, color to blur colours. Empty: none. A point without neighbours keeps its own value |
-| `max_per_cell` *(more)* | int | `64` | 8 to 1024 (soft, held within 1 to 4096) | The search cuts space into cubes as wide as `distance`. A point looks at no more than this many points of each cube around it: a dense clump costs no more than that. The node warns when points are left out |
+| `max_per_cell` *(more)* | int | `64` | 8 to 1024 (soft, held within 1 to 4096) | The search cuts space into cubes as wide as `distance`. A point looks at no more than this many points of each cube around it: a dense clump costs no more than that. The node warns when points are left out. Many points lower it, so a frame stays short: to 795 for 100 000 points, 79 for a million, with a warning |
 
 ### pts.noise
 
@@ -2630,7 +2630,7 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `distance` | float | `0.1` | 0.001 to 1 (soft, held within 0.000001 to 10000) | The longest line, in metres: points farther apart are not joined |
+| `distance` | float | `0.15` | 0.001 to 1 (soft, held within 0.000001 to 10000) | The longest line, in metres: points farther apart are not joined |
 | `min_distance` | float | `0` | 0 to 1 (soft, held within 0 to 10000) | The shortest line, in metres: points nearer than this are not joined |
 | `max_lines` | int | `4` | 1 to 12 (soft, held within 1 to 32) | Lines each point starts, at most. A point that other points choose can end up with more lines |
 | `choose` | nearest \| random | `"nearest"` |  | Which neighbours a point joins when more than `max_lines` are within `distance`; nearest: the nearest ones. A line can switch to another neighbour when two distances change order; random: a random few, by a number each pair keeps while both points exist: lines change only as points come within `distance` or leave it. Points with an `id` (particles) keep their numbers by id |
@@ -2638,7 +2638,7 @@ Outputs:
 | `duplicates` *(more)* | bool | `false` |  | Two points that choose each other get two lines, one from each. Off: one line. Two lines on top of each other look brighter with additive blending |
 | `max` *(more)* | int | `1000000` | 1000 to 10000000 (soft, held within 1 to 67108864) | The most lines. Lines past this many are left out, the lines of the last points first. Memory: about 100 bytes a line with the default attributes |
 | `attributes` *(more)* | text | `"color width"` |  | Attributes each end of a line takes from its point besides position, separated by spaces. The ones the points lack are left out |
-| `max_per_cell` *(more)* | int | `64` | 8 to 1024 (soft, held within 1 to 4096) | The search cuts space into cubes as wide as `distance`. A point looks at no more than this many points of each cube around it: a dense clump costs no more than that. The node warns when points are left out |
+| `max_per_cell` *(more)* | int | `64` | 8 to 1024 (soft, held within 1 to 4096) | The search cuts space into cubes as wide as `distance`. A point looks at no more than this many points of each cube around it: a dense clump costs no more than that. The node warns when points are left out. Many points lower it, so a frame stays short: to 795 for 100 000 points, 79 for a million, with a warning |
 
 ### pts.random
 
@@ -2720,7 +2720,7 @@ Outputs:
 | `every` | int | `1` | 1 to 30 (soft, held within 1 to 1000) | Frames between two places kept. 2 keeps every second frame: a trail twice as long for the same `length`. The head follows the point every frame |
 | `match` *(more)* | text | `"id"` |  | The attribute that tells a point from frame to frame, as pts.particles gives `id`. Points without it keep their trail by their place in the list: right for a set whose points stay in order |
 | `attributes` *(more)* | text | `"color width scale"` |  | Attributes the trail carries besides position, separated by spaces: each place keeps the value the point had then. The ones the points lack are left out |
-| `max` *(more)* | int | `100000` | 1 to 1000000 (soft, held within 1 to 67108864) | The most trails: points past this many have none. The trails take `max` times `length` points of memory |
+| `max` *(more)* | int | `100000` | 1 to 1000000 (soft, held within 1 to 67108864) | The most trails: points past this many have none. Memory: the trails are sized for as many points as the input may hold (a particle node's `max`) up to this many, times `length`, times the attributes carried, twice. Too many for memory: fewer points get a trail, with a warning |
 | `reset` | bool | `false` |  | Trails start over at every frame while on: each a single place |
 
 ### pts.transform
