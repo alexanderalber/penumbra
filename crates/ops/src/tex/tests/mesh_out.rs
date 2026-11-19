@@ -236,3 +236,31 @@ fn round_sprites_go_into_the_file_as_discs() {
     let b = Bounds::of(m.vertices.iter().map(|v| v.position)).unwrap();
     assert!(close(b.min, [-1.25, 0.0, -0.25]) && close(b.max, [1.25, 0.0, 0.25]), "{b:?}");
 }
+
+/// Lines have no shape a file holds yet: they are left out with a word, and the rest is
+/// written.
+#[test]
+fn lines_are_left_out_of_the_file_with_a_word() {
+    let dir = scratch("mesh-out-lines");
+    let ops = vec![
+        create(
+            "/line",
+            "pts.generate",
+            &[("shape", "line".into()), ("count", Value::Int(2)), ("size", Value::Vec3([2.0, 0.0, 0.0]))],
+        ),
+        create("/ribbon", "geo.from_pts", &[("mode", "lines".into()), ("width", Value::Float(0.1))]),
+        connect("/line", "/ribbon", 0),
+        create("/dots", "geo.from_pts", &[("size", Value::Float(0.5))]),
+        connect("/line", "/dots", 0),
+        create("/both", "geo.merge", &[]),
+        connect("/ribbon", "/both", 0),
+        connect("/dots", "/both", 1),
+        create("/w", "out.mesh", &[("file", "both.obj".into())]),
+        connect("/both", "/w", 0),
+    ];
+    let Some((mut rig, outs)) = rig_with_outs(&ops, dir.path()) else { return };
+    let m = written(&mut rig, &outs, &dir.join("both.obj"), &[]);
+    assert_eq!(m.triangle_count(), 2 * 16, "the two discs only");
+    let s = rig.cooker.status(rig.id("/w")).unwrap();
+    assert!(s.warning.as_deref().is_some_and(|w| w.contains("lines")), "{:?}", s.warning);
+}
