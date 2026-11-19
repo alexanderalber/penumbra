@@ -354,3 +354,31 @@ fn a_probe_reads_the_first_values_and_sums_up_all() {
     assert!(probe.fill(&gpu, &p, Ask { name: "nothing", first: 1, summary: false }).is_err());
     assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
 }
+
+/// Particle ids that already lie in their input's band stay as they are: points that come round
+/// a feedback loop into a later input of a merge keep their ids frame after frame, where adding
+/// the band again moved them every frame. Ids from 0, as a particle system counts, still move up
+/// into the band.
+#[test]
+fn merged_ids_already_in_their_band_stay() {
+    let Some(gpu) = gpu() else { return };
+    let ids = |values: &[u32]| {
+        let b = Buffer::of::<u32>(&gpu, values.len() as u64, "ids").unwrap();
+        b.write(&gpu, 0, values).unwrap();
+        let n = values.len() as u32;
+        Points::new(n, n, vec![Attr::new("id", AttrType::U32, b).unwrap()]).unwrap()
+    };
+    let half = 1u32 << 31;
+    let new = ids(&[0, 1]);
+    let mut merger = merge::Merger::new();
+    // The first frame: two systems that count from 0.
+    let first = merger.merge(&gpu, &[(0, &new), (1, &ids(&[0, 1]))]).unwrap();
+    let read = |p: &Points| p.attr("id").unwrap().buffer().read::<u32>(&gpu).unwrap()[..4].to_vec();
+    assert_eq!(read(&first), [0, 1, half, half + 1]);
+    // What came round goes into the second input again: its banded ids do not move.
+    let fed = ids(&[half, half + 1, half + 7]);
+    let again = merger.merge(&gpu, &[(0, &ids(&[2, 3])), (1, &fed)]).unwrap();
+    let got = again.attr("id").unwrap().buffer().read::<u32>(&gpu).unwrap()[..5].to_vec();
+    assert_eq!(got, [2, 3, half, half + 1, half + 7]);
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}
