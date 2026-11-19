@@ -83,7 +83,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::choice("blend", &BLENDS)
                 .doc("How the copies meet what lies behind them")
                 .choice_doc("over", "they cover it, as any surface: opaque where the colour is, see-through where its alpha or a soft edge says")
-                .choice_doc("add", "their colour is added to it, so overlapping sprites or lines grow brighter: glow, sparks, light trails. Drawn after everything else, hidden by what stands in front, casting no shadow"),
+                .choice_doc("add", "their colour is added to it, so overlapping sprites or lines grow brighter: glow, sparks, light trails. Drawn after everything else, hidden by what stands in front, casting no shadow. They cover nothing: the render stays see-through there, and tex.composite over a picture adds their light to it"),
         )
         .param(
             ParamSpec::float("scale", 1.0)

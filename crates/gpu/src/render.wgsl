@@ -1115,7 +1115,7 @@ fn fs_blend(v: VOut) -> Colour {
 }
 
 // The colour pass's copies that add their colour to what lies behind them, after everything
-// else: their premultiplied colour is added, their alpha laid over (render::Pass::Add).
+// else: their premultiplied colour is added, the alpha behind them stays (render::Pass::Add).
 @fragment
 fn fs_add(v: VOut) -> Colour {
     let line = coverage(v);
