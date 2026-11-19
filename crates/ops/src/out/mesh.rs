@@ -337,9 +337,15 @@ struct Sizes {
     skipped: usize,
 }
 
+/// Whether `item` is lines between points (`geo.from_pts` in lines mode): ribbons the renderer
+/// builds facing the camera, which a file has no shape for yet. They are left out.
+fn lines(item: &penumbra_gpu::geo::Item) -> bool {
+    item.instances.as_ref().is_some_and(|i| i.lines.is_some())
+}
+
 fn sizes(geo: &Geo, expand: bool) -> Sizes {
     let mut s = Sizes::default();
-    for item in &geo.items {
+    for item in geo.items.iter().filter(|i| !lines(i)) {
         let mesh = &item.model.mesh;
         let n = item.copies();
         let written = if expand { n } else { 1 };
@@ -633,6 +639,7 @@ impl MeshOut {
         let pieces = geo
             .items
             .iter()
+            .filter(|i| !lines(i))
             .map(|i| Piece {
                 model: i.model.clone(),
                 world: i.world,
@@ -813,6 +820,14 @@ impl Operator for MeshOut {
                 }
             }
             _ => {}
+        }
+        if let Some(geo) = cx.input_as::<Geo>(0) {
+            let n = geo.items.iter().filter(|i| lines(i)).count();
+            if n > 0 {
+                cx.warn(format!(
+                    "{n} items of lines (geo.from_pts in lines mode) are left out: a file holds no lines yet"
+                ));
+            }
         }
         if self.left_out > 0 {
             cx.warn(format!("{} copies left out: their place is not a finite number", self.left_out));
