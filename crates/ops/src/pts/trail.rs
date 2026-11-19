@@ -13,7 +13,7 @@
 
 use penumbra_core::{Curve, Error, ParamSpec, Tick};
 use penumbra_gpu::points::trail::{self, Key, Settings, Trailer};
-use penumbra_gpu::points::{AttrType, Points, canonical, most_elements};
+use penumbra_gpu::points::{Points, canonical};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
@@ -71,7 +71,7 @@ fn desc() -> NodeDesc {
             .clamp(1.0, 64.0 * 1024.0 * 1024.0)
             .range(1.0, 1_000_000.0)
             .curve(Curve::Log)
-            .doc("The most trails: points past this many have none. The trails take `max` times `length` points of memory")
+            .doc("The most trails: points past this many have none. Memory: the trails are sized for as many points as the input may hold (a particle node's `max`) up to this many, times `length`, times the attributes carried, twice. Too many for memory: fewer points get a trail, with a warning")
             .more(),
     )
     .param(ParamSpec::bool("reset", false).doc("Trails start over at every frame while on: each a single place"))
@@ -92,6 +92,19 @@ struct Trail {
     /// Steps taken since the start, for `every`.
     steps: u64,
     last: Option<Tick>,
+}
+
+impl Trail {
+    /// What the step left out, in words: points past `max`, or past what memory allows.
+    fn speak(&self, cx: &CookContext<'_>, input: &Points, max: u32) {
+        if let Some(why) = self.trailer.cut() {
+            cx.warn(why);
+        } else if let Some(n) = input.count().seen().filter(|n| *n > max) {
+            cx.warn(format!(
+                "{n} points and `max` keeps {max} trails: the points past it have none. Raise `max`"
+            ));
+        }
+    }
 }
 
 impl Operator for Trail {
@@ -117,8 +130,7 @@ impl Operator for Trail {
         let dt = step(now.tick, self.last, period);
         let len = u32::try_from(cx.int("length")?.clamp(2, i64::from(MAX_LENGTH))).unwrap_or(16);
         let every = u64::try_from(cx.int("every")?.max(1)).unwrap_or(1);
-        let most = i64::from(most_elements(gpu, AttrType::Vec4) / len);
-        let max = u32::try_from(cx.int("max")?.clamp(1, most.max(1))).unwrap_or(DEFAULT_MAX);
+        let max = u32::try_from(cx.int("max")?.clamp(1, i64::from(u32::MAX))).unwrap_or(DEFAULT_MAX);
         let wanted = canonical(cx.text("match")?).to_string();
         let key =
             if !wanted.is_empty() && input.attr(&wanted).is_some() { Key::Attr(wanted) } else { Key::Index };
@@ -135,6 +147,7 @@ impl Operator for Trail {
             self.last = Some(now.tick);
             let set = Settings { len, max, key, shift: true, attrs };
             let out = self.trailer.step(gpu, input, None, &set)?;
+            self.speak(cx, input, max);
             return Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out)]));
         }
         if dt == 0.0
@@ -152,6 +165,7 @@ impl Operator for Trail {
         let shift = dt > 0.0 && (steps - 1).is_multiple_of(every);
         let set = Settings { len, max, key, shift, attrs };
         let out = self.trailer.step(gpu, input, self.before.as_ref(), &set)?;
+        self.speak(cx, input, max);
         self.steps = steps;
         self.last = Some(now.tick);
         self.before = Some(out.clone());
