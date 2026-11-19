@@ -1653,7 +1653,7 @@ Outputs: `out` (chan).
 
 ### chan.from_pts
 
-Numbers about points as channels: how many there are (count) and how many there may be (capacity). A count the GPU keeps, as after pts.delete, arrives a frame late
+Numbers about points as channels: how many there are (count) and may be (capacity), and an attribute's values at the first points and its mean, minimum and maximum over all of them. What the GPU keeps arrives a frame late
 
 Inputs:
 
@@ -1661,7 +1661,13 @@ Inputs:
 
 Outputs:
 
-- `out` (chan): `count`: the points there are. `capacity`: how many the buffers hold. A count kept on the GPU follows a frame or two late
+- `out` (chan): `count`: the points there are. `capacity`: how many the buffers hold. With an attribute: its values and summary, one sample each. Components are named tx ty tz for position, nx ny nz for normal, r g b a for colour, u v for uv, <name>_x and so on for others; a one-number attribute by its name. What comes from the GPU follows a frame or two late
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `attribute` | text |  |  | An attribute to read, such as `position`, `color` or `age` (P, Color and other TouchDesigner names work). Empty: only count and capacity |
+| `points` | int | `1` | 0 to 64 (soft, held within 0 to 1000) | With an attribute: how many of the first points give their values, a channel per point and component: tx0 ty0 tz0 for the first point's position, r0 g0 b0 a0 for its colour. At most 1000 |
+| `summary` | bool | `true` |  | With an attribute: its mean, minimum and maximum over all points, per component: tx_mean, tx_min, tx_max. Worked out on the GPU, so a million points cost little. As TouchDesigner's Analyze POP |
 
 ### chan.from_table
 
@@ -2174,7 +2180,7 @@ Outputs: `out` (audio).
 
 ## table
 
-[table.file](#tablefile), [table.from_chan](#tablefrom_chan), [table.null](#tablenull), [table.text](#tabletext)
+[table.file](#tablefile), [table.from_chan](#tablefrom_chan), [table.from_pts](#tablefrom_pts), [table.null](#tablenull), [table.text](#tabletext)
 
 ### table.file
 
@@ -2207,6 +2213,23 @@ Outputs:
 | `names` | bool | `true` |  | On, the first cell of each column (or row) is the channel's name, as most nodes that read a table expect; off, every cell is a value |
 | `keep` | text |  |  | The name of a column. Rows with 0 in it are left out, and the rows after them move up: `id` leaves out the slots of a tex.blob_track that hold no blob. Empty: every row stays. Does something only with layout numbered. |
 
+### table.from_pts
+
+The first points as rows of a table, a column per number of each attribute: to look at what the points hold. Read back from the GPU a frame late
+
+Inputs:
+
+- `in` (pts)
+
+Outputs:
+
+- `out` (table): The first row names the columns: tx ty tz for position, nx ny nz for normal, r g b a for colour, u v for uv, <name>_x and so on for others, a one-number attribute by its name. Then one row per point, in order. pts.from_table reads it back
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `points` | int | `100` | 1 to 10000 (soft, held within 1 to 1048576) | How many of the first points become rows. A table holds at most 1 048 576 cells, so with many columns fewer rows fit |
+| `attributes` | text |  |  | The attributes to show, separated by spaces (TouchDesigner names work). Empty: all of them |
+
 ### table.null
 
 Passes its input on unchanged: a fixed point to refer to while the chain before it changes
@@ -2232,7 +2255,7 @@ Outputs: `out` (table).
 
 ## pts
 
-[pts.delete](#ptsdelete), [pts.feedback](#ptsfeedback), [pts.field](#ptsfield), [pts.force](#ptsforce), [pts.from_tex](#ptsfrom_tex), [pts.generate](#ptsgenerate), [pts.lookup_tex](#ptslookup_tex), [pts.math](#ptsmath), [pts.neighbor](#ptsneighbor), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.particles](#ptsparticles), [pts.proximity](#ptsproximity), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.trail](#ptstrail), [pts.transform](#ptstransform)
+[pts.delete](#ptsdelete), [pts.feedback](#ptsfeedback), [pts.field](#ptsfield), [pts.file](#ptsfile), [pts.force](#ptsforce), [pts.from_chan](#ptsfrom_chan), [pts.from_geo](#ptsfrom_geo), [pts.from_table](#ptsfrom_table), [pts.from_tex](#ptsfrom_tex), [pts.generate](#ptsgenerate), [pts.lookup_tex](#ptslookup_tex), [pts.math](#ptsmath), [pts.merge](#ptsmerge), [pts.neighbor](#ptsneighbor), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.particles](#ptsparticles), [pts.proximity](#ptsproximity), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.switch](#ptsswitch), [pts.trail](#ptstrail), [pts.transform](#ptstransform)
 
 ### pts.delete
 
@@ -2307,6 +2330,20 @@ Outputs:
 | `attribute` *(more)* | text | `"weight"` |  | The attribute the weight goes into, TouchDesigner's names too (Weight) |
 | `distance` *(more)* | text |  |  | Also writes each point's distance from the shape's edge into this attribute, in metres: negative inside. Empty: none |
 
+### pts.file
+
+A point cloud from a file: .ply from a scanner or a 3D program, or .xyz and .csv text with a column per number. Updates when the file is saved
+
+Inputs: none.
+
+Outputs:
+
+- `out` (pts): One point per vertex or line, in the file's order. Colours stored as bytes (0 to 255) are taken as sRGB and made linear, as penumbra's colours are. Exact bounds
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `file` | file (ply, xyz, csv, txt, pts) |  |  | The file, relative to the project directory. .ply: ASCII or binary little endian; x y z place the points, nx ny nz, red green blue (alpha) and every other number of a vertex become attributes. .xyz, .csv, .txt, .pts: a number per column, split at commas, spaces, tabs or semicolons; a first line of names says what each column is (x y z, r g b, nx ny nz, any name), without one the columns are x y z and then r g b |
+
 ### pts.force
 
 A push on every point, added to its force: towards a point or away, towards a line, around a line, one way for all, or wind. For the loop of pts.particles
@@ -2330,6 +2367,44 @@ Outputs:
 | `radius` | float | `1` | 0.01 to 10 (soft, held within 0.000001 to 1000000) | The distance the falloff is measured in, in metres. Does something only with falloff linear, smooth or inverse_square. |
 | `mask` | text | `"weight"` |  | The force is multiplied by this attribute of each point: `weight` follows a pts.field. Points without it count as 1. Empty: no mask |
 | `attribute` *(more)* | text | `"force"` |  | The attribute the force is added to. velocity changes the speed at once, by this much at every step; wind then moves the speed at most all the way to the wind's |
+
+### pts.from_chan
+
+Points from channels: each sample is a point, each channel one of its numbers, by the channel's name. An audio spectrum, tracked blobs or a few typed values as points
+
+Inputs:
+
+- `in` (chan): x y z, tx ty tz or px py pz place the points; r g b a colour them; nx ny nz, u v and any attribute's <name>_x, <name>.x, <name>(0) set the others; a plain name makes a one-number attribute. Without a position the points lie along x from 0 to 1
+
+Outputs: `out` (pts).
+
+### pts.from_geo
+
+Points from geometry: a point at every vertex of a mesh, or points scattered evenly over its surface. To emit particles from a model or a text, or to draw a model as dots
+
+Inputs:
+
+- `in` (geo): The geometry, as tex.render would place it: each item's placement is applied. Items drawn as instances are left out
+
+Outputs:
+
+- `out` (pts): `position`, `normal` and `uv` in world space; `color` from the material where the geometry has one that is not plain white. Exact bounds
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `mode` | vertices \| surface | `"vertices"` |  | Where the points come from; vertices: one point at each vertex as the mesh stores it: a corner shared by faces of different normals is there once per face (a box has 24). As TouchDesigner's SOP to POP; surface: `count` points spread at random over the triangles, evenly by area, with the surface's normal and texture coordinates there. As TouchDesigner's Sprinkle POP |
+| `count` | int | `10000` | 100 to 1000000 (soft, held within 1 to 4194304) | surface: how many points. Does something only with mode surface. |
+| `seed` | int | `0` | 0 to 1000000000 | surface: another seed gives other places; the same seed the same ones. Does something only with mode surface. |
+
+### pts.from_table
+
+Points from a table: each row after the first is a point, each column one of its numbers, by the name in the first row. Typed coordinates or a list from a file as points
+
+Inputs:
+
+- `in` (table): x y z, tx ty tz or px py pz place the points; r g b a colour them; nx ny nz, u v and any attribute's <name>_x, <name>.x, <name>(0) set the others; a plain name makes a one-number attribute. Without a position the points lie along x from 0 to 1
+
+Outputs: `out` (pts).
 
 ### pts.from_tex
 
@@ -2431,6 +2506,18 @@ Outputs:
 | `b` *(more)* | float | `0` | -1 to 1 (soft) | A number the expression reads as b |
 | `c` *(more)* | float | `0` | -1 to 1 (soft) | A number the expression reads as c |
 | `d` *(more)* | float | `0` | -1 to 1 (soft) | A number the expression reads as d |
+
+### pts.merge
+
+Puts several sets of points into one: the points of the first input, then those of the second, and so on. Each attribute any input has is there; an input without it gives its points the default
+
+Inputs:
+
+- `in0 .. in63` (pts): The sets of points, in order. Any number, up to 64: each one wired adds a free slot below it
+
+Outputs:
+
+- `out` (pts): Every input's points one after the other. An attribute two inputs give different types is an error. A count kept on the GPU (after pts.delete, from pts.particles) stays there. Lines stay where every input has the same lines; rows and columns of a grid go
 
 ### pts.neighbor
 
@@ -2598,6 +2685,21 @@ Outputs:
 |---|---|---|---|---|
 | `file` | file (wgsl) |  |  | The WGSL file, relative to the project directory; saving it reloads the node. `// @write position` lines name the attributes, `fn main()` runs once per point. `// @neighbors 0.2` lets it walk the points within 0.2 m of each point |
 
+### pts.switch
+
+Chooses which of its sets of points goes out, as they are: cut between shapes or looks
+
+Inputs:
+
+- `in0 .. in63` (pts): The sets of points to choose from. Any number, up to 64: each one wired adds a free slot below it
+
+Outputs: `out` (pts).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `index` | int | `0` | 0 to 7 (soft, held within 0 to 63) | Which input goes out: the wired inputs counted from 0, gaps skipped. Past the last: the last. Bind a channel to it to switch from the network |
+| `inactive` | cook \| skip | `"cook"` |  | Whether the chains not chosen keep running (switching is instant) or pause (they cost nothing); cook: their chains keep cooking as if chosen; skip: only the chosen input's chain cooks; the others stand still. A particle system in a skipped chain carries on from where it stopped when it is chosen again |
+
 ### pts.trail
 
 A trail behind every point: a line through the places it had over the last frames, newest first. geo.from_pts draws it in lines mode
@@ -2701,6 +2803,8 @@ Outputs: `out` (geo).
 | `mode` | sprites \| copies \| lines | `"sprites"` |  | What stands at each point; sprites: a flat disc or square that always faces the camera; copies: a copy of the geometry on the `model` input; lines: a ribbon facing the camera from each point to the next along the points' lines (a trail, a generated line or circle). Points without lines make one line in their order |
 | `size` | float | `0.02` | 0.001 to 1 (soft, held within 0 to 10000) | sprites: the width of each sprite in metres, times the point's `scale`. Does something only with mode sprites. |
 | `sprite` | disc \| square | `"disc"` |  | sprites: the sprite's outline; disc: a round disc, as wide as `size`; square: a square of side `size`. Does something only with mode sprites. |
+| `softness` | float | `0` | 0 to 1 (soft) | sprites: how far in from the outline each sprite fades out. 0 is a hard edge. 1 fades all the way from the centre: a soft glowing dot, as a point sprite with a falloff texture in TouchDesigner. A soft edge is see-through, so it costs a second draw. Does something only with mode sprites. |
+| `blend` | over \| add | `"over"` |  | How the copies meet what lies behind them; over: they cover it, as any surface: opaque where the colour is, see-through where its alpha or a soft edge says; add: their colour is added to it, so overlapping sprites or lines grow brighter: glow, sparks, light trails. Drawn after everything else, hidden by what stands in front, casting no shadow |
 | `scale` | float | `1` | 0.01 to 10 (soft, held within 0 to 1000000) | copies: multiplies the model's size at every point, times the point's `scale`. Does something only with mode copies. |
 | `width` | float | `0.01` | 0.0005 to 0.5 (soft, held within 0 to 10000) | lines: the width of the ribbons in metres, times the points' `width` (LineWidth in TouchDesigner), blended between the two ends of each segment. Does something only with mode lines. |
 | `orient` | none \| normal | `"none"` |  | copies: how each copy is turned; none: every copy keeps the model's own turn; normal: each copy turns its +y to the point's `normal`, keeping +z up as far as it can. Does something only with mode copies. |
