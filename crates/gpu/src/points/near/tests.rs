@@ -11,8 +11,8 @@ use crate::testing::gpu;
 const LIST: usize = 48;
 
 /// A program that walks the neighbours of every live point (in index order) and writes how many
-/// it found and the first [`LIST`] of their indices.
-fn walker() -> String {
+/// it found and the first `list` of their indices.
+fn walker(list: usize) -> String {
     format!(
         "{}
 @group(2) @binding(0) var<storage, read> position: array<vec4f>;
@@ -29,8 +29,8 @@ fn walk(@builtin(global_invocation_id) id: vec3u) {{
     var c = 0u;
     var n = near_begin(position[i].xyz, i);
     while near_next(&n) {{
-        if c < {LIST}u {{
-            list[i * {LIST}u + c] = n.index;
+        if c < {list}u {{
+            list[i * {list}u + c] = n.index;
         }}
         c += 1u;
     }}
@@ -41,16 +41,29 @@ fn walk(@builtin(global_invocation_id) id: vec3u) {{
     )
 }
 
-/// What the GPU found per point: the count and the indices listed, sorted.
+/// What the GPU found per point: the count and the first [`LIST`] indices, sorted.
 fn search(gpu: &Gpu, p: &Points, radius: f32, cap: u32) -> (Vec<Vec<u32>>, Vec<u32>, u32) {
+    search_listing(gpu, p, radius, cap, LIST)
+}
+
+/// [`search`] listing `list` neighbours per point: fewer keep the list of many points within the
+/// largest buffer a GPU binds.
+fn search_listing(
+    gpu: &Gpu,
+    p: &Points,
+    radius: f32,
+    cap: u32,
+    list: usize,
+) -> (Vec<Vec<u32>>, Vec<u32>, u32) {
     let mut builder = NearGrid::new();
     let n = p.count().at_most() as usize;
     let Some(near) = builder.build(gpu, p, radius, cap).unwrap() else {
         return (vec![Vec::new(); n], vec![0; n], 0);
     };
-    let program = gpu.cached_compute("near test", &walker(), &[ParamSpec::int("n", 0)]).unwrap();
+    let program = gpu.cached_compute("near test", &walker(list), &[ParamSpec::int("n", 0)]).unwrap();
+    let listed = list;
     let found = Buffer::of::<u32>(gpu, n as u64, "found").unwrap();
-    let list = Buffer::of::<u32>(gpu, (n * LIST) as u64, "list").unwrap();
+    let list = Buffer::of::<u32>(gpu, (n * listed) as u64, "list").unwrap();
     let header = p.count().header_for(gpu).unwrap();
     let param = |name: &str| (name == "n").then_some(Value::Int(n as i64));
     let input = Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
@@ -65,7 +78,7 @@ fn search(gpu: &Gpu, p: &Points, radius: f32, cap: u32) -> (Vec<Vec<u32>>, Vec<u
     let all = list.read::<u32>(gpu).unwrap();
     let lists = (0..n)
         .map(|i| {
-            let mut l: Vec<u32> = all[i * LIST..i * LIST + (counts[i] as usize).min(LIST)].to_vec();
+            let mut l: Vec<u32> = all[i * listed..i * listed + (counts[i] as usize).min(listed)].to_vec();
             l.sort_unstable();
             l
         })
@@ -282,15 +295,18 @@ fn lines_sheets_and_shells_find_every_neighbour() {
     }
 }
 
-/// A picture of a million pixels turned into points on the floor.
+/// A picture of a million pixels turned into points on the floor. Each point has 8 neighbours at
+/// most, so the test lists 12: a list of 48 for a million points would be 192 MB, more than many
+/// GPUs bind at once (128 MiB is common).
 #[test]
 fn a_million_points_on_a_sheet_find_every_neighbour() {
     let Some(gpu) = gpu() else { return };
     let sheet: Vec<[f32; 3]> =
         (0..1000 * 1000).map(|i| [(i % 1000) as f32 * 0.01, (i / 1000) as f32 * 0.01, 0.0]).collect();
     let p = cloud(&gpu, &sheet, sheet.len(), false);
-    let (got, counts, crowded) = search(&gpu, &p, 0.015, 64);
+    let (got, counts, crowded) = search_listing(&gpu, &p, 0.015, 64, 12);
     assert_eq!(crowded, 0);
+    assert!(counts.iter().all(|c| *c <= 8), "a point of the sheet has more than 8 neighbours");
     agrees(&got, &counts, &reference_grid(&sheet, 0.015), "a million");
 }
 
