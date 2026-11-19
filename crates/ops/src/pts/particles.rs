@@ -391,6 +391,9 @@ struct Particles {
     zero: Option<Buffer>,
     /// The warm-up of a new start while it runs over several frames.
     warming: Option<Warming>,
+    /// What the last step said about the loop into `previous`: said again while the show stands
+    /// still, since every cook replaces the warning.
+    said: Option<&'static str>,
 }
 
 /// A warm-up under way: `done` of `steps` steps of `length` seconds.
@@ -734,6 +737,9 @@ impl Operator for Particles {
         let kept = self.sim.as_ref().is_some_and(|s| s.capacity == capacity);
         if dt == 0.0 && kept && !cx.params_changed() && !cx.inputs_changed() && !cx.first_cook() {
             // The show stands still: so do the particles.
+            if let Some(w) = self.said {
+                cx.warn(w);
+            }
             return Ok(Cooked::Unchanged);
         }
         if !kept {
@@ -744,6 +750,7 @@ impl Operator for Particles {
         let previous = cx.input_as::<Points>(1);
         let state: Option<Points>;
         let mut fresh = None;
+        self.said = None;
         match self.sim.as_ref() {
             Some(sim) => {
                 state = Some(match previous {
@@ -752,13 +759,13 @@ impl Operator for Particles {
                         if dt > 0.0
                             && p.count().header().is_some_and(|h| sim.older.iter().any(|o| o.same(h))) =>
                     {
-                        cx.warn(
+                        self.said = Some(
                             "the loop into `previous` did not run at the last step: a node in it is in error or still waiting (for a compile, an input), so it handed back older particles. Stepping on without the loop meanwhile",
                         );
                         sim.out.clone()
                     }
                     Some(_) if dt > 0.0 => {
-                        cx.warn(
+                        self.said = Some(
                             "the points on `previous` are not the particles this node gave out a step ago: a node in the loop changes their number or order (pts.delete does), or they come from elsewhere. Only pts.particles adds and removes particles; set `kill` to end them from the loop. Stepping on without the loop meanwhile",
                         );
                         sim.out.clone()
@@ -801,6 +808,9 @@ impl Operator for Particles {
             }
         }
 
+        if let Some(w) = self.said {
+            cx.warn(w);
+        }
         let (ids, carry, bound) = match (&fresh, &self.sim) {
             (Some((ids, carry, bound)), _) => (ids.clone(), *carry, bound.clone()),
             (None, Some(sim)) => (sim.ids.clone(), sim.carry, sim.bound.clone()),
