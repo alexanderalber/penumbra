@@ -161,7 +161,9 @@ impl Operator for Proximity {
             attrs,
         };
         let out = self.pairer.pairs(gpu, points, &set, Some(wake(cx)))?;
-        if let Some(w) = penumbra_gpu::points::near::lowered(set.cap, points.count().at_most()) {
+        let lowered = penumbra_gpu::points::near::lowered(set.cap, points.count().at_most());
+        let was_lowered = lowered.is_some();
+        if let Some(w) = lowered {
             cx.warn(w);
         }
         if set.min_distance >= set.distance {
@@ -181,8 +183,10 @@ impl Operator for Proximity {
                 ));
             }
             if crowded > 0 {
-                cx.warn(format!(
-                    "{crowded} points crowd their cube beyond `max_per_cell`: no point looks at them, so some lines are missing. Raise `max_per_cell` or lower `distance`"
+                cx.warn(penumbra_gpu::points::near::crowded(
+                    crowded,
+                    "no point looks at them, so some lines are missing",
+                    was_lowered,
                 ));
             }
         }

@@ -549,3 +549,14 @@ fn the_cap_shrinks_so_a_search_stays_short() {
     let few = NearGrid::new().build(&gpu, &cloud(&gpu, &places[..1000], 1000, false), 0.05, MAX_PER_CELL);
     assert_eq!(few.unwrap().unwrap().cap(), MAX_PER_CELL, "few points keep the whole cap");
 }
+
+/// Crowded points: where the cap was lowered for the number of points, a higher `max_per_cell`
+/// changes nothing, and the warning says to lower `distance` only.
+#[test]
+fn crowded_points_name_the_fix_that_helps() {
+    let asked = crowded(12, "some lines are missing", false);
+    assert!(asked.contains("Raise `max_per_cell`"), "{asked}");
+    let capped = crowded(12, "some lines are missing", lowered(MAX_PER_CELL, 1_000_000).is_some());
+    assert!(!capped.contains("Raise"), "{capped}");
+    assert!(capped.contains("Lower `distance`"), "{capped}");
+}
