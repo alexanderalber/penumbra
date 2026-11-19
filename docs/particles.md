@@ -21,6 +21,24 @@ The viewer on `pts.particles` shows how many particles live, a frame late: "1502
 work over the particles covers that many. `max` is the most particles at once. While that many
 live, the births of a step that do not fit are dropped, not saved for later.
 
+### Emit from a model or a text
+
+`pts.from_geo` with `mode` `surface` scatters points evenly over a mesh, each with the surface's
+normal there: wire `geo.text` or `geo.file` into it and it into the particles' `source`. Set
+`along_normal` on the particles to throw them off the surface. The points are where
+`tex.render` would draw the mesh, its placement applied. `count` is how many places there are
+to be born on; `rate` how many are born a second. Several emitters go into one `source`
+through `pts.merge`.
+
+### Soft, glowing particles
+
+`geo.from_pts` draws each particle as a sprite. `softness` 1 fades it from its centre to its
+rim, a soft dot; `blend` `add` adds its colour to what lies behind, so dense places glow
+brighter. That is the usual look for sparks and fire: a `mat.constant` of a dim colour (the
+sprites add up), `softness` 1, `blend` `add`. Added sprites write no depth and cast no shadow.
+A disc costs what a square costs: a million sprites draw in about 2 ms at 1920 x 1080 with 4x
+antialiasing on an RTX 3090, soft and added ones in about 1.2 ms.
+
 ## A force in the loop
 
 Wire the particles into the forces, and the last force into a `pts.null`. Then wire the null

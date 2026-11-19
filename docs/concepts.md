@@ -143,8 +143,9 @@ The families:
   and others. TouchDesigner's attribute names mean the same: `P` is `position`, `Color` is
   `color`, `PointScale` is `scale`. `pts.generate` puts points on a grid, a line, a circle, a
   sphere or a box, on the surface or inside, evenly or at random. `geo.from_pts` draws them
-  with `tex.render`: a small disc facing the camera at every point, or a copy of a model at
-  every point. `pts.noise`, `pts.transform`, `pts.math` and `pts.random` change attributes:
+  with `tex.render`: a small disc or square facing the camera at every point (a sprite; hard
+  edged or `softness` fading out, covering what lies behind or with `blend` add adding its
+  light), or a copy of a model at every point. `pts.noise`, `pts.transform`, `pts.math` and `pts.random` change attributes:
   noise over space and time, a move and turn about a pivot, an expression typed as a param
   (`position.z + sin(time) * 0.1`), random values. `pts.shader` runs a WGSL program of your own
   per point ([Shaders](shaders.md#a-program-over-points-ptsshader)). `pts.from_tex` makes a
@@ -154,6 +155,24 @@ The families:
   `tex.shader` and `geo.tex_instance`. `pts.lookup_tex` gives each point a value from a
   picture, looked up at its `uv` or its position. The viewer shows how many points there are,
   their attributes and the box around them.
+
+  **Bridges.** Points come from and go to the other kinds:
+
+  | from | to points | from points |
+  |---|---|---|
+  | pictures | `pts.from_tex` (TOP to POP) | `tex.from_pts` (POP to TOP) |
+  | geometry | `pts.from_geo`: the vertices, or points scattered over the surface (SOP to POP, Sprinkle POP) | `geo.from_pts`: sprites, copies, lines |
+  | channels | `pts.from_chan`: a point per sample (CHOP to POP) | `chan.from_pts`: the count, an attribute at the first points, its mean, minimum and maximum (POP to CHOP, Analyze POP) |
+  | tables | `pts.from_table`: a point per row (DAT to POP) | `table.from_pts`: the first points as rows (POP to DAT) |
+  | files | `pts.file`: `.ply`, `.xyz`, `.csv` (Point File In POP) | |
+
+  Channel and column names say where a number goes without any mapping: `x y z` or `tx ty tz`
+  place a point, `r g b a` colour it, `nx ny nz` and `u v` set its normal and texture
+  coordinates, `velocity_x` or TouchDesigner's `P(0)` name a component of any attribute, and a
+  plain name makes an attribute of one number. What `table.from_pts` writes,
+  `pts.from_table` reads back the same. `pts.merge` puts several sets of points one after the
+  other (an attribute one set lacks takes its default there); `pts.switch` passes one of them
+  on.
 
   The number of points can change on the GPU. `pts.delete` drops points: those an expression
   holds true for, a range of indices, those inside a box or a ball, or a random share. The rest

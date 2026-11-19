@@ -340,7 +340,19 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><p><strong><code>table</code></strong>: text tables, typed in or read from a file, for scripts and OSC. <a class="ref" href="#table.file"><code>table.file</code></a> reads a CSV, TSV or text file and reloads it when the file changes. <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a> turns a table of numbers into channels, a channel per column (or row), named by its first cell. A param bound to a channel follows the last value in that column (or row). <a class="ref" href="#table.from_chan"><code>table.from_chan</code></a> goes the other way: channels become the cells of a table, so an LFO or a tracker can place what a table places, such as the bodies of a <a class="ref" href="#physics.bodies"><code>physics.bodies</code></a>. <a class="ref" href="#out.table"><code>out.table</code></a> writes a table to a CSV or TSV file. With <code>file</code> empty it writes <code>export/&lt;node name&gt;.csv</code> in the project folder. In mode <code>changes</code> it writes whenever the table differs from what the file holds; in mode <code>manual</code> it writes only on <a class="ref" href="#table_out.write"><code>table_out.write</code></a>. <code>overwrite</code> on replaces the file in place, for a program that keeps reading it; off, every write gets a new name with <code>_2</code>, <code>_3</code>, ...</p>
 </li>
-<li><p><strong><code>pts</code></strong>: points on the GPU, penumbra's counterpart to TouchDesigner's POPs. Each point carries attributes: <code>position</code>, and where a node gives them <code>normal</code>, <code>color</code>, <code>scale</code>, <code>uv</code> and others. TouchDesigner's attribute names mean the same: <code>P</code> is <code>position</code>, <code>Color</code> is <code>color</code>, <code>PointScale</code> is <code>scale</code>. <a class="ref" href="#pts.generate"><code>pts.generate</code></a> puts points on a grid, a line, a circle, a sphere or a box, on the surface or inside, evenly or at random. <a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a> draws them with <a class="ref" href="#tex.render"><code>tex.render</code></a>: a small disc facing the camera at every point, or a copy of a model at every point. <a class="ref" href="#pts.noise"><code>pts.noise</code></a>, <a class="ref" href="#pts.transform"><code>pts.transform</code></a>, <a class="ref" href="#pts.math"><code>pts.math</code></a> and <a class="ref" href="#pts.random"><code>pts.random</code></a> change attributes: noise over space and time, a move and turn about a pivot, an expression typed as a param (<code>position.z + sin(time) * 0.1</code>), random values. <a class="ref" href="#pts.shader"><code>pts.shader</code></a> runs a WGSL program of your own per point (<a href="#shaders-a-program-over-points-ptsshader">Shaders</a>). <a class="ref" href="#pts.from_tex"><code>pts.from_tex</code></a> makes a point per texel of a picture, or per cell when sampled down: coloured points on a grid, a relief lifted by brightness, positions stored in a picture, or a depth picture as a point cloud. <a class="ref" href="#tex.from_pts"><code>tex.from_pts</code></a> turns one attribute back into a picture, a texel per point, for <a class="ref" href="#tex.shader"><code>tex.shader</code></a> and <a class="ref" href="#geo.tex_instance"><code>geo.tex_instance</code></a>. <a class="ref" href="#pts.lookup_tex"><code>pts.lookup_tex</code></a> gives each point a value from a picture, looked up at its <code>uv</code> or its position. The viewer shows how many points there are, their attributes and the box around them.</p>
+<li><p><strong><code>pts</code></strong>: points on the GPU, penumbra's counterpart to TouchDesigner's POPs. Each point carries attributes: <code>position</code>, and where a node gives them <code>normal</code>, <code>color</code>, <code>scale</code>, <code>uv</code> and others. TouchDesigner's attribute names mean the same: <code>P</code> is <code>position</code>, <code>Color</code> is <code>color</code>, <code>PointScale</code> is <code>scale</code>. <a class="ref" href="#pts.generate"><code>pts.generate</code></a> puts points on a grid, a line, a circle, a sphere or a box, on the surface or inside, evenly or at random. <a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a> draws them with <a class="ref" href="#tex.render"><code>tex.render</code></a>: a small disc or square facing the camera at every point (a sprite; hard edged or <code>softness</code> fading out, covering what lies behind or with <code>blend</code> add adding its light), or a copy of a model at every point. <a class="ref" href="#pts.noise"><code>pts.noise</code></a>, <a class="ref" href="#pts.transform"><code>pts.transform</code></a>, <a class="ref" href="#pts.math"><code>pts.math</code></a> and <a class="ref" href="#pts.random"><code>pts.random</code></a> change attributes: noise over space and time, a move and turn about a pivot, an expression typed as a param (<code>position.z + sin(time) * 0.1</code>), random values. <a class="ref" href="#pts.shader"><code>pts.shader</code></a> runs a WGSL program of your own per point (<a href="#shaders-a-program-over-points-ptsshader">Shaders</a>). <a class="ref" href="#pts.from_tex"><code>pts.from_tex</code></a> makes a point per texel of a picture, or per cell when sampled down: coloured points on a grid, a relief lifted by brightness, positions stored in a picture, or a depth picture as a point cloud. <a class="ref" href="#tex.from_pts"><code>tex.from_pts</code></a> turns one attribute back into a picture, a texel per point, for <a class="ref" href="#tex.shader"><code>tex.shader</code></a> and <a class="ref" href="#geo.tex_instance"><code>geo.tex_instance</code></a>. <a class="ref" href="#pts.lookup_tex"><code>pts.lookup_tex</code></a> gives each point a value from a picture, looked up at its <code>uv</code> or its position. The viewer shows how many points there are, their attributes and the box around them.</p>
+<p><strong>Bridges.</strong> Points come from and go to the other kinds:</p>
+<table>
+<thead><tr><th>from</th><th>to points</th><th>from points</th></tr></thead>
+<tbody>
+<tr><td>pictures</td><td><a class="ref" href="#pts.from_tex"><code>pts.from_tex</code></a> (TOP to POP)</td><td><a class="ref" href="#tex.from_pts"><code>tex.from_pts</code></a> (POP to TOP)</td></tr>
+<tr><td>geometry</td><td><a class="ref" href="#pts.from_geo"><code>pts.from_geo</code></a>: the vertices, or points scattered over the surface (SOP to POP, Sprinkle POP)</td><td><a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a>: sprites, copies, lines</td></tr>
+<tr><td>channels</td><td><a class="ref" href="#pts.from_chan"><code>pts.from_chan</code></a>: a point per sample (CHOP to POP)</td><td><a class="ref" href="#chan.from_pts"><code>chan.from_pts</code></a>: the count, an attribute at the first points, its mean, minimum and maximum (POP to CHOP, Analyze POP)</td></tr>
+<tr><td>tables</td><td><a class="ref" href="#pts.from_table"><code>pts.from_table</code></a>: a point per row (DAT to POP)</td><td><a class="ref" href="#table.from_pts"><code>table.from_pts</code></a>: the first points as rows (POP to DAT)</td></tr>
+<tr><td>files</td><td><a class="ref" href="#pts.file"><code>pts.file</code></a>: <code>.ply</code>, <code>.xyz</code>, <code>.csv</code> (Point File In POP)</td><td></td></tr>
+</tbody>
+</table>
+<p>Channel and column names say where a number goes without any mapping: <code>x y z</code> or <code>tx ty tz</code> place a point, <code>r g b a</code> colour it, <code>nx ny nz</code> and <code>u v</code> set its normal and texture coordinates, <code>velocity_x</code> or TouchDesigner's <code>P(0)</code> name a component of any attribute, and a plain name makes an attribute of one number. What <a class="ref" href="#table.from_pts"><code>table.from_pts</code></a> writes, <a class="ref" href="#pts.from_table"><code>pts.from_table</code></a> reads back the same. <a class="ref" href="#pts.merge"><code>pts.merge</code></a> puts several sets of points one after the other (an attribute one set lacks takes its default there); <a class="ref" href="#pts.switch"><code>pts.switch</code></a> passes one of them on.</p>
 <p>The number of points can change on the GPU. <a class="ref" href="#pts.delete"><code>pts.delete</code></a> drops points: those an expression holds true for, a range of indices, those inside a box or a ball, or a random share. The rest keep their order. <a class="ref" href="#pts.from_tex"><code>pts.from_tex</code></a> drops the points of empty texels when <code>delete_empty</code> is on. After such a node the GPU knows how many points there are, and the CPU only how many there may be. Every node downstream handles that: programs stop at the last point, <a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a> draws exactly the points that are left, <a class="ref" href="#tex.from_pts"><code>tex.from_pts</code></a> leaves the texels past them transparent. The viewer shows the count a frame late, as &quot;1204 of at most 20000 points&quot;. <a class="ref" href="#chan.from_pts"><code>chan.from_pts</code></a> turns it into a channel, also a frame late, so a network can react to it.</p>
 <p><a class="ref" href="#pts.particles"><code>pts.particles</code></a> makes points that are born on its source points, move, age and die. Forces come from a loop: <a class="ref" href="#pts.force"><code>pts.force</code></a> or <a class="ref" href="#pts.noise"><code>pts.noise</code></a> on <code>force</code> between the particles and a node wired back into their <code>previous</code> input. <a class="ref" href="#pts.field"><code>pts.field</code></a> gives the points a <code>weight</code> from a shape, to mask a force. <a class="ref" href="#pts.feedback"><code>pts.feedback</code></a> closes such a loop for any points. See <a href="#particles">Particles</a>.</p>
 <p><strong>Lines.</strong> Points can be joined into lines (line strips): a list of which point follows which. <a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a> in <code>lines</code> mode draws a ribbon from each point to the next one on its line. The ribbon faces the camera, is <code>width</code> metres wide times the point's <code>width</code> attribute (<code>LineWidth</code>), and takes the points' <code>color</code>. An ordered line from <a class="ref" href="#pts.generate"><code>pts.generate</code></a> is one line, an ordered circle a closed ring, a grid its rows, its columns or both. <a class="ref" href="#pts.trail"><code>pts.trail</code></a> makes a line behind every point through the places it had. Nodes that keep the number and order of the points (<a class="ref" href="#pts.noise"><code>pts.noise</code></a>, <a class="ref" href="#pts.math"><code>pts.math</code></a>, <a class="ref" href="#pts.transform"><code>pts.transform</code></a>, ...) keep the lines. <a class="ref" href="#pts.delete"><code>pts.delete</code></a> and <a class="ref" href="#pts.particles"><code>pts.particles</code></a> change the order, so their points come without lines. Points without lines drawn in <code>lines</code> mode make one line through all of them, in their order.</p>
@@ -1986,6 +1998,10 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 </li>
 </ol>
 <p>The viewer on <a class="ref" href="#pts.particles"><code>pts.particles</code></a> shows how many particles live, a frame late: &quot;15024 of at most 15130 points&quot;. &quot;At most&quot; is the count read back a frame or two ago plus the births since: the work over the particles covers that many. <code>max</code> is the most particles at once. While that many live, the births of a step that do not fit are dropped, not saved for later.</p>
+<h4 id="particles-emit-from-a-model-or-a-text">Emit from a model or a text</h4>
+<p><a class="ref" href="#pts.from_geo"><code>pts.from_geo</code></a> with <code>mode</code> <code>surface</code> scatters points evenly over a mesh, each with the surface's normal there: wire <a class="ref" href="#geo.text"><code>geo.text</code></a> or <a class="ref" href="#geo.file"><code>geo.file</code></a> into it and it into the particles' <code>source</code>. Set <code>along_normal</code> on the particles to throw them off the surface. The points are where <a class="ref" href="#tex.render"><code>tex.render</code></a> would draw the mesh, its placement applied. <code>count</code> is how many places there are to be born on; <code>rate</code> how many are born a second. Several emitters go into one <code>source</code> through <a class="ref" href="#pts.merge"><code>pts.merge</code></a>.</p>
+<h4 id="particles-soft-glowing-particles">Soft, glowing particles</h4>
+<p><a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a> draws each particle as a sprite. <code>softness</code> 1 fades it from its centre to its rim, a soft dot; <code>blend</code> <code>add</code> adds its colour to what lies behind, so dense places glow brighter. That is the usual look for sparks and fire: a <a class="ref" href="#mat.constant"><code>mat.constant</code></a> of a dim colour (the sprites add up), <code>softness</code> 1, <code>blend</code> <code>add</code>. Added sprites write no depth and cast no shadow. A disc costs what a square costs: a million sprites draw in about 2 ms at 1920 x 1080 with 4x antialiasing on an RTX 3090, soft and added ones in about 1.2 ms.</p>
 <h3 id="particles-a-force-in-the-loop">A force in the loop</h3>
 <p>Wire the particles into the forces, and the last force into a <a class="ref" href="#pts.null"><code>pts.null</code></a>. Then wire the null back into the particles' <code>previous</code> input:</p>
 <pre><code>pts.generate -&gt; pts.particles -&gt; pts.noise -&gt; pts.force -&gt; pts.null --+
@@ -4033,7 +4049,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>ao_strength</code></td><td>float</td><td><code>1</code></td><td>0 to 3 (soft, held within 0 to 8)</td><td>How much of the hidden ambient light is taken away: 1 as estimated, 0.3 at most 30 %, above 1 darker</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-resolution">The Helpers window › Resolution</a>, <a href="#mapping-without-camera-a-3d-model-of-the-object-model-mapping">Mapping without a camera › A 3D model of the object: Model mapping</a>, <a href="#navigation">Looking around in 3D</a>, <a href="#navigation-the-viewers-modes">Looking around in 3D › The viewer's modes</a>, <a href="#particles-the-smallest-network">Particles › The smallest network</a>, <a href="#scripts-pictures-and-meshes">Scripts › Pictures and meshes</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-resolution">The Helpers window › Resolution</a>, <a href="#mapping-without-camera-a-3d-model-of-the-object-model-mapping">Mapping without a camera › A 3D model of the object: Model mapping</a>, <a href="#navigation">Looking around in 3D</a>, <a href="#navigation-the-viewers-modes">Looking around in 3D › The viewer's modes</a>, <a href="#particles-the-smallest-network">Particles › The smallest network</a>, <a href="#particles-emit-from-a-model-or-a-text">Particles › Emit from a model or a text</a>, <a href="#scripts-pictures-and-meshes">Scripts › Pictures and meshes</a></p>
 </div></details>
 <details class="entry node" id="tex.render_volume"><summary><code class="name">tex.render_volume</code><span class="sum">Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, thin smoke lets through</span></summary>
 <div class="body">
@@ -5108,17 +5124,26 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#audio-tips">Audio › Tips</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
-<details class="entry node" id="chan.from_pts"><summary><code class="name">chan.from_pts</code><span class="sum">Numbers about points as channels: how many there are (count) and how many there may be (capacity). A count the GPU keeps, as after pts.delete, arrives a frame late</span></summary>
+<details class="entry node" id="chan.from_pts"><summary><code class="name">chan.from_pts</code><span class="sum">Numbers about points as channels: how many there are (count) and may be (capacity), and an attribute's values at the first points and its mean, minimum and maximum over all of them. What the GPU keeps arrives a frame late</span></summary>
 <div class="body">
-<p>Numbers about points as channels: how many there are (count) and how many there may be (capacity). A count the GPU keeps, as after pts.delete, arrives a frame late</p>
+<p>Numbers about points as channels: how many there are (count) and may be (capacity), and an attribute's values at the first points and its mean, minimum and maximum over all of them. What the GPU keeps arrives a frame late</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">pts</span></li>
 </ul>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">chan</span>: <code>count</code>: the points there are. <code>capacity</code>: how many the buffers hold. A count kept on the GPU follows a frame or two late</li>
+<li><code>out</code> <span class="kind">chan</span>: <code>count</code>: the points there are. <code>capacity</code>: how many the buffers hold. With an attribute: its values and summary, one sample each. Components are named tx ty tz for position, nx ny nz for normal, r g b a for colour, u v for uv, &lt;name&gt;_x and so on for others; a one-number attribute by its name. What comes from the GPU follows a frame or two late</li>
 </ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>attribute</code></td><td>text</td><td></td><td></td><td>An attribute to read, such as <code>position</code>, <code>color</code> or <code>age</code> (P, Color and other TouchDesigner names work). Empty: only count and capacity</td></tr>
+<tr><td><code>points</code></td><td>int</td><td><code>1</code></td><td>0 to 64 (soft, held within 0 to 1000)</td><td>With an attribute: how many of the first points give their values, a channel per point and component: tx0 ty0 tz0 for the first point's position, r0 g0 b0 a0 for its colour. At most 1000</td></tr>
+<tr><td><code>summary</code></td><td>bool</td><td><code>true</code></td><td></td><td>With an attribute: its mean, minimum and maximum over all points, per component: tx_mean, tx_min, tx_max. Worked out on the GPU, so a million points cost little. As TouchDesigner's Analyze POP</td></tr>
+</tbody>
+</table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 <details class="entry node" id="chan.from_table"><summary><code class="name">chan.from_table</code><span class="sum">Turns a table of numbers into channels, so its cells can drive params through bindings. <code>key</code> picks one row by its first cell, such as the name of a look</span></summary>
@@ -5883,7 +5908,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-table">
 <h3>table</h3>
-<p class="kinds"><a href="#table.file">table.file</a> <a href="#table.from_chan">table.from_chan</a> <a href="#table.null">table.null</a> <a href="#table.text">table.text</a></p>
+<p class="kinds"><a href="#table.file">table.file</a> <a href="#table.from_chan">table.from_chan</a> <a href="#table.from_pts">table.from_pts</a> <a href="#table.null">table.null</a> <a href="#table.text">table.text</a></p>
 <details class="entry node" id="table.file"><summary><code class="name">table.file</code><span class="sum">A table from a text, TSV or CSV file; updates when the file changes</span></summary>
 <div class="body">
 <p>A table from a text, TSV or CSV file; updates when the file changes</p>
@@ -5956,6 +5981,27 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
+<details class="entry node" id="table.from_pts"><summary><code class="name">table.from_pts</code><span class="sum">The first points as rows of a table, a column per number of each attribute: to look at what the points hold. Read back from the GPU a frame late</span></summary>
+<div class="body">
+<p>The first points as rows of a table, a column per number of each attribute: to look at what the points hold. Read back from the GPU a frame late</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">table</span>: The first row names the columns: tx ty tz for position, nx ny nz for normal, r g b a for colour, u v for uv, &lt;name&gt;_x and so on for others, a one-number attribute by its name. Then one row per point, in order. pts.from_table reads it back</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>points</code></td><td>int</td><td><code>100</code></td><td>1 to 10000 (soft, held within 1 to 1048576)</td><td>How many of the first points become rows. A table holds at most 1 048 576 cells, so with many columns fewer rows fit</td></tr>
+<tr><td><code>attributes</code></td><td>text</td><td></td><td></td><td>The attributes to show, separated by spaces (TouchDesigner names work). Empty: all of them</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
 <details class="entry node" id="table.null"><summary><code class="name">table.null</code><span class="sum">Passes its input on unchanged: a fixed point to refer to while the chain before it changes</span></summary>
 <div class="body">
 <p>Passes its input on unchanged: a fixed point to refer to while the chain before it changes</p>
@@ -5990,7 +6036,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-pts">
 <h3>pts</h3>
-<p class="kinds"><a href="#pts.delete">pts.delete</a> <a href="#pts.feedback">pts.feedback</a> <a href="#pts.field">pts.field</a> <a href="#pts.force">pts.force</a> <a href="#pts.from_tex">pts.from_tex</a> <a href="#pts.generate">pts.generate</a> <a href="#pts.lookup_tex">pts.lookup_tex</a> <a href="#pts.math">pts.math</a> <a href="#pts.neighbor">pts.neighbor</a> <a href="#pts.noise">pts.noise</a> <a href="#pts.null">pts.null</a> <a href="#pts.particles">pts.particles</a> <a href="#pts.proximity">pts.proximity</a> <a href="#pts.random">pts.random</a> <a href="#pts.shader">pts.shader</a> <a href="#pts.trail">pts.trail</a> <a href="#pts.transform">pts.transform</a></p>
+<p class="kinds"><a href="#pts.delete">pts.delete</a> <a href="#pts.feedback">pts.feedback</a> <a href="#pts.field">pts.field</a> <a href="#pts.file">pts.file</a> <a href="#pts.force">pts.force</a> <a href="#pts.from_chan">pts.from_chan</a> <a href="#pts.from_geo">pts.from_geo</a> <a href="#pts.from_table">pts.from_table</a> <a href="#pts.from_tex">pts.from_tex</a> <a href="#pts.generate">pts.generate</a> <a href="#pts.lookup_tex">pts.lookup_tex</a> <a href="#pts.math">pts.math</a> <a href="#pts.merge">pts.merge</a> <a href="#pts.neighbor">pts.neighbor</a> <a href="#pts.noise">pts.noise</a> <a href="#pts.null">pts.null</a> <a href="#pts.particles">pts.particles</a> <a href="#pts.proximity">pts.proximity</a> <a href="#pts.random">pts.random</a> <a href="#pts.shader">pts.shader</a> <a href="#pts.switch">pts.switch</a> <a href="#pts.trail">pts.trail</a> <a href="#pts.transform">pts.transform</a></p>
 <details class="entry node" id="pts.delete"><summary><code class="name">pts.delete</code><span class="sum">Drops points: those an expression you type holds true for, a range of indices, those inside a box or a ball, or a random share. The rest keep their order and attributes</span></summary>
 <div class="body">
 <p>Drops points: those an expression you type holds true for, a range of indices, those inside a box or a ball, or a random share. The rest keep their order and attributes</p>
@@ -6079,6 +6125,24 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles">Particles</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a>, <a href="#particles-two-traps">Particles › Two traps</a></p>
 </div></details>
+<details class="entry node" id="pts.file"><summary><code class="name">pts.file</code><span class="sum">A point cloud from a file: .ply from a scanner or a 3D program, or .xyz and .csv text with a column per number. Updates when the file is saved</span></summary>
+<div class="body">
+<p>A point cloud from a file: .ply from a scanner or a 3D program, or .xyz and .csv text with a column per number. Updates when the file is saved</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span>: One point per vertex or line, in the file's order. Colours stored as bytes (0 to 255) are taken as sRGB and made linear, as penumbra's colours are. Exact bounds</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>file</code></td><td>file (ply, xyz, csv, txt, pts)</td><td></td><td></td><td>The file, relative to the project directory. .ply: ASCII or binary little endian; x y z place the points, nx ny nz, red green blue (alpha) and every other number of a vertex become attributes. .xyz, .csv, .txt, .pts: a number per column, split at commas, spaces, tabs or semicolons; a first line of names says what each column is (x y z, r g b, nx ny nz, any name), without one the columns are x y z and then r g b</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
 <details class="entry node" id="pts.force"><summary><code class="name">pts.force</code><span class="sum">A push on every point, added to its force: towards a point or away, towards a line, around a line, one way for all, or wind. For the loop of pts.particles</span></summary>
 <div class="body">
 <p>A push on every point, added to its force: towards a point or away, towards a line, around a line, one way for all, or wind. For the loop of pts.particles</p>
@@ -6107,6 +6171,54 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles">Particles</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a></p>
+</div></details>
+<details class="entry node" id="pts.from_chan"><summary><code class="name">pts.from_chan</code><span class="sum">Points from channels: each sample is a point, each channel one of its numbers, by the channel's name. An audio spectrum, tracked blobs or a few typed values as points</span></summary>
+<div class="body">
+<p>Points from channels: each sample is a point, each channel one of its numbers, by the channel's name. An audio spectrum, tracked blobs or a few typed values as points</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">chan</span>: x y z, tx ty tz or px py pz place the points; r g b a colour them; nx ny nz, u v and any attribute's &lt;name&gt;_x, &lt;name&gt;.x, &lt;name&gt;(0) set the others; a plain name makes a one-number attribute. Without a position the points lie along x from 0 to 1</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span></li>
+</ul>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
+<details class="entry node" id="pts.from_geo"><summary><code class="name">pts.from_geo</code><span class="sum">Points from geometry: a point at every vertex of a mesh, or points scattered evenly over its surface. To emit particles from a model or a text, or to draw a model as dots</span></summary>
+<div class="body">
+<p>Points from geometry: a point at every vertex of a mesh, or points scattered evenly over its surface. To emit particles from a model or a text, or to draw a model as dots</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">geo</span>: The geometry, as tex.render would place it: each item's placement is applied. Items drawn as instances are left out</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span>: <code>position</code>, <code>normal</code> and <code>uv</code> in world space; <code>color</code> from the material where the geometry has one that is not plain white. Exact bounds</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>mode</code></td><td>vertices | surface</td><td><code>&quot;vertices&quot;</code></td><td></td><td>Where the points come from<ul><li><code>vertices</code>: one point at each vertex as the mesh stores it: a corner shared by faces of different normals is there once per face (a box has 24). As TouchDesigner's SOP to POP</li><li><code>surface</code>: <code>count</code> points spread at random over the triangles, evenly by area, with the surface's normal and texture coordinates there. As TouchDesigner's Sprinkle POP</li></ul></td></tr>
+<tr><td><code>count</code></td><td>int</td><td><code>10000</code></td><td>100 to 1000000 (soft, held within 1 to 4194304)</td><td>surface: how many points</td></tr>
+<tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 1000000000</td><td>surface: another seed gives other places; the same seed the same ones</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-emit-from-a-model-or-a-text">Particles › Emit from a model or a text</a></p>
+</div></details>
+<details class="entry node" id="pts.from_table"><summary><code class="name">pts.from_table</code><span class="sum">Points from a table: each row after the first is a point, each column one of its numbers, by the name in the first row. Typed coordinates or a list from a file as points</span></summary>
+<div class="body">
+<p>Points from a table: each row after the first is a point, each column one of its numbers, by the name in the first row. Typed coordinates or a list from a file as points</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">table</span>: x y z, tx ty tz or px py pz place the points; r g b a colour them; nx ny nz, u v and any attribute's &lt;name&gt;_x, &lt;name&gt;.x, &lt;name&gt;(0) set the others; a plain name makes a one-number attribute. Without a position the points lie along x from 0 to 1</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span></li>
+</ul>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 <details class="entry node" id="pts.from_tex"><summary><code class="name">pts.from_tex</code><span class="sum">One point per texel of a picture, or per cell when sampled down: coloured points on a grid, a relief lifted by brightness, positions stored in a picture, or a depth picture as a point cloud</span></summary>
 <div class="body">
@@ -6226,6 +6338,19 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-a-force-in-the-loop">Particles › A force in the loop</a>, <a href="#particles-two-traps">Particles › Two traps</a>, <a href="#particles-colour-over-life">Particles › Colour over life</a>, <a href="#particles-trails">Particles › Trails</a>, <a href="#particles-lines-between-near-points-plexus">Particles › Lines between near points (plexus)</a>, <a href="#particles-a-flock-boids">Particles › A flock (boids)</a>, <a href="#shaders-a-program-over-points-ptsshader">Shaders › A program over points (pts.shader)</a></p>
+</div></details>
+<details class="entry node" id="pts.merge"><summary><code class="name">pts.merge</code><span class="sum">Puts several sets of points into one: the points of the first input, then those of the second, and so on. Each attribute any input has is there; an input without it gives its points the default</span></summary>
+<div class="body">
+<p>Puts several sets of points into one: the points of the first input, then those of the second, and so on. Each attribute any input has is there; an input without it gives its points the default</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in0 .. in63</code> <span class="kind">pts</span>: The sets of points, in order Any number, up to 64: each one wired adds a free slot below it.</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span>: Every input's points one after the other. An attribute two inputs give different types is an error. A count kept on the GPU (after pts.delete, from pts.particles) stays there. Lines stay where every input has the same lines; rows and columns of a grid go</li>
+</ul>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-emit-from-a-model-or-a-text">Particles › Emit from a model or a text</a></p>
 </div></details>
 <details class="entry node" id="pts.neighbor"><summary><code class="name">pts.neighbor</code><span class="sum">Counts each point's neighbours within <code>distance</code> and averages over them: the way to their middle, a push away from the nearest, the mean of an attribute. The three rules of a flock (boids)</span></summary>
 <div class="body">
@@ -6423,6 +6548,27 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-a-flock-boids">Particles › A flock (boids)</a>, <a href="#shaders-a-program-over-points-ptsshader">Shaders › A program over points (pts.shader)</a></p>
 </div></details>
+<details class="entry node" id="pts.switch"><summary><code class="name">pts.switch</code><span class="sum">Chooses which of its sets of points goes out, as they are: cut between shapes or looks</span></summary>
+<div class="body">
+<p>Chooses which of its sets of points goes out, as they are: cut between shapes or looks</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in0 .. in63</code> <span class="kind">pts</span>: The sets of points to choose from Any number, up to 64: each one wired adds a free slot below it.</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span></li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>index</code></td><td>int</td><td><code>0</code></td><td>0 to 7 (soft, held within 0 to 63)</td><td>Which input goes out: the wired inputs counted from 0, gaps skipped. Past the last: the last. Bind a channel to it to switch from the network</td></tr>
+<tr><td><code>inactive</code></td><td>cook | skip</td><td><code>&quot;cook&quot;</code></td><td></td><td>Whether the chains not chosen keep running (switching is instant) or pause (they cost nothing)<ul><li><code>cook</code>: their chains keep cooking as if chosen</li><li><code>skip</code>: only the chosen input's chain cooks; the others stand still. A particle system in a skipped chain carries on from where it stopped when it is chosen again</li></ul></td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
 <details class="entry node" id="pts.trail"><summary><code class="name">pts.trail</code><span class="sum">A trail behind every point: a line through the places it had over the last frames, newest first. geo.from_pts draws it in lines mode</span></summary>
 <div class="body">
 <p>A trail behind every point: a line through the places it had over the last frames, newest first. geo.from_pts draws it in lines mode</p>
@@ -6525,7 +6671,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>crease</code></td><td>float</td><td><code>180</code></td><td>0 to 180°</td><td>smooth: edges sharper than this stay hard; 180 smooths everything</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-emit-from-a-model-or-a-text">Particles › Emit from a model or a text</a></p>
 </div></details>
 <details class="entry node" id="geo.from_pts"><summary><code class="name">geo.from_pts</code><span class="sum">Draws points with tex.render: a small disc or square facing the camera at every point, a copy of a model at every point, or ribbons along the points' lines, all on the GPU</span></summary>
 <div class="body">
@@ -6546,12 +6692,14 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>mode</code></td><td>sprites | copies | lines</td><td><code>&quot;sprites&quot;</code></td><td></td><td>What stands at each point<ul><li><code>sprites</code>: a flat disc or square that always faces the camera</li><li><code>copies</code>: a copy of the geometry on the <code>model</code> input</li><li><code>lines</code>: a ribbon facing the camera from each point to the next along the points' lines (a trail, a generated line or circle). Points without lines make one line in their order</li></ul></td></tr>
 <tr><td><code>size</code></td><td>float</td><td><code>0.02</code></td><td>0.001 to 1 (soft, held within 0 to 10000)</td><td>sprites: the width of each sprite in metres, times the point's <code>scale</code></td></tr>
 <tr><td><code>sprite</code></td><td>disc | square</td><td><code>&quot;disc&quot;</code></td><td></td><td>sprites: the sprite's outline<ul><li><code>disc</code>: a round disc, as wide as <code>size</code></li><li><code>square</code>: a square of side <code>size</code></li></ul></td></tr>
+<tr><td><code>softness</code></td><td>float</td><td><code>0</code></td><td>0 to 1 (soft)</td><td>sprites: how far in from the outline each sprite fades out. 0 is a hard edge. 1 fades all the way from the centre: a soft glowing dot, as a point sprite with a falloff texture in TouchDesigner. A soft edge is see-through, so it costs a second draw</td></tr>
+<tr><td><code>blend</code></td><td>over | add</td><td><code>&quot;over&quot;</code></td><td></td><td>How the copies meet what lies behind them<ul><li><code>over</code>: they cover it, as any surface: opaque where the colour is, see-through where its alpha or a soft edge says</li><li><code>add</code>: their colour is added to it, so overlapping sprites or lines grow brighter: glow, sparks, light trails. Drawn after everything else, hidden by what stands in front, casting no shadow</li></ul></td></tr>
 <tr><td><code>scale</code></td><td>float</td><td><code>1</code></td><td>0.01 to 10 (soft, held within 0 to 1000000)</td><td>copies: multiplies the model's size at every point, times the point's <code>scale</code></td></tr>
 <tr><td><code>width</code></td><td>float</td><td><code>0.01</code></td><td>0.0005 to 0.5 (soft, held within 0 to 10000)</td><td>lines: the width of the ribbons in metres, times the points' <code>width</code> (LineWidth in TouchDesigner), blended between the two ends of each segment</td></tr>
 <tr><td><code>orient</code></td><td>none | normal</td><td><code>&quot;none&quot;</code></td><td></td><td>copies: how each copy is turned<ul><li><code>none</code>: every copy keeps the model's own turn</li><li><code>normal</code>: each copy turns its +y to the point's <code>normal</code>, keeping +z up as far as it can</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-the-smallest-network">Particles › The smallest network</a>, <a href="#particles-trails">Particles › Trails</a>, <a href="#particles-lines-between-near-points-plexus">Particles › Lines between near points (plexus)</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#particles-the-smallest-network">Particles › The smallest network</a>, <a href="#particles-soft-glowing-particles">Particles › Soft, glowing particles</a>, <a href="#particles-trails">Particles › Trails</a>, <a href="#particles-lines-between-near-points-plexus">Particles › Lines between near points (plexus)</a></p>
 </div></details>
 <details class="entry node" id="geo.instance"><summary><code class="name">geo.instance</code><span class="sum">Many copies of a model, each placed by a row of a table: a grid, a ring, a crowd of objects</span></summary>
 <div class="body">
@@ -6687,6 +6835,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p><strong>A lit front on a dark body.</strong> Give <code>out</code> a <a class="ref" href="#mat.occluder"><code>mat.occluder</code></a> with <code>shows</code> on <code>black</code>, and put a material on <code>front</code> with <a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a>. Move <code>front</code> a little towards -y with a <a class="ref" href="#geo.transform"><code>geo.transform</code></a>, so the two faces do not fight. Texture coordinates span the block of text: a picture on <code>front</code> spreads over all its letters.</p>
 <p><strong>Limits.</strong> Text is cut off after 4096 characters and at about a million triangles, with a warning. <code>size</code>, <code>depth</code> and <code>spacing</code> outside their ranges are kept inside them, with a warning. A group of touching glyphs with more than 8192 segments, or an outline with a broken coordinate, is left out, also with a warning. Outlines that overlap or cross themselves are joined the way a 2D renderer fills them, so an overlap draws no line inside a letter.</p>
 </div>
+<p class="mentions">Mentioned in: <a href="#particles-emit-from-a-model-or-a-text">Particles › Emit from a model or a text</a></p>
 </div></details>
 <details class="entry node" id="geo.transform"><summary><code class="name">geo.transform</code><span class="sum">Moves, turns and scales geometry</span></summary>
 <div class="body">
@@ -6758,7 +6907,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>color</code></td><td>colour</td><td><code>[1, 1, 1, 1]</code></td><td></td><td>Linear RGBA, straight alpha; replaces the file's colour; times the texture input</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#particles-the-smallest-network">Particles › The smallest network</a></p>
+<p class="mentions">Mentioned in: <a href="#particles-the-smallest-network">Particles › The smallest network</a>, <a href="#particles-soft-glowing-particles">Particles › Soft, glowing particles</a></p>
 </div></details>
 <details class="entry node" id="mat.null"><summary><code class="name">mat.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
 <div class="body">
