@@ -193,9 +193,9 @@ impl Operator for Shader {
                     }
                 };
                 if !(radius.is_finite() && radius > 0.0) {
-                    return Err(CookError::failed(format!(
-                        "@neighbors: the radius is {radius}; it must be a positive number of metres"
-                    )));
+                    cx.warn(format!(
+                        "@neighbors: the radius is {radius}, so no neighbours are found; it must be a positive number of metres"
+                    ));
                 }
                 self.grid.build(gpu, points, radius as f32, decl.cap)?
             }
