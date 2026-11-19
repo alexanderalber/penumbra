@@ -1018,8 +1018,15 @@ pub fn name_found(kind: &str, text: &str) -> bool {
 
 /// TouchDesigner's family words and the family each stands for here, so `noise top` finds
 /// `tex.noise` and `lfo chop` finds `chan.lfo`.
-const FAMILY_WORDS: [(&str, &str); 6] =
-    [("top", "tex"), ("chop", "chan"), ("dat", "table"), ("sop", "geo"), ("mat", "mat"), ("comp", "comp")];
+const FAMILY_WORDS: [(&str, &str); 7] = [
+    ("top", "tex"),
+    ("chop", "chan"),
+    ("dat", "table"),
+    ("sop", "geo"),
+    ("pop", "pts"),
+    ("mat", "mat"),
+    ("comp", "comp"),
+];
 
 /// A search text as the add dialog and `node.kinds` read it ([`NodeTypes::search`]).
 #[derive(Clone, Debug, PartialEq)]
