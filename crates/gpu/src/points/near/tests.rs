@@ -184,6 +184,116 @@ fn random_points_find_the_same_neighbours_as_the_cpu() {
     check(&gpu, &flat, flat.len(), false, 0.08, "flat");
 }
 
+/// The CPU's answer as [`reference`] gives it, through a grid of cubes of the radius: fast enough
+/// for a hundred thousand points in a debug build.
+fn reference_grid(places: &[[f32; 3]], radius: f32) -> Vec<(Vec<u32>, Vec<u32>)> {
+    use std::collections::HashMap;
+    let r2 = radius * radius;
+    let cube = |p: &[f32; 3]| p.map(|v| (v / radius).floor() as i64);
+    let mut cubes: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
+    for (i, p) in places.iter().enumerate() {
+        cubes.entry(cube(p)).or_default().push(i as u32);
+    }
+    places
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let mut sure = Vec::new();
+            let mut edge = Vec::new();
+            let c = cube(p);
+            for d in 0..27i64 {
+                let at = [c[0] + d % 3 - 1, c[1] + (d / 3) % 3 - 1, c[2] + d / 9 - 1];
+                for &j in cubes.get(&at).map(Vec::as_slice).unwrap_or(&[]) {
+                    if j as usize == i {
+                        continue;
+                    }
+                    let q = places[j as usize];
+                    let d: f32 = (0..3).map(|k| (q[k] - p[k]) * (q[k] - p[k])).sum();
+                    if (d - r2).abs() <= 1e-5 * r2 {
+                        edge.push(j);
+                    } else if d < r2 {
+                        sure.push(j);
+                    }
+                }
+            }
+            (sure, edge)
+        })
+        .collect()
+}
+
+/// `places` turned by `angle` about the axis `(1, 2, 3)` (Rodrigues).
+fn tilted(places: &[[f32; 3]], angle: f32) -> Vec<[f32; 3]> {
+    let l = 14f32.sqrt();
+    let k = [1.0 / l, 2.0 / l, 3.0 / l];
+    let (s, c) = angle.sin_cos();
+    places
+        .iter()
+        .map(|v| {
+            let cross = [k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0]];
+            let dot = k[0] * v[0] + k[1] * v[1] + k[2] * v[2];
+            std::array::from_fn(|i| v[i] * c + cross[i] * s + k[i] * dot * (1.0 - c))
+        })
+        .collect()
+}
+
+/// Points on a line, on a flat sheet, on a sheet turned out of the axes, on a sphere's shell and
+/// in a random cloud: every one finds all its neighbours, and no cube is over the cap, since none
+/// holds more than a few points.
+#[test]
+fn lines_sheets_and_shells_find_every_neighbour() {
+    let Some(gpu) = gpu() else { return };
+    let line: Vec<[f32; 3]> = (0..20_000).map(|i| [i as f32 * 0.01, 0.0, 0.0]).collect();
+    let sheet: Vec<[f32; 3]> =
+        (0..300 * 300).map(|i| [(i % 300) as f32 * 0.01, (i / 300) as f32 * 0.01, 0.0]).collect();
+    let turned = tilted(&sheet, 0.7);
+    // A Fibonacci sphere: about 2 cm between points, about a dozen within 4 cm.
+    let shell: Vec<[f32; 3]> = (0..30_000)
+        .map(|i| {
+            let z = 1.0 - 2.0 * (i as f32 + 0.5) / 30_000.0;
+            let r = (1.0 - z * z).max(0.0).sqrt();
+            let a = i as f32 * 2.399_963;
+            [r * a.cos(), r * a.sin(), z]
+        })
+        .collect();
+    let cloud_points = random(41, 50_000, [0.0; 3], 1.0);
+    let cases = [
+        (&line, 0.015, "line"),
+        (&sheet, 0.015, "sheet"),
+        (&turned, 0.015, "turned sheet"),
+        (&shell, 0.04, "shell"),
+        (&cloud_points, 0.06, "cloud"),
+    ];
+    // Points that miss a neighbour and points over the cap, per case.
+    let mut wrong = Vec::new();
+    for (places, radius, what) in cases {
+        let p = cloud(&gpu, places, places.len(), false);
+        let (got, _, crowded) = search(&gpu, &p, radius, 64);
+        let want = reference_grid(places, radius);
+        let missed =
+            want.iter().zip(&got).filter(|((sure, _), g)| !sure.iter().all(|j| g.contains(j))).count();
+        if (missed, crowded) != (0, 0) {
+            wrong.push((what, missed, crowded));
+        }
+    }
+    assert!(wrong.is_empty(), "(case, points that miss a neighbour, points over the cap): {wrong:?}");
+    for (places, radius, what) in cases {
+        let (got, counts, _) = search(&gpu, &cloud(&gpu, places, places.len(), false), radius, 64);
+        agrees(&got, &counts, &reference_grid(places, radius), what);
+    }
+}
+
+/// A picture of a million pixels turned into points on the floor.
+#[test]
+fn a_million_points_on_a_sheet_find_every_neighbour() {
+    let Some(gpu) = gpu() else { return };
+    let sheet: Vec<[f32; 3]> =
+        (0..1000 * 1000).map(|i| [(i % 1000) as f32 * 0.01, (i / 1000) as f32 * 0.01, 0.0]).collect();
+    let p = cloud(&gpu, &sheet, sheet.len(), false);
+    let (got, counts, crowded) = search(&gpu, &p, 0.015, 64);
+    assert_eq!(crowded, 0);
+    agrees(&got, &counts, &reference_grid(&sheet, 0.015), "a million");
+}
+
 #[test]
 fn a_lattice_spaced_by_the_radius_finds_its_six_sides() {
     let Some(gpu) = gpu() else { return };
@@ -215,9 +325,11 @@ fn a_lattice_spaced_by_the_radius_finds_its_six_sides() {
 fn a_clump_in_one_cube_is_cut_at_the_cap_by_index() {
     let Some(gpu) = gpu() else { return };
     let mut places = random(3, 300, [0.2, -0.1, 0.05], 0.001);
-    // The cubes are counted from the first point: at the clump's low corner, the clump is in
-    // one cube.
-    places[0] = [0.2 - 0.001, -0.1 - 0.001, 0.05 - 0.001];
+    // The cubes are counted from the middle of the first, middle and last point: with all three
+    // at the clump's low corner, the clump is in one cube.
+    for i in [0, 150, 299] {
+        places[i] = [0.2 - 0.001, -0.1 - 0.001, 0.05 - 0.001];
+    }
     let p = cloud(&gpu, &places, places.len(), false);
     let cap = 40;
     let (got, counts, crowded) = search(&gpu, &p, 0.5, cap);
@@ -243,6 +355,18 @@ fn far_and_negative_coordinates_and_points_that_are_no_numbers() {
     // Tiny radius, close to the origin and on both sides of it.
     let near_zero = random(8, 400, [0.0; 3], 0.01);
     check(&gpu, &near_zero, near_zero.len(), false, 0.0015, "small");
+}
+
+/// A first point parked far away (as a hidden particle may be) does not throw the others into
+/// one cube.
+#[test]
+fn a_far_first_point_does_not_crowd_the_others() {
+    let Some(gpu) = gpu() else { return };
+    let mut places = random(12, 2000, [0.5, 0.0, 0.2], 1.0);
+    places[0] = [-1.0e6, -1.0e6, -1.0e6];
+    check(&gpu, &places, places.len(), false, 0.12, "far first point");
+    // The same on the GPU's count, where the last live point is not the last of the buffers.
+    check(&gpu, &places, 1500, true, 0.12, "far first point, count on the GPU");
 }
 
 #[test]
@@ -326,11 +450,17 @@ fn the_same_points_give_the_same_grid_bit_for_bit() {
     // Within a bucket the points are in the order of their index.
     let sorted = first.points().read::<[u32; 4]>(&gpu).unwrap();
     let cells = first.cells().read::<u32>(&gpu).unwrap();
+    let mut over = 0;
     for h in 0..(cells.len() - HEAD as usize) / 2 {
         let (s, e) = (cells[HEAD as usize + 2 * h] as usize, cells[HEAD as usize + 2 * h + 1] as usize);
         assert!(sorted[s..e].windows(2).all(|w| w[0][3] < w[1][3]), "bucket {h}");
+        over += e.saturating_sub(s).saturating_sub(32);
     }
-    assert_eq!(first.crowded().read::<u32>(&gpu).unwrap()[0], 300 - 32);
+    // Every point past the cap of its bucket is counted: the clump's, and a scattered point's
+    // that shares the clump's bucket.
+    let crowded = first.crowded().read::<u32>(&gpu).unwrap()[0] as usize;
+    assert_eq!(crowded, over);
+    assert!((300 - 32..300 - 32 + 4).contains(&crowded), "{crowded}");
 }
 
 #[test]
@@ -350,4 +480,36 @@ fn a_prefix_sum_over_many_blocks() {
         }
         assert_eq!(builder.total().unwrap().read::<u32>(&gpu).unwrap()[0], at, "{n}");
     }
+}
+
+/// Points in buffers of `capacity`, at most `at_most` alive on a count on the GPU, all alive.
+fn bounded(gpu: &Gpu, places: &[[f32; 3]], capacity: u32, at_most: u32) -> Points {
+    let mut pos: Vec<[f32; 4]> = places.iter().map(|p| [p[0], p[1], p[2], 1.0]).collect();
+    pos.resize(capacity as usize, [0.0; 4]);
+    let b = Buffer::of::<[f32; 4]>(gpu, u64::from(capacity), "position").unwrap();
+    b.write(gpu, 0, &pos).unwrap();
+    let header = Buffer::new(gpu, HEADER_BYTES, "count").unwrap();
+    header.write(gpu, 0, &[at_most, 0, 0, 0]).unwrap();
+    Points::new(capacity, 0, vec![Attr::new("position", AttrType::Vec3, b).unwrap()])
+        .unwrap()
+        .with_count(Count::gpu(header, at_most, Seen::default()).unwrap())
+        .unwrap()
+}
+
+/// A count on the GPU whose bound moves from build to build, as particles' does, keeps the
+/// grid's buffers.
+#[test]
+fn a_moving_bound_keeps_the_buffers() {
+    let Some(gpu) = gpu() else { return };
+    let places = random(51, 1200, [0.0; 3], 1.0);
+    let mut grid = NearGrid::new();
+    let a = grid.build(&gpu, &bounded(&gpu, &places, 2048, 1000), 0.1, 64).unwrap().unwrap();
+    let (cells, sorted) = (a.cells().clone(), a.points().clone());
+    drop(a);
+    let b = grid.build(&gpu, &bounded(&gpu, &places, 2048, 1100), 0.1, 64).unwrap().unwrap();
+    assert!(b.points().same(&sorted) && b.cells().same(&cells), "the same buffers");
+    // Still right: the points past the old bound are found.
+    let p = bounded(&gpu, &places, 2048, 1100);
+    let (got, counts, _) = search(&gpu, &p, 0.1, 64);
+    agrees(&got, &counts, &reference(&places, 1100, 0.1), "moved bound");
 }

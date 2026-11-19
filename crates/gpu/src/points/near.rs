@@ -4,12 +4,14 @@
 //! The grid: space is cut into cubes a little larger than the search radius ([`CELL_MARGIN`]), so
 //! the points within the radius of a point lie in its own cube or one of the 26 around it. A cube
 //! is found through a table of `T` buckets (`T` the power of two at or above the number of
-//! points, within [`MIN_TABLE_BITS`] and [`MAX_TABLE_BITS`]): the low bits of the Morton code of
-//! its three whole-number coordinates. So space has no bounds and needs no box, and cubes near
-//! each other have buckets near each other: the sorted points of the 27 cubes a query visits lie
-//! close in memory. Two cubes share a bucket when they lie a multiple of `2^(bits / 3)` cubes
-//! apart along each axis (128 cubes for a million points): a query checks each point's own cube,
-//! so that costs time, never a wrong answer.
+//! points, within [`MIN_TABLE_BITS`] and [`MAX_TABLE_BITS`]). Space is cut into blocks of `T`
+//! cubes (128 x 128 x 64 for a million points); inside a block a cube's bucket is the Morton code
+//! of its place there, turned by a hash of the block (an exclusive or). So space has no bounds and
+//! needs no box; cubes near each other have buckets near each other, so the sorted points of the
+//! 27 cubes a query visits mostly lie close in memory; and points that fill only a sliver of each
+//! block, on a line or a flat sheet, still spread over the whole table. Cubes of different blocks
+//! share a bucket by chance. A query checks each point's own cube, so a shared bucket costs time;
+//! it loses neighbours only when the bucket holds more points than the cap.
 //!
 //! The build, each time anew: every point gets the key of its bucket; a radix sort (8 bits per
 //! pass, stable, ranks counted within tiles of 256 points, so no step depends on which thread
@@ -27,10 +29,11 @@
 //! Points with a position that is not a finite number, and points past a count on the GPU, are in
 //! no bucket: nobody finds them and they find nobody.
 //!
-//! Limits: positions are measured from the first point, in cubes; past about 20 000 radii from it
-//! the cube of a point is no longer exact to a two-hundredth of a cube, so a pair nearer than the
-//! radius by less than about half a percent may be missed, and beyond a million cubes every point
-//! counts as lying in the last one (found all the same, but crowding the cap). The table has at
+//! Limits: positions are measured in cubes from the middle (per axis) of the first, the middle and
+//! the last live point; past about 20 000 radii from there the cube of a point is no longer exact
+//! to a two-hundredth of a cube, so a pair nearer than the radius by less than about half a percent
+//! may be missed, and beyond a million cubes every point counts as lying in the last one (found
+//! all the same, but crowding the cap). The table has at
 //! most 2^[`MAX_TABLE_BITS`] buckets: with more points than that, buckets share more cubes and
 //! queries slow down. A bucket's cap is at most [`MAX_PER_CELL`].
 
@@ -95,14 +98,30 @@ fn pn_near_spread(v: u32) -> u32 {
     return x;
 }
 
-// The bucket of cube c: the low bits of its Morton code, the bits of x, y and z taken in turn.
-// Cubes near each other get buckets near each other, so the sorted points of neighbouring cubes
-// lie close in memory; cubes share a bucket only when they lie a multiple of 2^(bits / 3) cubes
-// apart along each axis.
+// A well mixed number for a block of cubes.
+fn pn_near_mix(b: vec3i) -> u32 {
+    let u = bitcast<vec3u>(b);
+    var h = (u.x * 0x8da6b343u) ^ (u.y * 0xd8163841u) ^ (u.z * 0xcb1ab31fu);
+    h ^= h >> 16u;
+    h *= 0x7feb352du;
+    h ^= h >> 15u;
+    h *= 0x846ca68bu;
+    h ^= h >> 16u;
+    return h;
+}
+
+// The bucket of cube c. Space is cut into blocks of as many cubes as the table has buckets; inside
+// a block, the bucket is the Morton code of the cube's place in it (the bits of x, y and z taken in
+// turn), so cubes near each other get buckets near each other and the sorted points of
+// neighbouring cubes lie close in memory. Each block turns its codes by a hash of where it lies
+// (an exclusive or), so blocks spread over the whole table: points on a line or a sheet, which
+// fill only a sliver of each block, still use every bucket.
 fn pn_near_bucket_of(c: vec3i, mask: u32) -> u32 {
+    let bits = countOneBits(mask);
+    let per = vec3u((bits + 2u) / 3u, (bits + 1u) / 3u, bits / 3u);
     let u = bitcast<vec3u>(c);
     let m = pn_near_spread(u.x) | (pn_near_spread(u.y) << 1u) | (pn_near_spread(u.z) << 2u);
-    return m & mask;
+    return (m ^ pn_near_mix(c >> per)) & mask;
 }
 ";
 
@@ -125,10 +144,29 @@ fn pts_table() -> u32 {
     return u32(max(params.mask, 0)) + 1u;
 }
 
+// Where cubes are counted from: the middle (per axis) of the first, the middle and the last live
+// point, so one point parked far away does not move it off the others. Near the points, the cube
+// of a point is exact even where they lie far from the world's origin.
 fn pts_origin() -> vec3f {
-    let p = position[0].xyz;
-    if pn_near_finite(p) {
-        return p;
+    let live = min(header.x, pts_n());
+    if live == 0u {
+        return vec3f(0.0);
+    }
+    var a = position[0].xyz;
+    var b = position[live / 2u].xyz;
+    var c = position[live - 1u].xyz;
+    if !pn_near_finite(a) {
+        a = select(c, b, pn_near_finite(b));
+    }
+    if !pn_near_finite(b) {
+        b = select(c, a, pn_near_finite(a));
+    }
+    if !pn_near_finite(c) {
+        c = select(b, a, pn_near_finite(a));
+    }
+    let m = max(min(a, b), min(max(a, b), c));
+    if pn_near_finite(m) {
+        return m;
     }
     return vec3f(0.0);
 }
@@ -671,8 +709,11 @@ impl NearGrid {
         let cap = cap.clamp(1, MAX_PER_CELL);
         let bits = table_bits(n);
         let table = 1u32 << bits;
-        let words = u64::from(n) * 4;
         let tiles = n.div_ceil(TILE);
+        // Sized by the capacity, worked over the count: a count that moves from frame to frame
+        // (particles) keeps the buffers.
+        let room = points.capacity().max(n);
+        let words = u64::from(room) * 4;
         let keys = [
             sized(gpu, &mut self.keys[0], words, "pts near keys")?,
             sized(gpu, &mut self.keys[1], words, "pts near keys")?,
@@ -681,10 +722,11 @@ impl NearGrid {
             sized(gpu, &mut self.vals[0], words, "pts near order")?,
             sized(gpu, &mut self.vals[1], words, "pts near order")?,
         ];
-        let counts = sized(gpu, &mut self.counts, u64::from(tiles) * 256 * 4, "pts near counts")?;
-        let cells =
-            sized(gpu, &mut self.cells, (u64::from(HEAD) + 2 * u64::from(table)) * 4, "pts near cells")?;
-        let sorted = sized(gpu, &mut self.points, u64::from(n) * 16, "pts near points")?;
+        let counts =
+            sized(gpu, &mut self.counts, u64::from(room.div_ceil(TILE)) * 256 * 4, "pts near counts")?;
+        let most_table = 1u64 << table_bits(room);
+        let cells = sized(gpu, &mut self.cells, (u64::from(HEAD) + 2 * most_table) * 4, "pts near cells")?;
+        let sorted = sized(gpu, &mut self.points, u64::from(room) * 16, "pts near points")?;
         let crowded = sized(gpu, &mut self.crowded, 16, "pts near crowded")?;
         let dummy = sized(gpu, &mut self.dummy, 16, "pts near none")?;
         let header = points.count().header_for(gpu)?;
