@@ -22,7 +22,7 @@
 //! Layout in the buffers, as WGSL's `array<T>` has it: `f32`, `vec2f` (8 bytes), `vec3f` (16
 //! bytes, the fourth float unused), `vec4f`, `u32`, `i32`.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use penumbra_core::{Error, ParamSpec, Value};
@@ -320,6 +320,8 @@ struct SeenInner {
     /// The header's other three words as they arrived with `own`.
     rest: [AtomicU32; 3],
     read: Mutex<Option<BufferRead>>,
+    /// The readback failed: `own` never arrives.
+    failed: AtomicBool,
 }
 
 impl Default for SeenInner {
@@ -329,6 +331,7 @@ impl Default for SeenInner {
             own: AtomicU32::new(UNSEEN),
             rest: [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)],
             read: Mutex::new(None),
+            failed: AtomicBool::new(false),
         }
     }
 }
@@ -350,7 +353,10 @@ impl SeenInner {
                     self.value.store(n, Ordering::Relaxed);
                 }
             }
-            crate::ReadState::Failed => *read = None,
+            crate::ReadState::Failed => {
+                self.failed.store(true, Ordering::Relaxed);
+                *read = None;
+            }
             crate::ReadState::Waiting => {}
         }
     }
@@ -416,11 +422,22 @@ impl Seen {
         let [a, b, c] = &self.0.rest;
         Some([n, a.load(Ordering::Relaxed), b.load(Ordering::Relaxed), c.load(Ordering::Relaxed)])
     }
+
+    /// Whether its readback failed, so its own value never arrives.
+    pub fn failed(&self) -> bool {
+        self.0.settle(&mut crate::lock(&self.0.read));
+        self.0.failed.load(Ordering::Relaxed)
+    }
 }
 
 #[cfg(test)]
 impl Seen {
     /// A readback that arrives with `words` when the test says so.
+    /// A readback that failed.
+    pub(crate) fn fail(&self) {
+        self.0.failed.store(true, Ordering::Relaxed);
+    }
+
     pub(crate) fn arrive(&self, words: [u32; 4]) {
         for (slot, w) in self.0.rest.iter().zip(&words[1..]) {
             slot.store(*w, Ordering::Relaxed);
@@ -487,7 +504,10 @@ impl<S: Clone + PartialEq> Reports<S> {
         self.fresh = false;
         self.from = keys;
         let wake = wake.filter(|_| !same);
-        let seen = Seen::reading_notify(gpu, header, self.last.as_ref(), wake).unwrap_or_default();
+        // A readback that cannot start never arrives: it is not waited for.
+        let Ok(seen) = Seen::reading_notify(gpu, header, self.last.as_ref(), wake) else {
+            return Seen::default();
+        };
         self.last = Some(seen.clone());
         self.wait_for(seen.clone(), settings.clone());
         seen
@@ -511,6 +531,8 @@ impl<S: Clone + PartialEq> Reports<S> {
         self.newest.as_ref().filter(|(_, s)| s == settings).map(|(w, _)| *w)
     }
 
+    /// Takes in the readbacks that arrived, and drops those that failed: they never arrive, and
+    /// kept they would take the places of those that do.
     fn settle(&mut self) {
         let mut newest = None;
         self.pending.retain(|(seen, s)| match seen.arrived_words() {
@@ -518,7 +540,7 @@ impl<S: Clone + PartialEq> Reports<S> {
                 newest = Some((w, s.clone()));
                 false
             }
-            None => true,
+            None => !seen.failed(),
         });
         if let Some(n) = newest {
             self.fresh |= self.newest.as_ref() != Some(&n);

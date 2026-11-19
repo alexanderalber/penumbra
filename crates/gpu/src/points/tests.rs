@@ -255,6 +255,28 @@ fn readbacks_that_lag_many_frames_still_arrive() {
     assert_eq!(reports.words(&1), Some([9, 0, 0, 0]));
 }
 
+/// Readbacks that failed never arrive and leave the queue: seven of them do not take the places
+/// of the readbacks that do arrive, two cooks late, on a GPU that lags behind.
+#[test]
+fn failed_readbacks_do_not_make_reports_deaf() {
+    let mut reports = Reports::<u32>::new();
+    for _ in 0..REPORTS_PENDING - 1 {
+        let dead = Seen::default();
+        dead.fail();
+        reports.wait_for(dead, 1);
+    }
+    let started: Vec<Seen> = (0..40).map(|_| Seen::default()).collect();
+    let mut heard = None;
+    for (k, seen) in started.iter().enumerate() {
+        reports.wait_for(seen.clone(), 1);
+        if k >= 2 {
+            started[k - 2].arrive([k as u32, 0, 0, 0]);
+        }
+        heard = heard.or(reports.words(&1).map(|_| k));
+    }
+    assert_eq!(heard, Some(2), "the first readback to arrive is heard at once");
+}
+
 /// The half floats a picture is packed into by hand round as `half` rounds them: at the edges
 /// (no number, infinities, minus zero, the smallest and the largest).
 #[test]
