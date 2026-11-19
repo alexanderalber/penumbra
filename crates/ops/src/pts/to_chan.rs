@@ -59,11 +59,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("out", DataKind::Chan)
         .describe_output(
             "out",
-            "`count`: the points there are. `capacity`: how many the buffers hold. With an attribute: its values and summary, one sample each. Components are named tx ty tz for position, nx ny nz for normal, r g b a for colour, u v for uv, <name>_x and so on for others; a one-number attribute by its name. What comes from the GPU follows a frame or two late",
+            "`count`: the points there are. `capacity`: how many the buffers hold. With an attribute: its values and summary, one sample each. Components are named tx ty tz for position, nx ny nz for normal, r g b a for colour, u v for uv, <name>_x and so on for others; a one-number attribute by its name. An attribute name longer than 56 characters is cut to 56 in its channels. What comes from the GPU follows a frame or two late",
         ),
         || Box::new(ToChan::default()) as Box<dyn Operator>,
     ))
 }
+
+/// The most characters of an attribute's name its channels carry.
+const BASE_LEN: usize = Name::MAX_LEN - 8;
 
 /// The channel names of `name`'s components, a type `ty` (one name for a scalar).
 pub fn component_names(name: &str, ty: AttrType) -> Vec<String> {
@@ -77,6 +80,8 @@ pub fn component_names(name: &str, ty: AttrType) -> Vec<String> {
     if !fixed.is_empty() {
         return fixed.iter().map(|s| (*s).to_string()).collect();
     }
+    // Room for the longest ending, `_x_mean` or `_x999`, within a channel name.
+    let name = name.get(..BASE_LEN).unwrap_or(name);
     match ty.components() {
         1 => vec![name.to_string()],
         n => ["x", "y", "z", "w"].iter().take(n as usize).map(|c| format!("{name}_{c}")).collect(),
@@ -264,6 +269,28 @@ impl Operator for ToChan {
                     Err(CookError::Pending)
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An attribute name as long as names may be still gives channels: its first point, its
+    /// thousandth and its summary.
+    #[test]
+    fn long_attribute_names_give_channels() {
+        let name = "a".repeat(64);
+        let p =
+            Probed { count: 1000, mean: [1.0; 4], min: [0.0; 4], max: [2.0; 4], first: vec![[0.5; 4]; 1000] };
+        for ty in [AttrType::F32, AttrType::Vec3] {
+            let asked = Asked { name: name.clone(), ty, first: 1000, summary: true };
+            let out = probed(&asked, &p, 1024).unwrap();
+            let per = component_names(&name, ty).len();
+            assert_eq!(out.len(), 2 + 1000 * per + 3 * per);
+            let names: std::collections::HashSet<&str> = out.iter().map(|c| c.name.as_str()).collect();
+            assert_eq!(names.len(), out.len(), "every channel has a name of its own");
         }
     }
 }
