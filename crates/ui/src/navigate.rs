@@ -7,7 +7,7 @@
 //! `position`, `target` and `roll` (and `size` when orthographic), one undo step per movement (a drag, a turn of the wheel, a
 //! push of the 3D mouse until it rests again).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use egui::{Color32, Pos2, Rect, Response, Stroke, pos2};
@@ -109,6 +109,9 @@ pub struct Navigation {
     modes: BTreeMap<NodeId, Mode>,
     /// The free view's camera per node; set from the first picture's starting camera.
     cameras: BTreeMap<NodeId, Orbit>,
+    /// Nodes whose free view camera framed a stand-in box ([`Picture::guess`]) and was not moved
+    /// since: the first picture that knows the box frames them again.
+    guessed: BTreeSet<NodeId>,
     /// Size of the viewer's picture area in pixels, for the free view.
     pub size: (u32, u32),
     /// A steering movement under way: its undo group, the camera as steered so far, when the
@@ -123,6 +126,7 @@ impl Default for Navigation {
         Self {
             modes: BTreeMap::new(),
             cameras: BTreeMap::new(),
+            guessed: BTreeSet::new(),
             size: (960, 540),
             steering: None,
             horizon_locked: true,
@@ -243,17 +247,33 @@ impl Navigation {
     pub fn set_camera(&mut self, node: NodeId, o: Orbit) {
         if o.is_valid() {
             self.cameras.insert(node, o);
+            self.guessed.remove(&node);
         }
     }
 
     /// Back to where the free view starts (the next picture brings it).
     pub fn home(&mut self, node: NodeId) {
         self.cameras.remove(&node);
+        self.guessed.remove(&node);
     }
 
-    /// A picture arrived: its starting camera becomes the free view's, if it has none yet.
+    /// A picture arrived: its starting camera becomes the free view's, if it has none yet. A
+    /// camera that framed a box not known yet (points whose box comes back from the GPU late)
+    /// frames again, once, when the box is known, unless the user moved it meanwhile.
     pub fn arrived(&mut self, picture: &Picture) {
-        self.cameras.entry(picture.node).or_insert(picture.home);
+        self.arrive(picture.node, picture.home, picture.guess);
+    }
+
+    fn arrive(&mut self, node: NodeId, home: Orbit, guess: bool) {
+        let reframe = self.guessed.contains(&node) && !guess;
+        if reframe || !self.cameras.contains_key(&node) {
+            self.cameras.insert(node, home);
+            if guess {
+                self.guessed.insert(node);
+            } else {
+                self.guessed.remove(&node);
+            }
+        }
     }
 
     /// Applies `m` in the mode the viewer is in: the free view's camera, or the steered camera
@@ -278,6 +298,8 @@ impl Navigation {
             Mode::Free => {
                 if let Some(o) = self.cameras.get_mut(&scene.node) {
                     m.apply(o);
+                    // Moved by hand: it stays where the user put it.
+                    self.guessed.remove(&scene.node);
                 }
                 Ok(())
             }
@@ -408,5 +430,26 @@ mod tests {
         Move { roll: 20.0, ..Move::none() }.apply(&mut o);
         assert!((o.roll + 170.0).abs() < 1e-9, "wraps into -180..180: {}", o.roll);
         assert!(Move::none().is_none());
+    }
+
+    /// A free view framed for a box not known yet frames again once, when the box arrives; a
+    /// camera the user moved stays.
+    #[test]
+    fn a_guessed_frame_is_framed_again_once() {
+        let at = |d: f64| Orbit { eye: [0.0, -d, 0.0], target: [0.0; 3], roll: 0.0, fov: 40.0, ortho: None };
+        let (a, b) = (NodeId(1), NodeId(2));
+        let mut nav = Navigation::default();
+        nav.arrive(a, at(30.0), true);
+        nav.arrive(a, at(30.0), true);
+        assert_eq!(nav.camera(a).map(|o| o.eye), Some(at(30.0).eye), "still guessing");
+        nav.arrive(a, at(3.0), false);
+        assert_eq!(nav.camera(a).map(|o| o.eye), Some(at(3.0).eye), "framed by the box");
+        nav.arrive(a, at(5.0), false);
+        assert_eq!(nav.camera(a).map(|o| o.eye), Some(at(3.0).eye), "only once");
+        // Moved by hand before the box came: stays.
+        nav.arrive(b, at(30.0), true);
+        nav.set_camera(b, at(12.0));
+        nav.arrive(b, at(3.0), false);
+        assert_eq!(nav.camera(b).map(|o| o.eye), Some(at(12.0).eye));
     }
 }
