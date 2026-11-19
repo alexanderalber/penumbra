@@ -14,6 +14,7 @@ use penumbra_graph::{DataKind, FnNodeType, NodeDesc, NodeTypes, Operator};
 pub mod delete;
 pub mod feedback;
 pub mod field;
+pub mod file;
 pub mod force;
 pub mod from_geo;
 pub mod from_tex;
@@ -61,6 +62,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     from_geo::register(types)?;
     from_values::register(types)?;
     to_table::register(types)?;
+    file::register(types)?;
     types.register(FnNodeType::new(
         NodeDesc::new("pts.null", "Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes")
             .input("in", DataKind::Pts)
