@@ -39,7 +39,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "A point cloud from a file: .ply from a scanner or a 3D program, or .xyz and .csv text with a column per number. Updates when the file is saved",
         )
         .param(ParamSpec::file("file", EXTENSIONS).doc(
-            "The file, relative to the project directory. .ply: ASCII or binary little endian; x y z place the points, nx ny nz, red green blue (alpha) and every other number of a vertex become attributes. .xyz, .csv, .txt, .pts: a number per column, split at commas, spaces, tabs or semicolons; a first line of names says what each column is (x y z, r g b, nx ny nz, any name), without one the columns are x y z and then r g b",
+            "The file, relative to the project directory. .ply: ASCII or binary little endian; x y z place the points, nx ny nz, red green blue (alpha) and every other number of a vertex become attributes. .xyz, .csv, .txt, .pts: a number per column, split at commas, spaces, tabs or semicolons; a first line of names says what each column is (x y z, r g b, nx ny nz, any name). Without names the columns are x y z r g b; four or seven columns are x y z intensity (r g b), as laser scanners write them, and a first line holding only the number of points is skipped",
         ))
         .output("out", DataKind::Pts)
         .describe_output(
@@ -349,14 +349,21 @@ fn text(bytes: &[u8]) -> Result<Cloud, String> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let split = |line: &str| -> Vec<String> {
         line.split([',', ' ', '\t', ';'])
-            .map(str::trim)
+            .map(|w| w.trim().trim_matches('"').trim())
             .filter(|w| !w.is_empty())
             .map(str::to_string)
             .collect()
     };
     let mut lines =
         text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("//"));
-    let first = lines.next().map(split).unwrap_or_default();
+    let mut first = lines.next().map(split).unwrap_or_default();
+    // A .pts file from a laser scanner starts with the number of points on a line of its own:
+    // a claim, not a point.
+    if let [n] = first.as_slice()
+        && n.parse::<u64>().is_ok()
+    {
+        first = lines.next().map(split).unwrap_or_default();
+    }
     let named = first.iter().any(|w| w.parse::<f64>().is_err());
     let mut warnings = Vec::new();
     let mut rows: Vec<Vec<f64>> = Vec::new();
@@ -375,22 +382,36 @@ fn text(bytes: &[u8]) -> Result<Cloud, String> {
         (first.clone(), false)
     } else {
         let widest = rows.iter().map(Vec::len).max().unwrap_or(0);
-        let mut names: Vec<String> =
-            ["x", "y", "z", "r", "g", "b"].iter().take(widest).map(|s| (*s).to_string()).collect();
-        if widest > 6 {
+        // Four or seven columns, as laser scanners write them: an intensity after x y z.
+        let order: &[&str] = match widest {
+            4 => &["x", "y", "z", "intensity"],
+            7 => &["x", "y", "z", "intensity", "r", "g", "b"],
+            _ => &["x", "y", "z", "r", "g", "b"],
+        };
+        let mut names: Vec<String> = order.iter().take(widest).map(|s| (*s).to_string()).collect();
+        if widest > order.len() {
             warnings.push(format!(
-                "{widest} columns without names: the first six are x y z r g b, the rest are left out"
+                "{widest} columns without names: the first {} are {}, the rest are left out",
+                order.len(),
+                order.join(" ")
             ));
-            names.extend((6..widest).map(|_| String::new()));
+            names.extend((order.len()..widest).map(|_| String::new()));
         }
         // Colours of 0 to 255 are bytes in sRGB; up to 1 they are taken as they are.
-        let bytes = rows.iter().any(|r| r.iter().skip(3).take(3).any(|v| *v > 1.0));
+        let colour: Vec<usize> = names
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| ["r", "g", "b"].contains(&n.as_str()))
+            .map(|(i, _)| i)
+            .collect();
+        let bytes = rows.iter().any(|r| colour.iter().any(|i| r.get(*i).is_some_and(|v| *v > 1.0)));
         (names, bytes)
     };
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let is_colour = |i: usize| refs.get(i).is_some_and(|n| ["r", "g", "b"].contains(n));
     let value = |i: usize, p: usize| {
         let v = rows.get(p).and_then(|r| r.get(i)).copied()?;
-        Some(if bytes_colour && (3..6).contains(&i) { linear(v) } else { v })
+        Some(if bytes_colour && is_colour(i) { linear(v) } else { v })
     };
     let (cols, mut more) = columns(&refs, &value, count);
     warnings.append(&mut more);
@@ -480,7 +501,13 @@ mod tests {
         assert_eq!(c.count, 2);
         assert_eq!(floats(col(&c, "position"))[4..7], [4.0, 5.0, 6.0]);
         assert_eq!(floats(col(&c, "color"))[..4], [1.0, 1.0, 0.0, 1.0]);
-        let c = text(b"x;y;z;weight\n1;2;3;0.5\n").unwrap();
+        let c = text(b"\"x\";\"y\";\"z\";\"weight\"\n1;2;3;0.5\n").unwrap();
         assert_eq!((c.count, floats(col(&c, "weight"))), (1, vec![0.5]));
+        // A scanner's .pts: the count first, then x y z intensity r g b.
+        let c = text(b"2\n1 2 3 -500 255 0 0\n4 5 6 20 0 0 255\n").unwrap();
+        assert_eq!(c.count, 2);
+        assert_eq!(floats(col(&c, "position"))[..3], [1.0, 2.0, 3.0]);
+        assert_eq!(floats(col(&c, "intensity")), [-500.0, 20.0]);
+        assert_eq!(floats(col(&c, "color"))[4..8], [0.0, 0.0, 1.0, 1.0]);
     }
 }
