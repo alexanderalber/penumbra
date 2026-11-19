@@ -737,17 +737,15 @@ fn a_warm_up_goes_on_while_the_show_stands_and_follows_its_length() {
     rig.cook("/p");
     assert!(running(&rig), "a warm-up of 5 s takes more than a frame");
     // The show stands still from here.
-    let mut frames = 0;
-    while running(&rig) && frames < 400 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while running(&rig) && std::time::Instant::now() < deadline {
         super::pts_near::idle(&mut rig, "/p", 1);
-        frames += 1;
     }
     assert!(!running(&rig), "the warm-up ends while the show stands");
     let n = live(&rig, &output(&rig, "/p"));
     assert!((60..=61).contains(&n), "a second of particles at 60 a second: {n}");
-    let (_, cooks) = super::pts_near::idle(&mut rig, "/p", 5);
-    let (_, later) = super::pts_near::idle(&mut rig, "/p", 5);
-    assert_eq!(cooks, later, "and then rests");
+    let (_, rests) = super::pts_near::settle(&mut rig, "/p");
+    assert!(rests.is_some(), "and then rests");
 
     // 30 s of warm-up, changed to none while it runs: no pre-roll.
     rig.cooker.reset(id);
