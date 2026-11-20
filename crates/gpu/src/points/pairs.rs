@@ -34,11 +34,13 @@ pub const SPAN01: &str = "span01";
 /// The most lines one point chooses.
 pub const MAX_LINES: u32 = 32;
 
-/// Bins of the cut at `max` (16 per thread of its workgroup of 256). Each line falls into a bin
-/// by a hash of its pair's keys (`id`, else the index); the cut keeps the bins from the first on.
-/// A new cut keeps the most bins whose lines are at most 63/64 of `max`. The cut stays where it
-/// was while the lines it keeps are between 31/32 of `max` and `max`, so a count that moves a
-/// little from frame to frame keeps every line it can.
+/// Bins of the cut at `max` (16 per thread of its workgroup of 256). Each line has a key of 24
+/// bits from a hash of its pair's keys (`id`, else the index); the cut keeps the lines whose key
+/// is below a bound. The key's top 12 bits are the line's bin. The cut counts the lines per bin,
+/// then per value of the low 12 bits in the one bin the bound falls in, so it can stop inside a
+/// bin. A new cut keeps the most lines up to 63/64 of `max`. The cut stays where it was while
+/// the lines it keeps are between 31/32 of `max` and `max`, so a count that moves a little from
+/// frame to frame keeps every line it can.
 pub const CUT_BINS: u32 = 4096;
 
 /// Which of its candidates a point chooses when it has more than `most`.
@@ -87,12 +89,13 @@ fn pts_key(i: u32) -> u32 {
     return i;
 }
 
-// The bin of the line between i and j for the cut at `max`: the same for the pair whichever end
-// draws it, while both points keep their keys.
-fn pts_bin(i: u32, j: u32) -> u32 {
+// The key of the line between i and j for the cut at `max`: 24 bits, the same for the pair
+// whichever end draws it, while both points keep their keys. Its top 12 bits are its bin, the
+// low 12 its place in the bin.
+fn pts_cut_key(i: u32, j: u32) -> u32 {
     let a = pts_key(i);
     let b = pts_key(j);
-    return pn_hash(vec3u(min(a, b), max(a, b), 0x6a09e667u)).y >> 20u;
+    return pn_hash(vec3u(min(a, b), max(a, b), 0x6a09e667u)).y >> 8u;
 }
 ";
 
@@ -161,8 +164,11 @@ fn pts_emits(i: u32, j: u32) -> bool {
 }
 ";
 
-/// The lines wanted per bin of the cut, and the cut: the first bin whose lines no longer fit
-/// under `max` (`CUT_BINS` where all fit), and the lines wanted.
+/// The cut at `max`: a line is kept when its key ([`CUT_BINS`]) is below `cut[0]`. Counted in
+/// two levels: the lines per bin, then the lines per place in the one bin a new cut falls in.
+/// `tally` holds the lines per bin, per place in the bin of the cut before, and per place in the
+/// bin of the new cut. `cut` holds the cut, the lines wanted, the bin of a new cut (`BINSu` for
+/// none) and the lines it may still take from that bin.
 const CUT: &str = "
 @group(2) @binding(0) var<storage, read> keys: array<u32>;
 @group(2) @binding(1) var<storage, read> chosen: array<u32>;
@@ -171,9 +177,12 @@ const CUT: &str = "
 @group(2) @binding(4) var<storage, read_write> cut: array<u32>;
 @group(2) @binding(5) var<uniform> header: vec4u;
 
+// Every line kept: above every key.
+const PTS_ALL: u32 = 16777216u;
+
 @compute @workgroup_size(64)
 fn clear(@builtin(global_invocation_id) id: vec3u) {
-    if id.x < BINSu {
+    if id.x < 3u * BINSu {
         atomicStore(&tally[id.x], 0u);
     }
 }
@@ -185,33 +194,67 @@ fn tally_lines(@builtin(global_invocation_id) id: vec3u) {
     if id.x >= pn.size.x || i >= min(header.x, n) {
         return;
     }
+    let before = cut[0] >> 12u;
     let most = pts_most();
     let c = min(chosen_n[i], most);
     for (var s = 0u; s < c; s++) {
         let j = chosen[i * most + s];
         if pts_emits(i, j) {
-            atomicAdd(&tally[pts_bin(i, j)], 1u);
+            let k = pts_cut_key(i, j);
+            atomicAdd(&tally[k >> 12u], 1u);
+            if (k >> 12u) == before {
+                atomicAdd(&tally[BINSu + (k & 0xfffu)], 1u);
+            }
         }
     }
 }
 
-// The lines of each run of 16 bins.
+@compute @workgroup_size(64)
+fn tally_places(@builtin(global_invocation_id) id: vec3u) {
+    let i = id.y * pn.size.x + id.x;
+    let n = u32(max(params.n, 0));
+    let bin = cut[2];
+    if id.x >= pn.size.x || i >= min(header.x, n) || bin >= BINSu {
+        return;
+    }
+    let most = pts_most();
+    let c = min(chosen_n[i], most);
+    for (var s = 0u; s < c; s++) {
+        let j = chosen[i * most + s];
+        if pts_emits(i, j) {
+            let k = pts_cut_key(i, j);
+            if (k >> 12u) == bin {
+                atomicAdd(&tally[2u * BINSu + (k & 0xfffu)], 1u);
+            }
+        }
+    }
+}
+
+// The sum of each run of 16 of the 4096 counts at `base`.
 var<workgroup> pts_runs: array<u32, 256>;
 
-// The lines in the bins before b.
-fn pts_below(b: u32) -> u32 {
+fn pts_sum_runs(base: u32, t: u32) {
+    var mine = 0u;
+    for (var k = 0u; k < 16u; k++) {
+        mine += atomicLoad(&tally[base + t * 16u + k]);
+    }
+    pts_runs[t] = mine;
+}
+
+// The sum of the counts at `base` before b.
+fn pts_below(base: u32, b: u32) -> u32 {
     var c = 0u;
     for (var r = 0u; r < b / 16u; r++) {
         c += pts_runs[r];
     }
     for (var k = b / 16u * 16u; k < b; k++) {
-        c += atomicLoad(&tally[k]);
+        c += atomicLoad(&tally[base + k]);
     }
     return c;
 }
 
-// The most bins from the first on whose lines are at most `limit`.
-fn pts_most_bins(limit: u32) -> u32 {
+// The most counts at `base` from the first on whose sum is at most `limit`, and that sum.
+fn pts_most_fit(base: u32, limit: u32) -> vec2u {
     var c = 0u;
     var r = 0u;
     loop {
@@ -223,24 +266,21 @@ fn pts_most_bins(limit: u32) -> u32 {
     }
     var b = r * 16u;
     loop {
-        if b >= BINSu || c + atomicLoad(&tally[b]) > limit {
+        if b >= 4096u || c + atomicLoad(&tally[base + b]) > limit {
             break;
         }
-        c += atomicLoad(&tally[b]);
+        c += atomicLoad(&tally[base + b]);
         b += 1u;
     }
-    return b;
+    return vec2u(b, c);
 }
 
 // The cut stays where it was while the lines it keeps are between 31/32 of `max` and `max`, so
-// a count that moves a little from frame to frame changes no line. Else it keeps 63/64 of `max`.
+// a count that moves a little from frame to frame changes no line. Else a new cut keeps up to
+// 63/64 of `max`: the bins that fit whole (here), then what fits of the next bin (cut_places).
 @compute @workgroup_size(256)
-fn cut_lines(@builtin(local_invocation_index) t: u32) {
-    var mine = 0u;
-    for (var k = 0u; k < 16u; k++) {
-        mine += atomicLoad(&tally[t * 16u + k]);
-    }
-    pts_runs[t] = mine;
+fn cut_bins(@builtin(local_invocation_index) t: u32) {
+    pts_sum_runs(0u, t);
     workgroupBarrier();
     if t != 0u {
         return;
@@ -250,24 +290,45 @@ fn cut_lines(@builtin(local_invocation_index) t: u32) {
         total += pts_runs[r];
     }
     let max_lines = u32(max(params.max, 0));
-    var keep = BINSu;
+    var keep = PTS_ALL;
+    var bin = BINSu;
+    var room = 0u;
     if total > max_lines {
         let before = cut[0];
         var stay = false;
-        if before < BINSu {
-            let kept = pts_below(before);
+        if before < PTS_ALL {
+            var kept = pts_below(0u, before >> 12u);
+            for (var p = 0u; p < (before & 0xfffu); p++) {
+                kept += atomicLoad(&tally[BINSu + p]);
+            }
             stay = kept <= max_lines && kept >= max_lines - max_lines / 32u;
         }
         if stay {
             keep = before;
         } else {
-            keep = pts_most_bins(max_lines - max_lines / 64u);
+            let limit = max_lines - max_lines / 64u;
+            let fit = pts_most_fit(0u, limit);
+            bin = min(fit.x, BINSu - 1u);
+            room = limit - fit.y;
+            keep = bin << 12u;
         }
     }
     cut[0] = keep;
     cut[1] = total;
-    cut[2] = 0u;
-    cut[3] = 0u;
+    cut[2] = bin;
+    cut[3] = room;
+}
+
+@compute @workgroup_size(256)
+fn cut_places(@builtin(local_invocation_index) t: u32) {
+    pts_sum_runs(2u * BINSu, t);
+    workgroupBarrier();
+    let bin = cut[2];
+    if t != 0u || bin >= BINSu {
+        return;
+    }
+    let fit = pts_most_fit(2u * BINSu, cut[3]);
+    cut[0] = (bin << 12u) + fit.x;
 }
 ";
 
@@ -296,7 +357,7 @@ fn count(@builtin(global_invocation_id) id: vec3u) {
         let c = min(chosen_n[i], most);
         for (var s = 0u; s < c; s++) {
             let j = chosen[i * most + s];
-            if pts_emits(i, j) && pts_bin(i, j) < cut.x {
+            if pts_emits(i, j) && pts_cut_key(i, j) < cut.x {
                 e += 1u;
                 mask |= 1u << s;
             }
@@ -453,9 +514,9 @@ pub struct Pairer {
     counts: Option<Buffer>,
     /// Per point a bit per choice: the lines it draws after the cut at `max`.
     kept: Option<Buffer>,
-    /// Lines wanted per bin of the cut.
+    /// Lines wanted per bin of the cut, and per place in a bin ([`CUT`]).
     tally: Option<Buffer>,
-    /// The cut: the first bin left out, the lines wanted.
+    /// The cut: the first key left out, the lines wanted, the bin and room of a new cut.
     cut: Option<Buffer>,
     map: Option<Buffer>,
     none: Option<Buffer>,
@@ -517,7 +578,7 @@ impl Pairer {
         let chosen_n = sized(gpu, &mut self.chosen_n, u64::from(room) * 4, "pts proximity chosen count")?;
         let counts = sized(gpu, &mut self.counts, u64::from(room) * 4, "pts proximity counts")?;
         let kept = sized(gpu, &mut self.kept, u64::from(room) * 4, "pts proximity kept")?;
-        let tally = sized(gpu, &mut self.tally, u64::from(CUT_BINS) * 4, "pts proximity tally")?;
+        let tally = sized(gpu, &mut self.tally, 3 * u64::from(CUT_BINS) * 4, "pts proximity tally")?;
         let cut = sized(gpu, &mut self.cut, 16, "pts proximity cut")?;
         let map = sized(gpu, &mut self.map, u64::from(capacity) * 4, "pts proximity ends")?;
         let none = sized(gpu, &mut self.none, 16, "pts proximity no keys")?;
@@ -552,9 +613,11 @@ impl Pairer {
             gpu,
             &[key_buffer, &chosen, &chosen_n, &tally, &cut, &count_now],
             &[
-                Step { entry: "clear", out: Out::range(CUT_BINS), input: &input },
+                Step { entry: "clear", out: Out::range(3 * CUT_BINS), input: &input },
                 Step { entry: "tally_lines", out: grid(n), input: &input },
-                Step { entry: "cut_lines", out: Out::range(256), input: &input },
+                Step { entry: "cut_bins", out: Out::range(256), input: &input },
+                Step { entry: "tally_places", out: grid(n), input: &input },
+                Step { entry: "cut_places", out: Out::range(256), input: &input },
             ],
         )?;
         gpu.cached_compute("pts proximity count", &count_source(), &params())?.run_with(
