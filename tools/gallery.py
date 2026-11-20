@@ -50,6 +50,8 @@ SHOWCASE = [
     ("smoke", EXAMPLES / "smoke", "/out", 25),
     # 20 s: the beat tracker has locked on and the picture is moving with it.
     ("raymarch", EXAMPLES / "raymarch", "/out", 20),
+    # 10 s: the sparks of several lives fill the air above the word.
+    ("particles", EXAMPLES / "particles", "/out", 10),
 ]
 
 # Params set before the wait, per showcase picture: picture name, then (node, params). 2 on the
