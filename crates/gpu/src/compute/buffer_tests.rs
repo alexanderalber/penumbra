@@ -79,6 +79,19 @@ fn a_resized_buffer_keeps_what_fits() {
     assert_eq!(b.read::<u32>(&gpu).unwrap(), [1, 2]);
 }
 
+/// Waits for `read` as a test can: the copy may be done while its callback runs on another
+/// test's thread that polled the shared device first, so poll on until it says so.
+fn ready(gpu: &crate::Gpu, read: &crate::BufferRead) -> crate::ReadState {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut state = read.wait(gpu, std::time::Duration::from_secs(30));
+    while state == crate::ReadState::Waiting && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        gpu.poll();
+        state = read.state();
+    }
+    state
+}
+
 #[test]
 fn a_readback_without_waiting_delivers_after_a_poll_and_reuses_its_buffer() {
     let Some(gpu) = gpu() else { return };
@@ -86,18 +99,18 @@ fn a_readback_without_waiting_delivers_after_a_poll_and_reuses_its_buffer() {
     b.write(&gpu, 0, &[1u32, 2, 3, 4]).unwrap();
     let first = b.read_async(&gpu, None).unwrap();
     assert!(first.get::<u32>().is_err() || first.state() == crate::ReadState::Ready);
-    assert_eq!(first.wait(&gpu, std::time::Duration::from_secs(30)), crate::ReadState::Ready);
+    assert_eq!(ready(&gpu, &first), crate::ReadState::Ready);
     assert_eq!(first.get::<u32>().unwrap(), [1, 2, 3, 4]);
     assert!(first.get::<[u8; 3]>().is_err());
     // A later write shows in the next readback, made in the first one's staging buffer.
     b.write(&gpu, 1, &[9u32]).unwrap();
     let second = b.read_async(&gpu, Some(first)).unwrap();
-    assert_eq!(second.wait(&gpu, std::time::Duration::from_secs(30)), crate::ReadState::Ready);
+    assert_eq!(ready(&gpu, &second), crate::ReadState::Ready);
     assert_eq!(second.get::<u32>().unwrap(), [1, 9, 3, 4]);
     // A spare of another size is not taken.
     let small = Buffer::of::<u32>(&gpu, 2, "small").unwrap();
     let third = small.read_async(&gpu, Some(second)).unwrap();
-    assert_eq!(third.wait(&gpu, std::time::Duration::from_secs(30)), crate::ReadState::Ready);
+    assert_eq!(ready(&gpu, &third), crate::ReadState::Ready);
     assert_eq!(third.get::<u32>().unwrap(), [0, 0]);
     assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
 }

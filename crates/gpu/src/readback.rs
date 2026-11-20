@@ -521,19 +521,11 @@ impl PendingRead {
     /// says where the readback stands. For a small readback whose result is wanted in the same
     /// frame; the wait blocks the calling thread, so keep `timeout` short.
     pub fn wait(&self, gpu: &Gpu, timeout: Duration) -> ReadState {
-        if self.state() != ReadState::Waiting {
-            return self.state();
-        }
-        let deadline = std::time::Instant::now() + timeout;
-        let wait =
-            wgpu::PollType::Wait { submission_index: Some(self.index.clone()), timeout: Some(timeout) };
-        // A timeout is not an error here: the caller looks again later.
-        let _ = gpu.device().poll(wait);
-        // The copy may be done while its callback still runs on another thread that polled
-        // first: look again shortly, without waiting on the GPU again.
-        while self.state() == ReadState::Waiting && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_micros(200));
-            let _ = gpu.device().poll(wgpu::PollType::Poll);
+        if self.state() == ReadState::Waiting {
+            let wait =
+                wgpu::PollType::Wait { submission_index: Some(self.index.clone()), timeout: Some(timeout) };
+            // A timeout is not an error here: the caller looks again later.
+            let _ = gpu.device().poll(wait);
         }
         self.state()
     }
