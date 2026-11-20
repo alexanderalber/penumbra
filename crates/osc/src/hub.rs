@@ -1331,7 +1331,10 @@ mod tests {
         let (hub, port) = hub_on_any_port(false);
         let s = hub.sender("test", target("localhost", port).unwrap()).unwrap();
         s.send(&message_packet(&Message::new("/x", vec![Arg::Float(2.0)])), 1).unwrap();
-        until("arrived", || hub.read(0).is_some_and(|st| st.entries.len() == 1));
+        // The listener stores a message before it lists it among the recent ones.
+        until("arrived", || {
+            hub.read(0).is_some_and(|st| st.entries.len() == 1) && !hub.status().recent.is_empty()
+        });
         let st = hub.status();
         assert_eq!(st.senders.len(), 1);
         assert_eq!(st.senders[0].packets, 1);
