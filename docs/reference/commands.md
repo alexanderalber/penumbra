@@ -332,6 +332,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `script.bench` | Measure a script call: GIL attach, request round trip, trivial and 200-channel calls; {runs?} |
+| `script.choose` | Choose the Python for script nodes when the search finds none or the wrong one, kept for every project and the next starts; {path?: a Python folder or a file in one (python.exe, libpython3.XY.dylib, bin/python3)}, without path: back to the search. In effect at once while no script has run, else after a restart; PENUMBRA_PYTHON wins over it |
 | `script.info` | The script node's Python: where it was found (or why not), version, state, call times, timeouts |
 
 ## shapes

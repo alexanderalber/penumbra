@@ -46,7 +46,8 @@ const STACK: usize = 16 << 20;
 /// Why a script did not run or did not finish.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ScriptError {
-    /// No usable Python, or it could not be started. Lasts until penumbra restarts.
+    /// No usable Python, or it could not be started. One that could not be started stays so
+    /// until penumbra restarts; a missing one until another is chosen ([`Host::set_install`]).
     Unavailable(String),
     /// The Python thread is doing something else (starting, loading a script); the waker given
     /// to [`Host::call`] runs once it is free.
@@ -144,6 +145,8 @@ struct Stats {
 }
 
 struct State {
+    /// The Python to run, or why there is none. Changes only while nothing has started.
+    install: Result<Install, String>,
     phase: Phase,
     running: Option<Running>,
     /// A caller gave up waiting for the running request.
@@ -151,7 +154,8 @@ struct State {
     seq: u64,
     /// Module slots of deleted nodes, freed with the next request.
     drops: Vec<u64>,
-    /// Run when the thread is free again (calls that met [`ScriptError::Busy`]).
+    /// Run when the thread is free again (calls that met [`ScriptError::Busy`]), or when
+    /// another Python is taken ([`Host::set_install`]).
     wakers: Vec<Box<dyn FnOnce() + Send>>,
     work: Option<Sender<Work>>,
     stats: Stats,
@@ -191,7 +195,6 @@ struct Shared {
 
 /// The script host. One per process (an interpreter cannot be restarted): [`crate::host`].
 pub struct Host {
-    install: Result<Install, String>,
     shared: Arc<Shared>,
     next_key: AtomicU64,
 }
@@ -200,9 +203,9 @@ impl Host {
     /// A host for `install` (or the reason there is none). Starts nothing yet.
     pub fn new(install: Result<Install, String>) -> Host {
         Host {
-            install,
             shared: Arc::new(Shared {
                 state: Mutex::new(State {
+                    install,
                     phase: Phase::NotStarted,
                     running: None,
                     stuck: false,
@@ -225,14 +228,53 @@ impl Host {
         }
     }
 
-    /// The Python found at startup, or why there is none.
-    pub fn install(&self) -> Result<&Install, &str> {
-        self.install.as_ref().map_err(String::as_str)
+    /// The Python found, or why there is none.
+    pub fn install(&self) -> Result<Install, String> {
+        lock(&self.shared.state).install.clone()
+    }
+
+    /// Why there is no Python to run, if there is none.
+    pub fn missing(&self) -> Option<String> {
+        lock(&self.shared.state).install.as_ref().err().cloned()
+    }
+
+    /// Takes another Python (or another reason for having none) unless one has started or
+    /// failed to start: a process holds one interpreter for good. Says whether it was taken;
+    /// then the wakers left with [`Host::wake_on_install`] run.
+    pub fn set_install(&self, install: Result<Install, String>) -> bool {
+        let wakers = {
+            let mut st = lock(&self.shared.state);
+            if !matches!(st.phase, Phase::NotStarted) {
+                return false;
+            }
+            match &install {
+                Ok(i) => log::info!(
+                    "script node: now Python 3.{} at {} ({})",
+                    i.minor,
+                    i.library.display(),
+                    i.source
+                ),
+                Err(e) => log::warn!("script node: {e}"),
+            }
+            st.install = install;
+            std::mem::take(&mut st.wakers)
+        };
+        for w in wakers {
+            w();
+        }
+        true
+    }
+
+    /// Runs `wake` once another Python is taken, for a node that failed for lack of one.
+    /// Without a Python nothing else runs the wakers.
+    pub fn wake_on_install(&self, wake: Box<dyn FnOnce() + Send>) {
+        lock(&self.shared.state).wakers.push(wake);
     }
 
     /// Whether scripts can run as far as is known: a Python was found and has not failed.
     pub fn available(&self) -> bool {
-        self.install.is_ok() && !matches!(lock(&self.shared.state).phase, Phase::Failed(_))
+        let st = lock(&self.shared.state);
+        st.install.is_ok() && !matches!(st.phase, Phase::Failed(_))
     }
 
     /// A fresh module slot for one node.
@@ -250,7 +292,7 @@ impl Host {
 
     pub fn status(&self) -> Status {
         let st = lock(&self.shared.state);
-        let (library, source, mut error) = match &self.install {
+        let (library, source, mut error) = match &st.install {
             Ok(i) => (Some(i.library.display().to_string()), Some(i.source.to_string()), None),
             Err(e) => (None, None, Some(e.clone())),
         };
@@ -433,10 +475,14 @@ impl Host {
         limit: Duration,
         wake: Option<Box<dyn FnOnce() + Send>>,
     ) -> Result<Receiver<Result<Vec<u8>, String>>, ScriptError> {
-        let install = self.install.as_ref().map_err(|e| ScriptError::Unavailable(e.clone()))?;
         let mut st = lock(&self.shared.state);
-        if matches!(st.phase, Phase::NotStarted) {
-            self.start(&mut st, install.clone());
+        if let Err(e) = &st.install {
+            return Err(ScriptError::Unavailable(e.clone()));
+        }
+        if matches!(st.phase, Phase::NotStarted)
+            && let Ok(install) = st.install.clone()
+        {
+            self.start(&mut st, install);
         }
         match &st.phase {
             Phase::Failed(e) => return Err(ScriptError::Unavailable(e.clone())),

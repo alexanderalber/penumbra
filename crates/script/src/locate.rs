@@ -14,6 +14,11 @@
 //! following the executable's symlinks: python.org's framework, Homebrew, setup-python) has
 //! `lib/libpython3.XY.dylib`; else the newest `libpython3.XY.so.1.0` in the usual library
 //! directories.
+//!
+//! Everywhere a Python chosen in the app ([`Env::chosen`]) comes second, after
+//! `PENUMBRA_PYTHON`. Such a choice is the way out when the search fails, so more counts for it
+//! outside Windows: also a file of a Python that is no library (`bin/python3`, a framework's
+//! `Python`), or a Python's folder, with the library beside it, in `lib` or in `../lib`.
 
 use std::path::{Path, PathBuf};
 
@@ -30,14 +35,22 @@ pub struct Install {
     pub library: PathBuf,
     /// The minor version from the file names (confirmed when loaded).
     pub minor: u32,
-    /// How it was found: `PENUMBRA_PYTHON`, `PATH`, `default location`.
+    /// How it was found: `PENUMBRA_PYTHON`, `chosen in penumbra`, `PATH`, `default location`.
     pub source: &'static str,
 }
+
+/// [`Install::source`] of the Python named by the environment variable.
+pub const FROM_ENV: &str = "PENUMBRA_PYTHON";
+/// [`Install::source`] of the Python chosen in the app.
+pub const CHOSEN: &str = "chosen in penumbra";
 
 /// Where to look; the environment, passed in so tests can vary it.
 #[derive(Clone, Debug, Default)]
 pub struct Env {
     pub explicit: Option<PathBuf>,
+    /// The Python chosen in the app and kept by it: a Python directory or a file in one. Used
+    /// when `explicit` names none.
+    pub chosen: Option<PathBuf>,
     pub path: Vec<PathBuf>,
     /// Directories whose `Python3*` subdirectories are candidates (Windows) or library
     /// directories (elsewhere).
@@ -72,7 +85,7 @@ impl Env {
             .map(PathBuf::from)
             .collect()
         };
-        Env { explicit: var("PENUMBRA_PYTHON"), path, defaults, python_home: var("PYTHONHOME") }
+        Env { explicit: var(FROM_ENV), chosen: None, path, defaults, python_home: var("PYTHONHOME") }
     }
 }
 
@@ -104,14 +117,17 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 fn find_install(env: &Env) -> Result<Install, String> {
     let mut ignored = Vec::new();
     if let Some(explicit) = &env.explicit {
-        let dir = if explicit.is_file() {
-            explicit.parent().unwrap_or(explicit).to_path_buf()
-        } else {
-            explicit.clone()
-        };
-        let file = explicit.is_file().then_some(explicit.as_path());
-        return check(&dir, file, "PENUMBRA_PYTHON", &mut ignored)
+        return named(explicit, FROM_ENV, &mut ignored)
             .ok_or_else(|| format!("PENUMBRA_PYTHON={}: {}", explicit.display(), ignored.join("; ")));
+    }
+    if let Some(chosen) = &env.chosen {
+        return named(chosen, CHOSEN, &mut ignored).ok_or_else(|| {
+            format!(
+                "the Python chosen in penumbra ({}) is not usable: {}; choose another one (script.choose without a path goes back to the search)",
+                chosen.display(),
+                ignored.join("; ")
+            )
+        });
     }
     if cfg!(windows) {
         for dir in &env.path {
@@ -154,7 +170,8 @@ fn find_install(env: &Env) -> Result<Install, String> {
     best.ok_or_else(|| {
         let mut msg = format!(
             "no Python 3.{MIN_MINOR} or newer found; install one from python.org (or put it on PATH, or set \
-             PENUMBRA_PYTHON to its directory)"
+             PENUMBRA_PYTHON to its directory). If one is installed, name it with the node's `choose Python ...` \
+             button (script.choose)"
         );
         if !ignored.is_empty() {
             msg.push_str("; not usable: ");
@@ -162,6 +179,37 @@ fn find_install(env: &Env) -> Result<Install, String> {
         }
         msg
     })
+}
+
+/// The Python a setting names: a Python directory, or a file in one.
+fn named(path: &Path, source: &'static str, ignored: &mut Vec<String>) -> Option<Install> {
+    let is_file = path.is_file();
+    let dir = if is_file { path.parent().unwrap_or(path) } else { path };
+    if source == CHOSEN && !cfg!(windows) {
+        return chosen_unix(dir, is_file.then_some(path), ignored);
+    }
+    check(dir, is_file.then_some(path), source, ignored)
+}
+
+/// A choice made in the app, outside Windows: the library itself, or the first library found
+/// beside the chosen file or in the chosen folder, in its `lib` or in `../lib`. So the
+/// executable (`bin/python3`) and a framework's `Python` file lead to the library too.
+fn chosen_unix(dir: &Path, file: Option<&Path>, ignored: &mut Vec<String>) -> Option<Install> {
+    let library = file.filter(|f| f.file_name().is_some_and(|n| unix_minor(&n.to_string_lossy()).is_some()));
+    if library.is_some() {
+        return check_unix(dir, library, CHOSEN, ignored);
+    }
+    let mut places = vec![dir.to_path_buf(), dir.join("lib")];
+    places.extend(dir.parent().map(|up| up.join("lib")));
+    let mut none = Vec::new();
+    let found = places.iter().find_map(|place| check_unix(place, None, CHOSEN, &mut none));
+    if found.is_none() {
+        ignored.push(format!(
+            "no libpython3.XY.so or .dylib (XY >= {MIN_MINOR}) in {}, its lib folder or the lib folder beside it",
+            dir.display()
+        ));
+    }
+    found
 }
 
 /// Whether `dir` holds a usable Python (`file`: the library the user named, if any).
@@ -177,7 +225,7 @@ fn check(
 fn check_windows(dir: &Path, source: &'static str, ignored: &mut Vec<String>) -> Option<Install> {
     let stable = dir.join("python3.dll");
     if !stable.is_file() {
-        if source == "PENUMBRA_PYTHON" {
+        if source == FROM_ENV || source == CHOSEN {
             ignored.push(format!("no python3.dll in {}", dir.display()));
         }
         return None;
@@ -232,7 +280,7 @@ fn check_unix(
             }
         }
     }
-    if source == "PENUMBRA_PYTHON" {
+    if source == FROM_ENV || source == CHOSEN {
         ignored.push(format!("no libpython3.XY.so (XY >= {MIN_MINOR}) in {}", dir.display()));
     }
     None
@@ -334,6 +382,19 @@ mod tests {
         let env = Env { explicit: Some(good.join("python312.dll")), ..Env::default() };
         assert_eq!(find(&env).unwrap().source, "PENUMBRA_PYTHON");
 
+        // A Python chosen in the app: before PATH, after PENUMBRA_PYTHON, and never replaced.
+        touch(&embed.join("python.exe"));
+        let env = Env { chosen: Some(embed.join("python.exe")), path: vec![good.clone()], ..Env::default() };
+        let found = find(&env).unwrap();
+        assert_eq!((found.library, found.minor, found.source), (embed.join("python3.dll"), 13, CHOSEN));
+        let env = Env { explicit: Some(good.clone()), ..env };
+        assert_eq!(find(&env).unwrap().source, "PENUMBRA_PYTHON");
+        let env = Env { chosen: Some(old.clone()), path: vec![good.clone()], ..Env::default() };
+        let e = find(&env).unwrap_err();
+        assert!(e.starts_with("the Python chosen in penumbra") && e.contains("is Python 3.10"), "{e}");
+        let env = Env { chosen: Some(root.join("gone")), path: vec![good.clone()], ..Env::default() };
+        assert!(find(&env).unwrap_err().contains("no python3.dll"));
+
         // PYTHONHOME elsewhere would abort Py_Initialize.
         let env = Env { path: vec![good.clone()], python_home: Some(old.clone()), ..Env::default() };
         assert!(find(&env).unwrap_err().contains("PYTHONHOME"));
@@ -341,6 +402,34 @@ mod tests {
         assert!(find(&env).is_ok());
 
         assert!(find(&Env::default()).unwrap_err().contains("no Python 3.12"));
+    }
+
+    /// Runs on every system: the files are only looked at, never loaded.
+    #[test]
+    fn a_choice_outside_windows_leads_from_a_python_file_to_its_library() {
+        let root = scratch("chosen-unix");
+        let lib = root.join("lib/libpython3.13.dylib");
+        touch(&lib);
+        touch(&root.join("lib/libpython3.11.dylib"));
+        touch(&root.join("bin/python3"));
+        touch(&root.join("Python"));
+        let found = |dir: &Path, file: Option<&Path>| {
+            let mut ignored = Vec::new();
+            chosen_unix(dir, file, &mut ignored).map(|i| (i.library, i.minor, i.source)).ok_or(ignored)
+        };
+        let want = Ok((lib.clone(), 13, CHOSEN));
+        // The library, the executable, the framework's file, the prefix, its lib folder.
+        assert_eq!(found(&root.join("lib"), Some(&lib)), want);
+        assert_eq!(found(&root.join("bin"), Some(&root.join("bin/python3"))), want);
+        assert_eq!(found(&root, Some(&root.join("Python"))), want);
+        assert_eq!(found(&root, None), want);
+        assert_eq!(found(&root.join("lib"), None), want);
+        // A library that is too old is refused as named, with no look around it.
+        let old = root.join("lib/libpython3.11.dylib");
+        let e = found(&root.join("lib"), Some(&old)).unwrap_err();
+        assert!(e.len() == 1 && e[0].contains("is Python 3.11"), "{e:?}");
+        let e = found(&root.join("far/away"), None).unwrap_err();
+        assert!(e.len() == 1 && e[0].contains("no libpython3.XY"), "{e:?}");
     }
 
     #[cfg(not(windows))]

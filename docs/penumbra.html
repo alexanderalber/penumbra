@@ -2672,12 +2672,16 @@ fn main(v: PnVertex) -&gt; @location(0) vec4f {
 <ol>
 <li><code>PENUMBRA_PYTHON</code>: a Python directory, or a file in one.
 </li>
+<li>The Python you chose in penumbra, if you chose one (see below).
+</li>
 <li>The first directory on <code>PATH</code> that holds a usable Python.
 </li>
 <li>The newest Python in the installer's default places (<code>%LOCALAPPDATA%\Programs\Python\Python3*</code>, <code>%ProgramFiles%\Python3*</code>).
 </li>
 </ol>
 <p>Python loads only when the first script node cooks. Without a usable Python the node shows an error saying what is missing; the rest of the app runs. <a class="ref" href="#script.info"><code>script.info</code></a> on the control channel says which Python was found, or why none.</p>
+<p>When penumbra finds no Python although one is installed, name it yourself. The node's parameters then show a <strong>choose Python ...</strong> button under the error. Pick <code>python.exe</code> in the Python's folder. On macOS and Linux pick the Python's <code>libpython3.XY.dylib</code> or <code>libpython3.XY.so</code>, or its <code>python3</code>. The script nodes run at once. penumbra keeps the choice for every project, in <code>python.json</code> in its data folder (<code>%LOCALAPPDATA%\penumbra</code>).</p>
+<p>On the control channel the same is <a class="ref" href="#script.choose"><code>script.choose path=&lt;file or folder&gt;</code></a>. Without <code>path</code> it drops the choice and penumbra searches again. A choice made after a script has run takes effect at the next start: penumbra cannot change the Python it has loaded.</p>
 <h3 id="scripts-a-script">A script</h3>
 <p>The script is the node's <code>code</code> param, or a <code>.py</code> file in the project named by <code>file</code> (which then takes precedence and reloads when saved). It defines <code>cook(cx)</code>:</p>
 <pre><code class="lang-python">PARAMS = {&quot;gain&quot;: (1.0, 0.0, 2.0)}
@@ -9547,6 +9551,11 @@ node.bind {param: &quot;/sim.reset&quot;, from: &quot;/keys&quot;, channel: &quo
 <details class="entry command" id="script.bench"><summary><code class="name">script.bench</code><span class="sum">Measure a script call: GIL attach, request round trip, trivial and 200-channel calls</span></summary>
 <div class="body">
 <p>Measure a script call: GIL attach, request round trip, trivial and 200-channel calls; {runs?}</p>
+</div></details>
+<details class="entry command" id="script.choose"><summary><code class="name">script.choose</code><span class="sum">Choose the Python for script nodes when the search finds none or the wrong one, kept for every project and the next starts</span></summary>
+<div class="body">
+<p>Choose the Python for script nodes when the search finds none or the wrong one, kept for every project and the next starts; {path?: a Python folder or a file in one (python.exe, libpython3.XY.dylib, bin/python3)}, without path: back to the search. In effect at once while no script has run, else after a restart; PENUMBRA_PYTHON wins over it</p>
+<p class="mentions">Mentioned in: <a href="#scripts-python">Scripts › Python</a></p>
 </div></details>
 <details class="entry command" id="script.info"><summary><code class="name">script.info</code><span class="sum">The script node's Python: where it was found (or why not), version, state, call times, timeouts</span></summary>
 <div class="body">
