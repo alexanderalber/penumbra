@@ -366,4 +366,42 @@ def cook(cx):
         assert!(!h.available());
         assert_eq!(h.status().state, "not_started");
     }
+
+    #[test]
+    fn another_python_is_taken_until_one_starts() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let h = penumbra_script::Host::new(Err("none found".into()));
+        assert_eq!(h.missing().as_deref(), Some("none found"));
+        let woken = Arc::new(AtomicUsize::new(0));
+        let w = woken.clone();
+        h.wake_on_install(Box::new(move || {
+            w.fetch_add(1, Ordering::Relaxed);
+        }));
+
+        // Still none, for another reason: taken, and the waiting node hears of it.
+        assert!(h.set_install(Err("the chosen one is gone".into())));
+        assert_eq!(woken.load(Ordering::Relaxed), 1);
+        assert_eq!(h.status().error.as_deref(), Some("the chosen one is gone"));
+
+        // A file that is no Python: taken while nothing has started, then it fails to start,
+        // and from there on the process keeps what it has.
+        let install = penumbra_script::locate::Install {
+            library: std::env::temp_dir().join("penumbra-no-such-python.dll"),
+            minor: 12,
+            source: penumbra_script::locate::CHOSEN,
+        };
+        assert!(h.set_install(Ok(install.clone())));
+        assert_eq!(h.missing(), None);
+        assert_eq!(h.status().source.as_deref(), Some("chosen in penumbra"));
+        let source = "def cook(cx):\n    pass\n";
+        let load = Load { key: 1, generation: 1, source, label: "x", folder: None };
+        let e = h.load(&load, &|| false).unwrap_err();
+        assert!(matches!(e, ScriptError::Unavailable(_)), "{e}");
+        assert_eq!(h.status().state, "failed");
+        assert!(!h.set_install(Ok(install)));
+        assert!(!h.set_install(Err("none".into())));
+        assert_eq!(h.missing(), None);
+    }
 }

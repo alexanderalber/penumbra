@@ -168,6 +168,11 @@ fn run() -> Result<(), String> {
     let dir = session.dir().to_path_buf();
     let session = Arc::new(session);
     log::info!("project: {}", session.file().display());
+    // Before the engine starts, which is when Python is looked for.
+    match penumbra_engine::script_choice::default_file() {
+        Ok(file) => penumbra_engine::script_choice::load(file),
+        Err(e) => log::warn!("a Python chosen for script nodes is not kept across restarts: {e}"),
+    }
     let engine = Engine::start(session).map_err(|e| e.to_string())?;
     engine.set_shipped_library(penumbra_engine::components::shipped_source());
     if args.fresh {

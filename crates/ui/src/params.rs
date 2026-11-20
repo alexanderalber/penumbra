@@ -241,6 +241,15 @@ impl ParamPanel {
         if let Some(s) = input.status {
             if let Some(e) = &s.error {
                 ui.colored_label(theme::ERROR, e);
+                if e.starts_with(penumbra_ops::script::NO_PYTHON) {
+                    // The way out when the search fails. Not an edit: nothing in the project
+                    // changes, so allowed while Claude edits too.
+                    let r = ui.button("choose Python ...").on_hover_text(crate::python::HINT);
+                    auto.add("param.choose_python", r.rect, "choose Python");
+                    if r.clicked() {
+                        actions.push(Action::ChoosePython);
+                    }
+                }
             }
             if let Some(w) = &s.warning {
                 ui.colored_label(theme::WARNING, w);

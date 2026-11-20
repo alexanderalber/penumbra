@@ -163,6 +163,7 @@ pub struct PenumbraApp {
 /// What a job off the UI thread does.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Job {
+    ChoosePython,
     FaceTemplate,
     Trace,
 }
@@ -472,6 +473,14 @@ impl PenumbraApp {
                         )
                         .map_err(|e| penumbra_core::Error::new(e.0)),
                         None => Err(penumbra_core::Error::new("the node is gone")),
+                    }
+                }
+                Action::ChoosePython => {
+                    if self.jobs.iter().any(|(job, _)| *job == Job::ChoosePython) {
+                        Err(penumbra_core::Error::new("the dialog for the Python is open already"))
+                    } else {
+                        let started = "choose the Python for script nodes ...".to_string();
+                        self.spawn_job(Job::ChoosePython, "python-dialog", started, now, crate::python::ask)
                     }
                 }
                 Action::RestartVideo(node) => {

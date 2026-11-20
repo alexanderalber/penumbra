@@ -34,6 +34,7 @@ pub mod params;
 pub mod plot;
 mod pointer;
 pub mod projects;
+mod python;
 mod regions;
 mod scope;
 mod shapes;
@@ -139,6 +140,8 @@ pub enum Action {
     },
     /// A `tex.video_file` starts its clip over (`video_file.restart`).
     RestartVideo(NodeId),
+    /// Ask for the Python that script nodes use, in a file dialog (`script.choose`).
+    ChoosePython,
     /// A momentary `chan.button` goes down or up, held by the editor (`chan.press`); live
     /// state, no edit.
     PressButton {

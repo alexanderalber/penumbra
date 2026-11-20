@@ -50,6 +50,9 @@ const WAIT: Duration = Duration::from_millis(4);
 const STALE: Duration = Duration::from_secs(2);
 const LABEL: &str = "script.python";
 
+/// How the node's error starts while there is no Python to run.
+pub const NO_PYTHON: &str = "Python is not available";
+
 /// When the node recooks: `auto` every frame if the code mentions `time` or `frame`, else when
 /// an input or a param changes; `every frame`; `on change`.
 const COOK_MODES: [&str; 3] = ["auto", "every frame", "on change"];
@@ -169,6 +172,8 @@ struct Script {
     /// What the last call showed, its warnings or its error: shown again while a readback is
     /// on its way.
     last: Option<Result<Vec<String>, String>>,
+    /// The node failed for lack of a Python and has asked to be woken when one is chosen.
+    waits_for_python: bool,
 }
 
 /// A picture input as read back: what the script gets, the input's result it was read from,
@@ -207,6 +212,7 @@ impl Script {
             blank: None,
             mesh: None,
             last: None,
+            waits_for_python: false,
         }
     }
 
@@ -525,9 +531,15 @@ impl Drop for Script {
 impl Operator for Script {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let host = penumbra_script::host();
-        if let Err(e) = host.install() {
-            return Err(CookError::failed(format!("Python is not available: {e}")));
+        if let Some(e) = host.missing() {
+            if !self.waits_for_python {
+                self.waits_for_python = true;
+                let waker = cx.waker();
+                host.wake_on_install(Box::new(move || waker.wake()));
+            }
+            return Err(CookError::failed(format!("{NO_PYTHON}: {e}")));
         }
+        self.waits_for_python = false;
         if self.slot.poll() {
             self.current = self.slot.latest().cloned();
             self.stopped = None;
