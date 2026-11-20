@@ -890,3 +890,36 @@ fn inherited_speed_and_drag_and_mass_as_attributes() {
         );
     }
 }
+
+/// The bound on the count tightens on a GPU that lags more steps behind than the readbacks of
+/// the count waited for: the oldest readback, the next to arrive, is kept.
+#[test]
+fn readbacks_that_lag_many_frames_still_arrive() {
+    use std::time::{Duration, Instant};
+
+    use penumbra_gpu::Buffer;
+    use penumbra_gpu::points::{HEADER_BYTES, Seen, WAITING_MOST};
+
+    use crate::pts::particles::Bound;
+
+    let Some(gpu) = gpu() else { return };
+    let header = Buffer::new(&gpu, HEADER_BYTES, "test count").unwrap();
+    header.write(&gpu, 0, &[5u32, 0, 0, 0]).unwrap();
+    let mut bound = Bound::default();
+    bound.born = 100;
+    let first = Seen::reading(&gpu, &header, None).unwrap();
+    bound.read(first.clone());
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while first.arrived().is_none() && Instant::now() < deadline {
+        gpu.poll();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(first.arrived(), Some(5));
+    // The steps after it, each with 10 births at most: their readbacks are still on the way.
+    for _ in 0..2 * WAITING_MOST {
+        bound.born += 10;
+        bound.read(Seen::default());
+    }
+    bound.settle();
+    assert_eq!(bound.most(u32::MAX), 5 + 160, "the first count read back and every birth since");
+}

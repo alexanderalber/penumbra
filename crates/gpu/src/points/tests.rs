@@ -242,7 +242,7 @@ fn seen_counts_arrive_as_their_own() {
 #[test]
 fn readbacks_that_lag_many_frames_still_arrive() {
     let mut reports = Reports::<u32>::new();
-    let started: Vec<Seen> = (0..3 * REPORTS_PENDING).map(|_| Seen::default()).collect();
+    let started: Vec<Seen> = (0..3 * WAITING_MOST).map(|_| Seen::default()).collect();
     for seen in &started {
         reports.wait_for(seen.clone(), 1);
         assert_eq!(reports.words(&1), None, "nothing arrived yet");
@@ -260,7 +260,7 @@ fn readbacks_that_lag_many_frames_still_arrive() {
 #[test]
 fn failed_readbacks_do_not_make_reports_deaf() {
     let mut reports = Reports::<u32>::new();
-    for _ in 0..REPORTS_PENDING - 1 {
+    for _ in 0..WAITING_MOST - 1 {
         let dead = Seen::default();
         dead.fail();
         reports.wait_for(dead, 1);

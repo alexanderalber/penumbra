@@ -22,14 +22,13 @@
 //! particles. Every random number of a particle is keyed by its `id`, not by its place in the
 //! list, so it stays with the particle while those before it die.
 
-use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use penumbra_core::{Curve, Error, ParamSpec, Tick, Value};
 use penumbra_gpu::points::append::{self, Births, Item, Pick};
 use penumbra_gpu::points::compact::Compactor;
 use penumbra_gpu::points::program::{self, Decl, Program, Shape, Spec};
-use penumbra_gpu::points::{Attr, AttrType, Count, Points, Seen, default_of, most_elements};
+use penumbra_gpu::points::{Attr, AttrType, Count, Points, Seen, Waiting, default_of, most_elements};
 use penumbra_gpu::{Buffer, BufferRing, Gpu};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, JobStatus, NodeDesc, NodeTypes, Operator,
@@ -589,8 +588,13 @@ impl Particles {
         };
         // One readback a step: for display, and to tighten the bound a frame or two later. One
         // that cannot start leaves the bound as loose as the births make it.
-        let seen = Seen::reading(gpu, &header, bound.pending.back().map(|(s, _)| s)).unwrap_or_default();
-        bound.read(seen.clone());
+        let seen = match Seen::reading(gpu, &header, bound.pending.newest()) {
+            Ok(seen) => {
+                bound.read(seen.clone());
+                seen
+            }
+            Err(_) => Seen::default(),
+        };
         let zero = self.zero(gpu, capacity)?;
         let out = alive
             .with_attr(Attr::new(FORCE, AttrType::Vec3, zero)?)?
@@ -623,48 +627,38 @@ fn same_particles(p: &Points, out: &Points) -> bool {
     }
 }
 
-/// Readbacks of the count in flight at most; an older one is let go.
-const MAX_READS: usize = 8;
-
 /// What the CPU knows of the count: never less than it, and close to it a frame or two after
 /// a readback arrives. Programs, compaction and pictures work over this many, so few particles
 /// in a large `max` cost little.
 #[derive(Clone, Default)]
-struct Bound {
+pub(crate) struct Bound {
     /// Births at most since the start, each step's [`Births::most`] at the capacity.
-    born: u64,
+    pub(crate) born: u64,
     /// The last count known (read back, or 0 at a start) and `born` at that step.
     anchor: (u32, u64),
-    /// The counts read back after each step that have not arrived, oldest first, with `born`
-    /// at their step.
-    pending: VecDeque<(Seen, u64)>,
+    /// The counts read back after each step that have not arrived, with `born` at their step.
+    pending: Waiting<u64>,
 }
 
 impl Bound {
     /// Takes the newest count that arrived as the anchor, and lets go of the older ones.
-    fn settle(&mut self) {
-        let newest =
-            self.pending.iter().enumerate().rev().find_map(|(k, (s, b))| s.arrived().map(|n| (k, n, *b)));
-        if let Some((k, n, b)) = newest {
-            self.anchor = (n, b);
-            self.pending.drain(..=k);
+    pub(crate) fn settle(&mut self) {
+        if let Some((words, born)) = self.pending.settle() {
+            self.anchor = (words[0], born);
         }
     }
 
     /// The most particles there may be now: the anchor plus every birth since, within the
     /// capacity.
-    fn most(&self, capacity: u32) -> u32 {
+    pub(crate) fn most(&self, capacity: u32) -> u32 {
         let since = self.born.saturating_sub(self.anchor.1);
         let n = u64::from(self.anchor.0).saturating_add(since);
         u32::try_from(n).unwrap_or(u32::MAX).min(capacity)
     }
 
     /// The readback of the count after this step's births.
-    fn read(&mut self, seen: Seen) {
-        if self.pending.len() >= MAX_READS {
-            self.pending.pop_front();
-        }
-        self.pending.push_back((seen, self.born));
+    pub(crate) fn read(&mut self, seen: Seen) {
+        self.pending.push(seen, self.born);
     }
 }
 
