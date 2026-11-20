@@ -194,7 +194,7 @@ impl Gpu {
             tx.send(r).ok();
         });
         device
-            .poll(wgpu::PollType::Wait { submission_index: Some(index), timeout: Some(READ_TIMEOUT) })
+            .poll(self.wait_for(index, READ_TIMEOUT))
             .map_err(|e| Error::new(format!("waiting for the GPU: {e}")))?;
         match rx.recv_timeout(READ_TIMEOUT) {
             Ok(Ok(())) => {}
@@ -522,8 +522,7 @@ impl PendingRead {
     /// frame; the wait blocks the calling thread, so keep `timeout` short.
     pub fn wait(&self, gpu: &Gpu, timeout: Duration) -> ReadState {
         if self.state() == ReadState::Waiting {
-            let wait =
-                wgpu::PollType::Wait { submission_index: Some(self.index.clone()), timeout: Some(timeout) };
+            let wait = gpu.wait_for(self.index.clone(), timeout);
             // A timeout is not an error here: the caller looks again later.
             let _ = gpu.device().poll(wait);
         }
