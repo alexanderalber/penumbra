@@ -304,11 +304,12 @@ fn a_tcp_peer_that_is_not_there_is_an_error_and_retried() {
 
 #[test]
 fn a_link_that_fails_at_once_still_wakes_its_first_reader() {
-    // A refused connect fails within microseconds; the reader must already be registered when
-    // the link's thread reports it, or the one wake for the error is lost. Fresh links, many
-    // times, to give the thread every chance to win.
+    // A connect to port 0 fails at once on every system; the reader must already be registered
+    // when the link's thread reports it, or the one wake for the error is lost. Fresh links, many
+    // times, to give the thread every chance to win. A port that was just closed would not do:
+    // Windows retries a refused connect for about two seconds.
     for _ in 0..200 {
-        let to = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        let to = SocketAddr::from(([127, 0, 0, 1], 0));
         let hub = Hub::new();
         let (woken, wake) = wakes();
         let r = hub.reader("/in", Endpoint::TcpConnect(to), Decode::default(), wake).unwrap();
