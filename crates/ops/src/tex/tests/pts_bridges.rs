@@ -545,6 +545,31 @@ fn text_is_there_at_the_first_exact_frame() {
     }
 }
 
+/// Under exact frames a new text while the lettering of the last is still being built shows in
+/// the same frame: the cook waits for the build under way, then for the new one.
+#[test]
+fn a_new_text_while_the_last_builds_shows_at_once_under_exact_frames() {
+    let Some(gpu) = gpu() else { return };
+    let long = "penumbra ".repeat(300);
+    let mut rig = Rig::new(gpu, None, &[create("/t", "geo.text", &[("text", long.as_str().into())])]);
+    let width = |rig: &Rig| {
+        let out = rig.cooker.output(Port { node: rig.id("/t"), output: 0 })?;
+        let b = out.get::<penumbra_gpu::Geo>()?.bounds()?;
+        Some(b.max[0] - b.min[0])
+    };
+    // The long text's build starts and runs on.
+    rig.clock.advance(1);
+    rig.cook("/t");
+    let s = rig.cooker.status(rig.id("/t")).unwrap();
+    assert!(!super::pts::compiled(&s), "the long text was built at once: {s:?}");
+    rig.cooker.set_exact_frames(true);
+    rig.edit(&[set("/t.text", "i".into())]);
+    rig.clock.advance(1);
+    rig.cook("/t");
+    let w = width(&rig).unwrap_or(f32::INFINITY);
+    assert!(w < 1.0, "the lettering of `i` is narrow, this is {w} wide");
+}
+
 /// A new job's points (another seed, as many points) go to new buffers while the old ones still
 /// go out. Once the node idles, its trim lets go of the buffers of the old points.
 #[test]

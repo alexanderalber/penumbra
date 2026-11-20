@@ -416,12 +416,19 @@ impl Operator for GeoText {
         };
         // One build at a time; a newer request waits for it, and the job's end cooks the node
         // again. While a slider moves, the lettering follows at the speed it can be built.
-        if self.request.as_ref() != Some(&request) && !self.slot.busy() {
-            self.request = Some(request.clone());
-            self.slot.start(cx.spawn(move |_job| built(&gpu, &request).map(Arc::new).map_err(|e| e.0)));
+        // Exact frames wait for the lettering, so a recording or a stepped run has it at once:
+        // for a build under way first, then for the one this frame asks for.
+        let exact = cx.exact_frames();
+        if self.request.as_ref() != Some(&request) {
+            if exact {
+                crate::pts::program::finish(&mut self.slot);
+            }
+            if !self.slot.busy() {
+                self.request = Some(request.clone());
+                self.slot.start(cx.spawn(move |_job| built(&gpu, &request).map(Arc::new).map_err(|e| e.0)));
+            }
         }
-        // Exact frames wait for the lettering, so a recording or a stepped run has it at once.
-        if cx.exact_frames() {
+        if exact {
             crate::pts::program::finish(&mut self.slot);
         }
         let Some(b) = self.slot.latest().cloned() else {
