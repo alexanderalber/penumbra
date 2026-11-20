@@ -338,7 +338,7 @@ fn ply(bytes: &[u8]) -> Result<Cloud, String> {
         })
         .collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let plan = Plan::new(&refs);
+    let plan = Plan::new(&refs)?;
     warnings.extend(plan.warnings.iter().cloned());
     let most = claimed.min(MAX_POINTS);
     if claimed > MAX_POINTS {
@@ -580,7 +580,7 @@ fn text(bytes: &[u8]) -> Result<Cloud, String> {
         names
     };
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let plan = Plan::new(&refs);
+    let plan = Plan::new(&refs)?;
     warnings.extend(plan.warnings.iter().cloned());
     let mut cells = Cells::new(&plan, columns);
     let fit = cells.fit(data.len());
@@ -688,6 +688,19 @@ mod tests {
         assert_eq!(floats(col(&c, "position")), [1.0, 0.0, 0.0, 1.0, 0.0, 2.0, 0.0, 1.0]);
         assert!(text(b"").is_ok_and(|c| c.count == 0));
         assert!(text(b"\xff\xfe garbage \x00").is_ok());
+    }
+
+    /// A name starting with `pts_` would make one of penumbra's working attributes, which most
+    /// nodes drop: the file is refused, naming the attribute and another name.
+    #[test]
+    fn names_starting_with_pts_are_refused() {
+        let e = text(b"x y z pts_heat\n1 2 3 4\n").err().unwrap();
+        assert!(e.contains("`pts_heat`") && e.contains("such as `heat`"), "{e}");
+        let file = b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float pts_wind\nend_header\n1 2\n";
+        let e = ply(file).err().unwrap();
+        assert!(e.contains("`pts_wind`") && e.contains("such as `wind`"), "{e}");
+        // A component of an attribute named `pts` is fine.
+        assert!(text(b"pts_x pts_y\n1 2\n").is_ok());
     }
 
     #[test]
@@ -801,7 +814,7 @@ mod tests {
     #[test]
     fn columns_named_alike_keep_the_values_read_within_max_words() {
         for names in [vec!["x"; MAX_PROPERTIES], vec!["position.x"; MAX_PROPERTIES]] {
-            let plan = Plan::new(&names);
+            let plan = Plan::new(&names).unwrap();
             let mut cells = Cells::new(&plan, MAX_PROPERTIES);
             let n = cells.fit(MAX_POINTS);
             cells.reserve(n);

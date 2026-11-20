@@ -278,7 +278,8 @@ fn wgsl_builtin(name: &str) -> bool {
 
 /// Whether `name` can name an attribute in a program, where it becomes a variable of that name:
 /// an identifier, not a word WGSL reserves or has a function or type of, not a name every
-/// program has, not starting with `pn_`. The one check every attribute name in a program goes
+/// program has, not starting with `pn_`, not starting with `pts_` but for the working attributes
+/// ([`super::INTERNAL_ATTRS`]). The one check every attribute name in a program goes
 /// through, whether typed into a node or declared in a file.
 pub fn check_name(name: &str) -> Result<(), Error> {
     let refuse = |why: String| Err(Error::new(format!("{why}; choose another name")));
@@ -302,6 +303,11 @@ pub fn check_name(name: &str) -> Result<(), Error> {
     }
     if name.starts_with("pn_") {
         return refuse(format!("`{name}`: names starting with pn_ are penumbra's own"));
+    }
+    if super::internal(name) && !super::INTERNAL_ATTRS.contains(&name) {
+        return refuse(format!(
+            "`{name}`: names starting with pts_ are penumbra's own working attributes, which most nodes drop"
+        ));
     }
     Ok(())
 }

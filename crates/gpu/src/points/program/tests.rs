@@ -224,12 +224,13 @@ fn names_wgsl_or_the_program_already_has_are_refused() {
         ("_", "cannot name"),
         ("__x", "cannot name"),
         ("pn_x", "penumbra's own"),
+        ("pts_heat", "working attributes"),
         ("filter", "reserved"),
     ] {
         let e = check_name(name).err().unwrap_or_else(|| panic!("`{name}` was accepted"));
         assert!(e.0.contains(needle) && e.0.contains("choose another name"), "{name}: {e}");
     }
-    for name in ["heat", "max_speed", "a", "x2"] {
+    for name in ["heat", "max_speed", "a", "x2", "pts_wind", "pts_keep", "my_pts_x"] {
         assert!(check_name(name).is_ok(), "{name}");
     }
     for s in super::super::STANDARD {

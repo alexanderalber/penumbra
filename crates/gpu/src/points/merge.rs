@@ -2,8 +2,9 @@
 //! second, and so on, each set in its own order.
 //!
 //! Every attribute that any set has is in the result. A set without it gives its points the
-//! attribute's default ([`super::default_of`]; 0 for a name penumbra does not know). An attribute
-//! that two sets give different types is an error.
+//! attribute's default ([`super::default_of`]; 0 for a name penumbra does not know). A working
+//! attribute ([`super::internal`]) is there only where every set has it: a merge inside a
+//! particle loop keeps `pts_wind`. An attribute that two sets give different types is an error.
 //!
 //! Where every count is known on the CPU, so is the result's. Where a set keeps its count on the
 //! GPU, the result does too: the counts are gathered on the GPU (the header words copied side by
@@ -368,11 +369,13 @@ impl Merger {
     }
 }
 
-/// Every attribute of the sets, in the order they first appear, with its type.
+/// Every attribute of the sets, in the order they first appear, with its type; a working
+/// attribute only where every set has it.
 fn union(sets: &[(usize, &Points)]) -> Result<Vec<(String, AttrType)>, Error> {
     let mut out: Vec<(String, AttrType, usize)> = Vec::new();
+    let everywhere = |name: &str| sets.iter().all(|(_, p)| p.attr(name).is_some());
     for (input, p) in sets {
-        for a in p.attrs().iter().filter(|a| !super::internal(a.name())) {
+        for a in p.attrs().iter().filter(|a| !super::internal(a.name()) || everywhere(a.name())) {
             match out.iter().find(|(n, _, _)| n == a.name()) {
                 Some((_, ty, first)) if *ty != a.ty() => {
                     return Err(Error::new(format!(

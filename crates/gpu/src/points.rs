@@ -159,9 +159,30 @@ pub fn valid_name(name: &str) -> bool {
 
 /// Whether `name` is a working attribute one node leaves for another, such as `pts_wind` from
 /// `pts.force` for `pts.particles` round a loop: named with `pts_`. Such attributes are not
-/// listed with the points, not merged, and not in a table of all attributes.
+/// listed with the points, merged only where every set has them, and not in a table of all
+/// attributes.
 pub fn internal(name: &str) -> bool {
     name.starts_with("pts_")
+}
+
+/// The working attributes built-in nodes leave for each other ([`internal`]): `pts_wind` from
+/// `pts.force` for `pts.particles`, `pts_keep` for the points `pts.delete` keeps. The only names
+/// starting with `pts_` a program may declare.
+pub const INTERNAL_ATTRS: [&str; 2] = ["pts_wind", "pts_keep"];
+
+/// `Err` for a name starting with `pts_` from a file, a table or channels: penumbra keeps such
+/// names for its working attributes ([`internal`]), which most nodes drop, so the attribute
+/// would vanish along the way.
+pub fn check_source_name(name: &str) -> Result<(), Error> {
+    if !internal(name) {
+        return Ok(());
+    }
+    let rest = name.trim_start_matches("pts_");
+    let other =
+        if valid_name(rest) { format!("another name, such as `{rest}`") } else { "another name".into() };
+    Err(Error::new(format!(
+        "`{name}`: names starting with pts_ are penumbra's own working attributes, which most nodes drop; choose {other}"
+    )))
 }
 
 /// One attribute: a name, a type, and a buffer with an element per point.
@@ -764,12 +785,6 @@ impl Points {
         let bounds = if name == POSITION { None } else { self.bounds };
         let attrs: Vec<Attr> = self.attrs.iter().filter(|a| a.name() != name).cloned().collect();
         Self { attrs: attrs.into(), bounds, ..self.clone() }
-    }
-
-    /// Without the working attributes nodes leave for each other ([`internal`]).
-    pub fn without_internal(&self) -> Self {
-        let attrs: Vec<Attr> = self.attrs.iter().filter(|a| !internal(a.name())).cloned().collect();
-        Self { attrs: attrs.into(), ..self.clone() }
     }
 
     pub fn with_bounds(self, bounds: Option<Bounds>) -> Self {

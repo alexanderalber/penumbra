@@ -92,7 +92,7 @@ impl Operator for Merge {
         }
         // One input: nothing to merge, passed on as it is.
         if let [(_, only)] = sets.as_slice() {
-            return Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, only.without_internal())]));
+            return Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, (*only).clone())]));
         }
         let out = self.merger.merge(gpu, &sets)?;
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, out)]))
