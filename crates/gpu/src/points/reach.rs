@@ -190,6 +190,155 @@ impl LateBounds {
     }
 }
 
+/// The largest magnitude of any component of an attribute, as the bits of a float that is not
+/// negative (they order as its values do). Values that are no finite number are left out.
+const MOST: &str = "
+@group(2) @binding(0) var<storage, read> pts_value: array<f32>;
+@group(2) @binding(1) var<storage, read_write> pts_most: array<atomic<u32>, 4>;
+@group(2) @binding(2) var<uniform> pts_header: vec4u;
+
+var<workgroup> pts_group: atomic<u32>;
+
+@compute @workgroup_size(64)
+fn clear(@builtin(global_invocation_id) id: vec3u) {
+    if id.x == 0u {
+        atomicStore(&pts_most[0], 0u);
+    }
+}
+
+@compute @workgroup_size(64)
+fn reduce(@builtin(global_invocation_id) id: vec3u, @builtin(local_invocation_index) t: u32) {
+    if t == 0u {
+        atomicStore(&pts_group, 0u);
+    }
+    workgroupBarrier();
+    let i = id.y * pn.size.x + id.x;
+    let n = min(pts_header.x, u32(max(params.n, 0)));
+    if id.x < pn.size.x && i < n {
+        let stride = u32(max(params.stride, 1));
+        let parts = u32(clamp(params.parts, 1, 4));
+        for (var k = 0u; k < parts; k++) {
+            let v = abs(pts_value[i * stride + k]);
+            // NaN fails every comparison, infinity this one.
+            if v < 1e30 {
+                atomicMax(&pts_group, bitcast<u32>(v));
+            }
+        }
+    }
+    workgroupBarrier();
+    if t == 0u {
+        atomicMax(&pts_most[0], atomicLoad(&pts_group));
+    }
+}
+";
+
+/// The largest magnitude of an attribute of points whose values only the GPU knows (a line's
+/// `width`, a sprite's `scale`), worked out on the GPU and read back late as [`LateBounds`]
+/// reads the box. One per node; it keeps its buffer and readbacks across cooks.
+#[derive(Default)]
+pub struct LateMost {
+    target: Option<Buffer>,
+    reads: VecDeque<BufferRead>,
+    spare: Option<BufferRead>,
+    last: Option<f32>,
+    fresh: bool,
+    /// The buffers of the last reduction: the attribute and the count's header.
+    from: Option<[BufferKey; 2]>,
+}
+
+impl LateMost {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The largest magnitude of any component of `name` in `points` as last read back: a frame
+    /// or more late, `None` before the first arrives, for points without `name` or of whole
+    /// numbers, and where no value is a finite number. `wake` as in [`LateBounds::update`].
+    /// `Err` for anything the GPU refuses.
+    pub fn update(
+        &mut self,
+        gpu: &Gpu,
+        points: &Points,
+        name: &str,
+        wake: Option<Wake>,
+    ) -> Result<Option<f32>, Error> {
+        self.settle();
+        let n = points.count().at_most();
+        let Some(attr) = points.attr(name).filter(|a| {
+            matches!(
+                a.ty(),
+                super::AttrType::F32 | super::AttrType::Vec2 | super::AttrType::Vec3 | super::AttrType::Vec4
+            )
+        }) else {
+            self.last = None;
+            self.from = None;
+            return Ok(None);
+        };
+        if n == 0 || self.reads.len() >= IN_FLIGHT {
+            return Ok(self.last);
+        }
+        let target = match &self.target {
+            Some(b) => b.clone(),
+            None => {
+                let b = Buffer::new(gpu, 16, "pts most")?;
+                self.target = Some(b.clone());
+                b
+            }
+        };
+        let header = points.count().header_for(gpu)?;
+        let keys = [attr.buffer().key(), header.key()];
+        let same = !self.fresh && self.last.is_some() && self.from.as_ref() == Some(&keys);
+        self.fresh = false;
+        self.from = Some(keys);
+        let wake = wake.filter(|_| !same);
+        let params = [ParamSpec::int("n", 0), ParamSpec::int("stride", 1), ParamSpec::int("parts", 1)];
+        let program = gpu.cached_compute("pts most", MOST, &params)?;
+        let ty = attr.ty();
+        let param = |p: &str| match p {
+            "n" => Some(Value::Int(i64::from(n))),
+            "stride" => Some(Value::Int((ty.stride() / 4) as i64)),
+            "parts" => Some(Value::Int(i64::from(ty.components()))),
+            _ => None,
+        };
+        let input =
+            Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
+        let (w, h) = (n.clamp(1, ROW), n.div_ceil(n.clamp(1, ROW)));
+        program.run_with(
+            gpu,
+            &[attr.buffer(), &target, &header],
+            &[
+                Step { entry: "clear", out: Out::range(1), input: &input },
+                Step { entry: "reduce", out: Out::grid(w, h), input: &input },
+            ],
+        )?;
+        self.reads.push_back(target.read_async_notify(gpu, self.spare.take(), wake)?);
+        Ok(self.last)
+    }
+
+    /// Takes in the readbacks that arrived, oldest first; drops those that failed.
+    fn settle(&mut self) {
+        while let Some(state) = self.reads.front().map(BufferRead::state) {
+            if state == ReadState::Waiting {
+                break;
+            }
+            let Some(read) = self.reads.pop_front() else { break };
+            if state == ReadState::Ready {
+                if let Ok(words) = read.get::<u32>() {
+                    let most = words.first().map(|w| f32::from_bits(*w)).filter(|v| v.is_finite());
+                    self.fresh |= most != self.last;
+                    self.last = most;
+                }
+                self.spare = Some(read);
+            }
+        }
+    }
+
+    /// Bytes on the GPU.
+    pub fn bytes(&self) -> u64 {
+        self.target.as_ref().map_or(0, Buffer::bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
