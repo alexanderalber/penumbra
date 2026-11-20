@@ -12,13 +12,24 @@ The node needs Python 3.12 or newer, installed separately; nothing else in penum
 penumbra looks for it in this order:
 
 1. `PENUMBRA_PYTHON`: a Python directory, or a file in one.
-2. The first directory on `PATH` that holds a usable Python.
-3. The newest Python in the installer's default places (`%LOCALAPPDATA%\Programs\Python\Python3*`,
+2. The Python you chose in penumbra, if you chose one (see below).
+3. The first directory on `PATH` that holds a usable Python.
+4. The newest Python in the installer's default places (`%LOCALAPPDATA%\Programs\Python\Python3*`,
    `%ProgramFiles%\Python3*`).
 
 Python loads only when the first script node cooks. Without a usable Python the node shows an
 error saying what is missing; the rest of the app runs. `script.info` on the control channel
 says which Python was found, or why none.
+
+When penumbra finds no Python although one is installed, name it yourself. The node's
+parameters then show a **choose Python ...** button under the error. Pick `python.exe` in the
+Python's folder. On macOS and Linux pick the Python's `libpython3.XY.dylib` or `libpython3.XY.so`,
+or its `python3`. The script nodes run at once. penumbra keeps the choice for every project, in
+`python.json` in its data folder (`%LOCALAPPDATA%\penumbra`).
+
+On the control channel the same is `script.choose path=<file or folder>`. Without `path` it
+drops the choice and penumbra searches again. A choice made after a script has run takes
+effect at the next start: penumbra cannot change the Python it has loaded.
 
 ## A script
 

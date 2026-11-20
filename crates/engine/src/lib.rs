@@ -49,6 +49,7 @@ pub mod scan_run;
 pub mod scan_scene;
 pub mod scan_synthetic;
 pub mod screen;
+pub mod script_choice;
 pub mod shapes;
 pub mod show;
 pub mod show_values;
@@ -126,5 +127,6 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     projects::register(&mut registry, engine);
     navigation::register(&mut registry, engine);
     show::register(&mut registry, engine);
+    script_choice::register(&mut registry, engine);
     registry
 }
