@@ -312,20 +312,19 @@ impl BufferRead {
     /// Waits at most `timeout` for the copy, then says where the readback stands. Blocks the
     /// calling thread: for tests, and for a result wanted in the same frame.
     pub fn wait(&self, gpu: &Gpu, timeout: Duration) -> ReadState {
+        if self.state() != ReadState::Waiting {
+            return self.state();
+        }
         let deadline = std::time::Instant::now() + timeout;
-        while self.state() == ReadState::Waiting {
-            let left = deadline.saturating_duration_since(std::time::Instant::now());
-            if left.is_zero() {
-                break;
-            }
-            let wait =
-                wgpu::PollType::Wait { submission_index: Some(self.index.clone()), timeout: Some(left) };
-            // A timeout is not an error here: the caller looks again later. The copy may be done
-            // while its callback runs on another thread that polled first: look again shortly.
-            let _ = gpu.device().poll(wait);
-            if self.state() == ReadState::Waiting {
-                std::thread::sleep(Duration::from_micros(200));
-            }
+        let wait =
+            wgpu::PollType::Wait { submission_index: Some(self.index.clone()), timeout: Some(timeout) };
+        // A timeout is not an error here: the caller looks again later.
+        let _ = gpu.device().poll(wait);
+        // The copy may be done while its callback still runs on another thread that polled
+        // first: look again shortly, without waiting on the GPU again.
+        while self.state() == ReadState::Waiting && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_micros(200));
+            let _ = gpu.device().poll(wgpu::PollType::Poll);
         }
         self.state()
     }
