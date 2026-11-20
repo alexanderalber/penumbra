@@ -94,7 +94,7 @@ fn desc() -> NodeDesc {
             .clamp(1.0, 64.0 * 1024.0 * 1024.0)
             .range(1000.0, 10_000_000.0)
             .curve(Curve::Log)
-            .doc("The most lines. Past it, a share of the lines is left out by a number each pair keeps: the lines left are spread over all points and do not flicker while points move or are born. Then about 97 to 100 % of `max` are drawn, however many lines were wanted. Memory: about 100 bytes a line with the default attributes")
+            .doc("The most lines. Past it, a share of the lines is left out by a number each pair keeps: the lines left are spread over all points and do not flicker while points move or are born. Then about 97 to 100 % of `max` are drawn, however many lines were wanted. A `max` of a few lines may keep none. Memory: about 100 bytes a line with the default attributes")
             .more(),
     )
     .param(
