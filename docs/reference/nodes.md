@@ -2388,7 +2388,7 @@ Inputs:
 
 Outputs:
 
-- `out` (pts): `position`, `normal` and `uv` in world space; `color` from the material where the geometry has one that is not plain white. A model that moves or turns takes its points with it at every frame. Exact bounds
+- `out` (pts): `position`, `normal` and `uv` in world space; `color` from the material where the geometry has one that is not plain white. A model that moves or turns takes its points with it at every frame. The box is exact while the model stands where it stood when the points were made; once it moves, a box around its own box as placed
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|

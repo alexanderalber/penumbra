@@ -7,25 +7,29 @@
 //! over a large mesh takes a moment. Meanwhile the last points stay; under exact frames the cook
 //! waits. A job that runs is never thrown away: a newer request starts when it has ended.
 //!
-//! Points are in world space: each item's placement is applied at every cook, normals turned
-//! with it, so a model that moves or turns needs no new job. The share of points each triangle
-//! gets follows its area under the placement at the time the points were made; a scale that
-//! changes later stretches the points with the mesh. Items drawn as instances (sprites, copies on
-//! points) are left out with a warning.
+//! Points are in world space: each item's placement is applied at every cook on the GPU, normals
+//! turned with it, so a model that moves or turns needs no new job and no new upload. The points
+//! as made go to the GPU once per job, in their item's space; a compute pass places them. The
+//! share of points each triangle gets follows its area under the placement at the time the
+//! points were made; a scale that changes later stretches the points with the mesh. The box is
+//! exact under the placements the points were made with, else the box around each item's box as
+//! it is placed now. Items drawn as instances (sprites, copies on points) are left out with a
+//! warning.
 
 use std::sync::Arc;
 
-use penumbra_core::{Curve, Error, ParamSpec};
-use penumbra_gpu::Geo;
+use penumbra_core::{Curve, Error, ParamSpec, Value};
 use penumbra_gpu::geo::{Mat4, Model, normal_matrix, transform};
-use penumbra_gpu::points::AttrType;
+use penumbra_gpu::points::{Attr, AttrType, Points};
+use penumbra_gpu::{Buffer, BufferRing, Dispatch, Geo, Gpu, Out, Step};
 use penumbra_graph::{
     AsyncSlot, CookContext, CookError, Cooked, Data, DataKind, FnNodeType, JobStatus, NodeDesc, NodeTypes,
     Operator,
 };
+use penumbra_mesh::Bounds;
 
-use super::upload::{Column, Uploads, bounds_of};
-use crate::gpu;
+use super::upload::{Column, Uploads};
+use crate::{gpu, on_gpu};
 
 pub const KIND: &str = "pts.from_geo";
 
@@ -66,10 +70,11 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("out", DataKind::Pts)
         .describe_output(
             "out",
-            "`position`, `normal` and `uv` in world space; `color` from the material where the geometry has one that is not plain white. A model that moves or turns takes its points with it at every frame. Exact bounds",
+            "`position`, `normal` and `uv` in world space; `color` from the material where the geometry has one that is not plain white. A model that moves or turns takes its points with it at every frame. The box is exact while the model stands where it stood when the points were made; once it moves, a box around its own box as placed",
         ),
         || Box::new(FromGeo::default()) as Box<dyn Operator>,
-    ))
+    )
+    .warm_up(on_gpu(warm_up)))
 }
 
 /// What the points are made of: the items' models and colours, and the params. The items'
@@ -106,6 +111,51 @@ impl PartialEq for Request {
     }
 }
 
+/// Places the points made in their item's space: per item seven rows in `pts_worlds`, the
+/// placement's first three (model to world) and the turn of normals. An item past `items` stays
+/// where its model has it.
+const PLACE: &str = "
+@group(2) @binding(0) var<storage, read> pts_item: array<u32>;
+@group(2) @binding(1) var<storage, read> pts_position: array<vec4f>;
+@group(2) @binding(2) var<storage, read> pts_normal: array<vec4f>;
+@group(2) @binding(3) var<storage, read> pts_worlds: array<vec4f>;
+@group(2) @binding(4) var<storage, read_write> pts_placed: array<vec4f>;
+@group(2) @binding(5) var<storage, read_write> pts_turned: array<vec4f>;
+
+@compute @workgroup_size(64)
+fn place(@builtin(global_invocation_id) gid: vec3u) {
+    let i = gid.y * pn.size.x + gid.x;
+    if gid.x >= pn.size.x || i >= u32(max(params.n, 0)) {
+        return;
+    }
+    let k = pts_item[i];
+    let p = vec4f(pts_position[i].xyz, 1.0);
+    let n = pts_normal[i].xyz;
+    if k >= u32(max(params.items, 0)) {
+        pts_placed[i] = p;
+        pts_turned[i] = vec4f(n, 0.0);
+        return;
+    }
+    let b = 7u * k;
+    pts_placed[i] = vec4f(dot(pts_worlds[b], p), dot(pts_worlds[b + 1u], p), dot(pts_worlds[b + 2u], p), 1.0);
+    let t = vec3f(dot(pts_worlds[b + 4u].xyz, n), dot(pts_worlds[b + 5u].xyz, n), dot(pts_worlds[b + 6u].xyz, n));
+    let l = length(t);
+    pts_turned[i] = vec4f(select(vec3f(0.0), t / l, l > 1e-12 && l < 1e30), 0.0);
+}
+";
+
+fn place_params() -> [ParamSpec; 2] {
+    [ParamSpec::int("n", 0), ParamSpec::int("items", 0)]
+}
+
+/// Points per row of the placing pass's grid.
+const ROW: u32 = 1 << 16;
+
+/// Compiles the placing pass.
+fn warm_up(gpu: &Gpu) -> Result<(), Error> {
+    gpu.cached_compute("pts from_geo place", PLACE, &place_params()).map(|_| ())
+}
+
 /// The points made, in each item's own space, ready to be placed.
 struct Made {
     /// Per point: the item it lies on.
@@ -117,39 +167,32 @@ struct Made {
     color: Option<Vec<[f32; 4]>>,
     /// Points left out past [`MAX_POINTS`].
     cut: usize,
+    /// The placements the points were made under, per item.
+    worlds: Vec<Mat4>,
+    /// Per item, the box around its points in its own space.
+    boxes: Vec<Option<Bounds>>,
+    /// The box around every point under `worlds`.
+    world_box: Option<Bounds>,
 }
 
 impl Made {
-    /// The points' attributes with each item's placement in `worlds` applied (an item past the
-    /// end stays where its model has it).
-    fn columns(&self, worlds: &[Mat4]) -> Vec<Column> {
+    /// The points' attributes in their item's space, and `item`: what goes to the GPU once.
+    fn columns(&self) -> Vec<Column> {
         let n = self.item.len();
-        let turns: Vec<_> = worlds.iter().map(normal_matrix).collect();
+        let mut item = Column::new(ITEM, AttrType::U32);
         let mut position = Column::new("position", AttrType::Vec3);
         let mut normal = Column::new("normal", AttrType::Vec3);
         let mut uv = Column::new("uv", AttrType::Vec2);
+        item.words.extend_from_slice(&self.item);
         position.words.reserve(n * 4);
         normal.words.reserve(n * 4);
         uv.words.reserve(n * 2);
-        let f = |v: [f64; 3]| [v[0] as f32, v[1] as f32, v[2] as f32, 0.0];
-        for ((item, p), (nrm, t)) in
-            self.item.iter().zip(&self.position).zip(self.normal.iter().zip(&self.uv))
-        {
-            let p = p.map(f64::from);
-            let nrm = nrm.map(f64::from);
-            match (worlds.get(*item as usize), turns.get(*item as usize)) {
-                (Some(world), Some(turn)) => {
-                    position.push(f(transform(world, p)));
-                    normal.push(f(unit(turn.map(|row| row[0] * nrm[0] + row[1] * nrm[1] + row[2] * nrm[2]))));
-                }
-                _ => {
-                    position.push(f(p));
-                    normal.push(f(nrm));
-                }
-            }
+        for ((p, nrm), t) in self.position.iter().zip(&self.normal).zip(&self.uv) {
+            position.push([p[0], p[1], p[2], 1.0]);
+            normal.push([nrm[0], nrm[1], nrm[2], 0.0]);
             uv.push([t[0], t[1], 0.0, 0.0]);
         }
-        let mut columns = vec![position, normal, uv];
+        let mut columns = vec![item, position, normal, uv];
         if let Some(colors) = &self.color {
             let mut color = Column::new("color", AttrType::Vec4);
             color.words.reserve(n * 4);
@@ -160,24 +203,144 @@ impl Made {
         }
         columns
     }
+
+    /// The box around the points placed by `worlds`: exact under the placements they were made
+    /// with, else the box around each item's box placed (an item past the end of `worlds` as its
+    /// model has it).
+    fn bounds(&self, worlds: &[Mat4]) -> Option<Bounds> {
+        if worlds == self.worlds.as_slice() {
+            return self.world_box;
+        }
+        let mut out: Option<Bounds> = None;
+        for (k, b) in self.boxes.iter().enumerate() {
+            let Some(b) = b else { continue };
+            for c in b.corners() {
+                let c = c.map(f64::from);
+                let p = worlds.get(k).map_or(c, |w| transform(w, c)).map(|x| x as f32);
+                if p.iter().all(|x| x.is_finite()) {
+                    out = Some(out.map_or(Bounds { min: p, max: p }, |o| o.with(p)));
+                }
+            }
+        }
+        out
+    }
+
+    /// The boxes of the points, per item in its own space and all together under `worlds`.
+    fn boxed(mut self) -> Self {
+        let mut boxes: Vec<Option<Bounds>> = vec![None; self.worlds.len()];
+        let mut world_box: Option<Bounds> = None;
+        let grow = |b: &mut Option<Bounds>, p: [f32; 3]| {
+            if p.iter().all(|x| x.is_finite()) {
+                *b = Some(b.map_or(Bounds { min: p, max: p }, |o| o.with(p)));
+            }
+        };
+        for (k, p) in self.item.iter().zip(&self.position) {
+            if let Some(b) = boxes.get_mut(*k as usize) {
+                grow(b, *p);
+            }
+            let placed =
+                self.worlds.get(*k as usize).map_or(*p, |w| transform(w, p.map(f64::from)).map(|x| x as f32));
+            grow(&mut world_box, placed);
+        }
+        self.boxes = boxes;
+        self.world_box = world_box;
+        self
+    }
 }
+
+/// The attribute of the points as uploaded that names their item; it stays in the node.
+const ITEM: &str = "item";
 
 #[derive(Default)]
 struct FromGeo {
     slot: AsyncSlot<Arc<Made>>,
     asked: Option<Request>,
     /// The points that went out last: what they were made from, the placements, and them.
-    sent: Option<(Arc<Made>, Vec<Mat4>, penumbra_gpu::Points)>,
+    sent: Option<(Arc<Made>, Vec<Mat4>, Points)>,
     uploads: Uploads,
+    /// The points as made, in their items' space, on the GPU: uploaded once per job.
+    model: Option<(Arc<Made>, Points)>,
+    /// The placements for the placing pass, seven rows per item.
+    worlds: Option<Buffer>,
+    /// The placed positions and normals that go out.
+    placed: [BufferRing; 2],
+}
+
+impl FromGeo {
+    /// The points of `made` placed by `worlds` on the GPU; `uv` and `color` go out as uploaded.
+    fn place(&mut self, gpu: &Gpu, made: &Arc<Made>, worlds: &[Mat4]) -> Result<Points, Error> {
+        let model = match &self.model {
+            Some((m, p)) if Arc::ptr_eq(m, made) => p.clone(),
+            _ => {
+                let p = self.uploads.upload(gpu, made.item.len(), &made.columns(), None)?;
+                self.model = Some((made.clone(), p.clone()));
+                p
+            }
+        };
+        let n = made.item.len() as u32;
+        let capacity = model.capacity();
+        let attr = |name: &str| {
+            model.attr(name).ok_or_else(|| Error::new(format!("the uploaded points lack `{name}`")))
+        };
+        let (item, position, normal) = (attr(ITEM)?, attr("position")?, attr("normal")?);
+        let mut rows: Vec<[f32; 4]> = Vec::with_capacity(worlds.len().max(1) * 7);
+        for w in worlds {
+            let turn = normal_matrix(w);
+            rows.extend(w.iter().map(|r| r.map(|x| x as f32)));
+            rows.extend(turn.iter().map(|r| [r[0] as f32, r[1] as f32, r[2] as f32, 0.0]));
+        }
+        if rows.is_empty() {
+            rows.push([0.0; 4]);
+        }
+        let bytes = rows.len() as u64 * 16;
+        let table = match &self.worlds {
+            Some(b) if b.bytes() == bytes => b.clone(),
+            _ => {
+                let b = Buffer::new(gpu, bytes, "pts from_geo worlds")?;
+                self.worlds = Some(b.clone());
+                b
+            }
+        };
+        table.write(gpu, 0, &rows)?;
+        let [ring_p, ring_n] = &mut self.placed;
+        let placed = ring_p.next(gpu, u64::from(capacity) * 16, "pts position")?;
+        let turned = ring_n.next(gpu, u64::from(capacity) * 16, "pts normal")?;
+        if n > 0 {
+            let items = worlds.len() as i64;
+            let param = |name: &str| match name {
+                "n" => Some(Value::Int(i64::from(n))),
+                "items" => Some(Value::Int(items)),
+                _ => None,
+            };
+            let input =
+                Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
+            let (w, h) = (n.clamp(1, ROW), n.div_ceil(n.clamp(1, ROW)));
+            gpu.cached_compute("pts from_geo place", PLACE, &place_params())?.run_with(
+                gpu,
+                &[item.buffer(), position.buffer(), normal.buffer(), &table, &placed, &turned],
+                &[Step { entry: "place", out: Out::grid(w, h), input: &input }],
+            )?;
+        }
+        let mut attrs = vec![
+            Attr::new("position", AttrType::Vec3, placed)?,
+            Attr::new("normal", AttrType::Vec3, turned)?,
+        ];
+        attrs.extend(
+            model.attrs().iter().filter(|a| !["position", "normal", ITEM].contains(&a.name())).cloned(),
+        );
+        Ok(Points::new(capacity, n, attrs)?.with_bounds(made.bounds(worlds).filter(|_| n > 0)))
+    }
 }
 
 impl Operator for FromGeo {
     fn gpu_bytes(&self) -> u64 {
         self.uploads.bytes()
+            + self.worlds.as_ref().map_or(0, Buffer::bytes)
+            + self.placed.iter().map(BufferRing::bytes).sum::<u64>()
     }
 
     fn trim(&mut self) {
-        self.uploads.trim();
+        self.placed.iter_mut().for_each(BufferRing::trim);
     }
 
     fn job_status(&self) -> Option<JobStatus> {
@@ -253,9 +416,7 @@ impl Operator for FromGeo {
         {
             return Ok(Cooked::Unchanged);
         }
-        let columns = made.columns(&worlds);
-        let bounds = columns.first().and_then(bounds_of);
-        let points = self.uploads.upload(gpu, made.item.len(), &columns, bounds)?;
+        let points = self.place(gpu, &made, &worlds)?;
         self.sent = Some((made, worlds, points.clone()));
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Pts, points)]))
     }
@@ -331,6 +492,9 @@ fn make(r: &Request) -> Made {
         uv: Vec::new(),
         color: colour.then(Vec::new),
         cut: 0,
+        worlds: r.items.iter().map(|s| s.world).collect(),
+        boxes: Vec::new(),
+        world_box: None,
     };
     let f = |v: [f64; 3]| [v[0] as f32, v[1] as f32, v[2] as f32];
     if r.surface {
@@ -362,7 +526,7 @@ fn make(r: &Request) -> Made {
         }
         if tris.is_empty() || total <= 0.0 {
             m.color = None;
-            return m;
+            return m.boxed();
         }
         let n = r.count as usize;
         m.item.reserve(n);
@@ -432,5 +596,5 @@ fn make(r: &Request) -> Made {
             }
         }
     }
-    m
+    m.boxed()
 }
