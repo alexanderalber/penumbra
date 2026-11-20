@@ -356,6 +356,11 @@ fn particles_draw_end_to_end() {
 
 /// One particle in a loop with wind, until the loop's program has compiled; then started over.
 fn windy(strength: f64, mass: f64) -> Option<(Rig, Vec<[f32; 4]>)> {
+    windy_through(strength, mass, "pts.null")
+}
+
+/// [`windy`] with a node of `kind` between the wind and the end of the loop.
+fn windy_through(strength: f64, mass: f64, kind: &str) -> Option<(Rig, Vec<[f32; 4]>)> {
     let gpu = gpu()?;
     let ops = [
         create(
@@ -385,7 +390,7 @@ fn windy(strength: f64, mass: f64) -> Option<(Rig, Vec<[f32; 4]>)> {
             ],
         ),
         connect("/p", "/wind", 0),
-        create("/end", "pts.null", &[]),
+        create("/end", kind, &[]),
         connect("/wind", "/end", 0),
         connect("/end", "/p", 1),
     ];
@@ -434,11 +439,25 @@ fn wind_never_overshoots_and_a_negative_strength_pushes_nothing() {
     assert!(v.iter().all(|s| s[0] == 0.0), "{v:?}");
 }
 
-/// The pull wind leaves for the particles stays in their loop: the loop carries it round, but a
-/// merge and a table of every attribute after the loop show none, and wind on points that are no
-/// particles leaves none.
+/// A merge of one input inside the loop passes the pull on: a light particle still never passes
+/// the wind's speed.
 #[test]
-fn the_pull_of_wind_does_not_leave_the_loop() {
+fn wind_through_a_merge_in_the_loop_never_overshoots() {
+    // The working attributes programs may declare.
+    for name in [crate::pts::force::WIND, crate::pts::delete::KEEP] {
+        assert!(penumbra_gpu::points::INTERNAL_ATTRS.contains(&name), "{name}");
+    }
+    let Some((rig, v)) = windy_through(2.0, 0.01, "pts.merge") else { return };
+    assert!(v.iter().all(|s| s[0].is_finite() && (0.0..=3.0 + 1e-4).contains(&s[0])), "{v:?}");
+    assert!((v[39][0] - 3.0).abs() < 1e-3, "the wind's speed: {v:?}");
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
+
+/// The pull wind leaves for the particles stays with them: the loop carries it round, a merge
+/// passes it on where every input has it, but a merge with other points and a table of every
+/// attribute show none, and wind on points that are no particles leaves none.
+#[test]
+fn the_pull_of_wind_stays_with_the_particles() {
     let Some((mut rig, _)) = windy(2.0, 0.01) else { return };
     let wind = crate::pts::force::WIND;
     let end = points(&mut rig, "/end");
@@ -453,7 +472,7 @@ fn the_pull_of_wind_does_not_leave_the_loop() {
         connect("/line", "/f", 0),
     ]);
     let merged = points(&mut rig, "/m");
-    assert!(merged.attr(wind).is_none() && merged.attr("velocity").is_some(), "one input");
+    assert!(merged.attr(wind).is_some() && merged.attr("velocity").is_some(), "one input");
     rig.edit(&[connect("/line", "/m", 1)]);
     let merged = points(&mut rig, "/m");
     assert!(merged.attr(wind).is_none() && merged.attr("velocity").is_some(), "two inputs");

@@ -16,7 +16,7 @@
 //! makes a line that `pts.math` can lift by its values.
 
 use penumbra_core::{Chans, Error, Table};
-use penumbra_gpu::points::{AttrType, MAX_ATTRS, canonical, default_of, valid_name};
+use penumbra_gpu::points::{AttrType, MAX_ATTRS, canonical, check_source_name, default_of, valid_name};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
@@ -160,7 +160,8 @@ pub(crate) struct Plan {
 }
 
 impl Plan {
-    pub fn new(names: &[&str]) -> Self {
+    /// `Err` for a name that makes an attribute starting with `pts_` ([`check_source_name`]).
+    pub fn new(names: &[&str]) -> Result<Self, String> {
         let mut warnings = Vec::new();
         let mut found: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
         let mut ignored = Vec::new();
@@ -173,6 +174,7 @@ impl Plan {
                 }
                 continue;
             };
+            check_source_name(&attr).map_err(|e| e.0)?;
             match found.iter_mut().find(|(a, _)| *a == attr) {
                 // One source per number: the last column that gives it. So a file that names
                 // one column a thousand times keeps one of them, and the values read stay
@@ -251,7 +253,7 @@ impl Plan {
             let sources = sources.into_iter().filter(|(k, _)| *k < wide).collect();
             attrs.push((attr, ty, sources));
         }
-        Self { attrs, along_x, warnings }
+        Ok(Self { attrs, along_x, warnings })
     }
 
     /// The columns whose values are used, in increasing order.
@@ -302,15 +304,15 @@ impl Plan {
 }
 
 /// Points from named columns of numbers, each `count` long (`None` where a value is missing),
-/// and what to warn about.
+/// and what to warn about. `Err` as [`Plan::new`].
 pub(crate) fn columns(
     names: &[&str],
     value: &dyn Fn(usize, usize) -> Option<f64>,
     count: usize,
-) -> (Vec<Column>, Vec<String>) {
-    let plan = Plan::new(names);
+) -> Result<(Vec<Column>, Vec<String>), String> {
+    let plan = Plan::new(names)?;
     let cols = plan.columns(value, count);
-    (cols, plan.warnings)
+    Ok((cols, plan.warnings))
 }
 
 #[derive(Default)]
@@ -335,7 +337,7 @@ impl Operator for FromValues {
             let count = chans.channels().first().map_or(0, |c| c.samples.len());
             let value = |i: usize, p: usize| chans.channels().get(i).and_then(|c| c.samples.get(p)).copied();
             let n = count.min(MAX_POINTS);
-            let (cols, w) = columns(&names, &value, n);
+            let (cols, w) = columns(&names, &value, n).map_err(CookError::failed)?;
             (cols, w, (count, n))
         } else if let Some(table) = cx.input_as::<Table>(0) {
             let rows = table.rows();
@@ -346,7 +348,7 @@ impl Operator for FromValues {
                 rows.get(p + 1).and_then(|r| r.get(i)).and_then(|s| s.trim().parse::<f64>().ok())
             };
             let n = count.min(MAX_POINTS);
-            let (cols, w) = columns(&names, &value, n);
+            let (cols, w) = columns(&names, &value, n).map_err(CookError::failed)?;
             (cols, w, (count, n))
         } else if wired {
             return Err(CookError::Pending);
@@ -374,7 +376,7 @@ mod tests {
     fn large_ids_stay_exact() {
         let ids = [16_777_217.0, 4_000_000_001.0];
         let value = |_: usize, p: usize| ids.get(p).copied();
-        let (cols, _) = columns(&["id"], &value, 2);
+        let (cols, _) = columns(&["id"], &value, 2).unwrap();
         let id = cols.iter().find(|c| c.name == "id").unwrap();
         assert_eq!(id.ty, AttrType::U32);
         assert_eq!(id.words, [16_777_217, 4_000_000_001]);

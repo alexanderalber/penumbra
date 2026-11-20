@@ -27,6 +27,10 @@ attribute name and mean the same attribute:
 
 A missing attribute reads as its default: position 0, colour white, scale 1, weight 1.
 
+Names starting with `pts_` belong to penumbra's working attributes, such as the pull of wind
+that `pts.particles` reads. Most nodes drop them. A file, a table, channels or a program that
+names one gets an error: choose another name.
+
 **A count that may live on the GPU.** Nodes that make or drop points on the GPU
 (`pts.particles`, `pts.delete`, `pts.proximity`) keep the number of points there. The CPU then
 knows only how many there may be. Every node downstream handles that by itself. The viewer
