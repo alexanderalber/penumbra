@@ -209,7 +209,8 @@ Several emitters go into one `source` through `pts.merge`. Each system counts it
 `pts.merge` moves the ids of its second input up by half their range (a third for three inputs,
 and so on). Ids that already lie in their input's part stay as they are. So points that come
 round a `pts.feedback` loop into the same input keep their ids, and trails and random numbers
-keyed by id hold.
+keyed by id hold. A `pts.merge` of other `pts.merge` nodes can repeat ids: the parts of the inner
+merge land on top of each other. Put all systems into one `pts.merge` (up to 64 inputs).
 
 ## Trails
 

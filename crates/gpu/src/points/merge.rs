@@ -18,6 +18,9 @@
 //! ([`super::trail`]). An id that already lies in its set's band stays: points that come round a
 //! feedback loop into the same input keep their ids frame after frame. Ids from another set's
 //! band (a loop into another input) go into this set's band all the same, never into another.
+//! That fold can repeat ids where a set is itself a merge: the inner merge's bands all land in
+//! one band of the outer, on top of each other. Particle systems meant to stay apart go into
+//! one merge (it takes up to [`MAX_INPUTS`]).
 //!
 //! The capacity is the sum of the sets' capacities, so it keeps its size while their counts move.
 //! The bounds are the box around the sets' boxes, where every set has one. `dims` go. Lines stay
