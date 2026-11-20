@@ -450,8 +450,71 @@ impl Seen {
 /// What wakes a node from the thread that polls the GPU: it cooks again at the next frame.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
-/// Readbacks a node waits at once at most ([`Reports`]).
-const REPORTS_PENDING: usize = 8;
+/// Readbacks a node waits for at once at most ([`Waiting`]).
+pub const WAITING_MOST: usize = 8;
+
+/// Readbacks of headers on their way, oldest first, each with what belongs to it (the settings
+/// it was made under, the births before it). At most [`WAITING_MOST`]: under load one takes
+/// longer than a frame, and the newest that arrived still counts.
+///
+/// When too many are on their way, the newest before the one started now goes. Readbacks arrive
+/// in the order they started, so the oldest is the next to come: dropping it instead would drop
+/// each readback just before it arrives while a node cooks every frame on a GPU that lags behind,
+/// and the node would never hear back. A readback that failed never arrives and leaves the queue,
+/// so it takes no place from one that does.
+#[derive(Clone)]
+pub struct Waiting<T> {
+    pending: std::collections::VecDeque<(Seen, T)>,
+}
+
+impl<T> Default for Waiting<T> {
+    fn default() -> Self {
+        Self { pending: std::collections::VecDeque::new() }
+    }
+}
+
+impl<T> Waiting<T> {
+    /// Waits for `seen` as well. A readback that could not start is not given here: it never
+    /// arrives.
+    pub fn push(&mut self, seen: Seen, with: T) {
+        if self.pending.len() >= WAITING_MOST {
+            self.pending.pop_back();
+        }
+        self.pending.push_back((seen, with));
+    }
+
+    /// The readback started last that is still waited for.
+    pub fn newest(&self) -> Option<&Seen> {
+        self.pending.back().map(|(s, _)| s)
+    }
+
+    /// How many are waited for.
+    pub fn len(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Whether none is waited for.
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+
+    /// Takes out the readbacks that arrived, every one older than them, and those that failed.
+    /// Gives the words of the newest that arrived, with what belongs to it.
+    pub fn settle(&mut self) -> Option<([u32; 4], T)> {
+        let newest = self
+            .pending
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(k, (seen, _))| seen.arrived_words().map(|w| (k, w)));
+        let out = newest.and_then(|(k, words)| {
+            let mut gone = self.pending.drain(..=k);
+            gone.next_back().map(|(_, with)| (words, with))
+        });
+        self.pending.retain(|(seen, _)| !seen.failed());
+        out
+    }
+}
 
 /// Readbacks of a header for what a node says about its result (a warning about lines left out,
 /// crowded cubes), each tagged with the settings it was made under.
@@ -464,9 +527,7 @@ const REPORTS_PENDING: usize = 8;
 /// newest header was the same as the one before it. So on points that stopped changing the node
 /// cooks once or twice more to say what it found, then rests.
 pub struct Reports<S> {
-    /// Oldest first, at most [`REPORTS_PENDING`]: under load one can take longer than a frame,
-    /// and the newest that arrived still counts.
-    pending: Vec<(Seen, S)>,
+    pending: Waiting<S>,
     last: Option<Seen>,
     newest: Option<([u32; 4], S)>,
     /// A header that differs from the one before it arrived since the last read.
@@ -477,7 +538,7 @@ pub struct Reports<S> {
 
 impl<S> Default for Reports<S> {
     fn default() -> Self {
-        Self { pending: Vec::new(), last: None, newest: None, fresh: false, from: Vec::new() }
+        Self { pending: Waiting::default(), last: None, newest: None, fresh: false, from: Vec::new() }
     }
 }
 
@@ -513,16 +574,9 @@ impl<S: Clone + PartialEq> Reports<S> {
         seen
     }
 
-    /// Keeps `seen` among the readbacks waited for. Readbacks arrive in the order they started, so
-    /// the oldest is the next to come. When more than [`REPORTS_PENDING`] are on their way, the
-    /// newest before this one goes: dropping the oldest instead would drop each readback just
-    /// before it arrives while the node cooks every frame on a GPU that lags behind, and the node
-    /// would never say anything.
+    /// Keeps `seen` among the readbacks waited for ([`Waiting::push`]).
     fn wait_for(&mut self, seen: Seen, settings: S) {
-        if self.pending.len() >= REPORTS_PENDING {
-            self.pending.pop();
-        }
-        self.pending.push((seen, settings));
+        self.pending.push(seen, settings);
     }
 
     /// The newest header that arrived for `settings`; `None` before one did.
@@ -531,18 +585,9 @@ impl<S: Clone + PartialEq> Reports<S> {
         self.newest.as_ref().filter(|(_, s)| s == settings).map(|(w, _)| *w)
     }
 
-    /// Takes in the readbacks that arrived, and drops those that failed: they never arrive, and
-    /// kept they would take the places of those that do.
+    /// Takes in the readbacks that arrived ([`Waiting::settle`]).
     fn settle(&mut self) {
-        let mut newest = None;
-        self.pending.retain(|(seen, s)| match seen.arrived_words() {
-            Some(w) => {
-                newest = Some((w, s.clone()));
-                false
-            }
-            None => !seen.failed(),
-        });
-        if let Some(n) = newest {
+        if let Some(n) = self.pending.settle() {
             self.fresh |= self.newest.as_ref() != Some(&n);
             self.newest = Some(n);
         }
