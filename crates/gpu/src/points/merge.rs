@@ -11,11 +11,13 @@
 //! side), each set's points go to where the sets before it end, and a last pass writes the total
 //! into the result's header. Nothing waits for the GPU.
 //!
-//! Where every set has an `id` of `u32` (particles) and there are several, the ids of set `k` are
-//! moved up by `k` times `2^32 / sets` (wrapping): particle systems count their ids from 0 each, and
-//! moved apart they stay unique and rise along the list, which trails need ([`super::trail`]). An
-//! id that already lies in its set's band (from `k` times to `k + 1` times `2^32 / sets`) stays:
-//! points that come round a feedback loop into the same input keep their ids frame after frame.
+//! Where every set has an `id` of `u32` (particles) and there are several, the ids of set `k` go
+//! into its band, from `k` times to `k + 1` times `2^32 / sets`: an id is moved up by the band's
+//! start, past the band's width it wraps round within the band. Particle systems count their ids
+//! from 0 each, and moved apart they stay unique and rise along the list, which trails need
+//! ([`super::trail`]). An id that already lies in its set's band stays: points that come round a
+//! feedback loop into the same input keep their ids frame after frame. Ids from another set's
+//! band (a loop into another input) go into this set's band all the same, never into another.
 //!
 //! The capacity is the sum of the sets' capacities, so it keeps its size while their counts move.
 //! The bounds are the box around the sets' boxes, where every set has one. `dims` go. Lines stay
@@ -65,11 +67,14 @@ fn pts_merge(@builtin(global_invocation_id) gid: vec3u) {
         for (var w = 0u; w < words; w++) {
             pts_dst[o + w] = pts_src[i + w];
         }
-        // Ids moved up into the set's own band, unless they lie in it already.
-        let id = pts_src[i];
-        let band = bitcast<u32>(params.band);
-        let inside = band != 0u && id - band < bitcast<u32>(params.step);
-        pts_dst[o] = select(id + band, id, inside);
+        // Ids into the set's own band, unless they lie in it already.
+        if params.banded != 0 {
+            let id = pts_src[i];
+            let band = bitcast<u32>(params.band);
+            let step = max(bitcast<u32>(params.step), 1u);
+            let inside = id - band < step;
+            pts_dst[o] = select(band + id % step, id, inside);
+        }
     } else {
         for (var w = 0u; w < words; w++) {
             pts_dst[o + w] = bitcast<u32>(params.fill[w]);
@@ -107,7 +112,7 @@ fn pts_total(@builtin(global_invocation_id) gid: vec3u) {
 }
 ";
 
-fn params() -> [ParamSpec; 8] {
+fn params() -> [ParamSpec; 9] {
     [
         ParamSpec::int("input", 0),
         ParamSpec::int("words", 1),
@@ -116,6 +121,7 @@ fn params() -> [ParamSpec; 8] {
         ParamSpec::int("inputs", 0),
         ParamSpec::int("pairs", 0),
         ParamSpec::int("band", 0),
+        ParamSpec::int("banded", 0),
         ParamSpec::int("step", 0),
     ]
 }
@@ -127,7 +133,8 @@ struct Placing<'b> {
     words: i64,
     copy: bool,
     fill: [f32; 4],
-    band: i64,
+    /// The start of the set's band of ids, for the attribute `id` of sets that are banded.
+    band: Option<i64>,
     src: &'b Buffer,
     dst: &'b Buffer,
 }
@@ -157,7 +164,8 @@ impl Placing<'_> {
             "words" => Some(Value::Int(self.words)),
             "copy" => Some(Value::Int(i64::from(self.copy))),
             "fill" => Some(Value::Vec4(self.fill.map(f64::from))),
-            "band" => Some(Value::Int(self.band)),
+            "band" => Some(Value::Int(self.band.unwrap_or(0))),
+            "banded" => Some(Value::Int(i64::from(self.band.is_some()))),
             other => shared.param(other),
         }
     }
@@ -282,7 +290,7 @@ impl Merger {
                     words: (ty.stride() / 4) as i64,
                     copy: src.is_some(),
                     fill: fill_of(name, *ty),
-                    band: if banded && name == "id" { band(k) } else { 0 },
+                    band: (banded && name == "id").then(|| band(k)),
                     src: src.map_or(&none, Attr::buffer),
                     dst,
                 });
