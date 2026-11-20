@@ -436,22 +436,28 @@ impl Item {
 
     /// How far a sprite or a line reaches from its points in any direction, in the world's
     /// units; 0 for anything else. A line reaches half its width, its mitred corners up to four
-    /// times that ([`MITRE_LIMIT`]).
+    /// times that ([`MITRE_LIMIT`]). The widest line and the largest sprite count
+    /// ([`Instances::scale_most`]).
     pub fn sprite_reach(&self) -> f32 {
         match (&self.instances, self.model.bounds) {
-            (Some(inst), _) if inst.lines.is_some() => {
-                0.5 * MITRE_LIMIT * if inst.size.is_finite() { inst.size.abs() } else { 1.0 }
-            }
+            (Some(inst), _) if inst.lines.is_some() => 0.5 * MITRE_LIMIT * size_of(inst),
             (Some(inst), Some(b)) if inst.face_camera => self.reach(b, inst),
             _ => 0.0,
         }
     }
 
-    /// The model's reach from its origin times the instances' size.
+    /// The model's reach from its origin times the size of the largest copy.
     fn reach(&self, b: Bounds, inst: &Instances) -> f32 {
-        let size = if inst.size.is_finite() { inst.size.abs() } else { 1.0 };
-        b.corners().iter().map(|c| c.iter().map(|x| x * x).sum::<f32>().sqrt()).fold(0.0, f32::max) * size
+        b.corners().iter().map(|c| c.iter().map(|x| x * x).sum::<f32>().sqrt()).fold(0.0, f32::max)
+            * size_of(inst)
     }
+}
+
+/// The size of the largest copy: [`Instances::size`] times [`Instances::scale_most`]; a number
+/// that is not finite counts as 1.
+fn size_of(inst: &Instances) -> f32 {
+    let finite = |v: f32| if v.is_finite() { v.abs() } else { 1.0 };
+    finite(inst.size) * finite(inst.scale_most)
 }
 
 /// Copies of a model placed by textures on the GPU, one per texel of `position` (or the first
@@ -479,6 +485,9 @@ pub struct Instances {
     pub aim: Option<Tex>,
     /// rgb: the scale along x, y, z; none or a texel past the end: 1.
     pub scale: Option<Tex>,
+    /// The largest magnitude in [`Instances::scale`] as far as it is known (read back from the
+    /// GPU, late): the reach of a copy, a sprite or a line grows by it. 1 without `scale`.
+    pub scale_most: f32,
     /// rgb: multiplies the surface's colour; none or a texel past the end: white.
     pub color: Option<Tex>,
     /// Half the side of a box around the item's origin that holds every copy, since the
@@ -559,6 +568,7 @@ impl Instances {
             position,
             aim: None,
             scale: None,
+            scale_most: 1.0,
             color: None,
             extent: 0.0,
             late: false,

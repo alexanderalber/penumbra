@@ -425,3 +425,54 @@ fn sprites_let_go_of_the_model_copies_were_made_of() {
     let sprites = bytes(&mut rig);
     assert!(sprites < copies / 10, "{sprites} bytes after {copies}");
 }
+
+/// The box of lines and sprites holds the widest line and the largest sprite: a `width` or
+/// `scale` per point counts, read back from the GPU a frame or more late.
+#[test]
+fn the_box_of_lines_and_sprites_holds_the_widest_and_the_largest() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create(
+            "/line",
+            "pts.generate",
+            &[("shape", "line".into()), ("count", Value::Int(5)), ("size", Value::Vec3([4.0, 0.0, 0.0]))],
+        ),
+        create("/wide", "pts.math", &[("expression", "f32(index) + 1.0".into()), ("result", "width".into())]),
+        connect("/line", "/wide", 0),
+        create("/draw", "geo.from_pts", &[("mode", "lines".into()), ("width", Value::Float(0.1))]),
+        connect("/wide", "/draw", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    points(&mut rig, "/wide");
+    // The box is a cube around the line (2 m each way), grown by how far a line reaches: half
+    // the widest line (5 x 0.1), its mitred corners up to four times that.
+    let up = |rig: &mut Rig, above: f32| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            rig.clock.advance(1);
+            rig.cook("/draw");
+            rig.gpu.poll();
+            let geo = rig
+                .cooker
+                .output(Port { node: rig.id("/draw"), output: 0 })
+                .map(|d| d.get::<Geo>().unwrap().clone());
+            let y = geo.and_then(|g| g.bounds()).map_or(0.0, |b| b.max[1]);
+            if y > above || Instant::now() > deadline {
+                return y;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let y = up(&mut rig, 2.5);
+    assert!((y - 3.0).abs() < 1e-4, "lines: {y}");
+    // Sprites of size 0.1 scaled up to 5: the square's corner reaches 0.71 of its side.
+    rig.edit(&[
+        set("/wide.result", "scale".into()),
+        set("/draw.mode", "sprites".into()),
+        set("/draw.size", Value::Float(0.1)),
+    ]);
+    points(&mut rig, "/wide");
+    let y = up(&mut rig, 2.2);
+    assert!((y - (2.0 + 0.5 * 0.5f32.sqrt())).abs() < 1e-4, "sprites: {y}");
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}

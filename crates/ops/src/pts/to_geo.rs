@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use penumbra_core::{Curve, Error, ParamSpec};
 use penumbra_gpu::geo::{IDENTITY, Instances, Item, Lines, Mat4, Model};
-use penumbra_gpu::points::reach::LateBounds;
+use penumbra_gpu::points::reach::{LateBounds, LateMost};
 use penumbra_gpu::points::{Count, Strips};
 use penumbra_gpu::{BufferRing, Geo, Gpu, Points, TexRing};
 use penumbra_graph::{
@@ -137,6 +137,8 @@ struct FromPts {
     baked: Vec<Baked>,
     /// The box of points without exact bounds, read back from the GPU.
     late: LateBounds,
+    /// The largest `scale` or `width`, read back from the GPU.
+    most: LateMost,
 }
 
 impl FromPts {
@@ -262,7 +264,7 @@ impl Operator for FromPts {
         let sprite =
             self.sprite.as_ref().map_or(0, |m| m.bytes()) + self.segment.as_ref().map_or(0, |m| m.bytes());
         let baked: u64 = self.baked.iter().map(|b| b.made.bytes()).sum();
-        textures + self.scratch.bytes() + sprite + baked + self.late.bytes()
+        textures + self.scratch.bytes() + sprite + baked + self.late.bytes() + self.most.bytes()
     }
 
     fn trim(&mut self) {
@@ -317,6 +319,12 @@ impl Operator for FromPts {
             Some(_) => None,
             None => self.late.update(gpu, points, Some(wake(cx)))?,
         };
+        // The widest line or largest sprite, so the box holds them (framing, shadow maps). Until
+        // it arrives, 1: the size param alone.
+        let scale_most = match &scale {
+            Some(_) => self.most.update(gpu, points, sized_by, Some(wake(cx)))?,
+            None => None,
+        };
         let extent = points
             .bounds()
             .or(late)
@@ -334,6 +342,7 @@ impl Operator for FromPts {
             face_camera: !copies && !lines,
             aim,
             scale,
+            scale_most: scale_most.unwrap_or(1.0),
             color,
             extent,
             late: late.is_some(),
