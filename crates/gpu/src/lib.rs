@@ -195,6 +195,8 @@ struct Inner {
     polls: AtomicU64,
     /// Polls of the device that panicked inside wgpu (see [`poll_device`]).
     poll_panics: AtomicU64,
+    /// When the last poll of the device began (see [`PollClock`]).
+    poll_clock: Arc<PollClock>,
     /// The header that bounds no count, for points whose count the CPU knows (see
     /// [`points::Count`]).
     no_limit: Mutex<Option<Buffer>>,
@@ -260,6 +262,37 @@ pub fn poll_device(device: &wgpu::Device) -> Result<(), Error> {
         Polled::Done => Ok(()),
         Polled::Failed(e) => Err(Error::new(format!("GPU poll: {e}"))),
         Polled::Panicked => Err(Error::new(POLL_PANICKED)),
+    }
+}
+
+/// When the last poll of a device began, for readbacks that give up on the GPU: a readback is
+/// only failed by its age after a poll that began past its deadline and did not deliver it.
+/// A finished readback nobody polled for a while is still delivered.
+pub(crate) struct PollClock {
+    base: Instant,
+    /// Microseconds from `base` to the start of the last finished poll, plus one; 0 is none yet.
+    last: AtomicU64,
+}
+
+impl PollClock {
+    fn new() -> Self {
+        Self { base: Instant::now(), last: AtomicU64::new(0) }
+    }
+
+    /// Records a poll that began at `began` and has finished, its callbacks included.
+    fn polled(&self, began: Instant) {
+        let micros =
+            u64::try_from(began.saturating_duration_since(self.base).as_micros()).unwrap_or(u64::MAX);
+        self.last.fetch_max(micros.saturating_add(1), Ordering::AcqRel);
+    }
+
+    /// Whether a poll that began after `deadline` has finished. The callbacks it ran are
+    /// visible to the caller once this says yes.
+    pub(crate) fn polled_after(&self, deadline: Instant) -> bool {
+        match self.last.load(Ordering::Acquire) {
+            0 => false,
+            last => self.base.checked_add(Duration::from_micros(last - 1)).is_some_and(|t| t > deadline),
+        }
     }
 }
 
@@ -372,6 +405,7 @@ impl Gpu {
                 input_groups: Mutex::new(Vec::new()),
                 polls: AtomicU64::new(0),
                 poll_panics: AtomicU64::new(0),
+                poll_clock: Arc::new(PollClock::new()),
                 no_limit: Mutex::new(None),
             }),
         }
@@ -602,9 +636,16 @@ impl Gpu {
         self.inner.poll_panics.load(Ordering::Relaxed)
     }
 
-    /// One poll of the device; a panic caught in it is counted.
+    /// When the last poll of this device began, for readbacks judging their age.
+    pub(crate) fn poll_clock(&self) -> Arc<PollClock> {
+        self.inner.poll_clock.clone()
+    }
+
+    /// One poll of the device, recorded in the [`PollClock`]; a panic caught in it is counted.
     fn poll_counted(&self) -> Polled {
+        let began = Instant::now();
         let polled = poll_raw(&self.inner.device);
+        self.inner.poll_clock.polled(began);
         if let Polled::Panicked = polled {
             self.inner.poll_panics.fetch_add(1, Ordering::Relaxed);
         }

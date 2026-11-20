@@ -148,3 +148,34 @@ fn a_wait_on_a_lost_device_ends_at_once() {
     assert!(gpu.wait(Duration::from_secs(10)).is_err());
     assert!(t.elapsed() < Duration::from_millis(500), "{:?}", t.elapsed());
 }
+
+#[test]
+fn a_readback_the_gpu_finished_arrives_however_long_nobody_polled() {
+    // A device of its own: nothing else may poll it while the test does not.
+    let Ok(gpu) = Gpu::headless(AdapterChoice::Software) else { return };
+    let buffer = Buffer::of::<u32>(&gpu, 64, "unpolled").unwrap();
+    let mut bytes = vec![0u8; 4 * 4 * 8];
+    let tex = gpu.upload_rgba16f(4, 4, &mut bytes, "unpolled").unwrap();
+    let mut read = buffer.read_async(&gpu, None).unwrap();
+    let mut pending = gpu.read_async(&[&tex]).unwrap();
+    read.set_timeout(Duration::from_millis(20));
+    pending.set_timeout(Duration::from_millis(20));
+    std::thread::sleep(Duration::from_millis(300));
+    // Past the time, but no poll has looked since (a submission may have delivered them).
+    assert_ne!(read.state(), ReadState::Failed);
+    assert_ne!(pending.state(), ReadState::Failed);
+    assert_eq!(read.wait(&gpu, Duration::from_secs(10)), ReadState::Ready);
+    assert_eq!(pending.wait(&gpu, Duration::from_secs(10)), ReadState::Ready);
+}
+
+#[test]
+fn a_readback_past_its_time_fails_after_a_poll_that_did_not_deliver() {
+    let Ok(gpu) = Gpu::headless(AdapterChoice::Software) else { return };
+    let buffer = Buffer::of::<u32>(&gpu, 64, "undelivered").unwrap();
+    let mut read = buffer.read_async(&gpu, None).unwrap();
+    read.set_timeout(Duration::ZERO);
+    let _panics = PanickingPolls::new();
+    let t = Instant::now();
+    assert_eq!(read.wait(&gpu, Duration::from_secs(10)), ReadState::Failed);
+    assert!(t.elapsed() < Duration::from_millis(500), "{:?}", t.elapsed());
+}

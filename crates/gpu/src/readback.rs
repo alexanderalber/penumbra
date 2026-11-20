@@ -9,12 +9,41 @@ use half::f16;
 use penumbra_core::Error;
 use photocraft_codecs::{ChannelLayout, EncodeOptions, Format, Image};
 
-use crate::{Gpu, Tex};
+use crate::{Gpu, PollClock, Tex};
 
 /// How long a readback may wait for the GPU. Longer in this crate's tests: they share one
 /// software adapter across all their threads, where on a busy machine a small readback can
 /// wait behind the others' work for more than ten seconds.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(if cfg!(test) { 60 } else { 10 });
+
+/// The age of a readback started without waiting. A readback still waiting [`READ_TIMEOUT`]
+/// after it was submitted has failed (its callback may have been lost in a poll that panicked
+/// inside wgpu), but only once a poll that began after that time has not delivered it. A
+/// readback the GPU finished while nobody polled (the cook thread busy for longer) arrives.
+pub(crate) struct ReadAge {
+    started: Instant,
+    deadline: Instant,
+    clock: Arc<PollClock>,
+}
+
+impl ReadAge {
+    pub(crate) fn new(gpu: &Gpu) -> Self {
+        let started = Instant::now();
+        let mut age = Self { started, deadline: started, clock: gpu.poll_clock() };
+        age.set_timeout(READ_TIMEOUT);
+        age
+    }
+
+    /// Changes how long the readback may wait, counted from its start.
+    pub(crate) fn set_timeout(&mut self, timeout: Duration) {
+        self.deadline = self.started.checked_add(timeout).unwrap_or(self.started);
+    }
+
+    /// Whether a poll that began after the deadline has finished.
+    pub(crate) fn expired(&self) -> bool {
+        self.clock.polled_after(self.deadline)
+    }
+}
 
 /// A texture's pixels on the CPU, as stored: linear, premultiplied RGBA, rows top to bottom.
 #[derive(Clone, Debug, PartialEq)]
@@ -347,7 +376,7 @@ impl Gpu {
                 Err(_) => failed.store(true, Ordering::Release),
             });
         }
-        Ok(PendingRead { items, mapped, failed, started: Instant::now() })
+        Ok(PendingRead { items, mapped, failed, age: ReadAge::new(self) })
     }
 
     /// A texture from rows of little-endian half floats as [`PendingRead::rows`] delivers them
@@ -445,9 +474,8 @@ pub struct PendingRead {
     items: Vec<ReadItem>,
     mapped: Arc<AtomicUsize>,
     failed: Arc<AtomicBool>,
-    /// When the copies were submitted: a readback still waiting [`READ_TIMEOUT`] later has
-    /// failed (its callback may have been lost in a poll that panicked inside wgpu).
-    started: Instant,
+    /// When it has waited too long (see [`ReadAge`]).
+    age: ReadAge,
 }
 
 struct ReadItem {
@@ -529,15 +557,23 @@ impl PendingRead {
     }
 
     pub fn state(&self) -> ReadState {
+        let ready = || self.mapped.load(Ordering::Acquire) >= self.items.len();
         if self.failed.load(Ordering::Acquire) {
             ReadState::Failed
-        } else if self.mapped.load(Ordering::Acquire) >= self.items.len() {
+        } else if ready() {
             ReadState::Ready
-        } else if self.started.elapsed() > READ_TIMEOUT {
-            ReadState::Failed
+        } else if self.age.expired() {
+            // The poll that expired it may have delivered it after the look above.
+            if ready() { ReadState::Ready } else { ReadState::Failed }
         } else {
             ReadState::Waiting
         }
+    }
+
+    /// Lets the readback wait `timeout` instead of [`READ_TIMEOUT`].
+    #[cfg(test)]
+    pub(crate) fn set_timeout(&mut self, timeout: Duration) {
+        self.age.set_timeout(timeout);
     }
 
     /// Textures in this readback.
