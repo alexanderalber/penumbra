@@ -241,6 +241,12 @@ tunnel, melting shapes and a fractal.
 
 ![The raymarch example: a glowing pink and orange fractal ball with rings of fine ornament, over black](assets/gallery/raymarch.jpg)
 
+The [particles](examples/particles/README.md) example: sparks rise from the word "penumbra",
+stirred by a curl noise and blown up by a wind. Each spark glows as a soft dot, and leaves a
+short trail.
+
+![The particles example: golden sparks rise from the letters of the word penumbra and drift up and to the right, over a dark background](assets/gallery/particles.jpg)
+
 The demo the app opens on its first start: a reaction-diffusion growing around a title.
 
 ![The demo: reaction-diffusion stripes and spots around the title](assets/gallery/demo.jpg)
