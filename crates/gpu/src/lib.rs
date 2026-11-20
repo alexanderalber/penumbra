@@ -554,6 +554,19 @@ impl Gpu {
         Ok(compiled)
     }
 
+    /// The poll that waits for submission `index`, at most `timeout`. On a software adapter it
+    /// waits for everything submitted so far instead: wgpu-core asserts, and panics, when one
+    /// thread waits for an index whose completion another thread's poll has just taken in. A
+    /// software adapter finishes work fast enough to hit that between two threads' polls.
+    pub(crate) fn wait_for(
+        &self,
+        index: wgpu::SubmissionIndex,
+        timeout: std::time::Duration,
+    ) -> wgpu::PollType {
+        let software = self.inner.info.device_type == wgpu::DeviceType::Cpu;
+        wgpu::PollType::Wait { submission_index: (!software).then_some(index), timeout: Some(timeout) }
+    }
+
     /// Submits command buffers, after the passes waiting (see [`deferred`]). Everything
     /// penumbra submits goes through here (not through the queue directly), so
     /// [`Gpu::configure_surface`] can keep submissions out while wgpu waits for an idle GPU.
