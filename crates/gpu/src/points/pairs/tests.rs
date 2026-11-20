@@ -116,31 +116,49 @@ fn pcg3d(p: [u32; 3]) -> [u32; 3] {
     v
 }
 
-/// The bin of the cut of a line between the points with keys `a` and `b`.
-fn bin(a: u32, b: u32) -> u32 {
-    pcg3d([a.min(b), a.max(b), 0x6a09_e667])[1] >> 20
+/// The key of the cut of a line between the points with keys `a` and `b`: 24 bits, the bin on
+/// top.
+fn cut_key(a: u32, b: u32) -> u32 {
+    pcg3d([a.min(b), a.max(b), 0x6a09_e667])[1] >> 8
 }
 
-/// The lines a new cut at `max` keeps, in order, and the largest bin: where they do not all fit,
-/// the bins from the first on while their lines fit under 63/64 of `max`. `key` gives a point's
-/// key from its index.
+/// The lines a new cut at `max` keeps, in order, and the most lines that share one key. Where
+/// they do not all fit: the lines whose key is below the largest bound that keeps at most 63/64
+/// of `max`. `key` gives a point's key from its index.
 fn cut(lines: Vec<(u32, u32)>, max: u32, key: impl Fn(u32) -> u32) -> (Vec<(u32, u32)>, u32) {
-    let mut tally = vec![0u32; CUT_BINS as usize];
+    let mut per_key = std::collections::BTreeMap::<u32, u32>::new();
     for (i, j) in &lines {
-        tally[bin(key(*i), key(*j)) as usize] += 1;
+        *per_key.entry(cut_key(key(*i), key(*j))).or_default() += 1;
     }
-    let mut keep = CUT_BINS;
+    let mut bound = 1 << 24;
     if lines.len() as u32 > max {
         let limit = max - max / 64;
         let mut below = 0;
-        keep = 0;
-        while keep < CUT_BINS && below + tally[keep as usize] <= limit {
-            below += tally[keep as usize];
-            keep += 1;
+        bound = 0;
+        for (k, c) in &per_key {
+            if below + c > limit {
+                bound = *k;
+                break;
+            }
+            below += c;
         }
     }
-    let largest = tally.iter().copied().max().unwrap_or(0);
-    (lines.into_iter().filter(|(i, j)| bin(key(*i), key(*j)) < keep).collect(), largest)
+    let largest = per_key.values().copied().max().unwrap_or(0);
+    (lines.into_iter().filter(|(i, j)| cut_key(key(*i), key(*j)) < bound).collect(), largest)
+}
+
+/// Far more lines wanted than `max`: the cut stops inside a bin, so it keeps all but 1/64 of
+/// `max`, also where one bin of the 4096 holds more lines than `max`.
+#[test]
+fn a_cut_far_below_the_lines_wanted_keeps_nearly_max() {
+    for (total, max) in [(300_000u32, 1000u32), (5_000_000, 1000), (50_000, 1), (2_000_000, 100_000)] {
+        let lines: Vec<(u32, u32)> = (0..total).map(|k| (k, k + 1)).collect();
+        let (kept, largest) = cut(lines, max, |i| i);
+        let limit = max - max / 64;
+        let kept = kept.len() as u32;
+        assert!(kept <= limit && kept + largest > limit, "{total} lines, max {max}: {kept} kept");
+        assert!(kept * 100 >= max * 97, "{total} lines, max {max}: {kept} kept");
+    }
 }
 
 /// The lines as made: pairs of tags, read through the ends.
@@ -213,6 +231,7 @@ fn the_most_lines_cut_the_rest_and_say_how_many_were_wanted() {
     let (expected, largest) = cut(all.clone(), 100, |i| i);
     assert_eq!(kept, expected);
     assert!(kept.len() <= 99 && kept.len() + largest as usize > 99, "{} lines kept", kept.len());
+    assert!(kept.len() >= 97, "{} lines kept", kept.len());
     let words = out.count().header().unwrap().read::<u32>(&gpu).unwrap();
     assert_eq!((words[1], words[2], words[3]), (kept.len() as u32, 0, all.len() as u32));
 }
@@ -397,4 +416,27 @@ fn a_moving_bound_keeps_the_buffers_of_the_lines() {
         assert!(key.is(b.attr(name).unwrap().buffer()), "{name} was made anew");
     }
     assert_eq!(lines(&gpu, &b), model(&places, 500, &set));
+}
+
+/// A `max` far below the lines wanted, where one bin of the cut holds more lines than `max`: the
+/// cut keeps nearly `max` lines, the same ones frame after frame.
+#[test]
+fn a_small_max_among_many_lines_keeps_nearly_max_and_holds_still() {
+    let Some(gpu) = gpu() else { return };
+    let places = random(13, 10_000);
+    let input = cloud(&gpu, &places, places.len(), false);
+    let all = Settings { attrs: vec!["tag".into()], ..settings(0.25, 16) };
+    let mut pairer = Pairer::new();
+    let wanted = lines(&gpu, &pairer.pairs(&gpu, &input, &all, None).unwrap()).len() as u32;
+    assert!(wanted > 20 * CUT_BINS, "{wanted} lines wanted");
+    for max in [20u32, 1] {
+        let set = Settings { max, ..all.clone() };
+        let first = lines(&gpu, &pairer.pairs(&gpu, &input, &set, None).unwrap());
+        let kept = first.len() as u32;
+        assert!(kept <= max && kept + 1 >= max - max / 64, "max {max}: {kept} kept of {wanted}");
+        for _ in 0..3 {
+            assert_eq!(lines(&gpu, &pairer.pairs(&gpu, &input, &set, None).unwrap()), first, "max {max}");
+        }
+    }
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
 }
