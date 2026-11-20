@@ -196,6 +196,7 @@ impl Operator for ToChan {
 
     fn trim(&mut self) {
         self.spare = None;
+        self.probe.trim();
     }
 
     fn job_status(&self) -> Option<JobStatus> {

@@ -493,3 +493,43 @@ fn merge_timing() {
         cpu.as_secs_f64() * 1e6 / f64::from(runs)
     );
 }
+
+/// A probe and the first rows read again and again take their buffers from a ring: a thousand
+/// read-backs keep using the same few buffers, and each holds what was asked this time (the
+/// header of a count the CPU knows reads as zeros again after one on the GPU).
+#[test]
+fn probes_and_first_rows_use_their_buffers_again() {
+    use super::probe::{self, Ask, Probe, Probed};
+    let Some(gpu) = gpu() else { return };
+    let n = 50u32;
+    let b = Buffer::of::<[f32; 4]>(&gpu, u64::from(n), "position").unwrap();
+    let known = Points::new(n, n, vec![Attr::new("position", AttrType::Vec3, b.clone()).unwrap()]).unwrap();
+    let header = Buffer::new(&gpu, HEADER_BYTES, "h").unwrap();
+    header.write(&gpu, 0, &[7u32, 0, 0, 0]).unwrap();
+    let on_gpu = known.clone().with_count(Count::gpu(header, n, Seen::default()).unwrap()).unwrap();
+    let mut probe = Probe::new();
+    let mut ring = crate::BufferRing::new();
+    let (mut probed, mut rows): (Vec<crate::BufferKey>, Vec<crate::BufferKey>) = (Vec::new(), Vec::new());
+    let keep = |keys: &mut Vec<crate::BufferKey>, out: &Buffer| {
+        if !keys.iter().any(|k| k.is(out)) {
+            keys.push(out.key());
+        }
+    };
+    for i in 0..1000u32 {
+        b.write(&gpu, 0, &[[i as f32, 1.0, 2.0, 1.0]]).unwrap();
+        let points = if i % 2 == 0 { &known } else { &on_gpu };
+        let out = probe.fill(&gpu, points, Ask { name: "position", first: 2, summary: false }).unwrap();
+        keep(&mut probed, &out);
+        let first = probe::first_rows(&gpu, points, &["position"], 2, &mut ring).unwrap();
+        keep(&mut rows, &first);
+        if i % 100 == 0 || i % 100 == 1 {
+            let got = Probed::of(&out.read::<[f32; 4]>(&gpu).unwrap()).unwrap();
+            assert_eq!((got.first[0][0], got.count), (i as f32, if i % 2 == 0 { n } else { 7 }), "probe {i}");
+            let words = first.read::<u32>(&gpu).unwrap();
+            let count = if i % 2 == 0 { 0 } else { 7 };
+            assert_eq!((words[0], f32::from_bits(words[4])), (count, i as f32), "first rows {i}");
+        }
+    }
+    assert!(probed.len() <= 2 && rows.len() <= 2, "{} and {} buffers", probed.len(), rows.len());
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}

@@ -14,7 +14,7 @@
 use penumbra_core::{Error, ParamSpec, Value};
 
 use super::{AttrType, Points, canonical, default_of};
-use crate::{Buffer, Dispatch, Gpu, Out, Step};
+use crate::{Buffer, BufferRing, Dispatch, Gpu, Out, Step};
 
 /// `vec4f`s before the first point's value.
 pub const HEAD: u64 = 4;
@@ -169,6 +169,8 @@ pub struct Ask<'a> {
 pub struct Probe {
     partial: Option<Buffer>,
     none: Option<Buffer>,
+    /// The buffers it fills, reused once nobody reads them any more.
+    outs: BufferRing,
 }
 
 impl Probe {
@@ -176,12 +178,13 @@ impl Probe {
         Self::default()
     }
 
-    /// A new buffer holding what `ask` wants of `points`, filled after the GPU work recorded
-    /// before: read it back ([`Buffer::read_async`]). `Err` for an attribute the points lack and
-    /// penumbra does not know, and for anything the GPU refuses.
+    /// A buffer holding what `ask` wants of `points`, filled after the GPU work recorded
+    /// before: read it back ([`Buffer::read_async`]). The buffer is one of its own, used again
+    /// once nobody holds it. `Err` for an attribute the points lack and penumbra does not know,
+    /// and for anything the GPU refuses.
     pub fn fill(&mut self, gpu: &Gpu, points: &Points, ask: Ask<'_>) -> Result<Buffer, Error> {
         let first = ask.first.min(MAX_FIRST);
-        let out = Buffer::new(gpu, (HEAD + u64::from(first)) * 16, "pts probe")?;
+        let out = self.outs.next(gpu, (HEAD + u64::from(first)) * 16, "pts probe")?;
         let attr = points.attr(ask.name);
         let (kind, fill) = match (attr.map(super::Attr::ty), default_of(ask.name)) {
             (Some(AttrType::F32), _) => (0, [0.0; 4]),
@@ -247,7 +250,13 @@ impl Probe {
     }
 
     pub fn bytes(&self) -> u64 {
-        [&self.partial, &self.none].iter().filter_map(|b| b.as_ref()).map(Buffer::bytes).sum()
+        [&self.partial, &self.none].iter().filter_map(|b| b.as_ref()).map(Buffer::bytes).sum::<u64>()
+            + self.outs.bytes()
+    }
+
+    /// Lets go of the buffers nobody reads.
+    pub fn trim(&mut self) {
+        self.outs.trim();
     }
 }
 
@@ -270,19 +279,27 @@ impl Probed {
     }
 }
 
-/// A new buffer to read back: the header of `points`' count (zeros for a count the CPU knows),
-/// then the first `rows` elements of each attribute named in `names`, one attribute after the
-/// other, as their buffers lay them out. An attribute the points lack, or whose buffer is too
-/// short, stays zeros.
-pub fn first_rows(gpu: &Gpu, points: &Points, names: &[&str], rows: u32) -> Result<Buffer, Error> {
+/// A buffer to read back, from `ring`: the header of `points`' count (zeros for a count the CPU
+/// knows), then the first `rows` elements of each attribute named in `names`, one attribute
+/// after the other, as their buffers lay them out. An attribute the points lack, or whose buffer
+/// is too short, stays zeros.
+pub fn first_rows(
+    gpu: &Gpu,
+    points: &Points,
+    names: &[&str],
+    rows: u32,
+    ring: &mut BufferRing,
+) -> Result<Buffer, Error> {
     let n = u64::from(rows);
     let len = |name: &str| points.attr(name).map_or(0, |a| n * a.ty().stride());
     let bytes = super::HEADER_BYTES + names.iter().map(|name| len(name)).sum::<u64>();
-    let out = Buffer::new(gpu, bytes, "pts first rows")?;
+    let out = ring.next(gpu, bytes, "pts first rows")?;
     let ((), error) = gpu.scoped(|| {
         let mut encoder = gpu
             .device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pts first rows") });
+        // A buffer used before holds what it read then.
+        encoder.clear_buffer(out.buffer(), 0, None);
         if let Some(h) = points.count().header() {
             encoder.copy_buffer_to_buffer(h.buffer(), 0, out.buffer(), 0, super::HEADER_BYTES);
         }

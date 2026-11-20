@@ -12,7 +12,7 @@ use penumbra_core::table::MAX_CELLS;
 use penumbra_core::{Curve, Error, ParamSpec, Table};
 use penumbra_gpu::points::probe::first_rows;
 use penumbra_gpu::points::{AttrType, HEADER_BYTES, canonical};
-use penumbra_gpu::{BufferRead, Points, ReadState};
+use penumbra_gpu::{BufferRead, BufferRing, Points, ReadState};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, JobStatus, NodeDesc, NodeTypes, Operator,
 };
@@ -64,6 +64,10 @@ struct Layout {
 #[derive(Default)]
 struct ToTable {
     reading: Option<(BufferRead, Instant, Layout)>,
+    /// The buffers the rows are copied into, reused once read.
+    rows: BufferRing,
+    /// The last readback that arrived: its staging buffer serves the next one of its size.
+    spare: Option<BufferRead>,
     again: bool,
     sent: Option<Table>,
 }
@@ -72,10 +76,10 @@ impl ToTable {
     fn start(&mut self, cx: &CookContext<'_>, points: &Points, layout: Layout) -> Result<(), CookError> {
         let gpu = gpu(cx)?;
         let names: Vec<&str> = layout.attrs.iter().map(|(n, _)| n.as_str()).collect();
-        let staging = first_rows(gpu, points, &names, layout.rows)?;
+        let staging = first_rows(gpu, points, &names, layout.rows, &mut self.rows)?;
         let waker = cx.waker();
         let ready: Option<Arc<dyn Fn() + Send + Sync>> = Some(Arc::new(move || waker.wake()));
-        let read = staging.read_async_notify(gpu, None, ready)?;
+        let read = staging.read_async_notify(gpu, self.spare.take(), ready)?;
         self.reading = Some((read, Instant::now(), layout));
         self.again = false;
         Ok(())
@@ -120,6 +124,13 @@ fn table_of(layout: &Layout, words: &[u32]) -> Result<Table, Error> {
 impl Operator for ToTable {
     fn gpu_bytes(&self) -> u64 {
         self.reading.as_ref().map_or(0, |(r, _, _)| r.bytes())
+            + self.spare.as_ref().map_or(0, BufferRead::bytes)
+            + self.rows.bytes()
+    }
+
+    fn trim(&mut self) {
+        self.spare = None;
+        self.rows.trim();
     }
 
     fn job_status(&self) -> Option<JobStatus> {
@@ -180,6 +191,7 @@ impl Operator for ToTable {
             Some(ReadState::Ready) => {
                 let Some((read, _, was)) = self.reading.take() else { return Ok(Cooked::Unchanged) };
                 let words = read.get::<u32>().map_err(CookError::from)?;
+                self.spare = Some(read);
                 let table = table_of(&was, &words)?;
                 if self.again || was != layout {
                     self.start(cx, points, layout)?;
