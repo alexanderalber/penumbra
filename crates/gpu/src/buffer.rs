@@ -10,13 +10,13 @@
 
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bytemuck::Pod;
 use penumbra_core::Error;
 
 use crate::Gpu;
-use crate::readback::{READ_TIMEOUT, ReadState};
+use crate::readback::{READ_TIMEOUT, ReadAge, ReadState};
 
 struct Inner {
     buffer: wgpu::Buffer,
@@ -284,7 +284,7 @@ impl Buffer {
                 ready();
             }
         });
-        Ok(BufferRead { staging, bytes: self.0.bytes, state, started: Instant::now() })
+        Ok(BufferRead { staging, bytes: self.0.bytes, state, age: ReadAge::new(gpu) })
     }
 }
 
@@ -297,9 +297,8 @@ pub struct BufferRead {
     staging: wgpu::Buffer,
     bytes: u64,
     state: Arc<AtomicU8>,
-    /// When the copy was submitted: a readback still waiting [`READ_TIMEOUT`] later has failed
-    /// (its callback may have been lost in a poll that panicked inside wgpu).
-    started: Instant,
+    /// When it has waited too long (see [`ReadAge`]).
+    age: ReadAge,
 }
 
 impl BufferRead {
@@ -307,9 +306,19 @@ impl BufferRead {
         match self.state.load(Ordering::Acquire) {
             READY => ReadState::Ready,
             FAILED => ReadState::Failed,
-            _ if self.started.elapsed() > READ_TIMEOUT => ReadState::Failed,
+            // The poll that expired it may have delivered it after the look above.
+            _ if self.age.expired() => match self.state.load(Ordering::Acquire) {
+                READY => ReadState::Ready,
+                _ => ReadState::Failed,
+            },
             _ => ReadState::Waiting,
         }
+    }
+
+    /// Lets the readback wait `timeout` instead of [`READ_TIMEOUT`].
+    #[cfg(test)]
+    pub(crate) fn set_timeout(&mut self, timeout: Duration) {
+        self.age.set_timeout(timeout);
     }
 
     /// Waits at most `timeout` for the copy, then says where the readback stands. Blocks the
