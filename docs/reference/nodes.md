@@ -2354,7 +2354,7 @@ Inputs:
 
 Outputs:
 
-- `out` (pts): The points with the force added; the others pass on unchanged. Wind into `force` also adds to `pts_wind`, how hard it pulls each point: pts.particles reads it to step the speed without overshooting
+- `out` (pts): The points with the force added; the others pass on unchanged. Wind into the `force` of particles also adds to `pts_wind`, how hard it pulls each point: pts.particles reads it to step the speed without overshooting
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|

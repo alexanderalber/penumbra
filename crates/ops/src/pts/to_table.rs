@@ -130,7 +130,12 @@ impl Operator for ToTable {
         let points = input(cx)?;
         let wanted = cx.text("attributes")?;
         let attrs: Vec<(String, AttrType)> = if wanted.trim().is_empty() {
-            points.attrs().iter().map(|a| (a.name().to_string(), a.ty())).collect()
+            points
+                .attrs()
+                .iter()
+                .filter(|a| !penumbra_gpu::points::internal(a.name()))
+                .map(|a| (a.name().to_string(), a.ty()))
+                .collect()
         } else {
             let mut out = Vec::new();
             for w in wanted.split_whitespace() {

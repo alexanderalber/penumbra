@@ -321,7 +321,7 @@ impl Merger {
 fn union(sets: &[(usize, &Points)]) -> Result<Vec<(String, AttrType)>, Error> {
     let mut out: Vec<(String, AttrType, usize)> = Vec::new();
     for (input, p) in sets {
-        for a in p.attrs() {
+        for a in p.attrs().iter().filter(|a| !super::internal(a.name())) {
             match out.iter().find(|(n, _, _)| n == a.name()) {
                 Some((_, ty, first)) if *ty != a.ty() => {
                     return Err(Error::new(format!(
