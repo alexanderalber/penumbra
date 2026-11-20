@@ -1678,6 +1678,51 @@ fn the_velocity_picture_of_a_sliding_and_a_turning_body_is_what_the_solver_says(
     assert_eq!(v.get(64, 48).unwrap(), [0.0; 4]);
 }
 
+/// The velocity picture follows the solver's `speed`: a box that slides at 1.2 m/s to the right
+/// moves 0.3 widths per second at speed 1, half of that in slow motion at 0.5, and not at all
+/// while speed 0 holds it. The held box is still in the picture (alpha is the mask).
+#[test]
+fn the_velocity_picture_slows_and_stops_with_the_solvers_speed() {
+    let Some(gpu) = gpu() else { return };
+    let mut ops = bodies(
+        "tx,tz,sx,sy,sz,vx,vz,wy
+-1,1.5,0.6,0.6,0.6,1.2,0,0",
+        &[("gravity", Value::Vec3([0.0; 3])), ("floor", false.into())],
+    );
+    ops.extend([
+        create("/velocity", "tex.null", &[]),
+        create("/places", "table.null", &[]),
+        wire("/solver", BODY_VELOCITY, "/velocity", 0),
+        wire("/solver", BODY_TABLE, "/places", 0),
+    ]);
+    let mut rig = Rig::new(gpu, None, &ops);
+    let at_the_box = |rig: &mut Rig, speed: f64, frames: u32| -> [f32; 4] {
+        rig.edit(&[set("/solver.speed", Value::Float(speed))]);
+        for _ in 0..frames {
+            rig.clock.advance(1);
+            let ids = [rig.id("/velocity"), rig.id("/places")];
+            rig.cooker.cook(&rig.net, rig.clock.now(), &ids, &[]);
+        }
+        assert_eq!(rig.cooker.status(rig.id("/solver")).unwrap().warning, None);
+        let v = rig.gpu.read(&rig.tex("/velocity").unwrap()).unwrap();
+        let table = rig.cooker.output(Port { node: rig.id("/places"), output: 0 }).unwrap();
+        let table = table.get::<penumbra_core::Table>().unwrap();
+        let at = |col: usize| table.cell(1, col).parse::<f64>().unwrap();
+        v.get(((at(0) + 2.0) * 32.0) as u32, ((3.0 - at(2)) * 32.0) as u32).unwrap()
+    };
+    let full = at_the_box(&mut rig, 1.0, 10);
+    assert!((full[0] - 0.3).abs() < 2e-3 && full[3] == 1.0, "speed 1: {full:?}");
+    let slow = at_the_box(&mut rig, 0.5, 10);
+    assert!((slow[0] - 0.15).abs() < 2e-3 && slow[3] == 1.0, "speed 0.5: {slow:?}");
+    // Held in the frame the speed goes to 0, and in the frames after it.
+    for frames in [1, 5] {
+        let held = at_the_box(&mut rig, 0.0, frames);
+        assert!(held[0] == 0.0 && held[1] == 0.0 && held[3] == 1.0, "speed 0, {frames} frames: {held:?}");
+    }
+    let again = at_the_box(&mut rig, 1.0, 3);
+    assert!((again[0] - 0.3).abs() < 2e-3, "speed 1 again: {again:?}");
+}
+
 /// Bodies far away, flying at absurd speeds and spins, with a cell that is not a number, then
 /// no camera: the pictures and the liquid stay finite, and the missing camera is named.
 #[test]

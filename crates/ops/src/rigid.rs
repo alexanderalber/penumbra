@@ -248,6 +248,9 @@ struct RigidBodies {
     drawer: Option<Shapes>,
     /// What drawing the pictures found, said again on every cook while it holds.
     picture_note: Option<String>,
+    /// The share of the solver's speeds the `velocity` picture on the output shows: 0 while it
+    /// shows bodies that stand still, or while there is none.
+    velocity_rate: f32,
 }
 
 impl Operator for RigidBodies {
@@ -350,10 +353,15 @@ impl Operator for RigidBodies {
         }
         self.slots.resize_with(MAX_RUN, || None);
         // A world just built shows its start; time moves it from the next frame on.
-        let dt = if built { 0.0 } else { step(now, self.last, period) * cx.float("speed")?.max(0.0) };
+        let speed = cx.float("speed")?.max(0.0);
+        let dt = if built { 0.0 } else { step(now, self.last, period) * speed };
         self.last = Some(now);
         // Whether the solver takes this frame as time at all.
         let moving = dt as f32 >= MIN_STEP;
+        // How fast the bodies move for whoever watches, as a share of the solver's speeds. Those
+        // are in the solver's own time: `speed` stretches it, and a frame without a step stops it.
+        // `as`: a share of at most 16.
+        let rate = if moving { speed as f32 } else { 0.0 };
         let Self { world, slots, triggers, .. } = self;
         let world = world.get_or_insert_with(|| World::new(settings));
         world.apply(settings);
@@ -449,7 +457,10 @@ impl Operator for RigidBodies {
             changed = true;
         }
 
+        // A `velocity` picture of bodies in motion must not stay on the output once they are
+        // held: tex.liquid would go on pushing with it.
         let still = !moving
+            && self.velocity_rate == 0.0
             && !changed
             && !cx.params_changed()
             && !cx.inputs_changed()
@@ -481,13 +492,15 @@ impl Operator for RigidBodies {
             let pictures = if wanted.contains(&true) {
                 let moves: Vec<(&Bodies, Vec<Placement>, Vec<Motion>)> = placed
                     .into_iter()
-                    .map(|(i, bodies, places)| (bodies, places, world.motions(i)))
+                    .map(|(i, bodies, places)| (bodies, places, seen_at(world.motions(i), rate)))
                     .collect();
                 let (pictures, note) = pictures((&mut self.rings, &mut self.drawer), cx, &moves, wanted)?;
                 self.picture_note = note;
+                self.velocity_rate = if wanted[1] { rate } else { 0.0 };
                 pictures
             } else {
                 self.picture_note = None;
+                self.velocity_rate = 0.0;
                 [Data::skipped(DataKind::Tex), Data::skipped(DataKind::Tex)]
             };
             let [mask, velocity] = pictures;
@@ -512,6 +525,15 @@ impl Operator for RigidBodies {
         }
         Ok(outputs.map_or(Cooked::Unchanged, Cooked::Outputs))
     }
+}
+
+/// The solver's `motions` as they look while its time runs at `rate` times the frames' time.
+fn seen_at(mut motions: Vec<Motion>, rate: f32) -> Vec<Motion> {
+    for m in &mut motions {
+        m.velocity = m.velocity.map(|v| v * rate);
+        m.spin = m.spin.map(|w| w * rate);
+    }
+    motions
 }
 
 /// The `mask` and `velocity` pictures of the bodies `moves`, those in `wanted`, drawn with
