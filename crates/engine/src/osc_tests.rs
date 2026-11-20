@@ -1,7 +1,7 @@
 //! OSC end to end: loopback UDP on 127.0.0.1, listeners on port 0 (any free port), no outside
 //! network.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use penumbra_osc::{Arg, Message};
 use serde_json::{Value as Json, json};
@@ -207,6 +207,22 @@ fn osc_is_refused_while_claude_edits_and_learn_binds_the_next_address() {
     // A timeout and a cancel.
     let r = f.registry.dispatch("osc.learn", &json!({"param": "/lfo.rate", "timeout": 0.2, "wait": 2}));
     assert!(r["error"].as_str().unwrap().contains("nothing arrived"), "{r}");
+    // A second learn that ends the same way is an answer too, long before the wait is over.
+    let t = Instant::now();
+    let r = f.registry.dispatch("osc.learn", &json!({"param": "/lfo.rate", "timeout": 0.2, "wait": 60}));
+    assert!(r["error"].as_str().unwrap().contains("nothing arrived"), "{r}");
+    assert!(t.elapsed() < Duration::from_secs(30), "{:?}", t.elapsed());
+    // So is a cancel from elsewhere.
+    let t = Instant::now();
+    let r = std::thread::scope(|s| {
+        let waiting =
+            s.spawn(|| f.registry.dispatch("osc.learn", &json!({"param": "/lfo.rate", "wait": 60})));
+        eventually("armed", || f.engine.osc().learning().is_some());
+        assert!(f.engine.osc().cancel_learn());
+        waiting.join().unwrap()
+    });
+    assert_eq!(r["result"]["cancelled"], true, "{r}");
+    assert!(t.elapsed() < Duration::from_secs(30), "{:?}", t.elapsed());
     f.call("osc.learn", json!({"param": "/lfo.rate"}));
     assert_eq!(f.call("osc.learn", json!({"cancel": true}))["cancelled"], true);
     assert!(f.fail("osc.learn", json!({"param": "/lfo.shape"})).contains("numbers only"));
