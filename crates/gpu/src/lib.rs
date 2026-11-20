@@ -238,7 +238,13 @@ enum Polled {
 const POLL_PANICKED: &str = "the GPU poll panicked inside wgpu";
 
 fn poll_raw(device: &wgpu::Device) -> Polled {
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| device.poll(wgpu::PollType::Poll))) {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(test)]
+        if testing::POLL_PANICS.get() {
+            panic!("a poll made to panic by a test");
+        }
+        device.poll(wgpu::PollType::Poll)
+    })) {
         Ok(Ok(_)) => Polled::Done,
         Ok(Err(e)) => Polled::Failed(e.to_string()),
         Err(_) => Polled::Panicked,
@@ -256,6 +262,10 @@ pub fn poll_device(device: &wgpu::Device) -> Result<(), Error> {
         Polled::Panicked => Err(Error::new(POLL_PANICKED)),
     }
 }
+
+/// Panics in a row after which a wait for the GPU gives up: a device whose every poll panics
+/// (as after a loss on some drivers) would otherwise keep it busy until its timeout.
+const MAX_POLL_PANICS: u32 = 3;
 
 /// Every how many calls of [`Gpu::poll`] the input bind groups are swept (about once a second
 /// at 60 frames a second).
@@ -592,34 +602,49 @@ impl Gpu {
         self.inner.poll_panics.load(Ordering::Relaxed)
     }
 
+    /// One poll of the device; a panic caught in it is counted.
+    fn poll_counted(&self) -> Polled {
+        let polled = poll_raw(&self.inner.device);
+        if let Polled::Panicked = polled {
+            self.inner.poll_panics.fetch_add(1, Ordering::Relaxed);
+        }
+        polled
+    }
+
     /// One poll of the device, counting a panic caught in it ([`poll_device`]).
     fn poll_once(&self) -> Result<(), Error> {
-        match poll_raw(&self.inner.device) {
+        match self.poll_counted() {
             Polled::Done => Ok(()),
             Polled::Failed(e) => Err(Error::new(format!("GPU poll: {e}"))),
-            Polled::Panicked => {
-                self.inner.poll_panics.fetch_add(1, Ordering::Relaxed);
-                Err(Error::new(POLL_PANICKED))
-            }
+            Polled::Panicked => Err(Error::new(POLL_PANICKED)),
         }
     }
 
     /// Polls the device until `done` says so or `timeout` is up, at least once. `Ok(false)` when
     /// time ran out. Between polls it yields, then sleeps a quarter millisecond, so a long wait
     /// does not keep a core busy. This is how penumbra waits for the GPU: wgpu's own blocking
-    /// wait panics when its time runs out while another thread polls or submits.
+    /// wait panics when its time runs out while another thread polls or submits. A lost device
+    /// ends the wait at once with an error, and so do [`MAX_POLL_PANICS`] panicking polls in a
+    /// row: nothing would arrive.
     pub(crate) fn poll_until(&self, timeout: Duration, done: impl Fn() -> bool) -> Result<bool, Error> {
         let start = Instant::now();
         let mut round = 0u32;
+        let mut panics = 0u32;
         loop {
             if done() {
                 return Ok(true);
             }
-            match poll_raw(&self.inner.device) {
-                Polled::Done => {}
+            if self.is_lost() {
+                return Err(Error::new("the GPU device is lost"));
+            }
+            match self.poll_counted() {
+                Polled::Done => panics = 0,
                 // The callbacks of that poll are lost; the next poll goes on with the rest.
                 Polled::Panicked => {
-                    self.inner.poll_panics.fetch_add(1, Ordering::Relaxed);
+                    panics += 1;
+                    if panics >= MAX_POLL_PANICS || self.is_lost() {
+                        return Err(Error::new(POLL_PANICKED));
+                    }
                 }
                 Polled::Failed(e) => return Err(Error::new(format!("GPU poll: {e}"))),
             }
@@ -918,7 +943,14 @@ fn block_on<F: std::future::Future>(f: F) -> F::Output {
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
+    use std::cell::Cell;
     use std::sync::OnceLock;
+
+    thread_local! {
+        /// Makes every poll on this thread panic inside the caught region, as polls do on a
+        /// device whose loss wgpu treats as fatal.
+        pub static POLL_PANICS: Cell<bool> = const { Cell::new(false) };
+    }
 
     /// One software device per test process. `None` where no software adapter exists; on Windows
     /// WARP always does, so there it is an error.
