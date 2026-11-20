@@ -24,6 +24,14 @@ pub(super) fn points(rig: &mut Rig, path: &str) -> Points {
         rig.cook(path);
         let s = rig.cooker.status(rig.id(path)).unwrap();
         if s.has_output && compiled(&s) || s.error.is_some() {
+            // A job that ended after the cook shows as done before a cook takes its result in:
+            // one more cook of the same frame takes it, and changes nothing else.
+            let s = if matches!(s.job, Some(penumbra_graph::JobStatus::Done)) {
+                rig.cook(path);
+                rig.cooker.status(rig.id(path)).unwrap()
+            } else {
+                s
+            };
             assert_eq!((s.error, s.warning), (None, None), "{path}");
             break;
         }

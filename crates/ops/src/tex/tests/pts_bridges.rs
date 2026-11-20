@@ -212,15 +212,7 @@ fn points_come_from_a_meshes_vertices_and_surface() {
     // faces are 2 x 1 (two), 2 x 0.5 (two) and 1 x 0.5 (two): 4 + 2 + 1 = 7 square metres.
     let n = 7000;
     rig.edit(&[set("/pts.mode", "surface".into()), set("/pts.count", Value::Int(n))]);
-    // The scatter runs in a job: a job that ends just after a cook shows as done before the
-    // next cook takes its points in.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let p = loop {
-        let p = points(&mut rig, "/pts");
-        if p.count().known() == Some(n as u32) || Instant::now() > deadline {
-            break p;
-        }
-    };
+    let p = points(&mut rig, "/pts");
     assert_eq!(p.count().known(), Some(n as u32));
     let normals = values(&rig, &p, "normal");
     let along = |axis: usize| normals.iter().filter(|v| v[axis].abs() > 0.99).count() as f64;
