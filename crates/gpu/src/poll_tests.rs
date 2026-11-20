@@ -107,3 +107,44 @@ fn short_readback_waits_do_not_panic_on_the_hardware_adapter() {
     let Ok(gpu) = Gpu::headless(AdapterChoice::Hardware) else { return };
     check(&gpu, Duration::from_secs(10));
 }
+
+/// Makes every poll on this thread panic while it lives, as on a device whose loss wgpu treats
+/// as fatal.
+struct PanickingPolls;
+
+impl PanickingPolls {
+    fn new() -> Self {
+        crate::testing::POLL_PANICS.set(true);
+        Self
+    }
+}
+
+impl Drop for PanickingPolls {
+    fn drop(&mut self) {
+        crate::testing::POLL_PANICS.set(false);
+    }
+}
+
+#[test]
+fn a_wait_gives_up_at_once_when_every_poll_panics() {
+    // A device of its own: the panicking polls must not count against the other tests.
+    let Ok(gpu) = Gpu::headless(AdapterChoice::Software) else { return };
+    let buffer = Buffer::of::<u32>(&gpu, 64, "panics").unwrap();
+    let before = gpu.poll_panics();
+    let _panics = PanickingPolls::new();
+    let t = Instant::now();
+    assert!(gpu.wait(Duration::from_secs(10)).is_err());
+    assert!(buffer.read::<u32>(&gpu).is_err());
+    assert!(gpu.read(&crate::Tex::new(&gpu, 4, 4, "panics").unwrap()).is_err());
+    assert!(t.elapsed() < Duration::from_millis(500), "{:?}", t.elapsed());
+    assert_eq!(gpu.poll_panics() - before, 3 * u64::from(crate::MAX_POLL_PANICS));
+}
+
+#[test]
+fn a_wait_on_a_lost_device_ends_at_once() {
+    let Ok(gpu) = Gpu::headless(AdapterChoice::Software) else { return };
+    gpu.simulate_loss("test");
+    let t = Instant::now();
+    assert!(gpu.wait(Duration::from_secs(10)).is_err());
+    assert!(t.elapsed() < Duration::from_millis(500), "{:?}", t.elapsed());
+}
