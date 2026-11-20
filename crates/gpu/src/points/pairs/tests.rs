@@ -99,8 +99,48 @@ fn model(places: &[[f32; 3]], live: usize, set: &Settings) -> Vec<(u32, u32)> {
             }
         }
     }
-    lines.truncate(set.max as usize);
-    lines
+    cut(lines, set.max, |i| i).0
+}
+
+/// PCG3D, as `pn_hash` in the shaders.
+fn pcg3d(p: [u32; 3]) -> [u32; 3] {
+    let mut v = p.map(|x| x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223));
+    for round in 0..2 {
+        v[0] = v[0].wrapping_add(v[1].wrapping_mul(v[2]));
+        v[1] = v[1].wrapping_add(v[2].wrapping_mul(v[0]));
+        v[2] = v[2].wrapping_add(v[0].wrapping_mul(v[1]));
+        if round == 0 {
+            v = v.map(|x| x ^ (x >> 16));
+        }
+    }
+    v
+}
+
+/// The bin of the cut of a line between the points with keys `a` and `b`.
+fn bin(a: u32, b: u32) -> u32 {
+    pcg3d([a.min(b), a.max(b), 0x6a09_e667])[1] >> 20
+}
+
+/// The lines a new cut at `max` keeps, in order, and the largest bin: where they do not all fit,
+/// the bins from the first on while their lines fit under 63/64 of `max`. `key` gives a point's
+/// key from its index.
+fn cut(lines: Vec<(u32, u32)>, max: u32, key: impl Fn(u32) -> u32) -> (Vec<(u32, u32)>, u32) {
+    let mut tally = vec![0u32; CUT_BINS as usize];
+    for (i, j) in &lines {
+        tally[bin(key(*i), key(*j)) as usize] += 1;
+    }
+    let mut keep = CUT_BINS;
+    if lines.len() as u32 > max {
+        let limit = max - max / 64;
+        let mut below = 0;
+        keep = 0;
+        while keep < CUT_BINS && below + tally[keep as usize] <= limit {
+            below += tally[keep as usize];
+            keep += 1;
+        }
+    }
+    let largest = tally.iter().copied().max().unwrap_or(0);
+    (lines.into_iter().filter(|(i, j)| bin(key(*i), key(*j)) < keep).collect(), largest)
 }
 
 /// The lines as made: pairs of tags, read through the ends.
@@ -169,9 +209,106 @@ fn the_most_lines_cut_the_rest_and_say_how_many_were_wanted() {
     let set = Settings { max: 100, ..settings(0.2, 3) };
     let out = Pairer::new().pairs(&gpu, &input, &set, None).unwrap();
     assert_eq!(out.capacity(), 200);
-    assert_eq!(lines(&gpu, &out), all[..100]);
+    let kept = lines(&gpu, &out);
+    let (expected, largest) = cut(all.clone(), 100, |i| i);
+    assert_eq!(kept, expected);
+    assert!(kept.len() <= 99 && kept.len() + largest as usize > 99, "{} lines kept", kept.len());
     let words = out.count().header().unwrap().read::<u32>(&gpu).unwrap();
-    assert_eq!((words[1], words[2], words[3]), (100, 0, all.len() as u32));
+    assert_eq!((words[1], words[2], words[3]), (kept.len() as u32, 0, all.len() as u32));
+}
+
+/// Points at `places` with an `id` each, and `tag` the same as the id.
+fn cloud_with_ids(gpu: &Gpu, places: &[[f32; 3]], ids: &[u32]) -> Points {
+    let n = places.len() as u32;
+    let pos: Vec<[f32; 4]> = places.iter().map(|p| [p[0], p[1], p[2], 1.0]).collect();
+    let p = Buffer::of::<[f32; 4]>(gpu, u64::from(n), "position").unwrap();
+    p.write(gpu, 0, &pos).unwrap();
+    let mut attrs = vec![Attr::new("position", AttrType::Vec3, p).unwrap()];
+    for name in ["id", "tag"] {
+        let b = Buffer::of::<u32>(gpu, u64::from(n), name).unwrap();
+        b.write(gpu, 0, ids).unwrap();
+        attrs.push(Attr::new(name, AttrType::U32, b).unwrap());
+    }
+    Points::new(n, n, attrs).unwrap()
+}
+
+/// The lines as pairs of ids, the smaller first.
+fn id_pairs(lines: &[(u32, u32)]) -> std::collections::BTreeSet<(u32, u32)> {
+    lines.iter().map(|(a, b)| (*a.min(b), *a.max(b))).collect()
+}
+
+/// The cut at `max` keeps the same pairs while the points stand, and while they move a little
+/// and some die (particles): which lines are kept does not follow the points' order, so it does
+/// not jump when a point before them goes. Fewer lines wanted only add lines.
+#[test]
+fn the_cut_at_max_keeps_the_same_pairs_while_points_move_and_die() {
+    let Some(gpu) = gpu() else { return };
+    let places = random(11, 3000);
+    let ids: Vec<u32> = (0..3000u32).map(|i| i * 7 + 3).collect();
+    let all = Settings { attrs: vec!["tag".into()], ..settings(0.2, 3) };
+    let mut pairer = Pairer::new();
+    let a = cloud_with_ids(&gpu, &places, &ids);
+    let wanted_a = id_pairs(&lines(&gpu, &pairer.pairs(&gpu, &a, &all, None).unwrap()));
+    let set = Settings { max: wanted_a.len() as u32 / 2, ..all.clone() };
+    let kept_a = lines(&gpu, &pairer.pairs(&gpu, &a, &set, None).unwrap());
+    assert!(kept_a.len() as u32 <= set.max && kept_a.len() as u32 > set.max * 97 / 100, "{}", kept_a.len());
+    for _ in 0..3 {
+        assert_eq!(lines(&gpu, &pairer.pairs(&gpu, &a, &set, None).unwrap()), kept_a, "the same points");
+    }
+    let kept_a = id_pairs(&kept_a);
+    // One point in twenty dies, the others move a hair and close up behind it, as a compaction
+    // leaves them.
+    let (places_b, ids_b): (Vec<[f32; 3]>, Vec<u32>) = places
+        .iter()
+        .zip(&ids)
+        .enumerate()
+        .filter(|(k, _)| k % 20 != 7)
+        .map(|(_, (p, id))| ([p[0] + 2e-4, p[1] - 1e-4, p[2] + 1e-4], *id))
+        .unzip();
+    let b = cloud_with_ids(&gpu, &places_b, &ids_b);
+    let wanted_b = id_pairs(&lines(&gpu, &pairer.pairs(&gpu, &b, &all, None).unwrap()));
+    let kept_b = id_pairs(&lines(&gpu, &pairer.pairs(&gpu, &b, &set, None).unwrap()));
+    let both: Vec<&(u32, u32)> = wanted_a.intersection(&wanted_b).collect();
+    assert!(both.len() * 10 > wanted_a.len() * 8, "most pairs stay: {} of {}", both.len(), wanted_a.len());
+    let lost = both.iter().filter(|p| kept_a.contains(p) && !kept_b.contains(p)).count();
+    assert_eq!(lost, 0, "lines kept before that are still wanted stay ({} pairs in both)", both.len());
+    assert!(kept_b.len() as u32 <= set.max);
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}
+
+/// A few points more or less change no line between the others while the cut at `max` binds:
+/// three points born at the front of the list (where the oldest particles sit after a merge),
+/// one gone at the back, the rest moved a hair.
+#[test]
+fn a_small_change_moves_no_other_line_past_the_cut() {
+    let Some(gpu) = gpu() else { return };
+    let places = random(12, 3000);
+    let ids: Vec<u32> = (0..3000u32).map(|i| i * 5 + 1).collect();
+    let all = Settings { attrs: vec!["tag".into()], ..settings(0.2, 3) };
+    let mut pairer = Pairer::new();
+    let a = cloud_with_ids(&gpu, &places, &ids);
+    let wanted_a = id_pairs(&lines(&gpu, &pairer.pairs(&gpu, &a, &all, None).unwrap()));
+    let set = Settings { max: wanted_a.len() as u32 / 3, ..all.clone() };
+    let kept_a = id_pairs(&lines(&gpu, &pairer.pairs(&gpu, &a, &set, None).unwrap()));
+    let mut places_b: Vec<[f32; 3]> = places[..3].iter().map(|p| [p[0] + 0.01, p[1], p[2]]).collect();
+    let mut ids_b: Vec<u32> = vec![90_001, 90_002, 90_003];
+    for (p, id) in places.iter().zip(&ids).take(2999) {
+        places_b.push([p[0] + 1e-5, p[1], p[2] - 1e-5]);
+        ids_b.push(*id);
+    }
+    let b = cloud_with_ids(&gpu, &places_b, &ids_b);
+    let wanted_b = id_pairs(&lines(&gpu, &pairer.pairs(&gpu, &b, &all, None).unwrap()));
+    let kept_b = id_pairs(&lines(&gpu, &pairer.pairs(&gpu, &b, &set, None).unwrap()));
+    let both: Vec<&(u32, u32)> = wanted_a.intersection(&wanted_b).collect();
+    assert!(
+        wanted_b.len() > wanted_a.len(),
+        "the new points bring lines: {} {}",
+        wanted_a.len(),
+        wanted_b.len()
+    );
+    let switched = both.iter().filter(|p| kept_a.contains(p) != kept_b.contains(p)).count();
+    assert_eq!(switched, 0, "of {} pairs in both, {switched} switched", both.len());
+    assert!(kept_b.len() as u32 <= set.max);
 }
 
 #[test]
