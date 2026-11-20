@@ -875,6 +875,8 @@ merges and the wire arrives with it.
 the file to `project.ron.bak`, then writes it without the wire. The bar at the top and
 `project.info` keep listing the wire, and `left_out_backup` names the copy. The note stays
 until the project is opened again, or until an edit of `project.ron` brings the wire back.
+The note also goes when `project.save` writes over a file that does not load: that save
+replaces the copy with the broken file, and the wire is in no file any more.
 
 **An edit of `project.ron` while the project is open** that would close a loop does not merge.
 The bar shows "project file not merged" with the loop, autosave pauses, and the file stays as

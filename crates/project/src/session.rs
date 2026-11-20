@@ -708,8 +708,15 @@ impl Session {
         };
         // Looked at again: the file may have changed since the last poll.
         let ours = ours && read_text(&self.file).ok().flatten() == lock(&self.state).file_text;
-        if !ours && (failed || !broken_nodes(&self.doc.snapshot()).is_empty()) {
-            self.backup()?;
+        if !ours && (failed || !broken_nodes(&self.doc.snapshot()).is_empty()) && self.backup()? {
+            let mut state = lock(&self.state);
+            if state.left_out_backup.take().is_some() {
+                // The copy that held them was just replaced; nothing holds them any more.
+                log::warn!(
+                    "{BACKUP_NAME} now holds the file this save replaced, no longer the parts the project                      opened without"
+                );
+                state.left_out.clear();
+            }
         }
         {
             let mut state = lock(&self.state);
@@ -1542,6 +1549,27 @@ mod tests {
         s.poll(t0 + 3 * S);
         assert!(file(&s).contains("2.0"), "{}", file(&s));
         assert!(!dir.path().join(BACKUP_NAME).exists(), "the file held nothing left out any more");
+    }
+
+    #[test]
+    fn a_save_that_replaces_the_copy_of_a_left_out_wire_stops_naming_the_copy() {
+        let (dir, s) = open_looped("test-loop-copy-replaced", LOOPED);
+        let bak = dir.path().join(BACKUP_NAME);
+        let t0 = Instant::now();
+        s.edit(Actor::User, &[set_k(2.0)], None, "", t0).unwrap();
+        s.poll(t0 + 2 * S);
+        s.poll(t0 + 3 * S);
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), LOOPED);
+        assert!(s.status(t0 + 3 * S).left_out_backup.is_some());
+        // Someone breaks the file, and a save writes over it: the copy is of the broken file now.
+        std::fs::write(s.file(), "garbage").unwrap();
+        s.poll(t0 + 5 * S);
+        assert!(s.status(t0 + 5 * S).file_error.is_some());
+        assert_eq!(s.save(), Ok(true));
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), "garbage");
+        let status = s.status(t0 + 6 * S);
+        assert_eq!(status.left_out_backup, None, "the copy no longer holds the wire");
+        assert!(status.left_out.is_empty(), "{:?}", status.left_out);
     }
 
     #[test]
