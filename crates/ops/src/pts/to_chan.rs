@@ -28,8 +28,16 @@ pub const KIND: &str = "chan.from_pts";
 /// How long a render that needs every frame exact waits for a readback.
 const EXACT_WAIT: Duration = Duration::from_secs(2);
 
-/// A readback older than this is given up: a lost device must not stop the node for good.
+/// A readback that has not arrived after this long is given up: a lost device must not stop the
+/// node for good.
 const STALE: Duration = Duration::from_secs(5);
+
+/// Whether a readback in `state`, started `age` ago, is given up. One that has arrived is taken
+/// however old it is: the node may not have cooked for a while, and dropping it would cost a
+/// second round for values that are already here.
+pub(super) fn given_up(state: ReadState, age: Duration) -> bool {
+    state != ReadState::Ready && age > STALE
+}
 
 /// Most points whose values become channels: four channels each stay under the channel limit.
 pub const MAX_POINTS: u32 = 1000;
@@ -223,7 +231,8 @@ impl Operator for ToChan {
         }
         // A readback given up is read anew: the change it was to show (or one that came while it
         // was in flight) would otherwise never arrive.
-        let stale = self.reading.as_ref().is_some_and(|(_, started, _)| started.elapsed() > STALE);
+        let stale =
+            self.reading.as_ref().is_some_and(|(r, started, _)| given_up(r.state(), started.elapsed()));
         if stale {
             self.reading = None;
         }
@@ -281,6 +290,16 @@ impl Operator for ToChan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A node that did not cook for a while finds its readback arrived long ago, and takes it.
+    #[test]
+    fn a_readback_that_arrived_is_taken_however_old() {
+        let old = STALE + Duration::from_secs(60);
+        assert!(!given_up(ReadState::Ready, old));
+        assert!(given_up(ReadState::Waiting, old));
+        assert!(given_up(ReadState::Failed, old));
+        assert!(!given_up(ReadState::Waiting, STALE / 2));
+    }
 
     /// An attribute name as long as names may be still gives channels: its first point, its
     /// thousandth and its summary.
