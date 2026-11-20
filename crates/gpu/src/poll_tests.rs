@@ -1,0 +1,109 @@
+//! Waits on one device from many threads at once, as the cook thread, the job threads and the
+//! window do in the app.
+
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
+
+use crate::{AdapterChoice, Buffer, Gpu, ReadState};
+
+/// What [`race`] counted.
+#[derive(Debug)]
+struct Race {
+    /// Panics out of a wait or a poll, plus those the polls caught themselves.
+    panics: usize,
+    waits: usize,
+    /// Readbacks still waiting long after their copy was submitted.
+    stuck: usize,
+}
+
+/// Runs for `time`: three threads submit a copy and wait for its readback with no time or a
+/// millisecond to spare, two threads only poll, one submits and polls. wgpu-core asserts
+/// in a wait whose time runs out while another thread takes the finished work in, so a wait
+/// that asks wgpu to block with a timeout panics here within a second.
+fn race(gpu: &Gpu, time: Duration) -> Race {
+    let stop = Arc::new(AtomicBool::new(false));
+    let panics = Arc::new(AtomicUsize::new(0));
+    let waits = Arc::new(AtomicUsize::new(0));
+    let stuck = Arc::new(AtomicUsize::new(0));
+    let caught_before = gpu.poll_panics();
+    let mut threads = Vec::new();
+    for t in 0..6 {
+        let (gpu, stop, panics, waits, stuck) =
+            (gpu.clone(), stop.clone(), panics.clone(), waits.clone(), stuck.clone());
+        threads.push(std::thread::spawn(move || {
+            let Ok(buffer) = Buffer::of::<u32>(&gpu, 64, "race") else { return };
+            let count = |r: std::thread::Result<()>| {
+                if r.is_err() {
+                    panics.fetch_add(1, Ordering::Relaxed);
+                }
+            };
+            while !stop.load(Ordering::Relaxed) {
+                match t {
+                    0..3 => {
+                        let timeout = if t == 0 { Duration::ZERO } else { Duration::from_millis(1) };
+                        let Ok(read) = buffer.read_async(&gpu, None) else { continue };
+                        count(catch_unwind(AssertUnwindSafe(|| {
+                            read.wait(&gpu, timeout);
+                        })));
+                        waits.fetch_add(1, Ordering::Relaxed);
+                        // Every readback gets there in the end, polled by whoever polls.
+                        let deadline = Instant::now() + Duration::from_secs(10);
+                        while read.state() == ReadState::Waiting && Instant::now() < deadline {
+                            std::thread::sleep(Duration::from_micros(200));
+                        }
+                        if read.state() != ReadState::Ready {
+                            stuck.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    3 => {
+                        // A readback nobody waits for: a submission and a poll.
+                        drop(buffer.read_async(&gpu, None));
+                        count(catch_unwind(AssertUnwindSafe(|| gpu.poll())));
+                    }
+                    _ => count(catch_unwind(AssertUnwindSafe(|| gpu.poll()))),
+                }
+            }
+        }));
+    }
+    let end = Instant::now() + time;
+    while Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    stop.store(true, Ordering::Relaxed);
+    for t in threads {
+        if t.join().is_err() {
+            panics.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    let caught = usize::try_from(gpu.poll_panics() - caught_before).unwrap_or(usize::MAX);
+    Race {
+        panics: panics.load(Ordering::Relaxed) + caught,
+        waits: waits.load(Ordering::Relaxed),
+        stuck: stuck.load(Ordering::Relaxed),
+    }
+}
+
+fn check(gpu: &Gpu, time: Duration) {
+    let r = race(gpu, time);
+    eprintln!("{} ({:?}): {r:?}", gpu.name(), gpu.info().device_type);
+    assert!(r.waits > 0, "no wait ran: {r:?}");
+    assert_eq!(r.panics, 0, "a wait or a poll panicked: {r:?}");
+    assert_eq!(r.stuck, 0, "a readback never arrived: {r:?}");
+}
+
+#[test]
+fn short_readback_waits_do_not_panic_while_other_threads_poll_and_submit() {
+    let Some(gpu) = crate::testing::gpu() else { return };
+    check(&gpu, Duration::from_secs(3));
+}
+
+/// The same on the fast GPU, where the race is rarer: `cargo test -p penumbra-gpu -- --ignored
+/// on_the_hardware_adapter`.
+#[test]
+#[ignore = "needs a hardware adapter and runs for ten seconds"]
+fn short_readback_waits_do_not_panic_on_the_hardware_adapter() {
+    let Ok(gpu) = Gpu::headless(AdapterChoice::Hardware) else { return };
+    check(&gpu, Duration::from_secs(10));
+}

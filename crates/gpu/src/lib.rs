@@ -193,6 +193,8 @@ struct Inner {
     input_groups: Mutex<Vec<std::sync::Weak<pass::InputGroups>>>,
     /// Calls of [`Gpu::poll`] so far.
     polls: AtomicU64,
+    /// Polls of the device that panicked inside wgpu (see [`poll_device`]).
+    poll_panics: AtomicU64,
     /// The header that bounds no count, for points whose count the CPU knows (see
     /// [`points::Count`]).
     no_limit: Mutex<Option<Buffer>>,
@@ -223,6 +225,35 @@ impl Lost {
         for hook in hooks {
             hook(message);
         }
+    }
+}
+
+/// What a poll of the device came to.
+enum Polled {
+    Done,
+    Failed(String),
+    Panicked,
+}
+
+const POLL_PANICKED: &str = "the GPU poll panicked inside wgpu";
+
+fn poll_raw(device: &wgpu::Device) -> Polled {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| device.poll(wgpu::PollType::Poll))) {
+        Ok(Ok(_)) => Polled::Done,
+        Ok(Err(e)) => Polled::Failed(e.to_string()),
+        Err(_) => Polled::Panicked,
+    }
+}
+
+/// One poll of `device`: runs the callbacks of the work the GPU has finished, never blocks.
+/// wgpu-core asserts inside a poll when its own bookkeeping disagrees between threads; that
+/// panic is caught here and becomes an error, so a show goes on. Polls of a [`Gpu`]'s device go
+/// through [`Gpu::poll`] and the waits built on it; this is for code holding only the device.
+pub fn poll_device(device: &wgpu::Device) -> Result<(), Error> {
+    match poll_raw(device) {
+        Polled::Done => Ok(()),
+        Polled::Failed(e) => Err(Error::new(format!("GPU poll: {e}"))),
+        Polled::Panicked => Err(Error::new(POLL_PANICKED)),
     }
 }
 
@@ -330,6 +361,7 @@ impl Gpu {
                 deferred: Mutex::new(deferred::Deferred::default()),
                 input_groups: Mutex::new(Vec::new()),
                 polls: AtomicU64::new(0),
+                poll_panics: AtomicU64::new(0),
                 no_limit: Mutex::new(None),
             }),
         }
@@ -444,9 +476,7 @@ impl Gpu {
     /// of resources just dropped is really given back (wgpu frees it once the GPU is done with
     /// it). For a decision based on [`Gpu::vram`] right after letting something big go.
     pub fn settle(&self, timeout: Duration) {
-        self.flush();
-        let wait = wgpu::PollType::Wait { submission_index: None, timeout: Some(timeout) };
-        if let Err(e) = self.inner.device.poll(wait) {
+        if let Err(e) = self.wait(timeout) {
             log::warn!("GPU settle: {e}");
         }
     }
@@ -484,18 +514,21 @@ impl Gpu {
     /// Blocks until everything submitted so far has finished on the GPU, for at most `timeout`.
     pub fn wait(&self, timeout: std::time::Duration) -> Result<(), Error> {
         self.flush();
-        self.inner
-            .device
-            .poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(timeout) })
-            .map(|_| ())
-            .map_err(|e| Error::new(format!("waiting for the GPU: {e}")))
+        let done = Arc::new(AtomicBool::new(false));
+        let set = done.clone();
+        self.inner.queue.on_submitted_work_done(move || set.store(true, Ordering::Release));
+        match self.poll_until(timeout, || done.load(Ordering::Acquire)) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(Error::new("the GPU did not finish its work in time")),
+            Err(e) => Err(Error::new(format!("waiting for the GPU: {e}"))),
+        }
     }
 
     /// Lets wgpu finish callbacks and free resources without waiting. The cook thread calls it
     /// once per frame.
     pub fn poll(&self) {
-        if let Err(e) = self.inner.device.poll(wgpu::PollType::Poll) {
-            log::warn!("GPU poll: {e}");
+        if let Err(e) = self.poll_once() {
+            log::warn!("{e}");
         }
         if self.inner.polls.fetch_add(1, Ordering::Relaxed).is_multiple_of(SWEEP_POLLS) {
             self.sweep_input_groups();
@@ -554,17 +587,55 @@ impl Gpu {
         Ok(compiled)
     }
 
-    /// The poll that waits for submission `index`, at most `timeout`. On a software adapter it
-    /// waits for everything submitted so far instead: wgpu-core asserts, and panics, when one
-    /// thread waits for an index whose completion another thread's poll has just taken in. A
-    /// software adapter finishes work fast enough to hit that between two threads' polls.
-    pub(crate) fn wait_for(
-        &self,
-        index: wgpu::SubmissionIndex,
-        timeout: std::time::Duration,
-    ) -> wgpu::PollType {
-        let software = self.inner.info.device_type == wgpu::DeviceType::Cpu;
-        wgpu::PollType::Wait { submission_index: (!software).then_some(index), timeout: Some(timeout) }
+    /// Polls of the device that panicked inside wgpu and were caught.
+    pub fn poll_panics(&self) -> u64 {
+        self.inner.poll_panics.load(Ordering::Relaxed)
+    }
+
+    /// One poll of the device, counting a panic caught in it ([`poll_device`]).
+    fn poll_once(&self) -> Result<(), Error> {
+        match poll_raw(&self.inner.device) {
+            Polled::Done => Ok(()),
+            Polled::Failed(e) => Err(Error::new(format!("GPU poll: {e}"))),
+            Polled::Panicked => {
+                self.inner.poll_panics.fetch_add(1, Ordering::Relaxed);
+                Err(Error::new(POLL_PANICKED))
+            }
+        }
+    }
+
+    /// Polls the device until `done` says so or `timeout` is up, at least once. `Ok(false)` when
+    /// time ran out. Between polls it yields, then sleeps a quarter millisecond, so a long wait
+    /// does not keep a core busy. This is how penumbra waits for the GPU: wgpu's own blocking
+    /// wait panics when its time runs out while another thread polls or submits.
+    pub(crate) fn poll_until(&self, timeout: Duration, done: impl Fn() -> bool) -> Result<bool, Error> {
+        let start = Instant::now();
+        let mut round = 0u32;
+        loop {
+            if done() {
+                return Ok(true);
+            }
+            match poll_raw(&self.inner.device) {
+                Polled::Done => {}
+                // The callbacks of that poll are lost; the next poll goes on with the rest.
+                Polled::Panicked => {
+                    self.inner.poll_panics.fetch_add(1, Ordering::Relaxed);
+                }
+                Polled::Failed(e) => return Err(Error::new(format!("GPU poll: {e}"))),
+            }
+            if done() {
+                return Ok(true);
+            }
+            if start.elapsed() >= timeout {
+                return Ok(false);
+            }
+            round = round.saturating_add(1);
+            if round < 16 {
+                std::thread::yield_now();
+            } else {
+                std::thread::sleep(Duration::from_micros(250));
+            }
+        }
     }
 
     /// Submits command buffers, after the passes waiting (see [`deferred`]). Everything
@@ -939,6 +1010,9 @@ pub(crate) mod testing {
         u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap())
     }
 }
+
+#[cfg(test)]
+mod poll_tests;
 
 #[cfg(test)]
 mod tests {

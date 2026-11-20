@@ -9,8 +9,8 @@
 //! [`Buffer::read_async`] does not wait, for a few numbers every frame.
 
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Arc, Weak, mpsc};
-use std::time::Duration;
+use std::sync::{Arc, OnceLock, Weak};
+use std::time::{Duration, Instant};
 
 use bytemuck::Pod;
 use penumbra_core::Error;
@@ -201,7 +201,7 @@ impl Buffer {
             )));
         }
         let device = gpu.device();
-        let ((staging, index), error) = gpu.scoped(|| {
+        let (staging, error) = gpu.scoped(|| {
             let staging = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("buffer readback"),
                 size: self.0.bytes,
@@ -211,23 +211,23 @@ impl Buffer {
             let mut encoder = device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("buffer readback") });
             encoder.copy_buffer_to_buffer(&self.0.buffer, 0, &staging, 0, self.0.bytes);
-            let index = gpu.submit([encoder.finish()]);
-            (staging, index)
+            gpu.submit([encoder.finish()]);
+            staging
         });
         if let Some(e) = error {
             return Err(Error::new(format!("buffer readback failed: {e}")));
         }
-        let (tx, rx) = mpsc::channel();
+        let mapped = Arc::new(OnceLock::new());
+        let set = mapped.clone();
         staging.map_async(wgpu::MapMode::Read, .., move |r| {
-            tx.send(r).ok();
+            let _ = set.set(r);
         });
-        device
-            .poll(gpu.wait_for(index, READ_TIMEOUT))
+        gpu.poll_until(READ_TIMEOUT, || mapped.get().is_some())
             .map_err(|e| Error::new(format!("waiting for the GPU: {e}")))?;
-        match rx.recv_timeout(READ_TIMEOUT) {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(Error::new(format!("cannot map the readback buffer: {e}"))),
-            Err(_) => return Err(Error::new("the GPU did not deliver the readback in time")),
+        match mapped.get() {
+            Some(Ok(())) => {}
+            Some(Err(e)) => return Err(Error::new(format!("cannot map the readback buffer: {e}"))),
+            None => return Err(Error::new("the GPU did not deliver the readback in time")),
         }
         let view = staging.get_mapped_range(..).map_err(|e| Error::new(format!("buffer readback: {e}")))?;
         let out: Vec<T> = bytemuck::pod_collect_to_vec(&view);
@@ -258,7 +258,7 @@ impl Buffer {
             s.staging.unmap();
             s.staging
         });
-        let ((staging, index), error) = gpu.scoped(|| {
+        let (staging, error) = gpu.scoped(|| {
             let staging = reuse.unwrap_or_else(|| {
                 device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("buffer read_async"),
@@ -270,8 +270,8 @@ impl Buffer {
             let mut encoder = device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("buffer read_async") });
             encoder.copy_buffer_to_buffer(&self.0.buffer, 0, &staging, 0, self.0.bytes);
-            let index = gpu.submit([encoder.finish()]);
-            (staging, index)
+            gpu.submit([encoder.finish()]);
+            staging
         });
         if let Some(e) = error {
             return Err(Error::new(format!("buffer readback failed: {e}")));
@@ -284,7 +284,7 @@ impl Buffer {
                 ready();
             }
         });
-        Ok(BufferRead { staging, bytes: self.0.bytes, index, state })
+        Ok(BufferRead { staging, bytes: self.0.bytes, state, started: Instant::now() })
     }
 }
 
@@ -296,8 +296,10 @@ const FAILED: u8 = 2;
 pub struct BufferRead {
     staging: wgpu::Buffer,
     bytes: u64,
-    index: wgpu::SubmissionIndex,
     state: Arc<AtomicU8>,
+    /// When the copy was submitted: a readback still waiting [`READ_TIMEOUT`] later has failed
+    /// (its callback may have been lost in a poll that panicked inside wgpu).
+    started: Instant,
 }
 
 impl BufferRead {
@@ -305,6 +307,7 @@ impl BufferRead {
         match self.state.load(Ordering::Acquire) {
             READY => ReadState::Ready,
             FAILED => ReadState::Failed,
+            _ if self.started.elapsed() > READ_TIMEOUT => ReadState::Failed,
             _ => ReadState::Waiting,
         }
     }
@@ -312,11 +315,8 @@ impl BufferRead {
     /// Waits at most `timeout` for the copy, then says where the readback stands. Blocks the
     /// calling thread: for tests, and for a result wanted in the same frame.
     pub fn wait(&self, gpu: &Gpu, timeout: Duration) -> ReadState {
-        if self.state() == ReadState::Waiting {
-            let wait = gpu.wait_for(self.index.clone(), timeout);
-            // A timeout is not an error here: the caller looks again later.
-            let _ = gpu.device().poll(wait);
-        }
+        // Running out of time is no error here: the caller looks again later.
+        let _ = gpu.poll_until(timeout, || self.state() != ReadState::Waiting);
         self.state()
     }
 
