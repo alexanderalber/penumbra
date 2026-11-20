@@ -2517,7 +2517,7 @@ Inputs:
 
 Outputs:
 
-- `out` (pts): Every input's points one after the other. An attribute two inputs give different types is an error. A count kept on the GPU (after pts.delete, from pts.particles) stays there. Lines stay where every input has the same lines; rows and columns of a grid go. Where every input has an `id` of whole numbers (particle systems, which each count from 0), the ids of the second input are moved up by half of their range, and so on, so they stay apart and rise along the list as pts.trail needs; random numbers keyed by id change with them. Ids already in their input's part of the range stay: points that come round a pts.feedback loop into the same input keep their ids
+- `out` (pts): Every input's points one after the other. An attribute two inputs give different types is an error. A count kept on the GPU (after pts.delete, from pts.particles) stays there. Lines stay where every input has the same lines; rows and columns of a grid go. Where every input has an `id` of whole numbers (particle systems, which each count from 0), the ids of the second input are moved up by half of their range, and so on, so they stay apart and rise along the list as pts.trail needs; random numbers keyed by id change with them. Ids already in their input's part of the range stay: points that come round a pts.feedback loop into the same input keep their ids. A merge of merges can repeat ids: put all particle systems into one pts.merge
 
 ### pts.neighbor
 

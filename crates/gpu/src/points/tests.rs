@@ -393,6 +393,31 @@ fn merged_ids_already_in_their_band_stay() {
     assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
 }
 
+/// A merge whose input is a merge folds the inner bands onto each other: the ids repeat. The
+/// module doc, the node help and the points guide say so; one merge of all sets keeps them apart.
+#[test]
+fn a_merge_of_merges_can_repeat_ids() {
+    let Some(gpu) = gpu() else { return };
+    let ids = |values: &[u32]| {
+        let b = Buffer::of::<u32>(&gpu, values.len() as u64, "ids").unwrap();
+        b.write(&gpu, 0, values).unwrap();
+        let n = values.len() as u32;
+        Points::new(n, n, vec![Attr::new("id", AttrType::U32, b).unwrap()]).unwrap()
+    };
+    let half = 1u32 << 31;
+    let read = |p: &Points| p.attr("id").unwrap().buffer().read::<u32>(&gpu).unwrap()[..6].to_vec();
+    let mut inner = merge::Merger::new();
+    let ab = inner.merge(&gpu, &[(0, &ids(&[0, 1])), (1, &ids(&[0, 1]))]).unwrap();
+    let mut outer = merge::Merger::new();
+    let nested = outer.merge(&gpu, &[(0, &ab), (1, &ids(&[0, 1]))]).unwrap();
+    assert_eq!(read(&nested), [0, 1, 0, 1, half, half + 1]);
+    let step = u32::MAX / 3;
+    let mut one = merge::Merger::new();
+    let flat = one.merge(&gpu, &[(0, &ids(&[0, 1])), (1, &ids(&[0, 1])), (2, &ids(&[0, 1]))]).unwrap();
+    assert_eq!(read(&flat), [0, 1, step, step + 1, 2 * step, 2 * step + 1]);
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}
+
 /// Four sets of points with six attributes between them, some lacking some: a set's own count
 /// known, or on the GPU below its capacity.
 fn four_sets(gpu: &Gpu, scale: u32) -> Vec<Points> {
