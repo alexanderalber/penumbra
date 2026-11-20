@@ -347,8 +347,7 @@ fn ply(bytes: &[u8]) -> Result<Cloud, String> {
     let mut cells = Cells::new(&plan, props.len());
     let wanted = cells.fit(most);
     if wanted < most {
-        warnings
-            .push(format!("{} values per vertex: the first {wanted} vertices become points", plan.words()));
+        warnings.push(format!("{}: the first {wanted} vertices become points", cells.limit("vertex")));
     }
     if binary {
         let stride: usize = props.iter().map(|(_, n)| n.size()).sum();
@@ -372,7 +371,7 @@ fn ply(bytes: &[u8]) -> Result<Cloud, String> {
         }
     } else {
         let text = String::from_utf8_lossy(body);
-        cells.reserve(wanted);
+        cells.reserve(room(wanted, body));
         for line in text.lines().filter(|l| !l.trim().is_empty()).take(wanted) {
             cells.row();
             for (i, w) in line.split_whitespace().take(props.len()).enumerate() {
@@ -401,6 +400,12 @@ fn ply(bytes: &[u8]) -> Result<Cloud, String> {
     let cols = plan.columns(&value, count);
     check(&cols)?;
     Ok(Cloud { count, columns: cols, warnings })
+}
+
+/// The points to make room for in the text `body` of a file whose header claims `wanted`: no
+/// more than it has lines. The claim is no promise: a file of a few bytes may claim millions.
+fn room(wanted: usize, body: &[u8]) -> usize {
+    wanted.min(body.iter().filter(|b| **b == b'\n').count() + 1)
 }
 
 /// The numbers of the columns a [`Plan`] uses, point after point; every other column is skipped
@@ -433,6 +438,16 @@ impl Cells {
     fn fit(&self, wanted: usize) -> usize {
         let per_point = self.words.max(self.width.saturating_mul(2)).max(1);
         wanted.min(MAX_WORDS / per_point)
+    }
+
+    /// What [`Cells::fit`] is bound by, for a warning: the values the points get, or the numbers
+    /// read while the file is read (two words each), per `item`.
+    fn limit(&self, item: &str) -> String {
+        if self.words >= self.width.saturating_mul(2) {
+            format!("{} values per {item}", self.words)
+        } else {
+            format!("{} numbers read per {item}", self.width)
+        }
     }
 
     fn reserve(&mut self, points: usize) {
@@ -585,7 +600,7 @@ fn text(bytes: &[u8]) -> Result<Cloud, String> {
     let mut cells = Cells::new(&plan, columns);
     let fit = cells.fit(data.len());
     if fit < data.len() {
-        warnings.push(format!("{} values per point: the first {fit} lines become points", plan.words()));
+        warnings.push(format!("{}: the first {fit} lines become points", cells.limit("point")));
         data.truncate(fit);
     }
     cells.reserve(data.len());
@@ -701,6 +716,37 @@ mod tests {
         assert!(e.contains("`pts_wind`") && e.contains("such as `wind`"), "{e}");
         // A component of an attribute named `pts` is fine.
         assert!(text(b"pts_x pts_y\n1 2\n").is_ok());
+    }
+
+    /// A tiny text body whose header claims millions of vertices makes room for its lines only.
+    #[test]
+    fn a_claim_of_millions_reserves_room_for_the_lines_there_are() {
+        assert_eq!(room(4_000_000, b"1 2 3\n4 5 6\n"), 3);
+        assert_eq!(room(2, b"1\n2\n3\n4\n"), 2);
+        assert_eq!(room(4_000_000, b""), 1);
+    }
+
+    /// The warning that cuts the vertices names what bounds them: many one-number attributes
+    /// cost two words each while the file is read, more than the points keep.
+    #[test]
+    fn the_cut_names_what_bounds_it() {
+        let mut head = format!("ply\nformat ascii 1.0\nelement vertex {MAX_POINTS}\nproperty float x\n");
+        for k in 0..20 {
+            head.push_str(&format!("property float p{k}\n"));
+        }
+        head.push_str("end_header\n1\n");
+        let c = ply(head.as_bytes()).unwrap();
+        let cut = c.warnings.iter().find(|w| w.contains("vertices become points")).unwrap();
+        assert!(cut.starts_with("21 numbers read per vertex"), "{:?}", c.warnings);
+        let mut head = format!("ply\nformat ascii 1.0\nelement vertex {MAX_POINTS}\n");
+        for k in 0..20 {
+            // The fourth number only: an attribute of four numbers from one column.
+            head.push_str(&format!("property float n{k}_w\n"));
+        }
+        head.push_str("end_header\n1\n");
+        let c = ply(head.as_bytes()).unwrap();
+        let cut = c.warnings.iter().find(|w| w.contains("vertices become points")).unwrap();
+        assert!(cut.contains("values per vertex"), "{:?}", c.warnings);
     }
 
     #[test]
