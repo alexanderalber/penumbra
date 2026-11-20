@@ -10,8 +10,10 @@
 //! position of each end's point and the attributes asked for, and per line `span` (its length in
 //! metres) and `span01` (the length over `distance`, 0 for touching points, 1 at the farthest).
 //! The lines are in the order of their first point, then of the choice; their number is on the
-//! GPU, at most `max`. The header's words: the ends, the lines, the points past the cap of their
-//! cube ([`super::near`]), the lines wanted before `max`.
+//! GPU, at most `max`. Past `max`, lines go by a number each pair keeps ([`CUT_BINS`]), so the
+//! same pairs stay while the points move or are born and die, and the lines left are spread over
+//! all points. The header's words: the ends, the lines, the points past the cap of their cube
+//! ([`super::near`]), the lines wanted before `max`.
 //!
 //! The same points give the same lines bit for bit: the choice is a total order (rank, then
 //! index), the grid visits points in a fixed order, and a prefix sum places the lines.
@@ -31,6 +33,13 @@ pub const SPAN01: &str = "span01";
 
 /// The most lines one point chooses.
 pub const MAX_LINES: u32 = 32;
+
+/// Bins of the cut at `max` (16 per thread of its workgroup of 256). Each line falls into a bin
+/// by a hash of its pair's keys (`id`, else the index); the cut keeps the bins from the first on.
+/// A new cut keeps the most bins whose lines are at most 63/64 of `max`. The cut stays where it
+/// was while the lines it keeps are between 31/32 of `max` and `max`, so a count that moves a
+/// little from frame to frame keeps every line it can.
+pub const CUT_BINS: u32 = 4096;
 
 /// Which of its candidates a point chooses when it has more than `most`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +78,24 @@ fn pts_most() -> u32 {
 }
 ";
 
+/// A point's key: its `id` where the points have one, else its index. Needs `keys`.
+const KEYED: &str = "
+fn pts_key(i: u32) -> u32 {
+    if params.keyed != 0 {
+        return keys[i];
+    }
+    return i;
+}
+
+// The bin of the line between i and j for the cut at `max`: the same for the pair whichever end
+// draws it, while both points keep their keys.
+fn pts_bin(i: u32, j: u32) -> u32 {
+    let a = pts_key(i);
+    let b = pts_key(j);
+    return pn_hash(vec3u(min(a, b), max(a, b), 0x6a09e667u)).y >> 20u;
+}
+";
+
 /// Each point's choice: up to `most` candidates by rank, then index.
 const CHOOSE: &str = "
 @group(2) @binding(0) var<storage, read> keys: array<u32>;
@@ -78,13 +105,6 @@ const CHOOSE: &str = "
 
 fn pts_less(r: u32, j: u32, r2: u32, j2: u32) -> bool {
     return r < r2 || (r == r2 && j < j2);
-}
-
-fn pts_key(i: u32) -> u32 {
-    if params.keyed != 0 {
-        return keys[i];
-    }
-    return i;
 }
 
 fn pts_rank(i: u32, j: u32, d: f32) -> u32 {
@@ -141,12 +161,126 @@ fn pts_emits(i: u32, j: u32) -> bool {
 }
 ";
 
-/// The number of lines each point makes.
+/// The lines wanted per bin of the cut, and the cut: the first bin whose lines no longer fit
+/// under `max` (`CUT_BINS` where all fit), and the lines wanted.
+const CUT: &str = "
+@group(2) @binding(0) var<storage, read> keys: array<u32>;
+@group(2) @binding(1) var<storage, read> chosen: array<u32>;
+@group(2) @binding(2) var<storage, read> chosen_n: array<u32>;
+@group(2) @binding(3) var<storage, read_write> tally: array<atomic<u32>>;
+@group(2) @binding(4) var<storage, read_write> cut: array<u32>;
+@group(2) @binding(5) var<uniform> header: vec4u;
+
+@compute @workgroup_size(64)
+fn clear(@builtin(global_invocation_id) id: vec3u) {
+    if id.x < BINSu {
+        atomicStore(&tally[id.x], 0u);
+    }
+}
+
+@compute @workgroup_size(64)
+fn tally_lines(@builtin(global_invocation_id) id: vec3u) {
+    let i = id.y * pn.size.x + id.x;
+    let n = u32(max(params.n, 0));
+    if id.x >= pn.size.x || i >= min(header.x, n) {
+        return;
+    }
+    let most = pts_most();
+    let c = min(chosen_n[i], most);
+    for (var s = 0u; s < c; s++) {
+        let j = chosen[i * most + s];
+        if pts_emits(i, j) {
+            atomicAdd(&tally[pts_bin(i, j)], 1u);
+        }
+    }
+}
+
+// The lines of each run of 16 bins.
+var<workgroup> pts_runs: array<u32, 256>;
+
+// The lines in the bins before b.
+fn pts_below(b: u32) -> u32 {
+    var c = 0u;
+    for (var r = 0u; r < b / 16u; r++) {
+        c += pts_runs[r];
+    }
+    for (var k = b / 16u * 16u; k < b; k++) {
+        c += atomicLoad(&tally[k]);
+    }
+    return c;
+}
+
+// The most bins from the first on whose lines are at most `limit`.
+fn pts_most_bins(limit: u32) -> u32 {
+    var c = 0u;
+    var r = 0u;
+    loop {
+        if r >= 256u || c + pts_runs[r] > limit {
+            break;
+        }
+        c += pts_runs[r];
+        r += 1u;
+    }
+    var b = r * 16u;
+    loop {
+        if b >= BINSu || c + atomicLoad(&tally[b]) > limit {
+            break;
+        }
+        c += atomicLoad(&tally[b]);
+        b += 1u;
+    }
+    return b;
+}
+
+// The cut stays where it was while the lines it keeps are between 31/32 of `max` and `max`, so
+// a count that moves a little from frame to frame changes no line. Else it keeps 63/64 of `max`.
+@compute @workgroup_size(256)
+fn cut_lines(@builtin(local_invocation_index) t: u32) {
+    var mine = 0u;
+    for (var k = 0u; k < 16u; k++) {
+        mine += atomicLoad(&tally[t * 16u + k]);
+    }
+    pts_runs[t] = mine;
+    workgroupBarrier();
+    if t != 0u {
+        return;
+    }
+    var total = 0u;
+    for (var r = 0u; r < 256u; r++) {
+        total += pts_runs[r];
+    }
+    let max_lines = u32(max(params.max, 0));
+    var keep = BINSu;
+    if total > max_lines {
+        let before = cut[0];
+        var stay = false;
+        if before < BINSu {
+            let kept = pts_below(before);
+            stay = kept <= max_lines && kept >= max_lines - max_lines / 32u;
+        }
+        if stay {
+            keep = before;
+        } else {
+            keep = pts_most_bins(max_lines - max_lines / 64u);
+        }
+    }
+    cut[0] = keep;
+    cut[1] = total;
+    cut[2] = 0u;
+    cut[3] = 0u;
+}
+";
+
+/// The number of lines each point makes, and which of its choices they are (a bit per choice):
+/// those it draws whose bin the cut keeps.
 const COUNT: &str = "
-@group(2) @binding(0) var<storage, read> chosen: array<u32>;
-@group(2) @binding(1) var<storage, read> chosen_n: array<u32>;
-@group(2) @binding(2) var<storage, read_write> counts: array<u32>;
-@group(2) @binding(3) var<uniform> header: vec4u;
+@group(2) @binding(0) var<storage, read> keys: array<u32>;
+@group(2) @binding(1) var<storage, read> chosen: array<u32>;
+@group(2) @binding(2) var<storage, read> chosen_n: array<u32>;
+@group(2) @binding(3) var<storage, read_write> counts: array<u32>;
+@group(2) @binding(4) var<storage, read_write> kept: array<u32>;
+@group(2) @binding(5) var<uniform> header: vec4u;
+@group(2) @binding(6) var<uniform> cut: vec4u;
 
 @compute @workgroup_size(64)
 fn count(@builtin(global_invocation_id) id: vec3u) {
@@ -156,23 +290,27 @@ fn count(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     var e = 0u;
+    var mask = 0u;
     if i < min(header.x, n) {
         let most = pts_most();
         let c = min(chosen_n[i], most);
         for (var s = 0u; s < c; s++) {
-            if pts_emits(i, chosen[i * most + s]) {
+            let j = chosen[i * most + s];
+            if pts_emits(i, j) && pts_bin(i, j) < cut.x {
                 e += 1u;
+                mask |= 1u << s;
             }
         }
     }
     counts[i] = e;
+    kept[i] = mask;
 }
 ";
 
 /// The lines: each point's at the place the prefix sum gave it, both ends.
 const EMIT: &str = "
 @group(2) @binding(0) var<storage, read> chosen: array<u32>;
-@group(2) @binding(1) var<storage, read> chosen_n: array<u32>;
+@group(2) @binding(1) var<storage, read> kept: array<u32>;
 @group(2) @binding(2) var<storage, read> places: array<u32>;
 @group(2) @binding(3) var<storage, read> position: array<vec4f>;
 @group(2) @binding(4) var<storage, read_write> map: array<u32>;
@@ -188,12 +326,12 @@ fn emit(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     let most = pts_most();
-    let c = min(chosen_n[i], most);
+    let mask = kept[i];
     let max_lines = u32(max(params.max, 0));
     var p = places[i];
-    for (var s = 0u; s < c; s++) {
-        let j = chosen[i * most + s];
-        if pts_emits(i, j) {
+    for (var s = 0u; s < most; s++) {
+        if ((mask >> s) & 1u) != 0u {
+            let j = chosen[i * most + s];
             if p < max_lines {
                 let d = distance(position[i].xyz, position[j].xyz);
                 let f = d / max(params.distance, 1e-30);
@@ -214,15 +352,16 @@ fn emit(@builtin(global_invocation_id) id: vec3u) {
 const FINISH: &str = "
 @group(2) @binding(0) var<storage, read> total: array<u32>;
 @group(2) @binding(1) var<storage, read> crowded: array<u32>;
-@group(2) @binding(2) var<storage, read_write> out: array<u32>;
+@group(2) @binding(2) var<storage, read> cut: array<u32>;
+@group(2) @binding(3) var<storage, read_write> out: array<u32>;
 
 @compute @workgroup_size(64)
 fn finish(@builtin(global_invocation_id) id: vec3u) {
     if id.x != 0u {
         return;
     }
-    let wanted = total[0];
-    let lines = min(wanted, u32(max(params.max, 0)));
+    let wanted = cut[1];
+    let lines = min(total[0], u32(max(params.max, 0)));
     out[0] = 2u * lines;
     out[1] = lines;
     out[2] = crowded[0];
@@ -260,15 +399,20 @@ const KEEP: &str = "
 
 fn choose_source() -> String {
     let choose = CHOOSE.replace("WALK", &near::near_loop("q.xyz", "i", KEEP));
-    format!("{}\n{COMMON}\n{choose}", near::query_wgsl(4))
+    format!("{}\n{COMMON}\n{KEYED}\n{choose}", near::query_wgsl(4))
+}
+
+fn cut_source() -> String {
+    let cut = CUT.replace("BINSu", &format!("{CUT_BINS}u"));
+    format!("{COMMON}\n{KEYED}\n{cut}\n{EMITS}")
 }
 
 fn count_source() -> String {
-    format!("{COMMON}\n{COUNT}\n{EMITS}")
+    format!("{COMMON}\n{KEYED}\n{COUNT}\n{EMITS}")
 }
 
 fn emit_source() -> String {
-    format!("{COMMON}\n{EMIT}\n{EMITS}")
+    format!("{COMMON}\n{EMIT}")
 }
 
 fn params() -> Vec<ParamSpec> {
@@ -289,6 +433,7 @@ fn params() -> Vec<ParamSpec> {
 pub fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     near::warm_up(gpu)?;
     gpu.cached_compute("pts proximity choose", &choose_source(), &params())?;
+    gpu.cached_compute("pts proximity cut", &cut_source(), &params())?;
     gpu.cached_compute("pts proximity count", &count_source(), &params())?;
     gpu.cached_compute("pts proximity emit", &emit_source(), &params())?;
     gpu.cached_compute("pts proximity finish", FINISH, &params())?;
@@ -306,6 +451,12 @@ pub struct Pairer {
     chosen: Option<Buffer>,
     chosen_n: Option<Buffer>,
     counts: Option<Buffer>,
+    /// Per point a bit per choice: the lines it draws after the cut at `max`.
+    kept: Option<Buffer>,
+    /// Lines wanted per bin of the cut.
+    tally: Option<Buffer>,
+    /// The cut: the first bin left out, the lines wanted.
+    cut: Option<Buffer>,
     map: Option<Buffer>,
     none: Option<Buffer>,
     headers: BufferRing,
@@ -365,6 +516,9 @@ impl Pairer {
             sized(gpu, &mut self.chosen, u64::from(room) * u64::from(most) * 4, "pts proximity chosen")?;
         let chosen_n = sized(gpu, &mut self.chosen_n, u64::from(room) * 4, "pts proximity chosen count")?;
         let counts = sized(gpu, &mut self.counts, u64::from(room) * 4, "pts proximity counts")?;
+        let kept = sized(gpu, &mut self.kept, u64::from(room) * 4, "pts proximity kept")?;
+        let tally = sized(gpu, &mut self.tally, u64::from(CUT_BINS) * 4, "pts proximity tally")?;
+        let cut = sized(gpu, &mut self.cut, 16, "pts proximity cut")?;
         let map = sized(gpu, &mut self.map, u64::from(capacity) * 4, "pts proximity ends")?;
         let none = sized(gpu, &mut self.none, 16, "pts proximity no keys")?;
         let count_now = points.count().header_for(gpu)?;
@@ -394,22 +548,31 @@ impl Pairer {
             &[key_buffer, &chosen, &chosen_n, &count_now, near.cells(), near.points()],
             &step("choose"),
         )?;
+        gpu.cached_compute("pts proximity cut", &cut_source(), &params())?.run_with(
+            gpu,
+            &[key_buffer, &chosen, &chosen_n, &tally, &cut, &count_now],
+            &[
+                Step { entry: "clear", out: Out::range(CUT_BINS), input: &input },
+                Step { entry: "tally_lines", out: grid(n), input: &input },
+                Step { entry: "cut_lines", out: Out::range(256), input: &input },
+            ],
+        )?;
         gpu.cached_compute("pts proximity count", &count_source(), &params())?.run_with(
             gpu,
-            &[&chosen, &chosen_n, &counts, &count_now],
+            &[key_buffer, &chosen, &chosen_n, &counts, &kept, &count_now, &cut],
             &step("count"),
         )?;
         self.grid.scan(gpu, &counts, n)?;
         gpu.cached_compute("pts proximity emit", &emit_source(), &params())?.run_with(
             gpu,
-            &[&chosen, &chosen_n, &counts, position.buffer(), &map, &span, &span01, &count_now],
+            &[&chosen, &kept, &counts, position.buffer(), &map, &span, &span01, &count_now],
             &step("emit"),
         )?;
         let total =
             self.grid.total().cloned().ok_or_else(|| Error::new("the sum of the lines is missing"))?;
         gpu.cached_compute("pts proximity finish", FINISH, &params())?.run_with(
             gpu,
-            &[&total, near.crowded(), &header],
+            &[&total, near.crowded(), &cut, &header],
             &[Step { entry: "finish", out: Out::range(1), input: &input }],
         )?;
         self.gather(gpu, &carried, points, &map, &header, (2 * lines_cap, capacity), &mut out)?;
@@ -492,11 +655,20 @@ impl Pairer {
 
     /// Bytes on the GPU of the buffers it keeps.
     pub fn bytes(&self) -> u64 {
-        let own = [&self.chosen, &self.chosen_n, &self.counts, &self.map, &self.none]
-            .iter()
-            .filter_map(|b| b.as_ref())
-            .map(Buffer::bytes)
-            .sum::<u64>();
+        let own = [
+            &self.chosen,
+            &self.chosen_n,
+            &self.counts,
+            &self.kept,
+            &self.tally,
+            &self.cut,
+            &self.map,
+            &self.none,
+        ]
+        .iter()
+        .filter_map(|b| b.as_ref())
+        .map(Buffer::bytes)
+        .sum::<u64>();
         own + self.grid.bytes()
             + self.headers.bytes()
             + self.rings.iter().map(|(_, r)| r.bytes()).sum::<u64>()
@@ -508,6 +680,9 @@ impl Pairer {
         self.chosen = None;
         self.chosen_n = None;
         self.counts = None;
+        self.kept = None;
+        self.tally = None;
+        self.cut = None;
         self.map = None;
         self.headers.trim();
         for (_, r) in &mut self.rings {
