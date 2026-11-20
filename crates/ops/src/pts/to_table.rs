@@ -173,10 +173,14 @@ impl Operator for ToTable {
         let rows = asked.min(fit).min(points.count().at_most() as usize);
         let layout = Layout { rows: u32::try_from(rows).unwrap_or(0), attrs, known: points.count().known() };
 
-        if self.reading.as_ref().is_some_and(|(_, started, _)| started.elapsed() > STALE) {
+        // A readback given up is read anew: the change it was to show (or one that came while it
+        // was in flight) would otherwise never arrive.
+        let stale = self.reading.as_ref().is_some_and(|(_, started, _)| started.elapsed() > STALE);
+        if stale {
             self.reading = None;
         }
-        let changed = cx.inputs_changed() || cx.params_changed() || cx.first_cook() || self.sent.is_none();
+        let changed =
+            stale || cx.inputs_changed() || cx.params_changed() || cx.first_cook() || self.sent.is_none();
         match (&self.reading, changed) {
             (None, true) => self.start(cx, points, layout.clone())?,
             (Some(_), true) => self.again = true,
