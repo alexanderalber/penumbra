@@ -380,6 +380,16 @@ fn merged_ids_already_in_their_band_stay() {
     let again = merger.merge(&gpu, &[(0, &ids(&[2, 3])), (1, &fed)]).unwrap();
     let got = again.attr("id").unwrap().buffer().read::<u32>(&gpu).unwrap()[..5].to_vec();
     assert_eq!(got, [2, 3, half, half + 1, half + 7]);
+    // Three sets: what comes round from the second band into the third input goes into the
+    // third band, not round past 2^32 into the first, where the first set's own ids are.
+    let step = u32::MAX / 3;
+    let first = merger.merge(&gpu, &[(0, &ids(&[0, 1])), (1, &ids(&[0, 1])), (2, &ids(&[0, 1]))]).unwrap();
+    let read6 = |p: &Points| p.attr("id").unwrap().buffer().read::<u32>(&gpu).unwrap()[..6].to_vec();
+    assert_eq!(read6(&first), [0, 1, step, step + 1, 2 * step, 2 * step + 1]);
+    let fed = ids(&[step + 5, 2 * step + 9]);
+    let again = merger.merge(&gpu, &[(0, &ids(&[0, 1])), (1, &ids(&[0])), (2, &fed)]).unwrap();
+    let got = again.attr("id").unwrap().buffer().read::<u32>(&gpu).unwrap()[..5].to_vec();
+    assert_eq!(got, [0, 1, step, 2 * step + 5, 2 * step + 9]);
     assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
 }
 
