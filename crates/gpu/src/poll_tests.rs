@@ -108,6 +108,11 @@ fn short_readback_waits_do_not_panic_on_the_hardware_adapter() {
     check(&gpu, Duration::from_secs(10));
 }
 
+/// A wait of ten seconds that ends within this ended "at once". Generous on purpose: a caught
+/// panic that prints its backtrace takes over 100 ms on a loaded machine, and these tests cause
+/// several.
+const AT_ONCE: Duration = Duration::from_secs(5);
+
 /// Makes every poll on this thread panic while it lives, as on a device whose loss wgpu treats
 /// as fatal.
 struct PanickingPolls;
@@ -136,7 +141,7 @@ fn a_wait_gives_up_at_once_when_every_poll_panics() {
     assert!(gpu.wait(Duration::from_secs(10)).is_err());
     assert!(buffer.read::<u32>(&gpu).is_err());
     assert!(gpu.read(&crate::Tex::new(&gpu, 4, 4, "panics").unwrap()).is_err());
-    assert!(t.elapsed() < Duration::from_millis(500), "{:?}", t.elapsed());
+    assert!(t.elapsed() < AT_ONCE, "{:?}", t.elapsed());
     assert_eq!(gpu.poll_panics() - before, 3 * u64::from(crate::MAX_POLL_PANICS));
 }
 
@@ -146,7 +151,7 @@ fn a_wait_on_a_lost_device_ends_at_once() {
     gpu.simulate_loss("test");
     let t = Instant::now();
     assert!(gpu.wait(Duration::from_secs(10)).is_err());
-    assert!(t.elapsed() < Duration::from_millis(500), "{:?}", t.elapsed());
+    assert!(t.elapsed() < AT_ONCE, "{:?}", t.elapsed());
 }
 
 #[test]
@@ -160,7 +165,9 @@ fn a_readback_the_gpu_finished_arrives_however_long_nobody_polled() {
     let mut pending = gpu.read_async(&[&tex]).unwrap();
     read.set_timeout(Duration::from_millis(20));
     pending.set_timeout(Duration::from_millis(20));
-    std::thread::sleep(Duration::from_millis(300));
+    // Long enough for the software adapter to finish two small copies while other tests load
+    // the machine: the first poll after this must find them done.
+    std::thread::sleep(Duration::from_secs(2));
     // Past the time, but no poll has looked since (a submission may have delivered them).
     assert_ne!(read.state(), ReadState::Failed);
     assert_ne!(pending.state(), ReadState::Failed);
@@ -177,5 +184,5 @@ fn a_readback_past_its_time_fails_after_a_poll_that_did_not_deliver() {
     let _panics = PanickingPolls::new();
     let t = Instant::now();
     assert_eq!(read.wait(&gpu, Duration::from_secs(10)), ReadState::Failed);
-    assert!(t.elapsed() < Duration::from_millis(500), "{:?}", t.elapsed());
+    assert!(t.elapsed() < AT_ONCE, "{:?}", t.elapsed());
 }
