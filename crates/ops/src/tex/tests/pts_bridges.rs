@@ -524,3 +524,23 @@ fn points_placed_on_the_gpu_follow_each_model_with_their_normals() {
     }
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
+
+/// Under exact frames `geo.text` waits for its lettering: the first stepped frame has it, and
+/// points made from it.
+#[test]
+fn text_is_there_at_the_first_exact_frame() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create("/t", "geo.text", &[("text", "pen".into())]),
+        create("/p", "pts.from_geo", &[]),
+        connect("/t", "/p", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    rig.cooker.set_exact_frames(true);
+    rig.clock.advance(1);
+    rig.cook("/p");
+    for path in ["/t", "/p"] {
+        let s = rig.cooker.status(rig.id(path)).unwrap();
+        assert!(s.has_output && s.error.is_none(), "{path}: {s:?}");
+    }
+}

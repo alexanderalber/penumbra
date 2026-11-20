@@ -420,6 +420,10 @@ impl Operator for GeoText {
             self.request = Some(request.clone());
             self.slot.start(cx.spawn(move |_job| built(&gpu, &request).map(Arc::new).map_err(|e| e.0)));
         }
+        // Exact frames wait for the lettering, so a recording or a stepped run has it at once.
+        if cx.exact_frames() {
+            crate::pts::program::finish(&mut self.slot);
+        }
         let Some(b) = self.slot.latest().cloned() else {
             return Err(match self.slot.error() {
                 Some(e) => CookError::failed(e),
