@@ -340,6 +340,7 @@ impl Operator for FromGeo {
     }
 
     fn trim(&mut self) {
+        self.uploads.trim();
         self.placed.iter_mut().for_each(BufferRing::trim);
     }
 
