@@ -1,9 +1,9 @@
 //! Reading textures back to the CPU: snapshots for Claude and the user, golden-image tests.
 
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use half::f16;
 use penumbra_core::Error;
@@ -157,7 +157,7 @@ impl Gpu {
         let padded = row.div_ceil(256) * 256;
         let size = padded * u64::from(height);
         let device = self.device();
-        let ((buffer, index), error) = self.scoped(|| {
+        let (buffer, error) = self.scoped(|| {
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("readback"),
                 size,
@@ -183,23 +183,23 @@ impl Gpu {
                 },
                 wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             );
-            let index = self.submit([encoder.finish()]);
-            (buffer, index)
+            self.submit([encoder.finish()]);
+            buffer
         });
         if let Some(e) = error {
             return Err(Error::new(format!("readback failed: {e}")));
         }
-        let (tx, rx) = mpsc::channel();
+        let mapped = Arc::new(OnceLock::new());
+        let set = mapped.clone();
         buffer.map_async(wgpu::MapMode::Read, .., move |r| {
-            tx.send(r).ok();
+            let _ = set.set(r);
         });
-        device
-            .poll(self.wait_for(index, READ_TIMEOUT))
+        self.poll_until(READ_TIMEOUT, || mapped.get().is_some())
             .map_err(|e| Error::new(format!("waiting for the GPU: {e}")))?;
-        match rx.recv_timeout(READ_TIMEOUT) {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(Error::new(format!("cannot map the readback buffer: {e}"))),
-            Err(_) => return Err(Error::new("the GPU did not deliver the readback in time")),
+        match mapped.get() {
+            Some(Ok(())) => {}
+            Some(Err(e)) => return Err(Error::new(format!("cannot map the readback buffer: {e}"))),
+            None => return Err(Error::new("the GPU did not deliver the readback in time")),
         }
         let view = buffer.get_mapped_range(..).map_err(|e| Error::new(format!("readback: {e}")))?;
         let mut data = Vec::with_capacity(width as usize * height as usize);
@@ -288,7 +288,7 @@ impl Gpu {
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
     ) -> Result<PendingRead, Error> {
         let device = self.device();
-        let ((items, index), error) = self.scoped(|| {
+        let (items, error) = self.scoped(|| {
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("read_async") });
             let mut items = Vec::with_capacity(textures.len());
@@ -325,8 +325,8 @@ impl Gpu {
                 );
                 items.push(ReadItem { buffer, width, height, padded, pixel_bytes });
             }
-            let index = self.submit([encoder.finish()]);
-            (items, index)
+            self.submit([encoder.finish()]);
+            items
         });
         if let Some(e) = error {
             return Err(Error::new(format!("readback failed: {e}")));
@@ -347,7 +347,7 @@ impl Gpu {
                 Err(_) => failed.store(true, Ordering::Release),
             });
         }
-        Ok(PendingRead { items, mapped, failed, index })
+        Ok(PendingRead { items, mapped, failed, started: Instant::now() })
     }
 
     /// A texture from rows of little-endian half floats as [`PendingRead::rows`] delivers them
@@ -445,7 +445,9 @@ pub struct PendingRead {
     items: Vec<ReadItem>,
     mapped: Arc<AtomicUsize>,
     failed: Arc<AtomicBool>,
-    index: wgpu::SubmissionIndex,
+    /// When the copies were submitted: a readback still waiting [`READ_TIMEOUT`] later has
+    /// failed (its callback may have been lost in a poll that panicked inside wgpu).
+    started: Instant,
 }
 
 struct ReadItem {
@@ -521,11 +523,8 @@ impl PendingRead {
     /// says where the readback stands. For a small readback whose result is wanted in the same
     /// frame; the wait blocks the calling thread, so keep `timeout` short.
     pub fn wait(&self, gpu: &Gpu, timeout: Duration) -> ReadState {
-        if self.state() == ReadState::Waiting {
-            let wait = gpu.wait_for(self.index.clone(), timeout);
-            // A timeout is not an error here: the caller looks again later.
-            let _ = gpu.device().poll(wait);
-        }
+        // Running out of time is no error here: the caller looks again later.
+        let _ = gpu.poll_until(timeout, || self.state() != ReadState::Waiting);
         self.state()
     }
 
@@ -534,6 +533,8 @@ impl PendingRead {
             ReadState::Failed
         } else if self.mapped.load(Ordering::Acquire) >= self.items.len() {
             ReadState::Ready
+        } else if self.started.elapsed() > READ_TIMEOUT {
+            ReadState::Failed
         } else {
             ReadState::Waiting
         }

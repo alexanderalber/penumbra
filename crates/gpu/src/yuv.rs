@@ -335,9 +335,7 @@ impl MappedPlanes {
             if Instant::now() >= deadline {
                 return Err(Error::new("the GPU did not hand the frame back in time"));
             }
-            self.device
-                .poll(wgpu::PollType::Poll)
-                .map_err(|e| Error::new(format!("waiting for the GPU: {e}")))?;
+            crate::poll_device(&self.device).map_err(|e| Error::new(format!("waiting for the GPU: {e}")))?;
             if self.state.load(Ordering::Acquire) == WAITING {
                 std::thread::sleep(Duration::from_millis(1));
             }

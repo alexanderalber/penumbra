@@ -569,7 +569,7 @@ impl Packed {
             if Instant::now() >= deadline {
                 return Err("the GPU did not hand the frame back in time".into());
             }
-            self.device.poll(wgpu::PollType::Poll).map_err(|e| format!("waiting for the GPU: {e}"))?;
+            penumbra_gpu::poll_device(&self.device).map_err(|e| format!("waiting for the GPU: {e}"))?;
             if self.state.load(Ordering::Acquire) == WAITING {
                 std::thread::sleep(Duration::from_millis(1));
             }
