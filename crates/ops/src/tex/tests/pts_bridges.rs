@@ -473,3 +473,54 @@ fn names_find_their_attributes() {
     assert_eq!(t("age"), is("age", 0));
     assert_eq!((t("index"), t("1st"), t("a b")), (None, None, None));
 }
+
+/// Points placed on the GPU once a model moved: on the box as it stands now, their normals turned
+/// with it, inside the box the points carry. Two models in one geometry each take their own
+/// placement.
+#[test]
+fn points_placed_on_the_gpu_follow_each_model_with_their_normals() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create("/box", "geo.primitive", &[("size", Value::Vec3([2.0, 1.0, 0.5]))]),
+        create("/a", "geo.transform", &[]),
+        connect("/box", "/a", 0),
+        create("/b", "geo.transform", &[("translate", Value::Vec3([0.0, 0.0, 5.0]))]),
+        connect("/box", "/b", 0),
+        create("/both", "geo.merge", &[]),
+        connect("/a", "/both", 0),
+        connect("/b", "/both", 1),
+        create("/pts", "pts.from_geo", &[]),
+        connect("/both", "/pts", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let first = points(&mut rig, "/pts");
+    assert_eq!(first.count().known(), Some(48));
+    rig.edit(&[
+        set("/a.rotate", Value::Vec3([0.0, 0.0, 30.0])),
+        set("/a.translate", Value::Vec3([1.0, 0.0, 0.0])),
+    ]);
+    let p = points(&mut rig, "/pts");
+    let (s, c) = 30f64.to_radians().sin_cos();
+    let b = p.bounds().unwrap();
+    let normals = values(&rig, &p, "normal");
+    for (k, (v, n)) in xyz(&rig, &p).iter().zip(&normals).enumerate() {
+        let inside = (0..3).all(|a| v[a] >= b.min[a] - 1e-5 && v[a] <= b.max[a] + 1e-5);
+        assert!(inside, "point {k} {v:?} lies outside {b:?}");
+        let (x, y, z) = (f64::from(v[0]), f64::from(v[1]), f64::from(v[2]));
+        let (nx, ny, nz) = (f64::from(n[0]), f64::from(n[1]), f64::from(n[2]));
+        // Back into the box's own space: the first 24 turned and moved, the others lifted by 5.
+        let (local, nl) = if k < 24 {
+            let (x, y) = (x - 1.0, y);
+            ([c * x + s * y, -s * x + c * y, z], [c * nx + s * ny, -s * nx + c * ny, nz])
+        } else {
+            ([x, y, z - 5.0], [nx, ny, nz])
+        };
+        let corner = (local[0].abs() - 1.0).abs() < 1e-4
+            && (local[1].abs() - 0.5).abs() < 1e-4
+            && (local[2].abs() - 0.25).abs() < 1e-4;
+        assert!(corner, "point {k} {v:?} is no corner of its box");
+        let axis = (0..3).find(|a| nl[*a].abs() > 0.999);
+        assert!(axis.is_some_and(|a| local[a] * nl[a] > 0.0), "point {k}: normal {n:?} does not point out");
+    }
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}
