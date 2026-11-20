@@ -571,18 +571,35 @@ impl Compute {
         self.record(gpu, buffers, steps)
     }
 
+    /// [`Compute::run_with`] for several sets of buffers: each run's steps with its own buffers,
+    /// all in one compute pass of one command encoder, so many small runs cost the CPU about what
+    /// one does. A run reads what the runs before it wrote. `Err` as for
+    /// [`Compute::run_with`]; then none of them runs.
+    pub fn run_many(&self, gpu: &Gpu, runs: &[(&[&Buffer], &[Step<'_>])]) -> Result<(), Error> {
+        self.record_runs(gpu, runs)
+    }
+
     fn record(&self, gpu: &Gpu, buffers: &[&Buffer], steps: &[Step<'_>]) -> Result<(), Error> {
+        self.record_runs(gpu, &[(buffers, steps)])
+    }
+
+    fn record_runs(&self, gpu: &Gpu, runs: &[(&[&Buffer], &[Step<'_>])]) -> Result<(), Error> {
         struct Ready<'e> {
             entry: &'e Entry,
             groups: [u32; 3],
             parts: [Vec<u8>; 3],
+            /// The run it belongs to.
+            run: usize,
         }
-        let group2 = self.buffer_group(gpu, buffers)?;
+        let groups2 =
+            runs.iter().map(|(buffers, _)| self.buffer_group(gpu, buffers)).collect::<Result<Vec<_>, _>>()?;
         let max_groups = gpu.device().limits().max_compute_workgroups_per_dimension;
+        let steps: Vec<(usize, &Step<'_>)> =
+            runs.iter().enumerate().flat_map(|(k, (_, steps))| steps.iter().map(move |s| (k, s))).collect();
         let mut ready = Vec::with_capacity(steps.len());
         // Steps that share a `Dispatch` in a row share its uniforms, packed once.
         let mut packed: Option<(*const Dispatch<'_>, Vec<u8>, Vec<u8>)> = None;
-        for step in steps {
+        for &(run, step) in &steps {
             let (entry, out, input) = (step.entry, step.out, step.input);
             let e = self
                 .entries
@@ -638,7 +655,7 @@ impl Compute {
                     self.label
                 )));
             }
-            ready.push(Ready { entry: e, groups, parts: [grid, time, params] });
+            ready.push(Ready { entry: e, groups, parts: [grid, time, params], run });
         }
         let parts: Vec<[&[u8]; 3]> = ready
             .iter()
@@ -649,13 +666,17 @@ impl Compute {
                 label: Some(&self.label),
                 timestamp_writes: None,
             });
-            if let Some(g) = &group2 {
-                cp.set_bind_group(BUFFER_GROUP, g, &[]);
-            }
-            for ((r, step), slots) in ready.iter().zip(steps).zip(slots) {
+            let mut bound = None;
+            for ((r, (_, step)), slots) in ready.iter().zip(&steps).zip(slots) {
                 let [x, y, z] = r.groups;
                 if x == 0 || y == 0 || z == 0 {
                     continue;
+                }
+                if bound != Some(r.run) {
+                    if let Some(Some(g)) = groups2.get(r.run) {
+                        cp.set_bind_group(BUFFER_GROUP, g, &[]);
+                    }
+                    bound = Some(r.run);
                 }
                 let group1 = self.layouts.group(gpu, step.input, step.out);
                 cp.set_pipeline(&r.entry.pipeline);
@@ -666,7 +687,7 @@ impl Compute {
         });
         match error {
             Some(e) => {
-                let names: Vec<&str> = steps.iter().map(|s| s.entry).collect();
+                let names: Vec<&str> = steps.iter().map(|(_, s)| s.entry).collect();
                 Err(Error::new(format!("{} {}: {e}", self.label, names.join(", "))))
             }
             None => Ok(()),

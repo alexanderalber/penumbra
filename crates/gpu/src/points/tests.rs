@@ -382,3 +382,114 @@ fn merged_ids_already_in_their_band_stay() {
     assert_eq!(got, [2, 3, half, half + 1, half + 7]);
     assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
 }
+
+/// Four sets of points with six attributes between them, some lacking some: a set's own count
+/// known, or on the GPU below its capacity.
+fn four_sets(gpu: &Gpu, scale: u32) -> Vec<Points> {
+    let names: [(&str, AttrType); 6] = [
+        ("position", AttrType::Vec3),
+        ("color", AttrType::Vec4),
+        ("scale", AttrType::F32),
+        ("uv", AttrType::Vec2),
+        ("velocity", AttrType::Vec3),
+        ("tag", AttrType::U32),
+    ];
+    (0..4u32)
+        .map(|k| {
+            let capacity = (k + 1) * 10 * scale;
+            let attrs: Vec<Attr> = names
+                .iter()
+                .enumerate()
+                .filter(|(a, _)| (a + k as usize) % 5 != 4)
+                .map(|(a, (name, ty))| {
+                    let words = (ty.stride() / 4) as u32;
+                    let values: Vec<u32> = (0..capacity * words)
+                        .map(|w| {
+                            if *ty == AttrType::U32 {
+                                k * 1000 + w
+                            } else {
+                                (k as f32 * 100.0 + a as f32 + w as f32 * 0.5).to_bits()
+                            }
+                        })
+                        .collect();
+                    let b = Buffer::of::<u32>(gpu, values.len() as u64, name).unwrap();
+                    b.write(gpu, 0, &values).unwrap();
+                    Attr::new(name, *ty, b).unwrap()
+                })
+                .collect();
+            let p = Points::new(capacity, capacity, attrs).unwrap();
+            if k % 2 == 0 {
+                return p;
+            }
+            let header = Buffer::new(gpu, HEADER_BYTES, "count").unwrap();
+            header.write(gpu, 0, &[capacity - 3, 0, 0, 0]).unwrap();
+            p.with_count(Count::gpu(header, capacity, Seen::default()).unwrap()).unwrap()
+        })
+        .collect()
+}
+
+/// A merge of four sets and six attributes: each attribute of each set in its place, in order,
+/// the default where a set lacks it, the count on the GPU the sum of the live points.
+#[test]
+fn a_merge_of_four_sets_puts_every_attribute_in_place() {
+    let Some(gpu) = gpu() else { return };
+    let sets = four_sets(&gpu, 1);
+    let refs: Vec<(usize, &Points)> = sets.iter().enumerate().collect();
+    let mut merger = merge::Merger::new();
+    for _ in 0..2 {
+        let out = merger.merge(&gpu, &refs).unwrap();
+        let header = out.count().header().unwrap().read::<u32>(&gpu).unwrap();
+        let live: Vec<u32> = sets.iter().map(|p| p.count().known().unwrap_or(p.capacity() - 3)).collect();
+        assert_eq!(header[0], live.iter().sum::<u32>());
+        for a in out.attrs() {
+            let got = a.buffer().read::<u32>(&gpu).unwrap();
+            let words = (a.ty().stride() / 4) as usize;
+            let mut at = 0usize;
+            for (k, p) in sets.iter().enumerate() {
+                let n = live[k] as usize * words;
+                let want: Vec<u32> = match p.attr(a.name()) {
+                    Some(src) => src.buffer().read::<u32>(&gpu).unwrap()[..n].to_vec(),
+                    None => {
+                        let fill = merge::fill_of(a.name(), a.ty());
+                        (0..n).map(|w| fill[w % words].to_bits()).collect()
+                    }
+                };
+                assert_eq!(got[at..at + n], want[..], "`{}` of set {k}", a.name());
+                at += n;
+            }
+        }
+    }
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}
+
+/// CPU time of a merge of four sets and six attributes, as a cook pass records it (deferred).
+#[test]
+#[ignore = "times a merge on the hardware GPU: cargo test -p penumbra-gpu merge_timing -- --ignored --nocapture"]
+fn merge_timing() {
+    let gpu = Gpu::headless(crate::AdapterChoice::Hardware).unwrap();
+    eprintln!("{}", gpu.name());
+    let sets = four_sets(&gpu, 1000);
+    let refs: Vec<(usize, &Points)> = sets.iter().enumerate().collect();
+    let mut merger = merge::Merger::new();
+    for _ in 0..50 {
+        let _d = gpu.defer();
+        merger.merge(&gpu, &refs).unwrap();
+    }
+    gpu.wait(std::time::Duration::from_secs(10)).unwrap();
+    let runs = 2000;
+    let mut cpu = std::time::Duration::ZERO;
+    for _ in 0..runs {
+        let t = std::time::Instant::now();
+        {
+            let _d = gpu.defer();
+            let out = merger.merge(&gpu, &refs).unwrap();
+            drop(out);
+        }
+        cpu += t.elapsed();
+        gpu.poll();
+    }
+    eprintln!(
+        "merge of 4 sets x 6 attributes: {:.1} us CPU per merge",
+        cpu.as_secs_f64() * 1e6 / f64::from(runs)
+    );
+}

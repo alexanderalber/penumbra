@@ -76,20 +76,19 @@ fn pts_merge(@builtin(global_invocation_id) gid: vec3u) {
     }
 }
 
-";
-
-/// Writes the total into the header of the merged points; for lines of two points, also the
-/// number of lines.
-const TOTAL: &str = "
-@group(2) @binding(0) var<storage, read> pts_counts: array<u32>;
-@group(2) @binding(1) var<storage, read_write> pts_header: array<u32>;
-
-const PTS_MAX_INPUTS: u32 = 64u;
-
-fn pts_live(k: u32) -> u32 {
-    return min(pts_counts[2u * k], pts_counts[2u * k + 1u]);
+// The count in the header of set `input` (bound as `pts_src`) into its place among the counts
+// (bound as `pts_dst`).
+@compute @workgroup_size(64)
+fn pts_count(@builtin(global_invocation_id) gid: vec3u) {
+    if gid.x != 0u {
+        return;
+    }
+    let k = min(u32(max(params.input, 0)), PTS_MAX_INPUTS - 1u);
+    pts_dst[2u * k] = pts_src[0];
 }
 
+// The total into the header of the merged points (bound as `pts_dst`); for lines of two
+// points, also the number of lines.
 @compute @workgroup_size(64)
 fn pts_total(@builtin(global_invocation_id) gid: vec3u) {
     if gid.x != 0u {
@@ -100,10 +99,10 @@ fn pts_total(@builtin(global_invocation_id) gid: vec3u) {
     for (var j = 0u; j < n; j++) {
         total += pts_live(j);
     }
-    pts_header[0] = total;
-    pts_header[1] = select(0u, total / 2u, params.pairs == 1);
-    pts_header[2] = 0u;
-    pts_header[3] = 0u;
+    pts_dst[0] = total;
+    pts_dst[1] = select(0u, total / 2u, params.pairs == 1);
+    pts_dst[2] = 0u;
+    pts_dst[3] = 0u;
 }
 ";
 
@@ -118,6 +117,49 @@ fn params() -> [ParamSpec; 8] {
         ParamSpec::int("band", 0),
         ParamSpec::int("step", 0),
     ]
+}
+
+/// One copy of a merge: an attribute of a set into its place.
+struct Placing<'b> {
+    k: usize,
+    n: u32,
+    words: i64,
+    copy: bool,
+    fill: [f32; 4],
+    band: i64,
+    src: &'b Buffer,
+    dst: &'b Buffer,
+}
+
+/// The params every step of a merge shares.
+struct Shared {
+    step: i64,
+    inputs: i64,
+    pairs: bool,
+}
+
+impl Shared {
+    fn param(&self, n: &str) -> Option<Value> {
+        match n {
+            "step" => Some(Value::Int(self.step)),
+            "inputs" => Some(Value::Int(self.inputs)),
+            "pairs" => Some(Value::Int(i64::from(self.pairs))),
+            _ => None,
+        }
+    }
+}
+
+impl Placing<'_> {
+    fn param(&self, n: &str, shared: &Shared) -> Option<Value> {
+        match n {
+            "input" => Some(Value::Int(self.k as i64)),
+            "words" => Some(Value::Int(self.words)),
+            "copy" => Some(Value::Int(i64::from(self.copy))),
+            "fill" => Some(Value::Vec4(self.fill.map(f64::from))),
+            "band" => Some(Value::Int(self.band)),
+            other => shared.param(other),
+        }
+    }
 }
 
 /// The buffers one node keeps to merge points, across cooks.
@@ -205,20 +247,6 @@ impl Merger {
             .enumerate()
             .filter_map(|(k, (_, p))| p.count().header().map(|h| (k, h.clone())))
             .collect();
-        if !headers.is_empty() {
-            let ((), error) = gpu.scoped(|| {
-                let mut encoder = gpu.device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("pts merge counts"),
-                });
-                for (k, h) in &headers {
-                    encoder.copy_buffer_to_buffer(h.buffer(), 0, counts.buffer(), (*k as u64) * 8, 4);
-                }
-                gpu.submit([encoder.finish()]);
-            });
-            if let Some(e) = error {
-                return Err(Error::new(format!("cannot gather the counts: {e}")));
-            }
-        }
 
         let none = match self.none.as_ref() {
             Some(b) => b.clone(),
@@ -229,12 +257,17 @@ impl Merger {
             }
         };
         let program = gpu.cached_compute("pts merge", MERGE, &params())?;
+        let header = if on_gpu { Some(self.headers.next(gpu, HEADER_BYTES, "pts count")?) } else { None };
         let banded =
             sets.len() > 1 && sets.iter().all(|(_, p)| p.attr("id").is_some_and(|a| a.ty() == AttrType::U32));
         let step = (1u64 << 32) / sets.len().max(1) as u64;
         // The low 32 bits as WGSL's i32 holds them; the program reads them back as u32.
         let low = |v: u64| i64::from(v as u32 as i32);
         let band = |k: usize| -> i64 { low(step * k as u64) };
+        let inputs = sets.len() as i64;
+        // Every copy (a set and an attribute each), then the total, recorded into one compute
+        // pass: recorded one by one, each copy cost the CPU about 45 us.
+        let mut copies: Vec<Placing<'_>> = Vec::new();
         for (k, (_, p)) in sets.iter().enumerate() {
             let n = p.count().at_most();
             if n == 0 {
@@ -242,57 +275,75 @@ impl Merger {
             }
             for ((name, ty), dst) in attrs.iter().zip(&buffers) {
                 let src = p.attr(name);
-                let fill = fill_of(name, *ty);
-                let words = (ty.stride() / 4) as i64;
-                let copy = src.is_some();
-                let param = |n: &str| match n {
-                    "input" => Some(Value::Int(k as i64)),
-                    "words" => Some(Value::Int(words)),
-                    "copy" => Some(Value::Int(i64::from(copy))),
-                    "fill" => Some(Value::Vec4(fill.map(f64::from))),
-                    "band" => Some(Value::Int(if banded && name == "id" { band(k) } else { 0 })),
-                    "step" => Some(Value::Int(low(step))),
-                    _ => None,
-                };
-                let input = Dispatch {
-                    volumes: &[],
-                    pictures: &[],
-                    data: None,
-                    seconds: 0.0,
-                    frame: 0,
-                    param: &param,
-                };
-                let src = src.map_or(&none, Attr::buffer);
-                let (w, h) = (n.clamp(1, ROW), n.div_ceil(n.clamp(1, ROW)));
-                program.run_with(
-                    gpu,
-                    &[&counts, src, dst],
-                    &[Step { entry: "pts_merge", out: Out::grid(w, h), input: &input }],
-                )?;
+                copies.push(Placing {
+                    k,
+                    n,
+                    words: (ty.stride() / 4) as i64,
+                    copy: src.is_some(),
+                    fill: fill_of(name, *ty),
+                    band: if banded && name == "id" { band(k) } else { 0 },
+                    src: src.map_or(&none, Attr::buffer),
+                    dst,
+                });
             }
+        }
+        let shared = Shared { step: low(step), inputs, pairs };
+        let shared = &shared;
+        let params_of: Vec<_> = copies.iter().map(|c| move |n: &str| c.param(n, shared)).collect();
+        let total_param = |n: &str| shared.param(n);
+        // The counts on the GPU first, each into its set's place among the counts.
+        let count_params: Vec<_> = headers
+            .iter()
+            .map(|(k, _)| {
+                let k = *k as i64;
+                move |n: &str| (n == "input").then_some(Value::Int(k))
+            })
+            .collect();
+        let count_inputs: Vec<Dispatch<'_>> = count_params
+            .iter()
+            .map(|f| Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: f })
+            .collect();
+        let count_steps: Vec<[Step<'_>; 1]> = count_inputs
+            .iter()
+            .map(|input| [Step { entry: "pts_count", out: Out::range(1), input }])
+            .collect();
+        let count_bindings: Vec<[&Buffer; 3]> = headers.iter().map(|(_, h)| [&none, h, &counts]).collect();
+        let inputs_of: Vec<Dispatch<'_>> = params_of
+            .iter()
+            .map(|f| Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: f })
+            .collect();
+        let total_input =
+            Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &total_param };
+        let steps: Vec<[Step<'_>; 1]> = copies
+            .iter()
+            .zip(&inputs_of)
+            .map(|(c, input)| {
+                let (w, h) = (c.n.clamp(1, ROW), c.n.div_ceil(c.n.clamp(1, ROW)));
+                [Step { entry: "pts_merge", out: Out::grid(w, h), input }]
+            })
+            .collect();
+        let bindings: Vec<[&Buffer; 3]> = copies.iter().map(|c| [&counts, c.src, c.dst]).collect();
+        let mut runs: Vec<(&[&Buffer], &[Step<'_>])> = count_bindings
+            .iter()
+            .zip(&count_steps)
+            .chain(bindings.iter().zip(&steps))
+            .map(|(b, s)| (b.as_slice(), s.as_slice()))
+            .collect();
+        let total_bindings = header.as_ref().map(|h| [&counts, &none, h]);
+        let total_step = [Step { entry: "pts_total", out: Out::range(1), input: &total_input }];
+        if let Some(b) = &total_bindings {
+            runs.push((b.as_slice(), &total_step));
+        }
+        if !runs.is_empty() {
+            program.run_many(gpu, &runs)?;
         }
 
         let bounds = bounds(sets);
         let made = Points::new(capacity, 0, out)?.with_bounds(bounds);
-        if !on_gpu {
+        let Some(header) = header else {
             let made = made.with_count(Count::Known(at_most))?;
             return Ok(made.with_strips(strips));
-        }
-        let header = self.headers.next(gpu, HEADER_BYTES, "pts count")?;
-        let inputs = sets.len() as i64;
-        let param = |n: &str| match n {
-            "inputs" => Some(Value::Int(inputs)),
-            "pairs" => Some(Value::Int(i64::from(pairs))),
-            _ => None,
         };
-        let input =
-            Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
-        let total = gpu.cached_compute("pts merge total", TOTAL, &params())?;
-        total.run_with(
-            gpu,
-            &[&counts, &header],
-            &[Step { entry: "pts_total", out: Out::range(1), input: &input }],
-        )?;
         // The readback is for display only: one that cannot start leaves the count unseen.
         let seen = Seen::reading(gpu, &header, self.last.as_ref()).unwrap_or_default();
         self.last = Some(seen.clone());
@@ -340,7 +391,7 @@ fn union(sets: &[(usize, &Points)]) -> Result<Vec<(String, AttrType)>, Error> {
 }
 
 /// The value a set without the attribute gives its points, as the attribute's words hold it.
-fn fill_of(name: &str, ty: AttrType) -> [f32; 4] {
+pub(crate) fn fill_of(name: &str, ty: AttrType) -> [f32; 4] {
     let d = default_of(name).filter(|d| d.ty == ty).map_or([0.0; 4], |d| d.default);
     match ty {
         // Whole numbers: their bits, which for the defaults (0) are the float's.
