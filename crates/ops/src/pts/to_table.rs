@@ -18,13 +18,12 @@ use penumbra_graph::{
 };
 
 use super::program::input;
-use super::to_chan::component_names;
+use super::to_chan::{component_names, given_up};
 use crate::gpu;
 
 pub const KIND: &str = "table.from_pts";
 
 const EXACT_WAIT: Duration = Duration::from_secs(2);
-const STALE: Duration = Duration::from_secs(5);
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
@@ -175,7 +174,8 @@ impl Operator for ToTable {
 
         // A readback given up is read anew: the change it was to show (or one that came while it
         // was in flight) would otherwise never arrive.
-        let stale = self.reading.as_ref().is_some_and(|(_, started, _)| started.elapsed() > STALE);
+        let stale =
+            self.reading.as_ref().is_some_and(|(r, started, _)| given_up(r.state(), started.elapsed()));
         if stale {
             self.reading = None;
         }

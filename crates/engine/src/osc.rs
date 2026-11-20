@@ -153,6 +153,9 @@ impl OscShared {
         if component.is_some() {
             spec.check_bindable(component).map_err(|e| e.0)?;
         }
+        // The outcome of an earlier learn is not this one's: whoever waits for this learn must
+        // not take it for an answer, and a second timeout for the same param reads the same.
+        *lock(&self.learned) = None;
         *lock(&self.learning) = Some(Learning {
             param: param.to_string(),
             target: (path, component),
@@ -499,10 +502,11 @@ fn learn_step(session: &Session, shared: &OscShared, now: Instant) {
     };
     let heard = shared.hub.take_heard();
     let finish = |l: Learned| {
+        // The outcome first: a learn that is over without one was cancelled.
+        *lock(&shared.learned) = Some(l);
         *lock(&shared.learning) = None;
         shared.hub.learn(false);
         shared.keyboard.learn(false);
-        *lock(&shared.learned) = Some(l);
     };
     if heard.is_none()
         && let Some(key) = shared.keyboard.take_heard()
@@ -863,14 +867,14 @@ fn osc_learn(e: &Engine, p: &Json) -> CmdResult<Json> {
     let param = a.param.ok_or("`param` is missing (or say {cancel: true})")?;
     let secs = |x: Option<f64>, d: f64| x.filter(|x| x.is_finite()).unwrap_or(d).clamp(0.0, 600.0);
     let timeout = Duration::from_secs_f64(secs(a.timeout, LEARN_TIMEOUT.as_secs_f64()).max(0.1));
-    let before = osc.learned();
     osc.learn(&e.session(), &param, timeout)?;
     let wait = Duration::from_secs_f64(secs(a.wait, 0.0));
     let deadline = Instant::now() + wait;
     while Instant::now() < deadline {
-        if osc.learning().is_none() && osc.learned() != before {
-            let l = osc.learned();
-            if let Some(err) = l.as_ref().and_then(|l| l.error.clone()) {
+        // Over: it heard something, ran out of time or was cancelled.
+        if osc.learning().is_none() {
+            let Some(l) = osc.learned() else { return Ok(json!({"cancelled": true})) };
+            if let Some(err) = l.error.clone() {
                 return Err(err.into());
             }
             return Ok(json!({"learned": l}));
