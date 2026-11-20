@@ -433,3 +433,33 @@ fn wind_never_overshoots_and_a_negative_strength_pushes_nothing() {
     let Some((_, v)) = windy(-2.0, 0.01) else { return };
     assert!(v.iter().all(|s| s[0] == 0.0), "{v:?}");
 }
+
+/// The pull wind leaves for the particles stays in their loop: the loop carries it round, but a
+/// merge and a table of every attribute after the loop show none, and wind on points that are no
+/// particles leaves none.
+#[test]
+fn the_pull_of_wind_does_not_leave_the_loop() {
+    let Some((mut rig, _)) = windy(2.0, 0.01) else { return };
+    let wind = crate::pts::force::WIND;
+    let end = points(&mut rig, "/end");
+    assert!(end.attr(wind).is_some(), "the loop carries the pull round");
+    rig.edit(&[
+        create("/m", "pts.merge", &[]),
+        connect("/end", "/m", 0),
+        create("/t", "table.from_pts", &[]),
+        connect("/end", "/t", 0),
+        line(),
+        create("/f", "pts.force", &[("kind", "wind".into())]),
+        connect("/line", "/f", 0),
+    ]);
+    let merged = points(&mut rig, "/m");
+    assert!(merged.attr(wind).is_none() && merged.attr("velocity").is_some(), "one input");
+    rig.edit(&[connect("/line", "/m", 1)]);
+    let merged = points(&mut rig, "/m");
+    assert!(merged.attr(wind).is_none() && merged.attr("velocity").is_some(), "two inputs");
+    let t = super::pts_bridges::table(&mut rig, "/t");
+    assert!(!t.rows()[0].iter().any(|n| n.starts_with(wind)), "{:?}", t.rows()[0]);
+    let plain = points(&mut rig, "/f");
+    assert!(plain.attr("force").is_some() && plain.attr(wind).is_none());
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
+}

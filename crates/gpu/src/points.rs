@@ -157,6 +157,13 @@ pub fn valid_name(name: &str) -> bool {
         && !name.starts_with(|c: char| c.is_ascii_digit())
 }
 
+/// Whether `name` is a working attribute one node leaves for another, such as `pts_wind` from
+/// `pts.force` for `pts.particles` round a loop: named with `pts_`. Such attributes are not
+/// listed with the points, not merged, and not in a table of all attributes.
+pub fn internal(name: &str) -> bool {
+    name.starts_with("pts_")
+}
+
 /// One attribute: a name, a type, and a buffer with an element per point.
 #[derive(Clone)]
 pub struct Attr {
@@ -757,6 +764,12 @@ impl Points {
         let bounds = if name == POSITION { None } else { self.bounds };
         let attrs: Vec<Attr> = self.attrs.iter().filter(|a| a.name() != name).cloned().collect();
         Self { attrs: attrs.into(), bounds, ..self.clone() }
+    }
+
+    /// Without the working attributes nodes leave for each other ([`internal`]).
+    pub fn without_internal(&self) -> Self {
+        let attrs: Vec<Attr> = self.attrs.iter().filter(|a| !internal(a.name())).cloned().collect();
+        Self { attrs: attrs.into(), ..self.clone() }
     }
 
     pub fn with_bounds(self, bounds: Option<Bounds>) -> Self {

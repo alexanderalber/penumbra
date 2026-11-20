@@ -92,7 +92,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             )
             .input("in", DataKind::Pts)
             .output("out", DataKind::Pts)
-            .describe_output("out", "The points with the force added; the others pass on unchanged. Wind into `force` also adds to `pts_wind`, how hard it pulls each point: pts.particles reads it to step the speed without overshooting"),
+            .describe_output("out", "The points with the force added; the others pass on unchanged. Wind into the `force` of particles also adds to `pts_wind`, how hard it pulls each point: pts.particles reads it to step the speed without overshooting"),
             || Box::new(Force::default()) as Box<dyn Operator>,
         )
         .warm_up(on_gpu(warm_up)),
@@ -104,15 +104,16 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 /// implicit step for the wind, so a light particle never passes the wind's speed.
 pub(crate) const WIND: &str = "pts_wind";
 
-/// The force of each kind, its falloff and mask, added to `target`.
-fn spec(target: &str, mask: Option<&str>, wind: bool) -> Spec {
+/// The force of each kind, its falloff and mask, added to `target`. `carry`: wind into `force`
+/// also adds its pull to [`WIND`].
+fn spec(target: &str, mask: Option<&str>, wind: bool, carry: bool) -> Spec {
     let m = mask.map_or("1.0".to_string(), |m| format!("f32({m})"));
     // Wind pulls towards the wind's speed, never away from it: a negative pull would grow
     // without end. Into `velocity` it is a change per step, at most all the way.
     let push = match (wind, target) {
         (false, _) => format!("{target} += pts_dir * params.strength * pts_falloff(pts_d) * {m};"),
         (true, "velocity") => "velocity += pts_dir * min(pts_k, 1.0);".to_string(),
-        (true, "force") => format!(
+        (true, "force") if carry => format!(
             "force += pts_dir * pts_k;
     {WIND} += pts_k;"
         ),
@@ -175,7 +176,7 @@ fn main() {{
     if wind && target != "velocity" {
         decls.push(Decl::read("velocity"));
     }
-    if wind && target == "force" {
+    if wind && carry && target == "force" {
         decls.push(Decl::write(WIND).ty(AttrType::F32).default([0.0; 4]));
     }
     if let Some(m) = mask {
@@ -205,7 +206,8 @@ fn warm_up(gpu: &Gpu) -> Result<(), Error> {
         ("velocity", AttrType::Vec3),
     ]);
     for wind in [false, true] {
-        let generated = program::generate(&spec("force", None, wind), &shape, program::storage_budget(gpu))?;
+        let generated =
+            program::generate(&spec("force", None, wind, wind), &shape, program::storage_budget(gpu))?;
         Program::cached(gpu, generated)?;
     }
     Ok(())
@@ -253,7 +255,11 @@ impl Operator for Force {
             None => None,
         };
         let wind = cx.text("kind")? == "wind";
-        let spec = spec(target, mask, wind);
+        // The pull is for pts.particles, which reads it from points that come round its loop:
+        // those carry `force` from the particles. Points without it (points that are no
+        // particles) get no pull to carry on.
+        let pull = wind && points.attr("force").is_some();
+        let spec = spec(target, mask, wind, pull);
         let param = |name: &str| cx.param(name).cloned();
         let out = self.own.run(cx, gpu, &spec, points, false, &param, &[])?;
         let bounds = if target == "position" { None } else { points.bounds() };

@@ -864,7 +864,12 @@ pub(crate) fn pts_lines(p: &penumbra_gpu::Points) -> Vec<String> {
         Some([r, c, s]) => format!("{count}, {r} x {c} x {s}"),
         None => count,
     }];
-    lines.extend(p.attrs().iter().map(|a| format!("{} {}", a.name(), a.ty().wgsl())));
+    lines.extend(
+        p.attrs()
+            .iter()
+            .filter(|a| !penumbra_gpu::points::internal(a.name()))
+            .map(|a| format!("{} {}", a.name(), a.ty().wgsl())),
+    );
     if let Some(b) = p.bounds() {
         let f = |v: [f32; 3]| v.map(|c| format_value(f64::from(c))).join(", ");
         lines.push(format!("from {} to {}", f(b.min), f(b.max)));

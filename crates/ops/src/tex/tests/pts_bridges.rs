@@ -370,7 +370,7 @@ fn an_attribute_comes_out_as_channels() {
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors().last);
 }
 
-fn table(rig: &mut Rig, path: &str) -> Table {
+pub(super) fn table(rig: &mut Rig, path: &str) -> Table {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         rig.clock.advance(1);
