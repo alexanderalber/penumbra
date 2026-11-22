@@ -9,8 +9,8 @@ So each stripe keeps moving, and the count on the wall is the time since the per
 
 - `/person` (`person.wgsl`) stands in for a depth camera's mask: white where the person is, black
   elsewhere. It is blocky like a Kinect's (`block`), frayed at the edges (`ragged`) and has stray
-  pixels near the floor (`speckle`). It runs quickly to the right, then goes back slowly to the
-  left with small steps.
+  pixels near the floor (`speckle`). The person walks quickly to the right, then slowly back to
+  the left. Their feet stay put while they carry the weight, and now and then an arm goes up.
 - `/seen` (`seen.wgsl`) and `/loop` remember when the person was last at each pixel. Where the
   mask is white, `/seen` writes the time; elsewhere it keeps the old value. So the latest visit
   wins.
