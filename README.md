@@ -74,7 +74,7 @@ groups of rigid bodies. The
   filter, room reverb. Limiter on the output. Records to WAV or into a video.
 - **Channels:** LFO, noise, math, filter, envelope, integrator, derivative, trail, merge, select.
   Buttons and sliders on their node. Mouse, keyboard, 3D mouse. A web page on a phone
-  ([control-page](examples/control-page/README.md) example). Any param bound to a channel by
+  ([control page](docs/concepts.md#a-control-page-in-the-browser)). Any param bound to a channel by
   dragging a wire onto it. OSC and MIDI learn.
 - **Shows:** a list of steps (`chan.sequence`): which piece, how long, which transition. Hold
   until GO from a key, a button or OSC. `tex.sequence` blends and cooks only what is shown.
