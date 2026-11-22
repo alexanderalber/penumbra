@@ -1,9 +1,11 @@
 # penumbra
 
-penumbra is a node-based tool for projection mapping, camera tracking and installations driven
-by sound, DMX or OSC. It is written in Rust on egui and wgpu. It covers part of what
-TouchDesigner is used for. It is not compatible with TouchDesigner: no `.toe`/`.tox` files, no
-TouchDesigner Python API, its own node names.
+penumbra is a free, open-source alternative to TouchDesigner for live visuals. It is a
+node-based tool for projection mapping, camera tracking and installations driven by sound, DMX
+or OSC. It is written in Rust on egui and wgpu. It covers part of what TouchDesigner is used
+for. It does not open TouchDesigner files: no `.toe`/`.tox`, no TouchDesigner Python API, its
+own node names. The add dialog finds a node by the name of the TouchDesigner operator whose
+job it does.
 
 - **Projection onto real objects.** Point the projectors and a camera at the scene and scan.
   penumbra finds the faces and objects, lines the projectors up, blends them and puts content
@@ -13,6 +15,9 @@ TouchDesigner Python API, its own node names.
 - **Everything is a command.** Every action in the app is also a command on a local JSON
   control channel. A script, or Claude Code, can build, change, run and photograph a network
   without anyone clicking. `penumbra-cli mcp` serves the same commands to MCP clients.
+- **TouchDesigner projects are rebuilt by an agent.** Claude Code reads a `.toe` and rebuilds
+  it as a penumbra network with the [porting skill](#compared-with-touchdesigner). In our
+  ports so far, that took 5 to 10 minutes per project.
 - **Plain files.** A project is a folder of text files that can be diffed and edited by hand.
 - **Free and open source** (MIT or Apache-2.0).
 
