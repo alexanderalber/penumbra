@@ -1603,10 +1603,10 @@ mod tests {
 
     #[test]
     fn arranging_again_keeps_the_arrangement() {
-        // The shipped example whose arrangement used to cycle through four layouts, as the
-        // editor sees it.
+        // A network (once a shipped example) whose arrangement used to cycle through four
+        // layouts, as the editor sees it.
         let types = penumbra_ops::builtin_types().unwrap();
-        let text = include_str!("../../../examples/projection-onto-objects/project.ron");
+        let text = include_str!("../tests/fixtures/arrange-relief.ron");
         let content = penumbra_project::load(text, &types).unwrap();
         let ops = penumbra_project::diff(&penumbra_project::Content::default(), &content);
         let net = Network::new().apply(&types, &ops).unwrap().network;
@@ -1640,7 +1640,7 @@ mod tests {
     #[test]
     fn notes_go_along_cover_no_node_and_arranging_again_moves_nothing() {
         let types = penumbra_ops::builtin_types().unwrap();
-        let text = include_str!("../../../examples/projector-wall/project.ron");
+        let text = include_str!("../tests/fixtures/arrange-wall-notes.ron");
         let content = penumbra_project::load(text, &types).unwrap();
         let ops = penumbra_project::diff(&penumbra_project::Content::default(), &content);
         let mut net = Network::new().apply(&types, &ops).unwrap().network;

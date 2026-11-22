@@ -21,8 +21,7 @@ project, read by `tex.image_file`. Nothing of it runs per frame: during the show
 `tex.remap` lookup and a multiply per projector.
 
 Paths in the commands are relative to the project directory. The last section walks through
-the whole chain once, from an empty project to a relief lit by two projectors, along the
-example projection-onto-objects.
+the whole chain once, from an empty project to a relief lit by two projectors.
 
 ## The scan button: `tex.scan`
 
@@ -329,8 +328,8 @@ warnings.
    lines keep their width on steep and flat parts, and a valley clipped at 0 gets no outline.
    A measured map is noisy (scan residuals, tile edges) and the lines wobble and break into
    small islands; `smooth` blurs the height inside the node before the lines are found, while
-   the colours stay sharp. The example uses 4 on its 960 x 540 map; a full-resolution scan
-   wants about 10, and thick lines need it most: without smoothing their edges follow the
+   the colours stay sharp. A 960 x 540 map wants about 4, a full-resolution scan
+   about 10, and thick lines need it most: without smoothing their edges follow the
    noise and plateau pixels punch holes into them.
 4. `tex.composite` multiply with `tex.image_file` of `relief/mask_N.png` (or run `scan.blend` with
    `"masks": ["relief/mask_0.png", ...]` and multiply by its `weight_N.png` instead, where the
@@ -825,33 +824,27 @@ cue](concepts.md#video-clips-on-cue).
 After a rescan, run `scan.face_template` again: the maps follow the new scan, the nodes reload
 them, and the delivered clips stay as they are.
 
-## Example: a relief from scan to picture
+## A relief from scan to picture
 
-The example **projection-onto-objects** (status bar folder button, **Examples**) is a relief
-lit by two projectors stacked one above the other, with the maps of one scan. It shows its
-picture without camera or projectors (`/view`). The steps below make the same thing for your
-own object and room, in the order they are done at the object. Each is a command (see
-[Control](control.md)) or a button.
+These steps light a relief with two projectors stacked one above the other, from an empty
+project to the picture on the object. They come in the order they are done at the object. Each
+is a command (see [Control](control.md)) or a button.
 
-**0. A project.** Either the example, kept as your own: **Save copy as** in the status bar's
-folder menu, into a folder beside the installation, then open that. Or an empty one:
+**0. A project.**
 
     penumbra-cli ctl project.new '{"dir": "D:/shows/relief"}'
 
 **1. Projectors and camera.** One `out.projector` per projector, its `display` from
-`output.list` (the example's `/proj_a` and `/proj_b` have none, so they open no window until
-you set it), and a `tex.video_in` for the camera:
+`output.list`, and a `tex.video_in` for the camera:
 
     penumbra-cli ctl output.list
-    penumbra-cli ctl node.set '{"path": "/proj_a", "params": {"display": "EPSON PJ [SECA514] @ target 168196"}}'
-    penumbra-cli ctl node.set '{"path": "/proj_b", "params": {"display": "EPSON PJ [SECA519] @ target 168194"}}'
+    penumbra-cli ctl node.create '{"path": "/proj_a", "kind": "out.projector", "params": {"display": "EPSON PJ [SECA514] @ target 168196"}}'
+    penumbra-cli ctl node.create '{"path": "/proj_b", "kind": "out.projector", "params": {"display": "EPSON PJ [SECA519] @ target 168194"}}'
     penumbra-cli ctl node.create '{"path": "/cam", "kind": "tex.video_in", "params": {"device": "Cam Link"}}'
 
-In an empty project create the projectors first, with `node.create` and `kind`
-`out.projector`. Fix the camera's exposure, white balance and focus on the camera itself.
+Fix the camera's exposure, white balance and focus on the camera itself.
 
-**2. Scan.** One `tex.scan` per projector, naming projector and camera (the example has
-`/scan_a` and `/scan_b`, naming `/cam`):
+**2. Scan.** One `tex.scan` per projector, naming projector and camera:
 
     penumbra-cli ctl node.create '{"path": "/scan_a", "kind": "tex.scan", "params": {"projector": "/proj_a", "camera": "/cam"}}'
     penumbra-cli ctl node.create '{"path": "/scan_b", "kind": "tex.scan", "params": {"projector": "/proj_b", "camera": "/cam"}}'
@@ -876,11 +869,8 @@ the view: valleys dark, peaks bright. If it is the wrong way round, run it again
 
     penumbra-cli ctl scan.blend '{"scans": ["scan/proj_a", "scan/proj_b"], "masks": ["relief/mask_0.png", "relief/mask_1.png"], "out": "relief"}'
 
-writes `relief/weight_0.png` and `weight_1.png`. In the example these replace the shipped
-weights, and the `tex.image_file` nodes reload them. Point the height nodes at the new heights:
-
-    penumbra-cli ctl node.set '{"path": "/height_a", "params": {"file": "relief/height_0.exr"}}'
-    penumbra-cli ctl node.set '{"path": "/height_b", "params": {"file": "relief/height_1.exr"}}'
+writes `relief/weight_0.png` and `weight_1.png`. After a new scan, run steps 3 and 4 again: the
+`tex.image_file` nodes of step 6 reload the files.
 
 **5. Colour (optional).** Make the projectors look alike, then even out the colour across each
 (on a relief only the colour: its shading would be taken for a hot spot):
@@ -890,9 +880,7 @@ weights, and the `tex.image_file` nodes reload them. Point the height nodes at t
 
 `projector.flatfield` connects a gain map and a black lift to each `out.projector`.
 
-**6. Content.** In the example it is there already: the projectors show it as soon as their
-displays are set. In an empty project the base, for projector A (B the same with `_b`,
-`height_1`, `weight_1`):
+**6. Content.** The base for projector A (B the same with `_b`, `height_1`, `weight_1`):
 
     penumbra-cli ctl node.batch '{"ops": [
       {"op": "create", "path": "/land_keys", "kind": "tex.ramp", "params": {"width": 256, "height": 1, "keep_size": true,
@@ -912,14 +900,7 @@ displays are set. In an empty project the base, for projector A (B the same with
     penumbra-cli ctl node.connect '{"from": "/weight_a", "to": "/out_a", "input": "in1"}'
     penumbra-cli ctl node.connect '{"from": "/out_a", "to": "/proj_a", "input": "in"}'
 
-The moving layers of the example (sun, tide, snow line; its README says how they are made) are
-copied over with copy and paste in the editor, or by opening the example's `project.ron` beside
-your own.
-
-**Looking without the room.** The example's `/view` puts both projectors' pictures into the
-camera's picture (`tex.remap` through each scan's `cam_to_proj`) and multiplies them by a photo
-of the relief lit white by each projector. For your own scan, point `/cam_to_proj_a` and
-`/cam_to_proj_b` at `scan/proj_a/cam_to_proj.exr` and `scan/proj_b/cam_to_proj.exr`; the
-photos are the first camera picture of a scan with `"frames": true` (`scan.capture`).
-`/upright` turns the camera's picture by a quarter (the example's camera stood on its side);
-set its `flop`, `flip_x` and `flip_y` for yours. At the object itself, look at the object.
+**Looking without the room.** A `tex.remap` through a scan's `cam_to_proj`
+(`scan/proj_a/cam_to_proj.exr`) puts a projector's picture into the camera's picture. Multiplied
+by a photo of the relief lit white by that projector, it shows roughly what the camera would see.
+The photos are the first camera picture of a scan with `"frames": true` (`scan.capture`). At the object itself, look at the object.
