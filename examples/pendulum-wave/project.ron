@@ -3,6 +3,7 @@
 (
     version: 2,
     nodes: {
+        "/about_credit": (kind: "ui.note", params: {"height": 95, "text": "# Credit\nInspired by a pendulum-wave clip by The Lab (@the.lab67), who makes physics and maths simulations.\n- https://www.tiktok.com/@the.lab67", "width": 450}, pos: [-480.0, 180.0]),
         "/about_picture": (kind: "ui.note", params: {"height": 155, "text": "# Picture\n`out` (`pendulums.wgsl`) computes every pendulum from the show time. Picture and sound stay in step.\n- `direction` on `out`: `across` turns the ripples into stripes\n- `colors` on `out`: `viridis`, `fire`, `sea`\n- `swing`, `glow` on `out`: bind a sound level to them", "width": 560}, pos: [200.0, 620.0]),
         "/about_rings": (kind: "ui.note", params: {"height": 135, "text": "# Rings\n`ring0` to `ring7` are sines, one per ring of pendulums. Ring k swings at (56 - k) / 48 Hz. A value passing 0 is a pendulum passing its rest point. All rings meet at 0 s and 24 s. The loop repeats after 48 s.", "width": 450}, pos: [-480.0, 0.0]),
         "/about_sound": (kind: "ui.note", params: {"height": 155, "text": "# Sound\n`notes` plays a note per lane of `rings` each time it passes 0. Lane 0 is `ring7`: corners A3, centre D5. `hat` follows `ring0` through `centre`. `kick` hits on every other hat (`every_other`, half the rate).\n- `key`, `scale`, `preset` on `notes`: try `pluck` or `bell`\n- `gain1`, `gain2` on `mix`: kick and hat. 0 mutes", "width": 560}, pos: [400.0, -150.0]),
