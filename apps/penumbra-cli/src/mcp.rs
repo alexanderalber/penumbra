@@ -50,6 +50,10 @@ node's picture, `ui_screenshot` the window; the other `ui_*` tools click, drag a
 edited for 3 seconds and keep the turn for 5 seconds after each command (the UI shows Claude at work); every edit can \
 be undone with `history.undo`.";
 
+/// Advice added when the app is not running. Without it, agents retried every tool or searched the
+/// source code for command and node names, which the generated reference already lists.
+const NOT_RUNNING: &str = "Every tool needs the running app, so retrying will fail the same way: ask the user to start penumbra. Command names and params are in docs/reference/commands.md, node kinds and their params in docs/reference/nodes.md (both in the source tree and the release zip); reading them beats searching the source code";
+
 /// Something that answers control channel requests with the reply envelope
 /// (`{"ok": true, "result": ...}` or `{"ok": false, "error": ...}`).
 pub trait Channel {
@@ -66,6 +70,7 @@ pub struct Port {
 impl Channel for Port {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         control::call(self.port, method, params, self.timeout)
+            .map_err(|e| if e.starts_with(control::UNREACHABLE) { format!("{e}. {NOT_RUNNING}") } else { e })
     }
 }
 
