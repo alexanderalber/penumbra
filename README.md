@@ -55,7 +55,7 @@ groups of rigid bodies. The
   a replug. Corner pin, mesh warp, soft edges, drawn masks
   ([mapping without a camera](docs/mapping-without-camera.md)). Test patterns on all projectors
   at once. Output also in a desktop window. Colour and brightness matched from camera
-  measurements ([projector-wall](examples/projector-wall/README.md) example).
+  measurements ([blend and match](docs/helpers.md#blend-and-match)).
 - **Model mapping:** a projector fitted to a 3D model without a camera. Choose corners on the
   model, move a crosshair onto the real ones
   ([how](docs/mapping-without-camera.md#a-3d-model-of-the-object-model-mapping)).
@@ -77,8 +77,7 @@ groups of rigid bodies. The
   ([control-page](examples/control-page/README.md) example). Any param bound to a channel by
   dragging a wire onto it. OSC and MIDI learn.
 - **Shows:** a list of steps (`chan.sequence`): which piece, how long, which transition. Hold
-  until GO from a key, a button or OSC. `tex.sequence` blends and cooks only what is shown
-  ([show](examples/show/README.md) example).
+  until GO from a key, a button or OSC. `tex.sequence` blends and cooks only what is shown.
 - **Python:** script node (CPython 3.12 or later). Channels and tables in, channels and a table
   out, state kept between frames.
 - **Components:** networks inside a node, with chosen params exposed, kept in a library.
@@ -198,9 +197,7 @@ for the film):
 On a wall, three projectors become one picture: blend weights from the scan, colours matched
 by the camera, brightness evened out by a flat field.
 
-[Scanning](docs/scanning.md) has the whole chain; the examples
-[projection-onto-objects](examples/projection-onto-objects/README.md) and
-[projector-wall](examples/projector-wall/README.md) ship real scans, and a
+[Scanning](docs/scanning.md) has the whole chain, and a
 [Claude Code skill](.claude/skills/projection-mapping/SKILL.md) walks a session through it.
 
 ## Gallery

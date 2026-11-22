@@ -2,9 +2,7 @@
 
 - assets/screenshot.png: the window with the curl-noise example, a node selected;
 - assets/arrange.png: the curl-noise example as first placed and after one arrange;
-- assets/gallery/*.jpg: the output pictures of the showcase projects, 1280 pixels wide;
-- assets/gallery/relief.jpg: the projection-onto-objects example's camera photo of the relief
-  beside the picture penumbra lights it with.
+- assets/gallery/*.jpg: the output pictures of the showcase projects, 1280 pixels wide.
 
 The photos in assets/photos/ come from a real setup, not from this script.
 
@@ -66,10 +64,6 @@ WINDOW = (EXAMPLES / "curl-noise", "1760x960", "/out", "/vel", 45)
 # editor places nodes that come without one, and the window size it is shot at.
 ARRANGE = (EXAMPLES / "curl-noise", "1700x900")
 ARRANGE_LABELS = ("before: as the nodes were first placed", "after: one press of L")
-
-# The relief picture: the example, the node shot, seconds of show time, and the part of the
-# camera photo that holds the relief (left, top, right, bottom in the photo's pixels).
-RELIEF = (EXAMPLES / "projection-onto-objects", "/view", 20, (500, 0, 920, 480))
 
 def call(method: str, **params) -> dict:
     return {"method": method, "params": params}
@@ -195,51 +189,14 @@ def arrange(work: Path) -> None:
     print("arrange: assets/arrange.png")
 
 
-def label_font(size: int) -> ImageFont.FreeTypeFont:
-    try:
-        return ImageFont.truetype("segoeui.ttf", size)
-    except OSError:
-        return ImageFont.load_default(size)
-
-
-def labelled_row(images: list[Image.Image], labels: list[str], height: int) -> Image.Image:
-    """Pictures side by side at one height, each with a label above, on the editor's grey."""
-    font = label_font(26)
-    scaled = [image.resize((round(image.width * height / image.height), height), Image.Resampling.LANCZOS)
-              for image in images]
-    label, gap = 48, 24
-    sheet = Image.new("RGB", (sum(s.width for s in scaled) + gap * (len(scaled) + 1), height + label + gap),
-                      (27, 27, 27))
-    draw = ImageDraw.Draw(sheet)
-    x = gap
-    for image, text in zip(scaled, labels):
-        draw.text((x, 8), text, fill=(200, 200, 200), font=font)
-        sheet.paste(image, (x, label))
-        x += image.width + gap
-    return sheet
-
-
 def save_jpg(image: Image.Image, jpg: Path) -> None:
     height = round(image.height * WIDTH / image.width)
     image.resize((WIDTH, height), Image.Resampling.LANCZOS).save(jpg, quality=JPG_QUALITY)
 
 
-def relief(work: Path) -> None:
-    project, node, wait, box = RELIEF
-    picture = work / "relief.png"
-    run([call("ui.view", path=node), {"wait": wait}, call("node.snapshot", path=node, file=picture.as_posix())],
-        work, "relief", project)
-    lit = on_black(picture)
-    lit = lit.crop(lit.getbbox() or (0, 0, lit.width, lit.height))
-    photo = Image.open(project / "camera" / "photo_0.jpg").convert("RGB").crop(box)
-    sheet = labelled_row([photo, lit], ["the relief, as the camera saw it", "what penumbra lights it with"], 720)
-    save_jpg(sheet, OUT / "relief.jpg")
-    print("relief: assets/gallery/relief.jpg")
-
-
 def main() -> int:
     jobs = {entry[0]: (lambda work, entry=entry: showcase(*entry, work)) for entry in SHOWCASE}
-    jobs.update({"window": window, "arrange": arrange, "relief": relief})
+    jobs.update({"window": window, "arrange": arrange})
     wanted = sys.argv[1:] or list(jobs)
     unknown = [name for name in wanted if name not in jobs]
     if unknown:
