@@ -1844,11 +1844,16 @@ impl Cooker {
 
     /// Whether `port` has no result and none is on its way ([`CookContext::input_stuck`]): walks up
     /// from a source without a result, through what it needs, to a failure or to a node that
-    /// waits for something of its own.
-    fn stuck(&self, port: Port) -> bool {
+    /// waits for something of its own. A walk that comes back to `asking` through a
+    /// previous-result input is stuck too: a feedback with nothing at `initial` waits for the
+    /// end of its loop, and a node in the loop that waited for the feedback would never cook.
+    fn stuck(&self, port: Port, asking: NodeId) -> bool {
         let mut seen = BTreeSet::new();
         let mut todo = vec![port];
         while let Some(port) = todo.pop() {
+            if port.node == asking {
+                return true;
+            }
             let Some(s) = self.runtimes.get(&port.node) else { return true };
             if let Some(outputs) = &s.outputs {
                 if outputs.get(port.output as usize).is_none() {
@@ -1864,8 +1869,8 @@ impl Cooker {
             }
             let needed = self.needed(s, &s.seen_bound);
             for (i, slot) in s.def.inputs.iter().enumerate() {
+                // Through a previous-result input too: its source may wait for `asking`.
                 if let Some(up) = slot
-                    && !s.def.is_previous(i)
                     && is_needed(needed.as_deref(), i)
                 {
                     todo.push(*up);
@@ -1920,7 +1925,7 @@ impl Cooker {
                     rt.ty.as_ref().and_then(|t| t.desc().inputs.get(i)).map_or("?", |s| s.name.as_str());
                 loops.push(format!("input `{name}`"));
             }
-            let is_stuck = !previous && data.is_none() && self.stuck(*port);
+            let is_stuck = !previous && data.is_none() && self.stuck(*port, id);
             if is_stuck {
                 stuck.push(i);
             }
@@ -3381,6 +3386,17 @@ mod tests {
         assert_eq!(f.value("/s"), Some(1.0));
         f.set("/f.fail", Value::Bool(false));
         settle(&mut f, 2.0);
+
+        // A feedback with nothing at `initial` waits for the end of its loop: a node in the
+        // loop that waited for the feedback in turn would never cook, so it is stuck.
+        let mut f = Fixture::new(&[
+            create("/loop", "test.loop"),
+            create("/s", "test.stuck"),
+            connect("/loop", "/s", 0),
+            connect("/s", "/loop", 1),
+        ]);
+        f.cook(&["/s"]);
+        assert_eq!(f.value("/s"), Some(1.0));
     }
 
     #[test]
