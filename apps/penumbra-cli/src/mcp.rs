@@ -48,7 +48,11 @@ entry. `doc_inspect` shows the project and its nodes (paths like /noise1 or /com
 node's picture, `ui_screenshot` the window; the other `ui_*` tools click, drag and type as a user would, by the ids \
 `ui_elements` lists (node./noise1, button.undo, ...). `node.kinds {kind}` explains a node type and its params. Edits wait until the user has not \
 edited for 3 seconds and keep the turn for 5 seconds after each command (the UI shows Claude at work); every edit can \
-be undone with `history.undo`.";
+be undone with `history.undo`. \
+Argument shapes: `command_run {id, params}`, `command_batch {steps: [{id, params}], label?}`. The commands used most: \
+`node.create {path, kind, params?}`, `node.set {path, params: {name: value}}`, `node.connect {from, to, output?, input?}`, \
+`node.bind {param: \"/node.param\", from: \"/channel_node\", channel?}`, `node.info {path}`, `node.kinds {search}` to \
+find a kind by a word, `node.kinds {kind}` for its params.";
 
 /// Advice added when the app is not running. Without it, agents retried every tool or searched the
 /// source code for command and node names, which the generated reference already lists.
