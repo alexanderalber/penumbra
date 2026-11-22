@@ -418,3 +418,31 @@ fn a_batch_on_a_real_engine_is_one_history_entry() {
     assert_eq!(r["result"]["isError"], true, "a second /a is refused: {r}");
     engine.shutdown();
 }
+
+/// The argument shapes the server instructions spell out are the ones the commands take.
+#[test]
+fn the_shapes_in_the_instructions_work_on_a_real_engine() {
+    let dir = penumbra_core::scratch::ScratchDir::new("mcp-shapes").unwrap();
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let session = Arc::new(
+        penumbra_project::Session::open(dir.path(), types, &penumbra_project::Content::default()).unwrap(),
+    );
+    let engine = penumbra_engine::Engine::start(session).unwrap();
+    let registry = penumbra_engine::engine_registry(&engine);
+    let steps = [
+        ("node.create", json!({"path": "/a", "kind": "tex.noise"})),
+        ("node.create", json!({"path": "/b", "kind": "tex.level", "params": {"gamma": 1.5}})),
+        ("node.create", json!({"path": "/l", "kind": "chan.lfo"})),
+        ("node.set", json!({"path": "/b", "params": {"contrast": 1.2}})),
+        ("node.connect", json!({"from": "/a", "to": "/b"})),
+        ("node.bind", json!({"param": "/b.brightness", "from": "/l"})),
+        ("node.info", json!({"path": "/b"})),
+        ("node.kinds", json!({"search": "noise"})),
+        ("node.kinds", json!({"kind": "tex.level"})),
+    ];
+    for (id, params) in steps {
+        assert!(INSTRUCTIONS.contains(&format!("`{id} {{")), "{id} is not in the instructions");
+        let r = registry.dispatch(id, &params);
+        assert_eq!(r["ok"], true, "{id} {params}: {r}");
+    }
+}
