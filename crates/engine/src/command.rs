@@ -90,9 +90,18 @@ impl Registry {
             return json!({"ok": true, "result": self.list()});
         }
         let Some(command) = self.commands.get(method) else {
+            let near = near_ids(method, self.ids());
+            let hint = if near.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "did you mean {}? ",
+                    near.iter().map(|id| format!("`{id}`")).collect::<Vec<_>>().join(", ")
+                )
+            };
             return json!({
                 "ok": false,
-                "error": format!("unknown method `{method}`; `commands` lists them all"),
+                "error": format!("unknown method `{method}`; {hint}`commands` lists them all"),
             });
         };
         if !params.is_object() {
@@ -106,6 +115,45 @@ impl Registry {
             Err(e) => json!({"ok": false, "error": e.0}),
         }
     }
+}
+
+/// At most three ids close to a misspelt or guessed `method`, closest first. Close means one
+/// extends the other at a `.` or `_` (`node.set_params` and `node.set`), or a few letters differ
+/// (`node.get` and `node.set`).
+fn near_ids<'a>(method: &str, ids: impl Iterator<Item = &'a str>) -> Vec<&'a str> {
+    let extends =
+        |long: &str, short: &str| long.strip_prefix(short).is_some_and(|rest| rest.starts_with(['.', '_']));
+    let limit = 1 + method.chars().count() / 6;
+    let mut near: Vec<(usize, &str)> = ids
+        .filter_map(|id| {
+            if extends(method, id) || extends(id, method) {
+                return Some((0, id));
+            }
+            let d = edit_distance(method, id);
+            (d <= limit).then_some((d, id))
+        })
+        .collect();
+    near.sort();
+    near.into_iter().take(3).map(|(_, id)| id).collect()
+}
+
+/// The number of single-character insertions, deletions and substitutions turning `a` into `b`.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    // One row of the distance table at a time: `prev[j]` is the distance from the letters of `a`
+    // so far to the first `j` letters of `b`.
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut row = Vec::with_capacity(prev.len());
+        let mut left = i + 1;
+        row.push(left);
+        for ((&cb, &diagonal), &above) in b.iter().zip(&prev).zip(prev.iter().skip(1)) {
+            left = (above + 1).min(left + 1).min(diagonal + usize::from(ca != cb));
+            row.push(left);
+        }
+        prev = row;
+    }
+    prev.last().copied().unwrap_or(0)
 }
 
 type RunFn = dyn Fn(&Value) -> Result<Value, CommandError> + Send + Sync;
@@ -181,6 +229,19 @@ mod tests {
         let r = crate::builtin_registry().dispatch("nope", &json!({}));
         assert_eq!(r["ok"], false);
         assert!(r["error"].as_str().unwrap().contains("nope"));
+    }
+
+    #[test]
+    fn an_unknown_method_names_the_close_ones() {
+        let ids = ["node.create", "node.info", "node.list", "node.set", "node.snapshot", "project.open"];
+        let near = |m| near_ids(m, ids.into_iter());
+        assert_eq!(near("node.set_params"), ["node.set"]);
+        assert_eq!(near("node.get"), ["node.set"]);
+        assert_eq!(near("node.creat"), ["node.create"]);
+        assert_eq!(near("node"), ["node.create", "node.info", "node.list"]);
+        assert!(near("render.frame").is_empty());
+        let r = crate::builtin_registry().dispatch("pong", &json!({}));
+        assert_eq!(r["error"], "unknown method `pong`; did you mean `ping`? `commands` lists them all");
     }
 
     #[test]
