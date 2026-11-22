@@ -111,10 +111,22 @@ fn parse_timeout(text: &str) -> Result<Duration, String> {
 
 fn ctl(port: u16, method: &str, params: &[String], timeout: Duration) -> Result<ExitCode, String> {
     let params = parse_params(params)?;
-    let reply = control::call(port, method, params, timeout)?;
+    let reply = control::call(port, method, params, timeout).map_err(with_reference_hint)?;
     let text = serde_json::to_string_pretty(&reply).map_err(|e| e.to_string())?;
     println!("{text}");
     Ok(if reply.get("ok") == Some(&Value::Bool(true)) { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+}
+
+/// When the app is not running, says where its commands are listed without it.
+fn with_reference_hint(e: String) -> String {
+    if e.starts_with(control::UNREACHABLE) {
+        format!(
+            "{e}\nWithout the app, docs/reference/commands.md lists the commands and \
+             docs/reference/nodes.md the node kinds (in the release folder and the source tree)"
+        )
+    } else {
+        e
+    }
 }
 
 fn parse_params(args: &[String]) -> Result<Value, String> {
@@ -145,6 +157,15 @@ fn parse_params(args: &[String]) -> Result<Value, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn an_unreachable_app_points_at_the_reference() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let e = ctl(port, "ping", &[], Duration::from_secs(2)).unwrap_err();
+        assert!(e.contains("is penumbra running?"), "{e}");
+        assert!(e.contains("docs/reference/commands.md"), "{e}");
+        assert_eq!(with_reference_hint("send failed: x".into()), "send failed: x");
+    }
 
     #[test]
     fn timeouts_parse() {
