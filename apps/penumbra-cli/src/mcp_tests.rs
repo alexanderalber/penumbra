@@ -372,7 +372,10 @@ fn an_app_that_is_not_running_is_an_error_result() {
     let line = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "command_run", "arguments": {"id": "ping"}}});
     let r = handle(&line.to_string(), &mut channel).unwrap();
     assert_eq!(r["result"]["isError"], true, "{r}");
-    assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("is penumbra running?"), "{r}");
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("is penumbra running?"), "{r}");
+    assert!(text.contains("ask the user to start penumbra"), "{r}");
+    assert!(text.contains("docs/reference/commands.md"), "{r}");
 }
 
 /// The whole path: MCP lines in, the control channel over TCP, a real engine with its registry.

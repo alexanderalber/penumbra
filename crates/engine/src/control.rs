@@ -308,11 +308,14 @@ fn serve_lines<R: Read, W: Write>(
     }
 }
 
+/// How the error of [`call`] starts when nothing listens on the port, so a caller can add its own advice.
+pub const UNREACHABLE: &str = "cannot reach the control channel";
+
 /// Send one request to the control channel on `127.0.0.1:port` and return the reply envelope.
 pub fn call(port: u16, method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut stream = TcpStream::connect_timeout(&addr, timeout)
-        .map_err(|e| format!("cannot reach the control channel on {addr} (is penumbra running?): {e}"))?;
+        .map_err(|e| format!("{UNREACHABLE} on {addr} (is penumbra running?): {e}"))?;
     stream.set_read_timeout(Some(timeout)).map_err(|e| e.to_string())?;
     stream.set_write_timeout(Some(timeout)).map_err(|e| e.to_string())?;
     let request = json!({"id": 1, "method": method, "params": params});
