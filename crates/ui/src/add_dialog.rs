@@ -30,10 +30,15 @@
 //! underneath), the others dimmed. Enter takes the first match of the active tab: the type
 //! named exactly so, then one whose name starts with the text, then any other found by its
 //! name, then one found by a tag. Tab switches to the next tab, Shift+Tab to the one before;
-//! while searching, both pass over tabs without a match. A TouchDesigner family word in the
-//! text (`noise top`, `lfo chop`) searches that family alone for the rest of the text, when the
-//! whole text finds nothing, and opens the first tab with a match in it: the family's own tab
-//! when it has one, else a topic's. Otherwise the dialog never switches the tab by itself.
+//! while searching, both pass over tabs without a match. A TouchDesigner family word at the
+//! start or end of the text (`noise top`, `lfo chop`, `particle pop`) opens the first tab with a
+//! match in that family: the family's own tab when it has one, else a topic's. When the whole
+//! text finds nothing, the word also narrows the search: that family alone, the rest of the
+//! text. When the whole text finds something (`particle pop` is a tag of `pts.particles`), every
+//! family is searched and the word only picks the tab. A word whose family has no match keeps
+//! the active tab if that tab has a match, else opens the first tab with one: `chop to` is a tag
+//! of `tex.from_chan`, and no chan type matches. A text without a family word never switches the
+//! tab.
 //! Escape or a click outside closes. Opened by double-click on empty canvas or Tab in the
 //! editor, on the tab of the selected node's type, and by "Replace node..." in the node menu,
 //! where choosing replaces that node.
@@ -423,11 +428,21 @@ fn tab_for(tabs: &[Tab], wanted: &str) -> usize {
 }
 
 /// The tab a family word opens: the first with a match in `family`, the family's own tab before
-/// the others; the family's own tab when none has one.
-fn family_tab(tabs: &[Tab], family: &str, has_match: impl Fn(usize) -> bool) -> usize {
+/// the others. When `family` has no match, the `active` tab if it has one of another family,
+/// else the first such tab; the family's own tab when no tab has a match at all.
+/// `has_match(i, family)`: whether tab `i` has a match, in `family` alone when one is given.
+fn family_tab(
+    tabs: &[Tab],
+    family: &str,
+    active: usize,
+    has_match: impl Fn(usize, Option<&str>) -> bool,
+) -> usize {
     let home = tab_for(tabs, family);
-    let holds = |i: usize| tabs.get(i).is_some_and(|t| t.families.iter().any(|f| f == family));
-    std::iter::once(home).chain(0..tabs.len()).find(|&i| holds(i) && has_match(i)).unwrap_or(home)
+    std::iter::once(home)
+        .chain(0..tabs.len())
+        .find(|&i| has_match(i, Some(family)))
+        .or_else(|| std::iter::once(active).chain(0..tabs.len()).find(|&i| has_match(i, None)))
+        .unwrap_or(home)
 }
 
 /// Everything `tab` offers, in grid order; `files` its component files ([`files_of`]).
@@ -594,6 +609,11 @@ fn next_tab<T>(groups: &[T], active: usize, back: bool, wanted: impl Fn(&T) -> b
     (1..=n).map(step).find(|&g| groups.get(g).is_some_and(&wanted)).unwrap_or_else(|| step(1))
 }
 
+/// Whether `kind` is of `family`; any kind when no family is given.
+fn in_family(kind: &str, family: Option<&str>) -> bool {
+    family.is_none_or(|f| kind.split_once('.').is_some_and(|(k, _)| k == f))
+}
+
 fn matches(kind: &str, filter: &str) -> bool {
     kind != GAP && penumbra_graph::name_found(kind, filter)
 }
@@ -619,7 +639,7 @@ impl Usable<'_> {
     /// tag with it or, for a component file, naming it in its shelf or `about` line.
     fn hit(self, kind: &str, filter: &str) -> bool {
         self.allows(kind)
-            && self.family.is_none_or(|f| kind.split_once('.').is_some_and(|(k, _)| k == f))
+            && in_family(kind, self.family)
             && (matches(kind, filter) || self.tag(kind, filter).is_some() || self.says(kind, filter))
     }
 
@@ -674,19 +694,19 @@ impl AddDialog {
         let search = types.search(&typed);
         let filter = search.text.clone();
         let usable = Usable { types, in_component: self.in_component, library, family: search.family };
-        let has_match = |i: usize| {
+        let match_in = |i: usize, family: Option<&str>| {
             filter.is_empty()
-                || tabs
-                    .get(i)
-                    .zip(files.get(i))
-                    .is_some_and(|(t, f)| tab_kinds(types, t, f).iter().any(|k| usable.hit(k, &filter)))
+                || tabs.get(i).zip(files.get(i)).is_some_and(|(t, f)| {
+                    tab_kinds(types, t, f).iter().any(|k| in_family(k, family) && usable.hit(k, &filter))
+                })
         };
+        let has_match = |i: usize| match_in(i, None);
         let mut active = tab_for(&tabs, &self.tab);
-        // A family word typed (`noise top`) opens a tab with a match in that family, once per
-        // text, so Tab still moves on from there.
-        match search.family {
+        // A family word typed (`noise top`, also `particle pop`, which a tag finds whole) opens a
+        // tab with a match in that family, once per text, so Tab still moves on from there.
+        match search.word {
             Some(f) if self.jumped != typed => {
-                active = family_tab(&tabs, f, has_match);
+                active = family_tab(&tabs, f, active, match_in);
                 self.jumped.clone_from(&typed);
             }
             Some(_) => {}
@@ -1580,7 +1600,9 @@ mod tests {
         assert_eq!((search.text.as_str(), search.family), ("noise", Some("tex")));
         assert_eq!(types.search("chop lfo").family, Some("chan"), "at the start as well");
         assert_eq!(types.search("noise").family, None, "a plain search searches every family");
-        assert_eq!(types.search("chop to").family, None, "a tag holding the word wins");
+        let chop_to = types.search("chop to");
+        assert_eq!((chop_to.family, chop_to.word), (None, Some("chan")), "a tag holding the word wins");
+        assert_eq!(types.search("noise").word, None);
         assert_eq!(types.search("top").family, None, "the word alone is a plain search");
         for (text, kind) in
             [("osc out chop", "out.osc"), ("midi out chop", "out.midi"), ("dmx out chop", "out.dmx")]
@@ -1591,15 +1613,16 @@ mod tests {
         let u = Usable { types: &types, in_component: false, library: &[], family: search.family };
         assert!(u.hit("tex.noise", &search.text) && !u.hit("chan.noise", &search.text));
         let tabs = tabs(&types, &[]);
-        let opens = |text: &str| {
+        let opens_from = |text: &str, active: &str| {
             let search = types.search(text);
-            let family = search.family.unwrap_or_default();
+            let family = search.word.unwrap_or_default();
             let u = Usable { types: &types, in_component: false, library: &[], family: search.family };
-            let i = family_tab(&tabs, family, |i| {
-                tab_kinds(&types, &tabs[i], &[]).iter().any(|k| u.hit(k, &search.text))
+            let i = family_tab(&tabs, family, tab_for(&tabs, active), |i, f| {
+                tab_kinds(&types, &tabs[i], &[]).iter().any(|k| in_family(k, f) && u.hit(k, &search.text))
             });
             (tabs[i].key().to_string(), search.text)
         };
+        let opens = |text: &str| opens_from(text, "tex");
         let (key, text) = opens("noise top");
         assert_eq!(key, "tex");
         let kinds = tab_kinds(&types, &tabs[tab_for(&tabs, "tex")], &[]);
@@ -1610,6 +1633,15 @@ mod tests {
         assert_eq!(opens("scan top"), ("mapping".to_string(), "scan".to_string()));
         assert_eq!(opens("zzz top").0, "tex", "no match: the family's own tab");
         assert_eq!(opens("lfo chop").0, "chan");
+        // A tag finds the whole text, and the word's family has the match: its tab opens.
+        assert_eq!(opens("particle pop"), ("pts".to_string(), "particle pop".to_string()));
+        assert_eq!(opens_from("particle pop", "geo").0, "pts");
+        // The tags found lie in other families: the active tab stays when it has one of them,
+        // else the first tab with one opens.
+        assert!(types.tag_found("tex.from_chan", "chop to").is_some());
+        assert_eq!(opens_from("chop to", "chan").0, "tex", "chan has no match");
+        assert_eq!(opens_from("chop to", "table").0, "table", "table.from_chan is a match");
+        assert_eq!(opens_from("dmx out chop", "tex").0, "out");
     }
 
     fn keys(tabs: &[Tab]) -> Vec<&str> {

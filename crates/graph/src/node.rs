@@ -979,12 +979,17 @@ impl NodeTypes {
 
     /// Reads a search `text`. A TouchDesigner family word at its end or start (`noise top`,
     /// `CHOP lfo`) narrows the search to that family, with the rest as the text. Only when the
-    /// whole text finds nothing: a tag may hold such a word (`chop to`).
+    /// whole text finds nothing: a tag may hold such a word (`chop to`). Either way the search
+    /// remembers the family the word names.
     pub fn search(&self, text: &str) -> Search {
-        let whole = Search { text: text.to_string(), family: None };
+        let whole = Search { text: text.to_string(), family: None, word: None };
         let Some((family, rest)) = family_word(text) else { return whole };
         let found = self.kinds().any(|k| name_found(k, text) || self.tag_found(k, text).is_some());
-        if found { whole } else { Search { text: rest, family: Some(family) } }
+        if found {
+            Search { word: Some(family), ..whole }
+        } else {
+            Search { text: rest, family: Some(family), word: Some(family) }
+        }
     }
 
     pub fn get(&self, kind: &str) -> Option<&Arc<dyn NodeType>> {
@@ -1035,6 +1040,9 @@ pub struct Search {
     pub text: String,
     /// The only family searched, named by a family word in the text.
     pub family: Option<&'static str>,
+    /// The family a family word in the text names, also when the whole text found something
+    /// and so every family is searched (`particle pop` finds `pts.particles` by a tag).
+    pub word: Option<&'static str>,
 }
 
 impl Search {
