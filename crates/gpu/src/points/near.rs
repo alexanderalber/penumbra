@@ -42,7 +42,7 @@ use std::fmt::Write as _;
 use penumbra_core::{Error, ParamSpec, Value};
 
 use super::{AttrType, Points};
-use crate::{Buffer, Dispatch, Gpu, Out, Step};
+use crate::{Buffer, Chain, Dispatch, Gpu, Out, Step};
 
 /// Fewest and most bits of the bucket table: 64 buckets to about four million.
 pub const MIN_TABLE_BITS: u32 = 6;
@@ -733,6 +733,21 @@ impl NearGrid {
         radius: f32,
         cap: u32,
     ) -> Result<Option<Near>, Error> {
+        let mut chain = Chain::new("pts near");
+        let near = self.build_in(&mut chain, gpu, points, radius, cap)?;
+        chain.run(gpu)?;
+        Ok(near)
+    }
+
+    /// [`NearGrid::build`] as steps of `chain`: the grid is there for the steps added after it.
+    pub fn build_in(
+        &mut self,
+        chain: &mut Chain,
+        gpu: &Gpu,
+        points: &Points,
+        radius: f32,
+        cap: u32,
+    ) -> Result<Option<Near>, Error> {
         // A radius that finds nothing lays the grid out by a radius of 1 and keeps 0, which the
         // walk takes as no radius at all.
         let finds = radius.is_finite() && radius > 0.0 && (1.0 / (radius * CELL_MARGIN)).is_finite();
@@ -784,8 +799,9 @@ impl NearGrid {
         };
         let input =
             Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
-        build.run_with(
+        chain.add(
             gpu,
+            &build,
             &[position.buffer(), &keys[0], &vals[0], &cells, &sorted, &crowded, &header],
             &[
                 Step { entry: "clear", out: grid(2 * table), input: &input },
@@ -823,8 +839,9 @@ impl NearGrid {
             };
             let input =
                 Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
-            sort.run_with(
+            chain.add(
                 gpu,
+                &sort,
                 &[keys_in, vals_in, keys_to, vals_to, &counts, &sums, &total],
                 &[
                     Step { entry: "tally", out: over_tiles, input: &input },
@@ -838,8 +855,9 @@ impl NearGrid {
         let [ka, kb] = &keys;
         let [va, vb] = &vals;
         let (keys_last, vals_last) = if passes.is_multiple_of(2) { (ka, va) } else { (kb, vb) };
-        build.run_with(
+        chain.add(
             gpu,
+            &build,
             &[position.buffer(), keys_last, vals_last, &cells, &sorted, &crowded, &header],
             &[Step { entry: "ranges", out: grid(n), input: &input }],
         )?;
@@ -849,6 +867,13 @@ impl NearGrid {
     /// An exclusive prefix sum over the first `n` values of `values`, in place; the total goes
     /// to [`NearGrid::total`].
     pub fn scan(&mut self, gpu: &Gpu, values: &Buffer, n: u32) -> Result<(), Error> {
+        let mut chain = Chain::new("pts scan");
+        self.scan_in(&mut chain, gpu, values, n)?;
+        chain.run(gpu)
+    }
+
+    /// [`NearGrid::scan`] as steps of `chain`.
+    pub fn scan_in(&mut self, chain: &mut Chain, gpu: &Gpu, values: &Buffer, n: u32) -> Result<(), Error> {
         if n == 0 {
             return Ok(());
         }
@@ -869,8 +894,9 @@ impl NearGrid {
         let input =
             Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
         let over_blocks = Out::Size([row * 256, blocks.div_ceil(row), 1]);
-        scan.run_with(
+        chain.add(
             gpu,
+            &scan,
             &[values, &sums, &total],
             &[
                 Step { entry: "reduce", out: over_blocks, input: &input },

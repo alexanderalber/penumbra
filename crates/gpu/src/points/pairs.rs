@@ -23,7 +23,7 @@ use penumbra_core::{Error, ParamSpec, Value};
 use super::compact::{attrs_per_pass, gather_params, gather_source};
 use super::near::{self, NearGrid, grid, sized};
 use super::{Attr, AttrType, Count, HEADER_BYTES, Points, Reports, Strips, Wake};
-use crate::{Buffer, BufferRing, Dispatch, Gpu, Out, Step};
+use crate::{Buffer, BufferRing, Chain, Dispatch, Gpu, Out, Step};
 
 /// The length of a line in metres.
 pub const SPAN: &str = "span";
@@ -555,7 +555,10 @@ impl Pairer {
         let room = points.capacity().max(n);
         let lines_cap = lines_of(n);
         let capacity = (2 * lines_of(room)).max(2);
-        let near = self.grid.build(gpu, points, set.distance, set.cap)?;
+        // Every step of the lines goes into one command encoder: a dozen encoders cost the CPU
+        // more than all the GPU work of a few thousand points.
+        let mut chain = Chain::new("pts proximity");
+        let near = self.grid.build_in(&mut chain, gpu, points, set.distance, set.cap)?;
         let header = self.headers.next(gpu, HEADER_BYTES, "pts count")?;
         let span = self.next(gpu, SPAN, u64::from(capacity) * 4)?;
         let span01 = self.next(gpu, SPAN01, u64::from(capacity) * 4)?;
@@ -568,6 +571,7 @@ impl Pairer {
             }
             out.push(Attr::new(SPAN, AttrType::F32, span)?);
             out.push(Attr::new(SPAN01, AttrType::F32, span01)?);
+            chain.run(gpu)?;
             return Ok(Points::new(capacity, 0, out)?
                 .with_bounds(points.bounds())
                 .with_strips(Strips::Pairs));
@@ -604,13 +608,15 @@ impl Pairer {
             Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
         let step = |entry| [Step { entry, out: grid(n), input: &input }];
         let key_buffer = keys.map_or(&none, |a| a.buffer());
-        gpu.cached_compute("pts proximity choose", &choose_source(), &params())?.run_with(
+        chain.add(
             gpu,
+            &*gpu.cached_compute("pts proximity choose", &choose_source(), &params())?,
             &[key_buffer, &chosen, &chosen_n, &count_now, near.cells(), near.points()],
             &step("choose"),
         )?;
-        gpu.cached_compute("pts proximity cut", &cut_source(), &params())?.run_with(
+        chain.add(
             gpu,
+            &*gpu.cached_compute("pts proximity cut", &cut_source(), &params())?,
             &[key_buffer, &chosen, &chosen_n, &tally, &cut, &count_now],
             &[
                 Step { entry: "clear", out: Out::range(3 * CUT_BINS), input: &input },
@@ -620,29 +626,34 @@ impl Pairer {
                 Step { entry: "cut_places", out: Out::range(256), input: &input },
             ],
         )?;
-        gpu.cached_compute("pts proximity count", &count_source(), &params())?.run_with(
+        chain.add(
             gpu,
+            &*gpu.cached_compute("pts proximity count", &count_source(), &params())?,
             &[key_buffer, &chosen, &chosen_n, &counts, &kept, &count_now, &cut],
             &step("count"),
         )?;
-        self.grid.scan(gpu, &counts, n)?;
-        gpu.cached_compute("pts proximity emit", &emit_source(), &params())?.run_with(
+        self.grid.scan_in(&mut chain, gpu, &counts, n)?;
+        chain.add(
             gpu,
+            &*gpu.cached_compute("pts proximity emit", &emit_source(), &params())?,
             &[&chosen, &kept, &counts, position.buffer(), &map, &span, &span01, &count_now],
             &step("emit"),
         )?;
         let total =
             self.grid.total().cloned().ok_or_else(|| Error::new("the sum of the lines is missing"))?;
-        gpu.cached_compute("pts proximity finish", FINISH, &params())?.run_with(
+        chain.add(
             gpu,
+            &*gpu.cached_compute("pts proximity finish", FINISH, &params())?,
             &[&total, near.crowded(), &cut, &header],
             &[Step { entry: "finish", out: Out::range(1), input: &input }],
         )?;
-        self.gather(gpu, &carried, points, &map, &header, (2 * lines_cap, capacity), &mut out)?;
+        self.gather(&mut chain, gpu, &carried, points, &map, &header, (2 * lines_cap, capacity), &mut out)?;
         out.push(Attr::new(SPAN, AttrType::F32, span)?);
         out.push(Attr::new(SPAN01, AttrType::F32, span01)?);
         // For display, and for what the node says about crowded cubes and lines left out.
-        let seen = self.reports.read(gpu, &header, set, &[position.buffer(), &count_now], wake);
+        let seen =
+            self.reports.read_in(&mut chain, gpu, &header, set, &[position.buffer(), &count_now], wake);
+        chain.run(gpu)?;
         let count = Count::gpu(header, 2 * lines_cap, seen)?;
         Ok(Points::new(capacity, 0, out)?
             .with_bounds(points.bounds())
@@ -662,6 +673,7 @@ impl Pairer {
     #[allow(clippy::too_many_arguments)]
     fn gather(
         &mut self,
+        chain: &mut Chain,
         gpu: &Gpu,
         carried: &[(String, AttrType)],
         points: &Points,
@@ -699,7 +711,12 @@ impl Pairer {
             let input =
                 Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
             let refs: Vec<&Buffer> = buffers.iter().collect();
-            program.run_with(gpu, &refs, &[Step { entry: "gather", out: Out::grid(w, h), input: &input }])?;
+            chain.add(
+                gpu,
+                &program,
+                &refs,
+                &[Step { entry: "gather", out: Out::grid(w, h), input: &input }],
+            )?;
         }
         Ok(())
     }
