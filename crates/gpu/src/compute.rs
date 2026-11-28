@@ -45,6 +45,7 @@ use std::sync::{Arc, Weak};
 use penumbra_core::{Error, ParamSpec, Value, lock};
 
 use crate::buffer::BufferKey;
+use crate::chain::{Chain, Ready};
 use crate::pass::{self, Field, SHARED};
 use crate::{Batch, Buffer, FORMAT, Gpu, Tex};
 
@@ -605,7 +606,8 @@ impl Compute {
     /// [`Compute::run_with`] for several sets of buffers: each run's steps with its own buffers,
     /// all in one compute pass of one command encoder, so many small runs cost the CPU about what
     /// one does. A run reads what the runs before it wrote. `Err` as for
-    /// [`Compute::run_with`]; then none of them runs.
+    /// [`Compute::run_with`]; then none of them runs. Steps of several programs, with copies and
+    /// readbacks between them, go into one encoder through a [`Chain`].
     pub fn run_many(&self, gpu: &Gpu, runs: &[(&[&Buffer], &[Step<'_>])]) -> Result<(), Error> {
         self.record_runs(gpu, runs)
     }
@@ -615,114 +617,107 @@ impl Compute {
     }
 
     fn record_runs(&self, gpu: &Gpu, runs: &[(&[&Buffer], &[Step<'_>])]) -> Result<(), Error> {
-        struct Ready<'e> {
-            entry: &'e Entry,
-            groups: [u32; 3],
-            parts: [Vec<u8>; 3],
-            /// The run it belongs to.
-            run: usize,
-        }
+        let mut chain = Chain::new(&self.label);
+        chain.add_runs(gpu, self, runs)?;
+        chain.run(gpu)
+    }
+
+    /// The program's label, as its errors begin.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// The dispatches of `runs` checked, with their uniforms packed and their bind groups made,
+    /// ready for a [`Chain`] to record. Dispatches of no cells are left out. `Err` as for
+    /// [`Compute::run_many`] for anything that can be checked before recording.
+    pub(crate) fn prepare(&self, gpu: &Gpu, runs: &[(&[&Buffer], &[Step<'_>])]) -> Result<Vec<Ready>, Error> {
         let groups2 =
             runs.iter().map(|(buffers, _)| self.buffer_group(gpu, buffers)).collect::<Result<Vec<_>, _>>()?;
         let max_groups = gpu.device().limits().max_compute_workgroups_per_dimension;
-        let steps: Vec<(usize, &Step<'_>)> =
-            runs.iter().enumerate().flat_map(|(k, (_, steps))| steps.iter().map(move |s| (k, s))).collect();
-        let mut ready = Vec::with_capacity(steps.len());
+        let mut ready = Vec::with_capacity(runs.iter().map(|(_, s)| s.len()).sum());
         // Steps that share a `Dispatch` in a row share its uniforms, packed once.
         let mut packed: Option<(*const Dispatch<'_>, Vec<u8>, Vec<u8>)> = None;
-        for &(run, step) in &steps {
-            let (entry, out, input) = (step.entry, step.out, step.input);
-            let e = self
-                .entries
-                .iter()
-                .find(|e| e.name == entry)
-                .ok_or_else(|| Error::new(format!("{}: no entry point `{entry}`", self.label)))?;
-            if let Some(wanted) = out.target()
-                && e.target != wanted
-            {
-                return Err(Error::new(format!(
-                    "{}: entry point `{entry}` writes a {:?}, not a {:?}",
-                    self.label, e.target, wanted
-                )));
-            }
-            if let Out::Picture(t) = out
-                && (!t.is_storage() || t.format() != FORMAT)
-            {
-                return Err(Error::new(format!(
-                    "{}: the target picture was not made for compute",
-                    self.label
-                )));
-            }
-            let size = out.size();
-            let mut grid = vec![0u8; 16];
-            for (slot, x) in grid.as_chunks_mut::<4>().0.iter_mut().zip(size) {
-                slot.copy_from_slice(&x.to_le_bytes());
-            }
-            let key: *const Dispatch<'_> = input;
-            let (time, params) = match &packed {
-                Some((k, time, params)) if std::ptr::eq(*k, key) => (time.clone(), params.clone()),
-                _ => {
-                    let mut time = vec![0u8; 16];
-                    for (slot, x) in
-                        time.as_chunks_mut::<4>().0.iter_mut().zip([input.seconds as f32, input.frame as f32])
-                    {
-                        slot.copy_from_slice(&x.to_le_bytes());
-                    }
-                    let params = pass::pack(&self.fields, self.uniform_size, input.param);
-                    packed = Some((key, time.clone(), params.clone()));
-                    (time, params)
+        for ((_, steps), group2) in runs.iter().zip(&groups2) {
+            let mut first = true;
+            for step in steps.iter() {
+                let (entry, out, input) = (step.entry, step.out, step.input);
+                let e = self
+                    .entries
+                    .iter()
+                    .find(|e| e.name == entry)
+                    .ok_or_else(|| Error::new(format!("{}: no entry point `{entry}`", self.label)))?;
+                if let Some(wanted) = out.target()
+                    && e.target != wanted
+                {
+                    return Err(Error::new(format!(
+                        "{}: entry point `{entry}` writes a {:?}, not a {:?}",
+                        self.label, e.target, wanted
+                    )));
                 }
-            };
-            let groups: [u32; 3] = std::array::from_fn(|i| {
-                size.get(i).copied().unwrap_or(1).div_ceil(e.workgroup.get(i).copied().unwrap_or(1).max(1))
-            });
-            if let Some((axis, n)) = groups.iter().enumerate().find(|(_, n)| **n > max_groups) {
-                let [x, y, z] = size;
-                let wg = e.workgroup.get(axis).copied().unwrap_or(1);
-                let along = ["x", "y", "z"].get(axis).copied().unwrap_or("an axis");
-                return Err(Error::new(format!(
-                    "{}: entry point `{entry}` over {x}x{y}x{z} cells needs {n} workgroups of {wg} along \
-                     {along}, more than the {max_groups} this GPU dispatches",
-                    self.label
-                )));
-            }
-            ready.push(Ready { entry: e, groups, parts: [grid, time, params], run });
-        }
-        let parts: Vec<[&[u8]; 3]> = ready
-            .iter()
-            .map(|r| [r.parts[0].as_slice(), r.parts[1].as_slice(), r.parts[2].as_slice()])
-            .collect();
-        let error = gpu.record_many(&self.label, &parts, |encoder, slots| {
-            let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some(&self.label),
-                timestamp_writes: None,
-            });
-            let mut bound = None;
-            for ((r, (_, step)), slots) in ready.iter().zip(&steps).zip(slots) {
-                let [x, y, z] = r.groups;
-                if x == 0 || y == 0 || z == 0 {
+                if let Out::Picture(t) = out
+                    && (!t.is_storage() || t.format() != FORMAT)
+                {
+                    return Err(Error::new(format!(
+                        "{}: the target picture was not made for compute",
+                        self.label
+                    )));
+                }
+                let size = out.size();
+                let mut grid = vec![0u8; 16];
+                for (slot, x) in grid.as_chunks_mut::<4>().0.iter_mut().zip(size) {
+                    slot.copy_from_slice(&x.to_le_bytes());
+                }
+                let key: *const Dispatch<'_> = input;
+                let (time, params) = match &packed {
+                    Some((k, time, params)) if std::ptr::eq(*k, key) => (time.clone(), params.clone()),
+                    _ => {
+                        let mut time = vec![0u8; 16];
+                        for (slot, x) in time
+                            .as_chunks_mut::<4>()
+                            .0
+                            .iter_mut()
+                            .zip([input.seconds as f32, input.frame as f32])
+                        {
+                            slot.copy_from_slice(&x.to_le_bytes());
+                        }
+                        let params = pass::pack(&self.fields, self.uniform_size, input.param);
+                        packed = Some((key, time.clone(), params.clone()));
+                        (time, params)
+                    }
+                };
+                let groups: [u32; 3] = std::array::from_fn(|i| {
+                    size.get(i)
+                        .copied()
+                        .unwrap_or(1)
+                        .div_ceil(e.workgroup.get(i).copied().unwrap_or(1).max(1))
+                });
+                if let Some((axis, n)) = groups.iter().enumerate().find(|(_, n)| **n > max_groups) {
+                    let [x, y, z] = size;
+                    let wg = e.workgroup.get(axis).copied().unwrap_or(1);
+                    let along = ["x", "y", "z"].get(axis).copied().unwrap_or("an axis");
+                    return Err(Error::new(format!(
+                        "{}: entry point `{entry}` over {x}x{y}x{z} cells needs {n} workgroups of {wg} along                          {along}, more than the {max_groups} this GPU dispatches",
+                        self.label
+                    )));
+                }
+                if groups.contains(&0) {
                     continue;
                 }
-                if bound != Some(r.run) {
-                    if let Some(Some(g)) = groups2.get(r.run) {
-                        cp.set_bind_group(BUFFER_GROUP, g, &[]);
-                    }
-                    bound = Some(r.run);
-                }
-                let group1 = self.layouts.group(gpu, step.input, step.out);
-                cp.set_pipeline(&r.entry.pipeline);
-                cp.set_bind_group(0, &slots.group, &slots.offsets);
-                cp.set_bind_group(1, &group1, &[]);
-                cp.dispatch_workgroups(x, y, z);
+                let inputs = self.layouts.group(gpu, input, out).map_err(|why| {
+                    Error::new(format!("{}: cannot bind the inputs of `{entry}`: {why}", self.label))
+                })?;
+                ready.push(Ready {
+                    pipeline: e.pipeline.clone(),
+                    groups,
+                    parts: [grid, time, params],
+                    inputs,
+                    buffers: group2.clone(),
+                    bind_buffers: first,
+                });
+                first = false;
             }
-        });
-        match error {
-            Some(e) => {
-                let names: Vec<&str> = steps.iter().map(|(_, s)| s.entry).collect();
-                Err(Error::new(format!("{} {}: {e}", self.label, names.join(", "))))
-            }
-            None => Ok(()),
         }
+        Ok(ready)
     }
 
     /// The bind group of `buffers` over the program's `@group(2)`, made or kept; `None` for a
@@ -1100,13 +1095,13 @@ impl Layouts {
         (group2, pipeline)
     }
 
-    fn group(&self, gpu: &Gpu, input: &Dispatch<'_>, out: Out<'_>) -> wgpu::BindGroup {
+    fn group(&self, gpu: &Gpu, input: &Dispatch<'_>, out: Out<'_>) -> Result<wgpu::BindGroup, String> {
         let mut kept = lock(&self.groups);
         if let Some(i) = kept.iter().position(|g| g.matches(input, out)) {
             let g = kept.remove(i);
             let group = g.group.clone();
             kept.push(g);
-            return group;
+            return Ok(group);
         }
         kept.retain(Group::alive);
         if kept.len() >= GROUPS {
@@ -1125,25 +1120,33 @@ impl Layouts {
             binding,
             resource: wgpu::BindingResource::TextureView(view),
         };
-        let group = gpu.device().create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("compute inputs"),
-            layout: &self.group1,
-            entries: &[
-                view(0, volume(0)),
-                view(1, volume(1)),
-                view(2, volume(2)),
-                view(3, volume(3)),
-                view(4, picture(0)),
-                view(5, picture(1)),
-                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&self.sampler) },
-                view(7, vol_out),
-                view(8, pic_out),
-                wgpu::BindGroupEntry {
-                    binding: 9,
-                    resource: input.data.map_or(&self.empty_data, |d| &d.0.buffer).as_entire_binding(),
-                },
-            ],
+        let (group, error) = gpu.scoped(|| {
+            gpu.device().create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("compute inputs"),
+                layout: &self.group1,
+                entries: &[
+                    view(0, volume(0)),
+                    view(1, volume(1)),
+                    view(2, volume(2)),
+                    view(3, volume(3)),
+                    view(4, picture(0)),
+                    view(5, picture(1)),
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    view(7, vol_out),
+                    view(8, pic_out),
+                    wgpu::BindGroupEntry {
+                        binding: 9,
+                        resource: input.data.map_or(&self.empty_data, |d| &d.0.buffer).as_entire_binding(),
+                    },
+                ],
+            })
         });
+        if let Some(e) = error {
+            return Err(e);
+        }
         kept.push(Group {
             volumes: std::array::from_fn(|i| input.volumes.get(i).copied().flatten().map(Volume::key)),
             pictures: std::array::from_fn(|i| input.pictures.get(i).copied().flatten().map(Tex::key)),
@@ -1155,7 +1158,7 @@ impl Layouts {
             },
             group: group.clone(),
         });
-        group
+        Ok(group)
     }
 }
 

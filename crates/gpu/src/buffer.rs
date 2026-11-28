@@ -15,8 +15,8 @@ use std::time::Duration;
 use bytemuck::Pod;
 use penumbra_core::Error;
 
-use crate::Gpu;
 use crate::readback::{READ_TIMEOUT, ReadAge, ReadState};
+use crate::{Chain, Gpu};
 
 struct Inner {
     buffer: wgpu::Buffer,
@@ -255,6 +255,49 @@ impl Buffer {
         spare: Option<BufferRead>,
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
     ) -> Result<BufferRead, Error> {
+        let (read, map) = self.start_read(gpu, spare, ready)?;
+        let staging = read.staging.clone();
+        let source = self.0.buffer.clone();
+        let bytes = self.0.bytes;
+        let error = gpu.record_commands(
+            "buffer read_async",
+            |encoder| encoder.copy_buffer_to_buffer(&source, 0, &staging, 0, bytes),
+            Some(map),
+        );
+        if let Some(e) = error {
+            return Err(Error::new(format!("buffer readback failed: {e}")));
+        }
+        Ok(read)
+    }
+
+    /// [`Buffer::read_async_notify`] as a step of `chain`: the copy is recorded with the chain's
+    /// other steps, after those added before it. The readback fails when the chain does not go
+    /// out ([`Chain::run`] fails, or it is dropped without running).
+    pub fn read_async_in(
+        &self,
+        chain: &mut Chain,
+        gpu: &Gpu,
+        spare: Option<BufferRead>,
+        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Result<BufferRead, Error> {
+        let (read, map) = self.start_read(gpu, spare, ready)?;
+        let staging = read.staging.clone();
+        let source = self.0.buffer.clone();
+        let bytes = self.0.bytes;
+        chain.commands("buffer read_async", move |encoder| {
+            encoder.copy_buffer_to_buffer(&source, 0, &staging, 0, bytes);
+        });
+        chain.after(map, read.state.clone());
+        Ok(read)
+    }
+
+    /// A readback waiting for its copy, and what maps it once the copy was submitted.
+    fn start_read(
+        &self,
+        gpu: &Gpu,
+        spare: Option<BufferRead>,
+        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Result<(BufferRead, crate::deferred::After), Error> {
         let device = gpu.device();
         let reuse = spare.filter(|s| s.bytes == self.0.bytes && s.state() == ReadState::Ready).map(|s| {
             s.staging.unmap();
@@ -287,21 +330,13 @@ impl Buffer {
                 }
             });
         });
-        let error = gpu.record_commands(
-            "buffer read_async",
-            |encoder| encoder.copy_buffer_to_buffer(&self.0.buffer, 0, &staging, 0, self.0.bytes),
-            Some(map),
-        );
-        if let Some(e) = error {
-            return Err(Error::new(format!("buffer readback failed: {e}")));
-        }
-        Ok(BufferRead { staging, bytes: self.0.bytes, state, age: ReadAge::new(gpu) })
+        Ok((BufferRead { staging, bytes: self.0.bytes, state, age: ReadAge::new(gpu) }, map))
     }
 }
 
 const WAITING: u8 = 0;
 const READY: u8 = 1;
-const FAILED: u8 = 2;
+pub(crate) const FAILED: u8 = 2;
 
 /// A readback of a [`Buffer`] started without waiting ([`Buffer::read_async`]).
 pub struct BufferRead {

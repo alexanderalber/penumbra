@@ -92,6 +92,12 @@ impl Deferred {
         self.lists.iter().all(|l| l.buffers.is_empty() && l.used == 0)
     }
 
+    /// Command buffers waiting, of every thread.
+    #[cfg(test)]
+    pub(crate) fn waiting(&self) -> usize {
+        self.lists.iter().map(|l| l.buffers.len()).sum()
+    }
+
     /// The list of `thread`, made when it has none; `None` only if that failed.
     fn list(&mut self, thread: ThreadId) -> Option<&mut List> {
         if !self.lists.iter().any(|l| l.thread == thread) {
@@ -235,7 +241,8 @@ impl Gpu {
         self.record_then(label, &[], |encoder, _| record(encoder), after)
     }
 
-    fn record_then(
+    /// [`Gpu::record_many`] with work for after the submission, as [`Gpu::record_commands`].
+    pub(crate) fn record_then(
         &self,
         label: &str,
         parts: &[[&[u8]; 3]],

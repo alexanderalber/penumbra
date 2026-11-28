@@ -305,8 +305,11 @@ fn half_floats_round_at_their_edges_as_half_does() {
     b.write(&gpu, 0, &values).unwrap();
     let n = values.len() as u32;
     let p = Points::new(n, n, vec![Attr::new("v", AttrType::F32, b).unwrap()]).unwrap();
-    let tex =
-        p.picture(&gpu, "v", (n, 1), false, &mut TexRing::default(), &mut BufferRing::default()).unwrap();
+    let mut chain = crate::Chain::new("test");
+    let tex = p
+        .picture(&mut chain, &gpu, "v", (n, 1), false, &mut TexRing::default(), &mut BufferRing::default())
+        .unwrap();
+    chain.run(&gpu).unwrap();
     let px = gpu.read(&tex).unwrap();
     for (i, v) in values.iter().enumerate() {
         let want = half::f16::from_f32(*v).to_f32();

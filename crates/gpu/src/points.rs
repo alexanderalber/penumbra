@@ -29,7 +29,7 @@ use penumbra_core::{Error, ParamSpec, Value};
 use penumbra_mesh::Bounds;
 
 use crate::{
-    Buffer, BufferKey, BufferRead, BufferRing, Dispatch, FLOAT_FORMAT, Gpu, Out, Step, Tex, TexRing,
+    Buffer, BufferKey, BufferRead, BufferRing, Chain, Dispatch, FLOAT_FORMAT, Gpu, Out, Step, Tex, TexRing,
 };
 
 /// The type of one element of an attribute.
@@ -409,6 +409,24 @@ impl Seen {
         before: Option<&Seen>,
         ready: Option<Wake>,
     ) -> Result<Self, Error> {
+        Self::start(before, |spare| header.read_async_notify(gpu, spare, ready))
+    }
+
+    /// [`Seen::reading_notify`] as a step of `chain` ([`Buffer::read_async_in`]).
+    pub fn reading_in(
+        chain: &mut Chain,
+        gpu: &Gpu,
+        header: &Buffer,
+        before: Option<&Seen>,
+        ready: Option<Wake>,
+    ) -> Result<Self, Error> {
+        Self::start(before, |spare| header.read_async_in(chain, gpu, spare, ready))
+    }
+
+    fn start(
+        before: Option<&Seen>,
+        read: impl FnOnce(Option<BufferRead>) -> Result<BufferRead, Error>,
+    ) -> Result<Self, Error> {
         let spare = before.and_then(|b| {
             let mut read = crate::lock(&b.0.read);
             // Its value first, so a readback that arrives just now is not lost with it.
@@ -419,7 +437,7 @@ impl Seen {
             }
         });
         let value = before.and_then(Seen::get).unwrap_or(UNSEEN);
-        let read = header.read_async_notify(gpu, spare, ready)?;
+        let read = read(spare)?;
         Ok(Self(Arc::new(SeenInner {
             value: AtomicU32::new(value),
             read: Mutex::new(Some(read)),
@@ -586,6 +604,29 @@ impl<S: Clone + PartialEq> Reports<S> {
         from: &[&Buffer],
         wake: Option<Wake>,
     ) -> Seen {
+        self.start(settings, from, wake, |before, wake| Seen::reading_notify(gpu, header, before, wake))
+    }
+
+    /// [`Reports::read`] as a step of `chain` ([`Seen::reading_in`]).
+    pub fn read_in(
+        &mut self,
+        chain: &mut Chain,
+        gpu: &Gpu,
+        header: &Buffer,
+        settings: &S,
+        from: &[&Buffer],
+        wake: Option<Wake>,
+    ) -> Seen {
+        self.start(settings, from, wake, |before, wake| Seen::reading_in(chain, gpu, header, before, wake))
+    }
+
+    fn start(
+        &mut self,
+        settings: &S,
+        from: &[&Buffer],
+        wake: Option<Wake>,
+        read: impl FnOnce(Option<&Seen>, Option<Wake>) -> Result<Seen, Error>,
+    ) -> Seen {
         self.settle();
         let keys: Vec<BufferKey> = from.iter().map(|b| b.key()).collect();
         let same =
@@ -594,7 +635,7 @@ impl<S: Clone + PartialEq> Reports<S> {
         self.from = keys;
         let wake = wake.filter(|_| !same);
         // A readback that cannot start never arrives: it is not waited for.
-        let Ok(seen) = Seen::reading_notify(gpu, header, self.last.as_ref(), wake) else {
+        let Ok(seen) = read(self.last.as_ref(), wake) else {
             return Seen::default();
         };
         self.last = Some(seen.clone());
@@ -836,6 +877,21 @@ impl Points {
         textures: &mut TexRing,
         scratch: &mut BufferRing,
     ) -> Result<Option<Tex>, Error> {
+        let mut chain = Chain::new("pts texels");
+        let tex = self.attr_texture_in(&mut chain, gpu, name, textures, scratch)?;
+        chain.run(gpu)?;
+        Ok(tex)
+    }
+
+    /// [`Points::attr_texture`] as steps of `chain`: the picture is written once the chain ran.
+    pub fn attr_texture_in(
+        &self,
+        chain: &mut Chain,
+        gpu: &Gpu,
+        name: &str,
+        textures: &mut TexRing,
+        scratch: &mut BufferRing,
+    ) -> Result<Option<Tex>, Error> {
         let count = self.count.at_most();
         let Some(attr) = self.attr(name) else { return Ok(None) };
         if count == 0 {
@@ -844,18 +900,18 @@ impl Points {
         let (w, h) = texel_size(self.capacity.max(count));
         if self.count.header().is_some() {
             // The copy below would bring the dead points along: write every texel instead.
-            return self.picture(gpu, attr.name(), (w, h), true, textures, scratch).map(Some);
+            return self.picture(chain, gpu, attr.name(), (w, h), true, textures, scratch).map(Some);
         }
         let tex = textures.next_in(gpu, w, h, FLOAT_FORMAT, &format!("pts {}", attr.name()))?;
         let texels = match attr.ty() {
             AttrType::Vec3 | AttrType::Vec4 => attr.buffer().clone(),
             ty => {
                 let out = scratch.next(gpu, u64::from(self.capacity.max(count)) * 16, "pts texels")?;
-                expand(gpu, attr.buffer(), ty, count, (w, h), &out)?;
+                expand(chain, gpu, attr.buffer(), ty, count, (w, h), &out)?;
                 out
             }
         };
-        copy_rows(gpu, &texels, count, &tex)?;
+        copy_rows(chain, &texels, count, &tex)?;
         Ok(Some(tex))
     }
 
@@ -878,12 +934,17 @@ impl Points {
         textures: &mut TexRing,
         scratch: &mut BufferRing,
     ) -> Result<Tex, Error> {
-        self.picture(gpu, name, size, gpu.float_textures(), textures, scratch)
+        let mut chain = Chain::new("pts picture");
+        let tex = self.picture(&mut chain, gpu, name, size, gpu.float_textures(), textures, scratch)?;
+        chain.run(gpu)?;
+        Ok(tex)
     }
 
-    /// [`Points::attr_picture`] in 32-bit floats (`float`) or half floats.
+    /// [`Points::attr_picture`] in 32-bit floats (`float`) or half floats, as steps of `chain`.
+    #[allow(clippy::too_many_arguments)]
     fn picture(
         &self,
+        chain: &mut Chain,
         gpu: &Gpu,
         name: &str,
         (width, height): (u32, u32),
@@ -934,12 +995,13 @@ impl Points {
         };
         let input =
             Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
-        program.run_with(
+        chain.add(
             gpu,
+            &program,
             &[&src, &out, &header],
             &[Step { entry: "picture", out: Out::grid(width, height), input: &input }],
         )?;
-        copy_picture(gpu, &out, stride * texel_bytes, &tex)?;
+        copy_picture(chain, &out, stride * texel_bytes, &tex);
         Ok(tex)
     }
 }
@@ -1061,11 +1123,10 @@ fn picture_params() -> [ParamSpec; 5] {
 }
 
 /// Copies the whole of `tex` from `src`, rows `row_bytes` apart.
-fn copy_picture(gpu: &Gpu, src: &Buffer, row_bytes: u32, tex: &Tex) -> Result<(), Error> {
+fn copy_picture(chain: &mut Chain, src: &Buffer, row_bytes: u32, tex: &Tex) {
     let (w, h) = tex.size();
-    // The copy waits with the pass that filled `src` while the thread defers: a submission of
-    // its own costs the CPU more than the copy.
-    let record = |encoder: &mut wgpu::CommandEncoder| {
+    let (src, tex) = (src.clone(), tex.clone());
+    chain.commands("pts picture copy", move |encoder| {
         encoder.copy_buffer_to_texture(
             wgpu::TexelCopyBufferInfo {
                 buffer: src.buffer(),
@@ -1078,11 +1139,7 @@ fn copy_picture(gpu: &Gpu, src: &Buffer, row_bytes: u32, tex: &Tex) -> Result<()
             tex.texture().as_image_copy(),
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
-    };
-    match gpu.record_commands("pts picture", record, None) {
-        Some(e) => Err(Error::new(format!("cannot copy the points into a picture: {e}"))),
-        None => Ok(()),
-    }
+    });
 }
 
 /// Points per row of the pictures [`Points::attr_texture`] makes.
@@ -1158,6 +1215,7 @@ fn expand_params() -> [ParamSpec; 2] {
 
 /// `count` elements of `src` of type `ty` (4 or 8 bytes each) into `vec4f`s in `out`.
 fn expand(
+    chain: &mut Chain,
     gpu: &Gpu,
     src: &Buffer,
     ty: AttrType,
@@ -1179,19 +1237,19 @@ fn expand(
         _ => None,
     };
     let input = Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
-    program.run_with(gpu, &[src, out], &[Step { entry: "expand", out: Out::grid(w, h), input: &input }])
+    chain.add(gpu, &program, &[src, out], &[Step { entry: "expand", out: Out::grid(w, h), input: &input }])
 }
 
 /// Copies `count` elements of 16 bytes from `src` into the texels of `tex`, row by row.
-fn copy_rows(gpu: &Gpu, src: &Buffer, count: u32, tex: &Tex) -> Result<(), Error> {
+fn copy_rows(chain: &mut Chain, src: &Buffer, count: u32, tex: &Tex) -> Result<(), Error> {
     let (w, h) = tex.size();
     if u64::from(w) * u64::from(h) < u64::from(count) || src.bytes() < u64::from(count) * 16 {
         return Err(Error::new("the points do not fit the picture"));
     }
     let full = count / w;
     let rest = count % w;
-    let ((), error) = gpu.scoped(|| {
-        let mut encoder = gpu.encoder("pts texels");
+    let (src, tex) = (src.clone(), tex.clone());
+    chain.commands("pts texels copy", move |encoder| {
         let at = |y: u32| wgpu::TexelCopyTextureInfo {
             texture: tex.texture(),
             mip_level: 0,
@@ -1226,12 +1284,8 @@ fn copy_rows(gpu: &Gpu, src: &Buffer, count: u32, tex: &Tex) -> Result<(), Error
                 wgpu::Extent3d { width: rest, height: 1, depth_or_array_layers: 1 },
             );
         }
-        gpu.submit([encoder.finish()]);
     });
-    match error {
-        Some(e) => Err(Error::new(format!("cannot copy the points into a picture: {e}"))),
-        None => Ok(()),
-    }
+    Ok(())
 }
 
 pub mod append;

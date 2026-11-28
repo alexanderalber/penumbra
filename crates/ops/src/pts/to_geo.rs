@@ -20,7 +20,7 @@ use penumbra_core::{Curve, Error, ParamSpec};
 use penumbra_gpu::geo::{IDENTITY, Instances, Item, Lines, Mat4, Model};
 use penumbra_gpu::points::reach::{LateBounds, LateMost};
 use penumbra_gpu::points::{Count, LINE, Strips};
-use penumbra_gpu::{BufferRing, Geo, Gpu, Points, TexRing};
+use penumbra_gpu::{BufferRing, Chain, Geo, Gpu, Points, TexRing};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
@@ -313,35 +313,41 @@ impl Operator for FromPts {
         if count == 0 {
             return empty();
         }
+        // The pictures, the reductions and their readbacks all go into one command encoder: one
+        // each would cost the CPU more than their GPU work.
+        let mut chain = Chain::new(KIND);
         let [position, scale, color, normal] = &mut self.textures;
-        let Some(position) = points.attr_texture(gpu, "position", position, &mut self.scratch)? else {
+        let Some(position) =
+            points.attr_texture_in(&mut chain, gpu, "position", position, &mut self.scratch)?
+        else {
             cx.warn("the points have no `position`: nothing is drawn");
             return empty();
         };
         // A line's width comes from `width`, a sprite's or a copy's size from `scale`.
         let sized_by = if lines { "width" } else { "scale" };
-        let scale = points.attr_texture(gpu, sized_by, scale, &mut self.scratch)?;
-        let color = points.attr_texture(gpu, "color", color, &mut self.scratch)?;
+        let scale = points.attr_texture_in(&mut chain, gpu, sized_by, scale, &mut self.scratch)?;
+        let color = points.attr_texture_in(&mut chain, gpu, "color", color, &mut self.scratch)?;
         // Lines of any length take the place along each line where copies take their aim.
         let runs = lines && matches!(points.strips(), Strips::Runs { .. });
         let aim = if copies && cx.text("orient")? == "normal" {
-            points.attr_texture(gpu, "normal", normal, &mut self.scratch)?
+            points.attr_texture_in(&mut chain, gpu, "normal", normal, &mut self.scratch)?
         } else if runs {
-            points.attr_texture(gpu, LINE, normal, &mut self.scratch)?
+            points.attr_texture_in(&mut chain, gpu, LINE, normal, &mut self.scratch)?
         } else {
             None
         };
         // Exact bounds where the points know them; else the box read back from the GPU, late.
         let late = match points.bounds() {
             Some(_) => None,
-            None => self.late.update(gpu, points, Some(wake(cx)))?,
+            None => self.late.update_in(&mut chain, gpu, points, Some(wake(cx)))?,
         };
         // The widest line or largest sprite, so the box holds them (framing, shadow maps). Until
         // it arrives, 1: the size param alone.
         let scale_most = match &scale {
-            Some(_) => self.most.update(gpu, points, sized_by, Some(wake(cx)))?,
+            Some(_) => self.most.update_in(&mut chain, gpu, points, sized_by, Some(wake(cx)))?,
             None => None,
         };
+        chain.run(gpu)?;
         let extent = points
             .bounds()
             .or(late)

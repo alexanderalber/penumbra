@@ -13,7 +13,7 @@ use penumbra_core::{Error, ParamSpec, Value};
 use penumbra_mesh::Bounds;
 
 use super::{Points, Wake};
-use crate::{Buffer, BufferKey, BufferRead, Dispatch, Gpu, Out, ReadState, Step};
+use crate::{Buffer, BufferKey, BufferRead, Chain, Dispatch, Gpu, Out, ReadState, Step};
 
 /// Points per row of the dispatch grid.
 const ROW: u32 = 1 << 16;
@@ -127,6 +127,20 @@ impl LateBounds {
         points: &Points,
         wake: Option<Wake>,
     ) -> Result<Option<Bounds>, Error> {
+        let mut chain = Chain::new("pts box");
+        let out = self.update_in(&mut chain, gpu, points, wake)?;
+        chain.run(gpu)?;
+        Ok(out)
+    }
+
+    /// [`LateBounds::update`] with the reduction and its readback as steps of `chain`.
+    pub fn update_in(
+        &mut self,
+        chain: &mut Chain,
+        gpu: &Gpu,
+        points: &Points,
+        wake: Option<Wake>,
+    ) -> Result<Option<Bounds>, Error> {
         self.settle();
         let n = points.count().at_most();
         let Some(position) = points.attr("position").filter(|a| a.ty() == super::AttrType::Vec3) else {
@@ -154,15 +168,16 @@ impl LateBounds {
         let input =
             Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
         let (w, h) = (n.clamp(1, ROW), n.div_ceil(n.clamp(1, ROW)));
-        program.run_with(
+        chain.add(
             gpu,
+            &program,
             &[position.buffer(), &target, &header],
             &[
                 Step { entry: "clear", out: Out::range(3), input: &input },
                 Step { entry: "reduce", out: Out::grid(w, h), input: &input },
             ],
         )?;
-        self.reads.push_back(target.read_async_notify(gpu, self.spare.take(), wake)?);
+        self.reads.push_back(target.read_async_in(chain, gpu, self.spare.take(), wake)?);
         Ok(self.last.map(grown))
     }
 
@@ -262,6 +277,21 @@ impl LateMost {
         name: &str,
         wake: Option<Wake>,
     ) -> Result<Option<f32>, Error> {
+        let mut chain = Chain::new("pts most");
+        let out = self.update_in(&mut chain, gpu, points, name, wake)?;
+        chain.run(gpu)?;
+        Ok(out)
+    }
+
+    /// [`LateMost::update`] with the reduction and its readback as steps of `chain`.
+    pub fn update_in(
+        &mut self,
+        chain: &mut Chain,
+        gpu: &Gpu,
+        points: &Points,
+        name: &str,
+        wake: Option<Wake>,
+    ) -> Result<Option<f32>, Error> {
         self.settle();
         let n = points.count().at_most();
         let Some(attr) = points.attr(name).filter(|a| {
@@ -303,15 +333,16 @@ impl LateMost {
         let input =
             Dispatch { volumes: &[], pictures: &[], data: None, seconds: 0.0, frame: 0, param: &param };
         let (w, h) = (n.clamp(1, ROW), n.div_ceil(n.clamp(1, ROW)));
-        program.run_with(
+        chain.add(
             gpu,
+            &program,
             &[attr.buffer(), &target, &header],
             &[
                 Step { entry: "clear", out: Out::range(1), input: &input },
                 Step { entry: "reduce", out: Out::grid(w, h), input: &input },
             ],
         )?;
-        self.reads.push_back(target.read_async_notify(gpu, self.spare.take(), wake)?);
+        self.reads.push_back(target.read_async_in(chain, gpu, self.spare.take(), wake)?);
         Ok(self.last)
     }
 

@@ -19,6 +19,7 @@
 pub mod bc;
 pub mod buffer;
 pub mod canvas;
+pub mod chain;
 pub mod compute;
 pub mod deferred;
 pub mod environment;
@@ -49,6 +50,7 @@ use penumbra_core::{Error, lock};
 
 pub use buffer::{Buffer, BufferKey, BufferRead, BufferRing};
 pub use canvas::{Canvas, Paint};
+pub use chain::Chain;
 pub use compute::{
     BufferSlot, Compute, DataBlock, Dispatch, Medium, MediumShape, Out, Step, Target, VOLUME_FORMAT, Volume,
     VolumeRing,
