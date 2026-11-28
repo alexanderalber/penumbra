@@ -55,7 +55,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "cook.profile",
-        "Where the frame time went since the last reset, in ms per frame: the steps of a frame, the steps of the cook pass, and the nodes under {under?} (default /) summed by its children, by kind and one by one (the {top?} most, default 30). A node's `cook_ms` is its operator's work, `visit_ms` adds what the scheduler spends on it; {reset?}",
+        "Where the frame time went since the last reset, in ms per frame: the steps of a frame, the steps of the cook pass, and the nodes under {under?} (default /) summed by its children, by kind and one by one (the {top?} most, default 30). A node's `cook_ms` is its operator's work, `visit_ms` adds what the scheduler spends on it, `gpu_ms` the GPU running its work (timed for a minute after each call unless {gpu?} is false; null where the GPU cannot time); {reset?}",
         cook_profile,
     );
     add(
@@ -221,6 +221,10 @@ fn cook_stats(e: &Engine, p: &Json) -> Result<Json> {
 /// Nodes `cook.profile` lists one by one when not told otherwise.
 const PROFILE_TOP: usize = 30;
 
+/// How long GPU timing stays on after a `cook.profile` call. Timestamps cost a little GPU and
+/// CPU time per command encoder, so a forgotten profile does not keep them on during a show.
+const GPU_TIMING: Duration = Duration::from_secs(60);
+
 /// One line of `cook.profile`: a node, a group under the asked-for path, or a kind.
 #[derive(Default)]
 struct Spent {
@@ -229,20 +233,25 @@ struct Spent {
     cook: f64,
     cook_max: f64,
     visit: f64,
+    /// Seconds the GPU spent on the node's work over the timed passes.
+    gpu: f64,
 }
 
 impl Spent {
-    fn add(&mut self, s: &penumbra_graph::NodeSpent) {
+    fn add(&mut self, s: &penumbra_graph::NodeSpent, gpu: Option<&penumbra_gpu::GpuSpent>) {
         self.nodes += 1;
         self.cooks += s.cooks;
         self.cook += s.cook.as_secs_f64();
         self.cook_max = self.cook_max.max(s.cook_max.as_secs_f64());
         self.visit += s.visit.as_secs_f64();
+        self.gpu += gpu.map_or(0.0, |g| g.time.as_secs_f64());
     }
 
-    fn json(&self, passes: f64) -> serde_json::Map<String, Json> {
+    /// `gpu_frames`: the passes GPU time was measured over, `None` when it was not.
+    fn json(&self, passes: f64, gpu_frames: Option<f64>) -> serde_json::Map<String, Json> {
         let mut o = serde_json::Map::new();
         o.insert("cook_ms".into(), json!(round(self.cook * 1000.0 / passes)));
+        o.insert("gpu_ms".into(), json!(gpu_frames.map(|f| round(self.gpu * 1000.0 / f))));
         o.insert("visit_ms".into(), json!(round(self.visit * 1000.0 / passes)));
         o.insert("cooks_per_frame".into(), json!(round(self.cooks as f64 / passes)));
         o
@@ -261,9 +270,11 @@ fn cook_profile(e: &Engine, p: &Json) -> Result<Json> {
         reset: Option<bool>,
         under: Option<String>,
         top: Option<usize>,
+        gpu: Option<bool>,
     }
     let a: A = args(p)?;
     let reset = a.reset.unwrap_or(false);
+    let time_gpu = a.gpu.unwrap_or(true);
     let top = a.top.unwrap_or(PROFILE_TOP);
     let under = a.under.unwrap_or_else(|| "/".into());
     let under = under.trim_end_matches('/').to_string();
@@ -276,33 +287,47 @@ fn cook_profile(e: &Engine, p: &Json) -> Result<Json> {
             return Err(CommandError(format!("no node `{under}`")));
         }
     }
-    let (frames, profile) = e.on_cook(move |st| {
+    let gpu = e.gpu().cloned();
+    let (frames, profile, gpu_times) = e.on_cook(move |st| {
         let frames = st.spent;
         if reset {
             st.spent = crate::engine::FrameSpent::default();
         }
-        (frames, st.cooker.take_profile(reset))
+        let gpu_times = gpu.map(|g| {
+            let times = g.take_gpu_times(reset);
+            g.time_gpu_until(time_gpu.then(|| std::time::Instant::now() + GPU_TIMING));
+            times
+        });
+        (frames, st.cooker.take_profile(reset), gpu_times)
     })?;
     let passes = profile.passes.passes.max(1) as f64;
+    // GPU time per pass is over the passes whose timestamps arrived, which lag the cook passes.
+    let gpu_frames = gpu_times.as_ref().filter(|t| t.frames > 0).map(|t| t.frames as f64);
+    let gpu_of: std::collections::HashMap<penumbra_core::NodeId, penumbra_gpu::GpuSpent> =
+        gpu_times.as_ref().map(|t| t.nodes.iter().copied().collect()).unwrap_or_default();
+    let mut gpu_all = Duration::ZERO;
     let per_frame = |d: Duration| json!(round(d.as_secs_f64() * 1000.0 / frames.frames.max(1) as f64));
     let per_pass = |d: Duration| json!(round(d.as_secs_f64() * 1000.0 / passes));
 
     let prefix = format!("{under}/");
     let mut groups: std::collections::BTreeMap<String, Spent> = Default::default();
     let mut kinds: std::collections::BTreeMap<String, Spent> = Default::default();
-    let mut nodes: Vec<(String, String, penumbra_graph::NodeSpent)> = Vec::new();
+    let mut nodes: Vec<(String, String, penumbra_graph::NodeSpent, Option<penumbra_gpu::GpuSpent>)> =
+        Vec::new();
     let mut visit_all = Duration::ZERO;
     let mut cook_all = Duration::ZERO;
     for (id, spent) in &profile.nodes {
         visit_all += spent.visit;
         cook_all += spent.cook;
+        let gpu = gpu_of.get(id);
+        gpu_all += gpu.map_or(Duration::ZERO, |g| g.time);
         let (Some(path), Some(def)) = (net.path_of(*id), net.node(*id)) else { continue };
         let path = path.to_string();
         let Some(rest) = path.strip_prefix(&prefix) else { continue };
         let child = rest.split('/').next().unwrap_or(rest);
-        groups.entry(format!("{prefix}{child}")).or_default().add(spent);
-        kinds.entry(def.kind.clone()).or_default().add(spent);
-        nodes.push((path, def.kind.clone(), *spent));
+        groups.entry(format!("{prefix}{child}")).or_default().add(spent, gpu);
+        kinds.entry(def.kind.clone()).or_default().add(spent, gpu);
+        nodes.push((path, def.kind.clone(), *spent, gpu.copied()));
     }
     let mut groups: Vec<(String, Spent)> = groups.into_iter().collect();
     groups.sort_by(|a, b| b.1.visit.total_cmp(&a.1.visit));
@@ -313,7 +338,7 @@ fn cook_profile(e: &Engine, p: &Json) -> Result<Json> {
     let groups: Vec<Json> = groups
         .iter()
         .map(|(path, s)| {
-            let mut o = s.json(passes);
+            let mut o = s.json(passes, gpu_frames);
             o.insert("path".into(), json!(path));
             o.insert("nodes".into(), json!(s.nodes));
             Json::Object(o)
@@ -323,7 +348,7 @@ fn cook_profile(e: &Engine, p: &Json) -> Result<Json> {
         .iter()
         .take(top)
         .map(|(kind, s)| {
-            let mut o = s.json(passes);
+            let mut o = s.json(passes, gpu_frames);
             o.insert("kind".into(), json!(kind));
             o.insert("nodes".into(), json!(s.nodes));
             Json::Object(o)
@@ -332,10 +357,10 @@ fn cook_profile(e: &Engine, p: &Json) -> Result<Json> {
     let nodes: Vec<Json> = nodes
         .iter()
         .take(top)
-        .map(|(path, kind, spent)| {
+        .map(|(path, kind, spent, gpu)| {
             let mut s = Spent::default();
-            s.add(spent);
-            let mut o = s.json(passes);
+            s.add(spent, gpu.as_ref());
+            let mut o = s.json(passes, gpu_frames);
             o.insert("path".into(), json!(path));
             o.insert("kind".into(), json!(kind));
             o.insert("cook_ms_max".into(), json!(round(s.cook_max * 1000.0)));
@@ -344,6 +369,18 @@ fn cook_profile(e: &Engine, p: &Json) -> Result<Json> {
         .collect();
     let pass = profile.passes;
     let evaluating = pass.outputs + pass.thumbnails;
+    let per_gpu_frame = |d: Duration| json!(gpu_frames.map(|f| round(d.as_secs_f64() * 1000.0 / f)));
+    let gpu = match &gpu_times {
+        None => json!({"state": "no GPU"}),
+        Some(t) => json!({
+            "state": t.state.name(),
+            "frames": t.frames,
+            "nodes_ms": per_gpu_frame(gpu_all),
+            "span_ms": per_gpu_frame(t.span),
+            "untimed_encoders": t.untimed,
+            "lost_frames": t.lost,
+        }),
+    };
     Ok(json!({
         "seconds": frames.since.map(|t| t.elapsed().as_secs_f64()),
         "frames": frames.frames,
@@ -376,7 +413,8 @@ fn cook_profile(e: &Engine, p: &Json) -> Result<Json> {
         "kinds": kinds,
         "nodes": nodes,
         "nodes_seen": listed,
-        "not_counted": "GPU execution time (a node's cook_ms holds recording and submitting its GPU work, not the GPU running it); the editor's own drawing; output windows presenting",
+        "gpu": gpu,
+        "not_counted": "in cook_ms, the GPU running a node's work (cook_ms holds recording and submitting it; gpu_ms is the GPU's part); in gpu_ms, GPU work recorded outside a node's cook (thumbnails, outputs, free views, the editor), on threads a node started, uploads, video in and out; the editor's own drawing; output windows presenting",
     }))
 }
 

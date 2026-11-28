@@ -252,8 +252,7 @@ impl Converter {
                     wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(v3) },
                 ],
             });
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("video") });
+            let mut encoder = gpu.encoder("video");
             {
                 let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("video"),

@@ -237,8 +237,7 @@ impl Shapes {
         if let Some(e) = error {
             return Err(Error::new(format!("cannot upload the shapes: {e}")));
         }
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("shapes") });
+        let mut encoder = gpu.encoder("shapes");
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shapes"),

@@ -266,8 +266,7 @@ impl Scatter {
             }
             None => None,
         };
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("scatter") });
+        let mut encoder = gpu.encoder("scatter");
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("scatter"),

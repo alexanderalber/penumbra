@@ -193,8 +193,7 @@ impl Gpu {
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("readback") });
+            let mut encoder = self.encoder("readback");
             encoder.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
                     texture: tex.texture(),
@@ -318,8 +317,7 @@ impl Gpu {
     ) -> Result<PendingRead, Error> {
         let device = self.device();
         let (items, error) = self.scoped(|| {
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("read_async") });
+            let mut encoder = self.encoder("read_async");
             let mut items = Vec::with_capacity(textures.len());
             for tex in textures {
                 let (width, height) = tex.size();

@@ -370,9 +370,7 @@ impl Projection {
             draws.push((item.key, item.viewport, scissor, group));
         }
         self.geometry.retain(|k, _| items.iter().any(|i| i.key == *k));
-        let mut encoder = gpu
-            .device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("projection") });
+        let mut encoder = gpu.encoder("projection");
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("projection"),

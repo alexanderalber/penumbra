@@ -1641,7 +1641,62 @@ fn nothing_is_saved_before_the_saved_state_was_read() {
     let k = prof["nodes"].as_array().and_then(|n| n.iter().find(|n| n["path"] == "/k"));
     assert_eq!(k.map(|k| k["kind"].clone()), Some(json!("chan.constant")), "{prof}");
     assert_eq!(prof["groups"][0]["path"], "/k", "{prof}");
+    assert_eq!(prof["gpu"]["state"], "no GPU", "{prof}");
+    assert_eq!(k.map(|k| k["gpu_ms"].clone()), Some(Json::Null), "{prof}");
     assert!(f.fail("cook.profile", json!({"under": "/nowhere"})).contains("no node"));
+}
+
+#[test]
+fn cook_profile_times_the_gpu_per_node_while_asked() {
+    let f = Fixture::new("gpu-profile");
+    let gpu = match penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software) {
+        Ok(g) => g,
+        Err(e) if cfg!(windows) => panic!("WARP must exist on Windows: {e}"),
+        Err(_) => return,
+    };
+    let supported = gpu.timing_state() != penumbra_gpu::TimingState::Unsupported;
+    f.engine.attach_gpu(gpu).unwrap();
+    f.call(
+        "node.create",
+        json!({"path": "/n", "kind": "tex.noise", "params": {"width": 256, "height": 256, "speed": 1}}),
+    );
+    f.call("node.create", json!({"path": "/l", "kind": "chan.lfo"}));
+    f.call("node.watch", json!({"path": "/n"}));
+    f.call("node.watch", json!({"path": "/l"}));
+    eventually("a cook", || f.call("node.info", json!({"path": "/n"}))["status"]["has_output"] == true);
+    let first = f.call("cook.profile", json!({"reset": true}));
+    if !supported {
+        assert_eq!(first["gpu"]["state"], "unsupported", "{first}");
+        return;
+    }
+    // Timing was off until this call, so nothing was measured yet.
+    assert_eq!(first["gpu"]["frames"], 0, "{first}");
+    let node = |prof: &Json, path: &str| {
+        prof["nodes"]
+            .as_array()
+            .and_then(|n| n.iter().find(|n| n["path"] == path))
+            .cloned()
+            .unwrap_or_default()
+    };
+    assert_eq!(node(&first, "/n")["gpu_ms"], Json::Null, "{first}");
+    let mut prof = Json::Null;
+    eventually("timed passes", || {
+        prof = f.call("cook.profile", json!({}));
+        prof["gpu"]["frames"].as_u64().is_some_and(|n| n >= 3)
+    });
+    assert_eq!(prof["gpu"]["state"], "on", "{prof}");
+    let noise = node(&prof, "/n")["gpu_ms"].as_f64().unwrap_or(0.0);
+    assert!(noise > 0.0, "{prof}");
+    assert_eq!(node(&prof, "/l")["gpu_ms"], 0.0, "a channel node has no GPU work: {prof}");
+    assert!(prof["gpu"]["nodes_ms"].as_f64().unwrap_or(0.0) >= noise, "{prof}");
+    assert!(
+        prof["kinds"].as_array().unwrap().iter().any(|k| k["kind"] == "tex.noise" && k["gpu_ms"] == noise)
+    );
+    // Switched off, it says so and stops measuring.
+    let off = f.call("cook.profile", json!({"gpu": false, "reset": true}));
+    assert_eq!(off["gpu"]["state"], "on", "the state before the call: {off}");
+    let after = f.call("cook.profile", json!({"gpu": false}));
+    assert_eq!(after["gpu"]["state"], "off", "{after}");
 }
 
 #[path = "osc_tests.rs"]

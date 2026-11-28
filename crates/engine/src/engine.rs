@@ -501,6 +501,10 @@ impl CookState {
             w.refill();
         }
         self.last = self.cooker.cook_showing(&net, self.clock.now(), &wanted, &request.thumbnails, &shown);
+        // Before the deferral's end, so resolving the pass's timestamps adds no submission.
+        if let Some(gpu) = &gpu {
+            gpu.end_timing_frame();
+        }
         drop(deferral);
         self.write_bound_presets(session, &net);
         let t_cook = Instant::now();

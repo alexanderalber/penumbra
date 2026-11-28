@@ -1178,9 +1178,7 @@ fn copy_rows(gpu: &Gpu, src: &Buffer, count: u32, tex: &Tex) -> Result<(), Error
     let full = count / w;
     let rest = count % w;
     let ((), error) = gpu.scoped(|| {
-        let mut encoder = gpu
-            .device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pts texels") });
+        let mut encoder = gpu.encoder("pts texels");
         let at = |y: u32| wgpu::TexelCopyTextureInfo {
             texture: tex.texture(),
             mip_level: 0,

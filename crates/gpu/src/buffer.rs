@@ -160,8 +160,7 @@ impl Buffer {
     /// Sets every byte to zero, after the dispatches recorded before this.
     pub fn clear(&self, gpu: &Gpu) -> Result<(), Error> {
         let ((), error) = gpu.scoped(|| {
-            let mut encoder =
-                gpu.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("clear") });
+            let mut encoder = gpu.encoder("clear");
             encoder.clear_buffer(&self.0.buffer, 0, None);
             gpu.submit([encoder.finish()]);
         });
@@ -181,9 +180,7 @@ impl Buffer {
         let new = Self::new(gpu, bytes, label)?;
         let kept = bytes.min(self.0.bytes);
         let ((), error) = gpu.scoped(|| {
-            let mut encoder = gpu
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("resize") });
+            let mut encoder = gpu.encoder("resize");
             encoder.copy_buffer_to_buffer(&self.0.buffer, 0, &new.0.buffer, 0, kept);
             gpu.submit([encoder.finish()]);
         });
@@ -213,8 +210,7 @@ impl Buffer {
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
-            let mut encoder = device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("buffer readback") });
+            let mut encoder = gpu.encoder("buffer readback");
             encoder.copy_buffer_to_buffer(&self.0.buffer, 0, &staging, 0, self.0.bytes);
             gpu.submit([encoder.finish()]);
             staging
