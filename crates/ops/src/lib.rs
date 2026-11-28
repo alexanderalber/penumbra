@@ -470,14 +470,62 @@ pub(crate) fn on_gpu(
 /// Compiles the shaders and pipelines of every node type in `types` ([`penumbra_graph::NodeType::warm_up`]), so
 /// the first node of each kind does not stall the cook thread (a pipeline takes up to about a
 /// hundred milliseconds on some backends). Call it on a background thread when the GPU appears.
-pub fn warm_up(types: &NodeTypes, gpu: &Gpu) {
-    for kind in types.kinds() {
-        if let Some(t) = types.get(kind)
-            && let Err(e) = t.warm_up(gpu)
-        {
-            log::error!("the shaders of {kind} do not compile: {e}");
+///
+/// The kinds are shared out over `threads` threads, the calling one included: wgpu's device
+/// compiles on several threads at once. A helper thread that cannot start leaves its share to
+/// the others.
+pub fn warm_up(types: &NodeTypes, gpu: &Gpu, threads: usize) {
+    let start = std::time::Instant::now();
+    let kinds: Vec<&str> = types.kinds().collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let times = std::sync::Mutex::new(Vec::with_capacity(kinds.len()));
+    let work = || {
+        loop {
+            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some(&kind) = kinds.get(i) else { break };
+            let Some(t) = types.get(kind) else { continue };
+            let began = std::time::Instant::now();
+            if let Err(e) = t.warm_up(gpu) {
+                log::error!("the shaders of {kind} do not compile: {e}");
+            }
+            if let Ok(mut times) = times.lock() {
+                times.push((began.elapsed(), kind));
+            }
         }
+    };
+    let mut running = 1;
+    std::thread::scope(|s| {
+        for n in 1..threads.max(1) {
+            let helper =
+                std::thread::Builder::new().name(format!("shader-warm-up-{n}")).spawn_scoped(s, work);
+            match helper {
+                Ok(_) => running += 1,
+                Err(e) => log::warn!("shader warm-up: no helper thread: {e}"),
+            }
+        }
+        work();
+    });
+    let mut times = times.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
+    times.sort_by_key(|t| std::cmp::Reverse(t.0));
+    let slowest: Vec<String> =
+        times.iter().take(5).map(|(d, kind)| format!("{kind} {:.0} ms", d.as_secs_f64() * 1000.0)).collect();
+    log::info!(
+        "built-in shaders of {} kinds compiled in {:.2} s on {running} thread{}; slowest: {}",
+        kinds.len(),
+        start.elapsed().as_secs_f64(),
+        if running == 1 { "" } else { "s" },
+        slowest.join(", ")
+    );
+}
+
+/// How many threads [`warm_up`] gets on `gpu`: half the processor's threads, at most 4, so the
+/// cook thread and the editor keep cores of their own while it runs. One on a software adapter:
+/// two software devices compiling at once can crash it, and several threads on one were not tried.
+pub fn warm_up_threads(gpu: &Gpu) -> usize {
+    if gpu.software() {
+        return 1;
     }
+    std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).clamp(1, 4))
 }
 
 /// Passes its input on as it is, without a copy: the nulls of every family but `tex`

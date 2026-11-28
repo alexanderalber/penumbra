@@ -470,6 +470,11 @@ impl Gpu {
         &self.inner.info
     }
 
+    /// Whether this is a software adapter (WARP on Windows) rather than a graphics card.
+    pub fn software(&self) -> bool {
+        self.inner.info.device_type == wgpu::DeviceType::Cpu
+    }
+
     /// Adapter name and backend, e.g. `NVIDIA GeForce RTX 3090 (Dx12)`.
     pub fn name(&self) -> String {
         format!("{} ({:?})", self.inner.info.name, self.inner.info.backend)
