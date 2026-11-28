@@ -88,7 +88,7 @@ pub(crate) struct Deferred {
 }
 
 impl Deferred {
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.lists.iter().all(|l| l.buffers.is_empty() && l.used == 0)
     }
 
@@ -246,18 +246,27 @@ impl Gpu {
         let mut d = lock(&self.inner.deferred);
         let (buffer, error) = self.scoped(|| {
             let slots = parts.iter().map(|p| self.slots(&mut d, thread, *p)).collect::<Option<Vec<_>>>()?;
-            let mut encoder =
-                self.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+            let mut encoder = self.encoder(label);
             record(&mut encoder, &slots);
-            Some(encoder.finish())
+            Some(encoder.finish_stamped())
         });
-        let Some(list) = d.list(thread) else { return Some("no list to record into".into()) };
+        let Some(list) = d.list(thread) else {
+            if let Some((_, Some(stamp))) = buffer {
+                self.void_stamp(stamp);
+            }
+            return Some("no list to record into".into());
+        };
         // A buffer that failed is invalid; submitting it would raise the error again, on
         // whatever submits next.
         match (buffer, error) {
-            (_, Some(e)) => return Some(e),
+            (b, Some(e)) => {
+                if let Some((_, Some(stamp))) = b {
+                    self.void_stamp(stamp);
+                }
+                return Some(e);
+            }
             (None, None) => return Some("the pass's uniforms do not fit a block".into()),
-            (Some(b), None) => {
+            (Some((b, _)), None) => {
                 list.buffers.push(b);
                 list.after.extend(after);
             }

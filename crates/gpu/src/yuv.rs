@@ -274,8 +274,7 @@ impl YuvReader {
                     wgpu::BindGroupEntry { binding: 3, resource: storage.as_entire_binding() },
                 ],
             });
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("yuv") });
+            let mut encoder = gpu.encoder("yuv");
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("yuv"),

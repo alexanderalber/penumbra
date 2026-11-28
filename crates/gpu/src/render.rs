@@ -1263,8 +1263,7 @@ impl Renderer {
                     }],
                 })
             });
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("render") });
+            let mut encoder = gpu.encoder("render");
             let pictures =
                 lights.iter().filter_map(|l| l.projector.as_ref().and_then(|p| p.texture.as_ref()));
             let mipped =

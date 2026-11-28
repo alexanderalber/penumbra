@@ -216,8 +216,7 @@ impl BcConverter {
                     },
                 ],
             });
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("bc") });
+            let mut encoder = gpu.encoder("bc");
             {
                 let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("bc"),

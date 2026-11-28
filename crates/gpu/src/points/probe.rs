@@ -295,9 +295,7 @@ pub fn first_rows(
     let bytes = super::HEADER_BYTES + names.iter().map(|name| len(name)).sum::<u64>();
     let out = ring.next(gpu, bytes, "pts first rows")?;
     let ((), error) = gpu.scoped(|| {
-        let mut encoder = gpu
-            .device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pts first rows") });
+        let mut encoder = gpu.encoder("pts first rows");
         // A buffer used before holds what it read then.
         encoder.clear_buffer(out.buffer(), 0, None);
         if let Some(h) = points.count().header() {

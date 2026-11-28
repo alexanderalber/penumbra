@@ -106,8 +106,7 @@ impl EnvironmentMaps {
                 })
             };
             let all_plain = plain.create_view(&wgpu::TextureViewDescriptor::default());
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("environment") });
+            let mut encoder = gpu.encoder("environment");
             let mut pass = |pipeline: &wgpu::RenderPipeline,
                             src: &wgpu::TextureView,
                             target: &wgpu::TextureView,

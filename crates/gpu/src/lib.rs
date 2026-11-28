@@ -35,6 +35,7 @@ pub mod scatter;
 pub mod shapes;
 pub mod stack;
 pub mod tex;
+pub mod timing;
 pub mod video;
 pub mod vram;
 pub mod yuv;
@@ -63,6 +64,7 @@ pub use scatter::{Scatter, ScatterDead, ScatterEdge, ScatterSettings, ScatterUni
 pub use shapes::{STILL, ShapeMode, ShapePoly, Shapes, shape_random};
 pub use stack::Stack;
 pub use tex::{Tex, TexRing, texture_bytes, unique_bytes, view_bytes};
+pub use timing::{GpuSpent, GpuTimes, TimingState};
 pub use vram::Vram;
 pub use yuv::{MappedPlanes, PlaneLayout, YuvReader};
 
@@ -202,6 +204,8 @@ struct Inner {
     /// The header that bounds no count, for points whose count the CPU knows (see
     /// [`points::Count`]).
     no_limit: Mutex<Option<Buffer>>,
+    /// GPU time per node (see [`timing`]).
+    timing: timing::Timing,
 }
 
 /// Whether the device is lost, why, and who wants to know (see [`Gpu::on_lost`]). Shared with
@@ -378,6 +382,7 @@ impl Gpu {
         });
         let info = adapter.get_info();
         let layouts = pass::Layouts::new(&device);
+        let timing = timing::Timing::new(&device);
         Self {
             inner: Arc::new(Inner {
                 adapter,
@@ -410,6 +415,7 @@ impl Gpu {
                 poll_panics: AtomicU64::new(0),
                 poll_clock: Arc::new(PollClock::new()),
                 no_limit: Mutex::new(None),
+                timing,
             }),
         }
     }
@@ -431,6 +437,12 @@ impl Gpu {
     /// penumbra does on a device that lacks it ([`Gpu::float_blending`]), tried on one that has it.
     pub fn headless_without_float_blending(choice: AdapterChoice) -> Result<Self, Error> {
         Self::headless_without(choice, wgpu::Features::FLOAT32_BLENDABLE)
+    }
+
+    /// [`Gpu::headless`] without timestamp queries even where the adapter has them: GPU time per
+    /// node stays unsupported ([`Gpu::timing_state`]).
+    pub fn headless_without_timestamps(choice: AdapterChoice) -> Result<Self, Error> {
+        Self::headless_without(choice, TIMESTAMPS)
     }
 
     fn headless_without(choice: AdapterChoice, features: wgpu::Features) -> Result<Self, Error> {
@@ -582,6 +594,7 @@ impl Gpu {
         if let Err(e) = self.poll_once() {
             log::warn!("{e}");
         }
+        self.collect_timing();
         if self.inner.polls.fetch_add(1, Ordering::Relaxed).is_multiple_of(SWEEP_POLLS) {
             self.sweep_bind_groups();
         }
@@ -863,8 +876,7 @@ impl Gpu {
                 dst.height()
             )));
         }
-        let mut encoder =
-            self.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("copy") });
+        let mut encoder = self.encoder("copy");
         encoder.copy_texture_to_texture(
             src.texture().as_image_copy(),
             dst.texture().as_image_copy(),
@@ -951,13 +963,18 @@ impl Gpu {
     }
 }
 
+/// The features GPU time per node needs ([`timing`]): both or neither.
+const TIMESTAMPS: wgpu::Features =
+    wgpu::Features::TIMESTAMP_QUERY.union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
+
 /// What penumbra asks of a device: the adapter's texture size limit (up to 16384), up to 64
 /// sampled textures per shader stage (frame stacks bind one array texture per chunk, see
 /// [`stack`]), BC texture compression where the adapter has it (HAP, [`bc`]), filtering of
 /// 32-bit float textures where it has that ([`FLOAT_FORMAT`]), blending into them where it has
 /// that ([`scatter`]), up to 16 storage buffers per shader stage and storage buffers of up to
 /// 1 GiB where the adapter allows (points keep each attribute in a buffer of its own,
-/// [`points`]), otherwise wgpu's defaults. eframe gets the same in the app.
+/// [`points`]), timestamp queries inside encoders where it has them ([`timing`]), otherwise
+/// wgpu's defaults. eframe gets the same in the app.
 pub fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
     let mut limits = wgpu::Limits::default();
     let offered = adapter.limits();
@@ -970,10 +987,13 @@ pub fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'sta
     limits.max_buffer_size = offered.max_buffer_size.clamp(limits.max_buffer_size, GIB);
     limits.max_storage_buffer_binding_size =
         offered.max_storage_buffer_binding_size.clamp(limits.max_storage_buffer_binding_size, GIB);
-    let required_features = adapter.features()
+    let mut required_features = adapter.features()
         & (wgpu::Features::TEXTURE_COMPRESSION_BC
             | wgpu::Features::FLOAT32_FILTERABLE
             | wgpu::Features::FLOAT32_BLENDABLE);
+    if adapter.features().contains(TIMESTAMPS) {
+        required_features |= TIMESTAMPS;
+    }
     wgpu::DeviceDescriptor {
         label: Some("penumbra"),
         required_limits: limits,

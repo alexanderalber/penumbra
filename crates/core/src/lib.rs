@@ -2,10 +2,11 @@
 //! and parameter paths, parameter values and their metadata, the common error type, and a lock
 //! that survives a panic elsewhere.
 //!
-//! No GPU, no UI, no threads.
+//! No GPU, no UI, no threads (one thread-local: the node being cooked, [`cooking`]).
 
 pub mod bind;
 pub mod chan;
+pub mod cooking;
 pub mod declare;
 pub mod error;
 pub mod files;

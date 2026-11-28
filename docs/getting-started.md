@@ -218,7 +218,16 @@ The status bar shows how long a frame takes. Above 16.7 ms a 60 Hz output shows 
 
 The numbers add up from the last `{"reset": true}`. So reset, let the show play the part that
 is slow, then read. A node's `cook_ms` is CPU time: for a `tex` node, recording and handing
-its work to the GPU. The time the GPU itself takes is not in it.
+its work to the GPU.
+
+**GPU time.** `gpu_ms` beside `cook_ms` is the time the GPU spends running the node's work:
+its render passes, compute steps and copies. The GPU is timed for one minute after each
+`cook.profile` call. The first call after a pause therefore has `gpu_ms` null; read again a
+few frames later. `{"gpu": false}` stops the timing at once. The `gpu` block sums up:
+`nodes_ms` is all nodes together, `span_ms` the GPU's time from the first timed work of a frame
+to the last, gaps included. GPU work outside the nodes is in neither: thumbnails, outputs, the
+editor, video in and out. On a GPU without timestamp queries (Apple GPUs) `gpu.state` says
+`unsupported` and `gpu_ms` stays null.
 
 ## When the GPU gives up
 

@@ -2087,7 +2087,11 @@ impl Cooker {
         rt.again = false;
         rt.trimmed = false;
         let started = Instant::now();
-        let result = catch_unwind(AssertUnwindSafe(|| op.cook(&cx)));
+        let result = {
+            // GPU work recorded inside is timed for this node.
+            let _cooking = penumbra_core::cooking::enter(id);
+            catch_unwind(AssertUnwindSafe(|| op.cook(&cx)))
+        };
         let panicked = result.is_err();
         let elapsed = started.elapsed();
         let read_time = cx.time_read.get();

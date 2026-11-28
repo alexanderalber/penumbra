@@ -366,8 +366,7 @@ impl Canvas {
         }
         let (draw_group, resolve_group) = groups;
         let clear = blend_space(background);
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("canvas") });
+        let mut encoder = gpu.encoder("canvas");
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("canvas draw"),

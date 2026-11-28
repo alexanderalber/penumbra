@@ -261,8 +261,7 @@ impl Stack {
                 Precision::Half => &p.push_half,
                 Precision::Byte => &p.push_byte,
             };
-            let mut encoder = device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame stack push") });
+            let mut encoder = gpu.encoder("frame stack push");
             {
                 let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("frame stack push"),
@@ -332,8 +331,7 @@ impl Stack {
                 layout: &p.read_layout,
                 entries: &entries,
             });
-            let mut encoder = device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame stack read") });
+            let mut encoder = gpu.encoder("frame stack read");
             {
                 let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("frame stack read"),
