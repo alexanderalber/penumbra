@@ -380,6 +380,18 @@ pub const TAGS: &[(&str, &[&str])] = &[
         ],
     ),
     ("pts.random", &["random pop", "jitter"]),
+    (
+        "pts.resample",
+        &[
+            "line resample pop",
+            "resample pop",
+            "even spacing",
+            "subdivide",
+            "points along a line",
+            "arc length",
+        ],
+    ),
+    ("pts.smooth", &["line smooth pop", "smooth pop", "smooth line", "relax", "laplacian", "round corners"]),
     ("pts.shader", &["glsl pop", "glsl", "compute shader", "custom"]),
     ("pts.switch", &["switch pop", "select", "choose"]),
     (

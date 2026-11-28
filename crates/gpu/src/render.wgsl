@@ -94,7 +94,9 @@ struct Draw {
     inst: vec4u,
     // Lines through the instances (geo::Lines): x points per line (0: one line through all),
     // y their distance in the list, z bit 0 closed lines, bit 1 a count on the GPU, bit 2 every
-    // two points a line of their own (instance i joins points 2i and 2i + 1), w the most points.
+    // two points a line of their own (instance i joins points 2i and 2i + 1), bit 3 lines of any
+    // length (each point's aim texel holds its place along its line and the line's points), w
+    // the most points.
     lines: vec4u,
     // Sprites (inst.y bit 3): x 1 where a disc is cut out of the square, y how far in from the
     // outline it fades (0 a hard edge, 1 from the centre); z 1 where the copies add their colour
@@ -206,8 +208,26 @@ const NO_POINT: u32 = 0xffffffffu;
 // How far out a mitred corner may reach, in half widths (geo::MITRE_LIMIT).
 const MITRE_LIMIT: f32 = 4.0;
 
+// Whether the lines are of any length, each point saying where it lies on its own (geo::Lines
+// runs).
+fn line_runs() -> bool {
+    return (draw.lines.z & 8u) != 0u;
+}
+
+// Point i's place along its line and its line's points, for lines of any length: kept inside
+// the list whatever the texel holds.
+fn line_run(i: u32) -> vec2u {
+    let r = instance_texel(inst_aim, i, vec4f(0.0));
+    let along = min(u32(clamp(r.x, 0.0, 16777216.0)), i);
+    let points = max(u32(clamp(r.y, 0.0, 16777216.0)), along + 1u);
+    return vec2u(along, points);
+}
+
 // Point i's number along its line.
 fn line_along(i: u32) -> u32 {
+    if line_runs() {
+        return line_run(i).x;
+    }
     let k = i / max(draw.lines.y, 1u);
     if draw.lines.x == 0u {
         return k;
@@ -215,8 +235,16 @@ fn line_along(i: u32) -> u32 {
     return k % draw.lines.x;
 }
 
-fn line_closed() -> bool {
-    return (draw.lines.z & 1u) != 0u && draw.lines.x > 2u;
+// The points on point i's line (0: one line through all).
+fn line_points(i: u32) -> u32 {
+    if line_runs() {
+        return line_run(i).y;
+    }
+    return draw.lines.x;
+}
+
+fn line_closed(points: u32) -> bool {
+    return (draw.lines.z & 1u) != 0u && points > 2u;
 }
 
 // Whether point j is one of the points: below the most, and alive where the count is on the GPU
@@ -234,11 +262,12 @@ fn line_exists(j: u32) -> bool {
 // The point before i on its line: a closed line's first point follows its last.
 fn line_before(i: u32) -> u32 {
     let stride = max(draw.lines.y, 1u);
+    let points = line_points(i);
     if line_along(i) > 0u {
         return i - stride;
     }
-    if line_closed() {
-        let j = i + (draw.lines.x - 1u) * stride;
+    if line_closed(points) {
+        let j = i + (points - 1u) * stride;
         if line_exists(j) {
             return j;
         }
@@ -249,13 +278,15 @@ fn line_before(i: u32) -> u32 {
 // The point after i on its line, if there is one.
 fn line_after(i: u32) -> u32 {
     let stride = max(draw.lines.y, 1u);
+    let points = line_points(i);
+    let along = line_along(i);
     var j = NO_POINT;
-    if draw.lines.x == 0u || line_along(i) + 1u < draw.lines.x {
+    if points == 0u || along + 1u < points {
         if i <= NO_POINT - 1u - stride {
             j = i + stride;
         }
-    } else if line_closed() {
-        j = i - (draw.lines.x - 1u) * stride;
+    } else if line_closed(points) && along >= points - 1u {
+        j = i - (points - 1u) * stride;
     }
     if j == NO_POINT || !line_exists(j) {
         return NO_POINT;

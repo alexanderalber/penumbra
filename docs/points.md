@@ -37,8 +37,8 @@ knows only how many there may be. Every node downstream handles that by itself. 
 shows the count a frame late, as "15024 of at most 15130 points".
 
 **Lines.** Points can be joined into lines: a trail behind each particle, a generated line or
-circle, the rows and columns of a grid, or pairs of points from `pts.proximity`.
-`geo.from_pts` in `lines` mode draws them.
+circle, the rows and columns of a grid, pairs of points from `pts.proximity`, or the lines
+`pts.resample` gives. `geo.from_pts` in `lines` mode draws them.
 
 **A box.** Some nodes know the box around their points; the viewer and thumbnails frame by it.
 Where no node knows it (particles, points moved by an expression), `geo.from_pts` reads the box
@@ -86,6 +86,8 @@ background with `tex.composite`.
 | Lookup Texture POP | `pts.lookup_tex` | |
 | Trail POP | `pts.trail` | |
 | Proximity POP | `pts.proximity` | |
+| Line Resample POP | `pts.resample` | `by` count or length |
+| Line Smooth POP | `pts.smooth` | |
 | Neighbor POP | `pts.neighbor` | gives sums and means, no indices |
 | GLSL POP | `pts.shader` | WGSL, see [Shaders](shaders.md#a-program-over-points-ptsshader) |
 | Merge, Switch, Null POP | `pts.merge`, `pts.switch`, `pts.null` | |
@@ -113,8 +115,8 @@ What a TouchDesigner user trips over:
   (`neighbors`, `cohesion`, `separation`, `near_velocity`). A `pts.shader` with
   `// @neighbors` walks the neighbours itself.
 - **z is up**, as everywhere in penumbra. Gravity is [0, 0, -9.81].
-- **No counterpart yet:** Ray, Polygonize, Extrude, Skin, the Line tools (Line Thick, Line
-  Resample and the like), GLSL Advanced, GLSL Copy, Copy, Cache, Sort, Group. Points reach
+- **No counterpart yet:** Ray, Polygonize, Extrude, Skin, the other Line tools (Line Thick,
+  Line Divide and the like), GLSL Advanced, GLSL Copy, Copy, Cache, Sort, Group. Points reach
   meshes only as sprites, copies and lines.
 
 ## Particles
@@ -233,6 +235,40 @@ A trail finds its particle by `id` and ends with it. Each place keeps the `color
 **Memory:** trails are sized for as many particles as there may be. 100 000 particles with
 trails of 32 are 3.2 million points. One set of trails takes at most 512 MB, and the node keeps
 two; longer trails leave the last particles without one, with a warning.
+
+## Even and smooth lines
+
+`pts.resample` puts new points along each line, evenly spaced: TouchDesigner's Line Resample
+POP. `pts.smooth` moves each point towards its neighbours on its line: the Line Smooth POP.
+Both work on every kind of line: trails, generated lines and circles, the rows of a grid, the
+lines of `pts.proximity`.
+
+```
+pts.generate (circle) -> pts.noise -> pts.resample -> pts.smooth -> geo.from_pts (mode lines)
+```
+
+1. `pts.generate`: `shape` `circle`, `count` 12.
+2. `pts.noise`, `amplitude` 0.15: a jagged ring.
+3. `pts.resample`: `by` `length`, `length` 0.02. The ring gets a point every 2 cm.
+4. `pts.smooth`: `iterations` 20, `strength` 0.5. The corners round off.
+5. `geo.from_pts`, `mode` `lines`, `width` 0.01.
+
+**`pts.resample`.** `by` `count` gives every line `count` points, its two ends included. `by`
+`length` gives each line a point about every `length` metres: a long line gets more points than
+a short one. Each line rounds `length` so its points come out even. The number of points is
+then on the GPU. A closed line, such as a circle, stays closed. Each new point mixes the
+attributes of the two old points around it: colour, width, age. Whole numbers such as `id` come
+from the nearer old point. `max` caps the points; lines past it are left out whole, with a
+warning.
+
+**`pts.smooth`.** Each of the `iterations` steps moves every point `strength` of the way to the
+middle of its two neighbours. More steps smooth over more points. Lines never mix: one trail
+does not pull on the next. A grid with lines along rows and columns smooths as a surface.
+`pin_ends` keeps the first and last point of each open line in place. Without it every step
+pulls the line in from its ends. Many steps shrink a ring a little.
+
+**Resample before smoothing.** `pts.smooth` moves each point by its neighbours, so it acts on
+few points where they lie far apart. Resample first for a smooth curve through a few points.
 
 ## Lines between near points (plexus)
 

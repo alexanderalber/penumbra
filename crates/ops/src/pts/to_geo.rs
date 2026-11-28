@@ -19,7 +19,7 @@ use std::sync::Arc;
 use penumbra_core::{Curve, Error, ParamSpec};
 use penumbra_gpu::geo::{IDENTITY, Instances, Item, Lines, Mat4, Model};
 use penumbra_gpu::points::reach::{LateBounds, LateMost};
-use penumbra_gpu::points::{Count, Strips};
+use penumbra_gpu::points::{Count, LINE, Strips};
 use penumbra_gpu::{BufferRing, Geo, Gpu, Points, TexRing};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
@@ -127,7 +127,8 @@ struct Baked {
 
 #[derive(Default)]
 struct FromPts {
-    /// Pictures of `position`, `scale`, `color` and `normal`.
+    /// Pictures of `position`, `scale`, `color` and `normal` (for lines of any length the place
+    /// along each line instead).
     textures: [TexRing; 4],
     scratch: BufferRing,
     /// The square every sprite is drawn from, disc or not.
@@ -233,10 +234,22 @@ pub fn lines_of(points: &Points) -> Vec<Lines> {
         Count::Known(n) => (*n, false),
         _ => (u32::MAX, true),
     };
-    let line = |len: u32, stride: u32, closed: bool| Lines { len, stride, closed, pairs: false, limit, live };
+    let line = |len: u32, stride: u32, closed: bool| Lines {
+        len,
+        stride,
+        closed,
+        pairs: false,
+        runs: false,
+        limit,
+        live,
+    };
     let pairs = Lines { pairs: true, ..line(2, 1, false) };
     match points.strips() {
         Strips::Pairs => vec![pairs],
+        // Lines of any length: each point says where it lies on its own ([`LINE`]).
+        Strips::Runs { closed } if points.attr(LINE).is_some() => {
+            vec![Lines { runs: true, ..line(0, 1, closed) }]
+        }
         // Lines of two points with a count the CPU knows: a copy per line, none spent on a first
         // point.
         Strips::Regular { len: 2, closed: false } if !live => vec![pairs],
@@ -309,8 +322,12 @@ impl Operator for FromPts {
         let sized_by = if lines { "width" } else { "scale" };
         let scale = points.attr_texture(gpu, sized_by, scale, &mut self.scratch)?;
         let color = points.attr_texture(gpu, "color", color, &mut self.scratch)?;
+        // Lines of any length take the place along each line where copies take their aim.
+        let runs = lines && matches!(points.strips(), Strips::Runs { .. });
         let aim = if copies && cx.text("orient")? == "normal" {
             points.attr_texture(gpu, "normal", normal, &mut self.scratch)?
+        } else if runs {
+            points.attr_texture(gpu, LINE, normal, &mut self.scratch)?
         } else {
             None
         };

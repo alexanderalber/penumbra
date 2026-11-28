@@ -7,6 +7,7 @@
 //! and masked by `pts.field`; `pts.feedback` closes a loop of any points. `pts.trail` keeps a
 //! line behind every point, which `geo.from_pts` draws as ribbons. `pts.proximity` joins near
 //! points with lines; `pts.neighbor` counts and averages each point's neighbours.
+//! `pts.resample` spaces the points of each line evenly, `pts.smooth` smooths each line.
 
 use penumbra_core::Error;
 use penumbra_graph::{DataKind, FnNodeType, NodeDesc, NodeTypes, Operator};
@@ -29,7 +30,9 @@ pub mod particles;
 pub(crate) mod program;
 pub mod proximity;
 pub mod random;
+pub mod resample;
 pub mod shader;
+pub mod smooth;
 pub mod to_chan;
 pub(crate) mod to_geo;
 pub mod to_table;
@@ -57,6 +60,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     field::register(types)?;
     trail::register(types)?;
     proximity::register(types)?;
+    resample::register(types)?;
+    smooth::register(types)?;
     neighbor::register(types)?;
     merge::register(types)?;
     from_geo::register(types)?;

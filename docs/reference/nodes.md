@@ -2255,7 +2255,7 @@ Outputs: `out` (table).
 
 ## pts
 
-[pts.delete](#ptsdelete), [pts.feedback](#ptsfeedback), [pts.field](#ptsfield), [pts.file](#ptsfile), [pts.force](#ptsforce), [pts.from_chan](#ptsfrom_chan), [pts.from_geo](#ptsfrom_geo), [pts.from_table](#ptsfrom_table), [pts.from_tex](#ptsfrom_tex), [pts.generate](#ptsgenerate), [pts.lookup_tex](#ptslookup_tex), [pts.math](#ptsmath), [pts.merge](#ptsmerge), [pts.neighbor](#ptsneighbor), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.particles](#ptsparticles), [pts.proximity](#ptsproximity), [pts.random](#ptsrandom), [pts.shader](#ptsshader), [pts.switch](#ptsswitch), [pts.trail](#ptstrail), [pts.transform](#ptstransform)
+[pts.delete](#ptsdelete), [pts.feedback](#ptsfeedback), [pts.field](#ptsfield), [pts.file](#ptsfile), [pts.force](#ptsforce), [pts.from_chan](#ptsfrom_chan), [pts.from_geo](#ptsfrom_geo), [pts.from_table](#ptsfrom_table), [pts.from_tex](#ptsfrom_tex), [pts.generate](#ptsgenerate), [pts.lookup_tex](#ptslookup_tex), [pts.math](#ptsmath), [pts.merge](#ptsmerge), [pts.neighbor](#ptsneighbor), [pts.noise](#ptsnoise), [pts.null](#ptsnull), [pts.particles](#ptsparticles), [pts.proximity](#ptsproximity), [pts.random](#ptsrandom), [pts.resample](#ptsresample), [pts.shader](#ptsshader), [pts.smooth](#ptssmooth), [pts.switch](#ptsswitch), [pts.trail](#ptstrail), [pts.transform](#ptstransform)
 
 ### pts.delete
 
@@ -2665,6 +2665,25 @@ Outputs:
 | `operation` | add \| set \| multiply | `"set"` |  | How the random value meets the attribute's value; add: the random value is added to it; set: the random value takes its place; multiply: it is multiplied by the random value |
 | `type` *(more)* | auto \| float \| vec2 \| vec3 \| vec4 \| int \| uint | `"auto"` |  | The type of the attribute when it is new: one the input has keeps its type, and so does one penumbra knows (position, color, scale, ...); auto: a number (float) for a name penumbra does not know; float: one number; vec2: two numbers; vec3: three numbers, such as a position or a direction; vec4: four numbers, such as a colour; int: a whole number; uint: a whole number from 0 |
 
+### pts.resample
+
+New points evenly spaced along each line: by a number per line or by the distance between them. Attributes are mixed from the old points around each new one
+
+Inputs:
+
+- `in` (pts): Points on lines: trails, a generated line or circle, a grid's rows, lines of pts.proximity. Points without lines are one line in their order
+
+Outputs:
+
+- `out` (pts): The lines again, with their new points in order along each. Every attribute of the input, mixed from the two old points around each new point; whole numbers such as `id` from the nearer one
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `by` | count \| length | `"count"` |  | How many points each line gets; count: `count` on every line, whatever its length; length: about `length` apart: a long line gets more points than a short one. The number of points is on the GPU then |
+| `count` | int | `32` | 2 to 256 (soft, held within 2 to 1048576) | Points on each line, its two ends included. A closed line spaces them all the way round. Does something only with by count. |
+| `length` | float | `0.05` | 0.001 to 1 (soft, held within 0.000001 to 10000) | The distance between two points along a line, in metres. Each line rounds it so its points come out even, from end to end. Does something only with by length. |
+| `max` *(more)* | int | `1000000` | 1000 to 10000000 (soft, held within 1 to 67108864) | The most points that come out. Lines past it are left out whole, the last ones first, with a warning |
+
 ### pts.shader
 
 A program of your own that runs once per point, written in WGSL in a file; reloads when saved. Its header names the attributes it reads and writes, and its params
@@ -2684,6 +2703,24 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `file` | file (wgsl) |  |  | The WGSL file, relative to the project directory; saving it reloads the node. `// @write position` lines name the attributes, `fn main()` runs once per point. `// @neighbors 0.2` lets it walk the points within 0.2 m of each point |
+
+### pts.smooth
+
+Smooths each line: every point moves towards its neighbours on its line, so corners round off and jitter calms down
+
+Inputs:
+
+- `in` (pts): Points on lines: trails, a generated line or circle, a grid, the lines of pts.resample. Points without lines are one line in their order
+
+Outputs:
+
+- `out` (pts): The same points and lines with smoother positions. Every other attribute stays
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `iterations` | int | `4` | 0 to 50 (soft, held within 0 to 1000) | Smoothing steps, one after another. More steps smooth over more points along the line. 0 passes the points on |
+| `strength` | float | `0.5` | 0 to 1 (soft) | How far each step moves a point towards the middle of its neighbours on its line: 0 not at all, 1 all the way |
+| `pin_ends` | bool | `true` |  | The first and last point of each open line stay where they are. Off: the ends move too, and every step pulls the line in from its ends. Closed lines have no ends |
 
 ### pts.switch
 

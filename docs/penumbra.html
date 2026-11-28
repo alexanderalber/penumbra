@@ -1988,7 +1988,7 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 <p>A missing attribute reads as its default: position 0, colour white, scale 1, weight 1.</p>
 <p>Names starting with <code>pts_</code> belong to penumbra's working attributes, such as the pull of wind that <a class="ref" href="#pts.particles"><code>pts.particles</code></a> reads. Most nodes drop them. A file, a table, channels or a program that names one gets an error: choose another name.</p>
 <p><strong>A count that may live on the GPU.</strong> Nodes that make or drop points on the GPU (<a class="ref" href="#pts.particles"><code>pts.particles</code></a>, <a class="ref" href="#pts.delete"><code>pts.delete</code></a>, <a class="ref" href="#pts.proximity"><code>pts.proximity</code></a>) keep the number of points there. The CPU then knows only how many there may be. Every node downstream handles that by itself. The viewer shows the count a frame late, as &quot;15024 of at most 15130 points&quot;.</p>
-<p><strong>Lines.</strong> Points can be joined into lines: a trail behind each particle, a generated line or circle, the rows and columns of a grid, or pairs of points from <a class="ref" href="#pts.proximity"><code>pts.proximity</code></a>. <a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a> in <code>lines</code> mode draws them.</p>
+<p><strong>Lines.</strong> Points can be joined into lines: a trail behind each particle, a generated line or circle, the rows and columns of a grid, pairs of points from <a class="ref" href="#pts.proximity"><code>pts.proximity</code></a>, or the lines <a class="ref" href="#pts.resample"><code>pts.resample</code></a> gives. <a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a> in <code>lines</code> mode draws them.</p>
 <p><strong>A box.</strong> Some nodes know the box around their points; the viewer and thumbnails frame by it. Where no node knows it (particles, points moved by an expression), <a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a> reads the box back from the GPU, a frame or two late.</p>
 <h3 id="points-points-on-screen">Points on screen</h3>
 <p>Four nodes give a picture:</p>
@@ -2030,6 +2030,8 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 <tr><td>Lookup Texture POP</td><td><a class="ref" href="#pts.lookup_tex"><code>pts.lookup_tex</code></a></td><td></td></tr>
 <tr><td>Trail POP</td><td><a class="ref" href="#pts.trail"><code>pts.trail</code></a></td><td></td></tr>
 <tr><td>Proximity POP</td><td><a class="ref" href="#pts.proximity"><code>pts.proximity</code></a></td><td></td></tr>
+<tr><td>Line Resample POP</td><td><a class="ref" href="#pts.resample"><code>pts.resample</code></a></td><td><code>by</code> count or length</td></tr>
+<tr><td>Line Smooth POP</td><td><a class="ref" href="#pts.smooth"><code>pts.smooth</code></a></td><td></td></tr>
 <tr><td>Neighbor POP</td><td><a class="ref" href="#pts.neighbor"><code>pts.neighbor</code></a></td><td>gives sums and means, no indices</td></tr>
 <tr><td>GLSL POP</td><td><a class="ref" href="#pts.shader"><code>pts.shader</code></a></td><td>WGSL, see <a href="#shaders-a-program-over-points-ptsshader">Shaders</a></td></tr>
 <tr><td>Merge, Switch, Null POP</td><td><a class="ref" href="#pts.merge"><code>pts.merge</code></a>, <a class="ref" href="#pts.switch"><code>pts.switch</code></a>, <a class="ref" href="#pts.null"><code>pts.null</code></a></td><td></td></tr>
@@ -2056,7 +2058,7 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 </li>
 <li><strong>z is up</strong>, as everywhere in penumbra. Gravity is [0, 0, -9.81].
 </li>
-<li><strong>No counterpart yet:</strong> Ray, Polygonize, Extrude, Skin, the Line tools (Line Thick, Line Resample and the like), GLSL Advanced, GLSL Copy, Copy, Cache, Sort, Group. Points reach meshes only as sprites, copies and lines.
+<li><strong>No counterpart yet:</strong> Ray, Polygonize, Extrude, Skin, the other Line tools (Line Thick, Line Divide and the like), GLSL Advanced, GLSL Copy, Copy, Cache, Sort, Group. Points reach meshes only as sprites, copies and lines.
 </li>
 </ul>
 <h3 id="points-particles">Particles</h3>
@@ -2115,6 +2117,25 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b&quot;x=0.5 y=0.25\n&qu
 </ol>
 <p>A trail finds its particle by <code>id</code> and ends with it. Each place keeps the <code>color</code>, <code>width</code> and <code>scale</code> the particle had then (<code>attributes</code> lists them).</p>
 <p><strong>Memory:</strong> trails are sized for as many particles as there may be. 100 000 particles with trails of 32 are 3.2 million points. One set of trails takes at most 512 MB, and the node keeps two; longer trails leave the last particles without one, with a warning.</p>
+<h3 id="points-even-and-smooth-lines">Even and smooth lines</h3>
+<p><a class="ref" href="#pts.resample"><code>pts.resample</code></a> puts new points along each line, evenly spaced: TouchDesigner's Line Resample POP. <a class="ref" href="#pts.smooth"><code>pts.smooth</code></a> moves each point towards its neighbours on its line: the Line Smooth POP. Both work on every kind of line: trails, generated lines and circles, the rows of a grid, the lines of <a class="ref" href="#pts.proximity"><code>pts.proximity</code></a>.</p>
+<pre><code>pts.generate (circle) -&gt; pts.noise -&gt; pts.resample -&gt; pts.smooth -&gt; geo.from_pts (mode lines)
+</code></pre>
+<ol>
+<li><a class="ref" href="#pts.generate"><code>pts.generate</code></a>: <code>shape</code> <code>circle</code>, <code>count</code> 12.
+</li>
+<li><a class="ref" href="#pts.noise"><code>pts.noise</code></a>, <code>amplitude</code> 0.15: a jagged ring.
+</li>
+<li><a class="ref" href="#pts.resample"><code>pts.resample</code></a>: <code>by</code> <code>length</code>, <code>length</code> 0.02. The ring gets a point every 2 cm.
+</li>
+<li><a class="ref" href="#pts.smooth"><code>pts.smooth</code></a>: <code>iterations</code> 20, <code>strength</code> 0.5. The corners round off.
+</li>
+<li><a class="ref" href="#geo.from_pts"><code>geo.from_pts</code></a>, <code>mode</code> <code>lines</code>, <code>width</code> 0.01.
+</li>
+</ol>
+<p><strong><a class="ref" href="#pts.resample"><code>pts.resample</code></a>.</strong> <code>by</code> <code>count</code> gives every line <code>count</code> points, its two ends included. <code>by</code> <code>length</code> gives each line a point about every <code>length</code> metres: a long line gets more points than a short one. Each line rounds <code>length</code> so its points come out even. The number of points is then on the GPU. A closed line, such as a circle, stays closed. Each new point mixes the attributes of the two old points around it: colour, width, age. Whole numbers such as <code>id</code> come from the nearer old point. <code>max</code> caps the points; lines past it are left out whole, with a warning.</p>
+<p><strong><a class="ref" href="#pts.smooth"><code>pts.smooth</code></a>.</strong> Each of the <code>iterations</code> steps moves every point <code>strength</code> of the way to the middle of its two neighbours. More steps smooth over more points. Lines never mix: one trail does not pull on the next. A grid with lines along rows and columns smooths as a surface. <code>pin_ends</code> keeps the first and last point of each open line in place. Without it every step pulls the line in from its ends. Many steps shrink a ring a little.</p>
+<p><strong>Resample before smoothing.</strong> <a class="ref" href="#pts.smooth"><code>pts.smooth</code></a> moves each point by its neighbours, so it acts on few points where they lie far apart. Resample first for a smooth curve through a few points.</p>
 <h3 id="points-lines-between-near-points-plexus">Lines between near points (plexus)</h3>
 <p><a class="ref" href="#pts.proximity"><code>pts.proximity</code></a> joins each point to its near neighbours with lines: TouchDesigner's Proximity POP.</p>
 <ol>
@@ -6155,7 +6176,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-pts">
 <h3>pts</h3>
-<p class="kinds"><a href="#pts.delete">pts.delete</a> <a href="#pts.feedback">pts.feedback</a> <a href="#pts.field">pts.field</a> <a href="#pts.file">pts.file</a> <a href="#pts.force">pts.force</a> <a href="#pts.from_chan">pts.from_chan</a> <a href="#pts.from_geo">pts.from_geo</a> <a href="#pts.from_table">pts.from_table</a> <a href="#pts.from_tex">pts.from_tex</a> <a href="#pts.generate">pts.generate</a> <a href="#pts.lookup_tex">pts.lookup_tex</a> <a href="#pts.math">pts.math</a> <a href="#pts.merge">pts.merge</a> <a href="#pts.neighbor">pts.neighbor</a> <a href="#pts.noise">pts.noise</a> <a href="#pts.null">pts.null</a> <a href="#pts.particles">pts.particles</a> <a href="#pts.proximity">pts.proximity</a> <a href="#pts.random">pts.random</a> <a href="#pts.shader">pts.shader</a> <a href="#pts.switch">pts.switch</a> <a href="#pts.trail">pts.trail</a> <a href="#pts.transform">pts.transform</a></p>
+<p class="kinds"><a href="#pts.delete">pts.delete</a> <a href="#pts.feedback">pts.feedback</a> <a href="#pts.field">pts.field</a> <a href="#pts.file">pts.file</a> <a href="#pts.force">pts.force</a> <a href="#pts.from_chan">pts.from_chan</a> <a href="#pts.from_geo">pts.from_geo</a> <a href="#pts.from_table">pts.from_table</a> <a href="#pts.from_tex">pts.from_tex</a> <a href="#pts.generate">pts.generate</a> <a href="#pts.lookup_tex">pts.lookup_tex</a> <a href="#pts.math">pts.math</a> <a href="#pts.merge">pts.merge</a> <a href="#pts.neighbor">pts.neighbor</a> <a href="#pts.noise">pts.noise</a> <a href="#pts.null">pts.null</a> <a href="#pts.particles">pts.particles</a> <a href="#pts.proximity">pts.proximity</a> <a href="#pts.random">pts.random</a> <a href="#pts.resample">pts.resample</a> <a href="#pts.shader">pts.shader</a> <a href="#pts.smooth">pts.smooth</a> <a href="#pts.switch">pts.switch</a> <a href="#pts.trail">pts.trail</a> <a href="#pts.transform">pts.transform</a></p>
 <details class="entry node" id="pts.delete"><summary><code class="name">pts.delete</code><span class="sum">Drops points: those an expression you type holds true for, a range of indices, those inside a box or a ball, or a random share. The rest keep their order and attributes</span></summary>
 <div class="body">
 <p>Drops points: those an expression you type holds true for, a range of indices, those inside a box or a ball, or a random share. The rest keep their order and attributes</p>
@@ -6395,7 +6416,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft, held within 0 to 1000000000)</td><td>random: another number gives other places for the points</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#points-points-on-screen">Points › Points on screen</a>, <a href="#points-if-you-know-touchdesigner">Points › If you know TouchDesigner</a>, <a href="#points-particles">Points › Particles</a>, <a href="#points-lines-between-near-points-plexus">Points › Lines between near points (plexus)</a>, <a href="#points-a-flock-boids">Points › A flock (boids)</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#points-points-on-screen">Points › Points on screen</a>, <a href="#points-if-you-know-touchdesigner">Points › If you know TouchDesigner</a>, <a href="#points-particles">Points › Particles</a>, <a href="#points-even-and-smooth-lines">Points › Even and smooth lines</a>, <a href="#points-lines-between-near-points-plexus">Points › Lines between near points (plexus)</a>, <a href="#points-a-flock-boids">Points › A flock (boids)</a></p>
 </div></details>
 <details class="entry node" id="pts.lookup_tex"><summary><code class="name">pts.lookup_tex</code><span class="sum">Each point takes a value from a picture: colours from an image or a video, sizes or heights from brightness. Where it looks comes from <code>uv</code> or the point's position</span></summary>
 <div class="body">
@@ -6529,7 +6550,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>type</code></td><td>auto | float | vec2 | vec3 | vec4 | int | uint</td><td><code>&quot;auto&quot;</code></td><td></td><td>The type of the attribute when it is new: one the input has keeps its type, and so does one penumbra knows (position, color, scale, ...)<ul><li><code>auto</code>: a number (float) for a name penumbra does not know</li><li><code>float</code>: one number</li><li><code>vec2</code>: two numbers</li><li><code>vec3</code>: three numbers, such as a position or a direction</li><li><code>vec4</code>: four numbers, such as a colour</li><li><code>int</code>: a whole number</li><li><code>uint</code>: a whole number from 0</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#points-if-you-know-touchdesigner">Points › If you know TouchDesigner</a>, <a href="#points-a-force-in-the-loop">Points › A force in the loop</a>, <a href="#points-lines-between-near-points-plexus">Points › Lines between near points (plexus)</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#points-if-you-know-touchdesigner">Points › If you know TouchDesigner</a>, <a href="#points-a-force-in-the-loop">Points › A force in the loop</a>, <a href="#points-even-and-smooth-lines">Points › Even and smooth lines</a>, <a href="#points-lines-between-near-points-plexus">Points › Lines between near points (plexus)</a></p>
 </div></details>
 <details class="entry node" id="pts.null"><summary><code class="name">pts.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
 <div class="body">
@@ -6612,7 +6633,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>max_per_cell</code></td><td>int</td><td><code>64</code></td><td>8 to 1024 (soft, held within 1 to 4096)</td><td>The search cuts space into cubes as wide as <code>distance</code>. A point looks at no more than this many points of each cube around it: a dense clump costs no more than that. The node warns when points are left out. Many points lower it, so a frame stays short: to 795 for 100 000 points, 79 for a million, with a warning</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#points-what-a-pts-value-is">Points › What a pts value is</a>, <a href="#points-if-you-know-touchdesigner">Points › If you know TouchDesigner</a>, <a href="#points-lines-between-near-points-plexus">Points › Lines between near points (plexus)</a>, <a href="#points-limits">Points › Limits</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#points-what-a-pts-value-is">Points › What a pts value is</a>, <a href="#points-if-you-know-touchdesigner">Points › If you know TouchDesigner</a>, <a href="#points-even-and-smooth-lines">Points › Even and smooth lines</a>, <a href="#points-lines-between-near-points-plexus">Points › Lines between near points (plexus)</a>, <a href="#points-limits">Points › Limits</a></p>
 </div></details>
 <details class="entry node" id="pts.random"><summary><code class="name">pts.random</code><span class="sum">A random value per point into an attribute: random colours, sizes, directions or places, the same for the same seed</span></summary>
 <div class="body">
@@ -6644,6 +6665,30 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#points-if-you-know-touchdesigner">Points › If you know TouchDesigner</a>, <a href="#points-colour-over-life">Points › Colour over life</a></p>
 </div></details>
+<details class="entry node" id="pts.resample"><summary><code class="name">pts.resample</code><span class="sum">New points evenly spaced along each line: by a number per line or by the distance between them. Attributes are mixed from the old points around each new one</span></summary>
+<div class="body">
+<p>New points evenly spaced along each line: by a number per line or by the distance between them. Attributes are mixed from the old points around each new one</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span>: Points on lines: trails, a generated line or circle, a grid's rows, lines of pts.proximity. Points without lines are one line in their order</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span>: The lines again, with their new points in order along each. Every attribute of the input, mixed from the two old points around each new point; whole numbers such as <code>id</code> from the nearer one</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>by</code></td><td>count | length</td><td><code>&quot;count&quot;</code></td><td></td><td>How many points each line gets<ul><li><code>count</code>: <code>count</code> on every line, whatever its length</li><li><code>length</code>: about <code>length</code> apart: a long line gets more points than a short one. The number of points is on the GPU then</li></ul></td></tr>
+<tr><td><code>count</code></td><td>int</td><td><code>32</code></td><td>2 to 256 (soft, held within 2 to 1048576)</td><td>Points on each line, its two ends included. A closed line spaces them all the way round</td></tr>
+<tr><td><code>length</code></td><td>float</td><td><code>0.05</code></td><td>0.001 to 1 (soft, held within 0.000001 to 10000)</td><td>The distance between two points along a line, in metres. Each line rounds it so its points come out even, from end to end</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>max</code></td><td>int</td><td><code>1000000</code></td><td>1000 to 10000000 (soft, held within 1 to 67108864)</td><td>The most points that come out. Lines past it are left out whole, the last ones first, with a warning</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#points-what-a-pts-value-is">Points › What a pts value is</a>, <a href="#points-if-you-know-touchdesigner">Points › If you know TouchDesigner</a>, <a href="#points-even-and-smooth-lines">Points › Even and smooth lines</a></p>
+</div></details>
 <details class="entry node" id="pts.shader"><summary><code class="name">pts.shader</code><span class="sum">A program of your own that runs once per point, written in WGSL in a file; reloads when saved. Its header names the attributes it reads and writes, and its params</span></summary>
 <div class="body">
 <p>A program of your own that runs once per point, written in WGSL in a file; reloads when saved. Its header names the attributes it reads and writes, and its params</p>
@@ -6666,6 +6711,28 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#points-if-you-know-touchdesigner">Points › If you know TouchDesigner</a>, <a href="#shaders-a-program-over-points-ptsshader">Shaders › A program over points (pts.shader)</a></p>
+</div></details>
+<details class="entry node" id="pts.smooth"><summary><code class="name">pts.smooth</code><span class="sum">Smooths each line: every point moves towards its neighbours on its line, so corners round off and jitter calms down</span></summary>
+<div class="body">
+<p>Smooths each line: every point moves towards its neighbours on its line, so corners round off and jitter calms down</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">pts</span>: Points on lines: trails, a generated line or circle, a grid, the lines of pts.resample. Points without lines are one line in their order</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">pts</span>: The same points and lines with smoother positions. Every other attribute stays</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>iterations</code></td><td>int</td><td><code>4</code></td><td>0 to 50 (soft, held within 0 to 1000)</td><td>Smoothing steps, one after another. More steps smooth over more points along the line. 0 passes the points on</td></tr>
+<tr><td><code>strength</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1 (soft)</td><td>How far each step moves a point towards the middle of its neighbours on its line: 0 not at all, 1 all the way</td></tr>
+<tr><td><code>pin_ends</code></td><td>bool</td><td><code>true</code></td><td></td><td>The first and last point of each open line stay where they are. Off: the ends move too, and every step pulls the line in from its ends. Closed lines have no ends</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#points-if-you-know-touchdesigner">Points › If you know TouchDesigner</a>, <a href="#points-even-and-smooth-lines">Points › Even and smooth lines</a></p>
 </div></details>
 <details class="entry node" id="pts.switch"><summary><code class="name">pts.switch</code><span class="sum">Chooses which of its sets of points goes out, as they are: cut between shapes or looks</span></summary>
 <div class="body">
@@ -6818,7 +6885,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>orient</code></td><td>none | normal</td><td><code>&quot;none&quot;</code></td><td></td><td>copies: how each copy is turned<ul><li><code>none</code>: every copy keeps the model's own turn</li><li><code>normal</code>: each copy turns its +y to the point's <code>normal</code>, keeping +z up as far as it can</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#points-what-a-pts-value-is">Points › What a pts value is</a>, <a href="#points-points-on-screen">Points › Points on screen</a>, <a href="#points-if-you-know-touchdesigner">Points › If you know TouchDesigner</a>, <a href="#points-particles">Points › Particles</a>, <a href="#points-soft-glowing-particles">Points › Soft, glowing particles</a>, <a href="#points-trails">Points › Trails</a>, <a href="#points-lines-between-near-points-plexus">Points › Lines between near points (plexus)</a>, <a href="#points-a-picture-as-points">Points › A picture as points</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#points-what-a-pts-value-is">Points › What a pts value is</a>, <a href="#points-points-on-screen">Points › Points on screen</a>, <a href="#points-if-you-know-touchdesigner">Points › If you know TouchDesigner</a>, <a href="#points-particles">Points › Particles</a>, <a href="#points-soft-glowing-particles">Points › Soft, glowing particles</a>, <a href="#points-trails">Points › Trails</a>, <a href="#points-even-and-smooth-lines">Points › Even and smooth lines</a>, <a href="#points-lines-between-near-points-plexus">Points › Lines between near points (plexus)</a>, <a href="#points-a-picture-as-points">Points › A picture as points</a></p>
 </div></details>
 <details class="entry node" id="geo.instance"><summary><code class="name">geo.instance</code><span class="sum">Many copies of a model, each placed by a row of a table: a grid, a ring, a crowd of objects</span></summary>
 <div class="body">

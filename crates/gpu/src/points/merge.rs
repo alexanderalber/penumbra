@@ -26,6 +26,8 @@
 //! The bounds are the box around the sets' boxes, where every set has one. `dims` go. Lines stay
 //! where every set has the same regular lines ([`Strips::Regular`]) whole, or every set is lines
 //! of two points ([`Strips::Pairs`]): then the result's header holds the number of lines too.
+//! Lines of any length ([`Strips::Runs`]) stay where every set has them, open in all or closed in
+//! all.
 
 use penumbra_core::{Error, ParamSpec, Value};
 use penumbra_mesh::Bounds;
@@ -459,6 +461,12 @@ fn strips(sets: &[(usize, &Points)]) -> Strips {
                     && p.count().known().is_none_or(|n| n % len == 0)
             };
             if with_points.iter().all(|p| whole(p)) { Strips::Regular { len, closed } } else { Strips::None }
+        }
+        // Each point says where it lies on its line, counted from the line's start, so lines of
+        // any length stay whole one after another.
+        Strips::Runs { closed } => {
+            let runs = |p: &Points| p.strips() == Strips::Runs { closed } && p.attr(super::LINE).is_some();
+            if with_points.iter().all(|p| runs(p)) { Strips::Runs { closed } } else { Strips::None }
         }
         _ => Strips::None,
     }

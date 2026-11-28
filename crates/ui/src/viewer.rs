@@ -854,6 +854,8 @@ pub(crate) fn pts_lines(p: &penumbra_gpu::Points) -> Vec<String> {
         (None, None) => format!("up to {most} {}", unit(most)),
     };
     let count = match p.strips() {
+        Strips::Runs { closed: false } => format!("{count}, on lines of any length"),
+        Strips::Runs { closed: true } => format!("{count}, on rings of any length"),
         Strips::Grid { rows: true, columns: true, .. } => format!("{count}, lines along rows and columns"),
         Strips::Grid { rows: true, .. } => format!("{count}, lines along rows"),
         Strips::Grid { columns: true, .. } => format!("{count}, lines along columns"),
