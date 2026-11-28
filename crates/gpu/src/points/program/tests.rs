@@ -364,3 +364,29 @@ fn a_header_asks_for_neighbours_by_metres_or_by_a_param() {
     assert_eq!(generate_near(&s, &shape, 8, true).unwrap().bindings(), 4);
     assert!(generate_near(&s, &shape, 3, true).is_err());
 }
+
+#[test]
+fn a_count_that_grows_across_cooks_gives_right_results_every_cook() {
+    let Some(gpu) = gpu() else { return };
+    let decls = vec![Decl::read("position"), Decl::set("heat").ty(AttrType::F32)];
+    let source = "fn main() { heat = position.y + params.gain; }";
+    let shape = Shape::of(&points(&gpu, 4, 4));
+    let g = generate(&spec(source, decls), &shape, storage_budget(&gpu)).unwrap();
+    let program = Program::compile(&gpu, g).unwrap();
+    let mut outputs = Outputs::default();
+    // The rings change their buffers with the size; each cook must bind the ones it was given.
+    let mut held = Vec::new();
+    for (k, n) in [4u32, 4, 1000, 1000, 4, 5000, 70_000, 4].into_iter().enumerate() {
+        let input = points(&gpu, n, n);
+        let out = run(&gpu, &program, &input, &mut outputs, k as f64);
+        let heat = out.attr("heat").unwrap().buffer().read::<f32>(&gpu).unwrap();
+        assert_eq!(heat.len(), n as usize, "cook {k}");
+        let wrong = (0..n).find(|&i| heat[i as usize] != 2.0 * i as f32 + k as f32);
+        assert_eq!(wrong, None, "cook {k}, {n} points");
+        // Some outputs stay held downstream, so the ring hands out others.
+        if k % 3 == 0 {
+            held.push(out);
+        }
+    }
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}
