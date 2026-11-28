@@ -26,7 +26,12 @@
 //!   the executable, the documentation, the examples, the content library and the beat network
 //!   (`assets/models`): `target/dist/penumbra-VERSION-windows-x64.zip` on Windows,
 //!   `penumbra-VERSION-macos-arm64.tar.gz` and `penumbra-VERSION-linux-x64.tar.gz` elsewhere
-//!   (named after the processor built on). Not part of `ci`.
+//!   (named after the processor built on). On Windows it holds `dxcompiler.dll` (DXC, the shader
+//!   compiler wgpu's DX12 backend prefers), downloaded from Microsoft's release once. Not part
+//!   of `ci`.
+//! - `dxc` (Windows): puts `dxcompiler.dll` into `target/debug/` and `target/release/`, so the
+//!   builds `cargo run` starts compile shaders with DXC too. Without it they use FXC, which is
+//!   several times slower.
 //! - `mcp`: a release build of `penumbra-cli` copied to `target/mcp/`, the place an MCP client
 //!   configuration should point at. A running MCP server locks its exe, and every Claude Code
 //!   session runs one, so a server started from `target/release/` blocks every later release
@@ -37,6 +42,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
+
+#[cfg(windows)]
+mod dxc;
 
 const LINUX_TARGET: &str = "x86_64-unknown-linux-gnu";
 
@@ -104,8 +112,10 @@ fn main() -> ExitCode {
         "notices" => notices(),
         "dist" => dist(),
         "mcp" => mcp(),
+        #[cfg(windows)]
+        "dxc" => root().and_then(dxc::install),
         other => Err(format!(
-            "unknown task `{other}`; tasks: ci, fmt, clippy, test, slow, linux, layers, bless, docs, notices, dist, mcp"
+            "unknown task `{other}`; tasks: ci, fmt, clippy, test, slow, linux, layers, bless, docs, notices, dist, mcp, dxc"
         )),
     };
     match result {
@@ -444,6 +454,10 @@ fn dist() -> Result<(), String> {
     files.push((root.join("target").join("THIRD-PARTY-NOTICES.html"), "THIRD-PARTY-NOTICES.html"));
     files.push((root.join("LICENSE-MIT"), "LICENSE-MIT"));
     files.push((root.join("LICENSE-APACHE"), "LICENSE-APACHE"));
+    #[cfg(windows)]
+    let dxc = dxc::fetch(root)?;
+    #[cfg(windows)]
+    files.extend(dxc::FILES.iter().map(|(inside, name)| (dxc.join(inside), *name)));
     for (from, to) in &files {
         std::fs::copy(from, stage.join(to)).map_err(|e| format!("cannot copy {}: {e}", from.display()))?;
     }

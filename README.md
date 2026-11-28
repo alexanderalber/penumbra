@@ -328,6 +328,9 @@ egui) and the third-party notices. `cargo xtask slow` runs the tests that take m
 GPU. Only a release needs them. `cargo xtask docs`
 regenerates the reference from the node types and commands, `cargo xtask bless` rewrites the
 golden images after an intended change of a render, `cargo xtask dist` builds the release zip.
+On Windows, `cargo xtask dxc` puts Microsoft's shader compiler `dxcompiler.dll` beside the debug
+and release builds. The release zip holds it too. Without it, shaders compile with the older
+FXC, several times slower: a new node can then hold up its first frame for seconds.
 
 ## How this is built
 
