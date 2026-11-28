@@ -195,9 +195,9 @@ impl PenumbraApp {
                 // One device for the UI and the cook thread, so textures need no copies.
                 let gpu = penumbra_gpu::Gpu::new(rs.adapter.clone(), rs.device.clone(), rs.queue.clone());
                 let (warm, types) = (gpu.clone(), engine.types().clone());
-                let spawned = std::thread::Builder::new()
-                    .name("shader-warm-up".into())
-                    .spawn(move || penumbra_ops::warm_up(&types, &warm));
+                let spawned = std::thread::Builder::new().name("shader-warm-up".into()).spawn(move || {
+                    penumbra_ops::warm_up(&types, &warm, penumbra_ops::warm_up_threads(&warm))
+                });
                 if let Err(e) = spawned {
                     log::warn!("cannot precompile the built-in shaders: {e}");
                 }
