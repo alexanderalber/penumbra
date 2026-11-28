@@ -481,7 +481,8 @@ pub struct Instances {
     /// rgb: where each copy goes.
     pub position: Tex,
     /// rgb: the direction the model's +y turns to, its +z kept up as far as it can be; none,
-    /// a texel past the end, or a zero direction: not turned.
+    /// a texel past the end, or a zero direction: not turned. For lines of any length
+    /// ([`Lines::runs`]) each point's place along its line and its line's points instead.
     pub aim: Option<Tex>,
     /// rgb: the scale along x, y, z; none or a texel past the end: 1.
     pub scale: Option<Tex>,
@@ -535,12 +536,17 @@ pub const MITRE_LIMIT: f32 = 4.0;
 /// `2i` to point `2i + 1`, so no copy is spent on a first point; `len`, `stride` and `closed`
 /// say nothing then. [`Instances::count`] counts the lines; where [`Instances::live`] keeps the
 /// number on the GPU, the number of lines is its second word.
+///
+/// `runs`: lines of any length, one after another. [`Instances::aim`] holds for each point its
+/// place along its line (red) and the number of points on its line (green); `len` and `stride`
+/// say nothing then.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Lines {
     pub len: u32,
     pub stride: u32,
     pub closed: bool,
     pub pairs: bool,
+    pub runs: bool,
     /// The points past this many are none (the count where the CPU knows it, `u32::MAX`
     /// where not): a line ends there.
     pub limit: u32,

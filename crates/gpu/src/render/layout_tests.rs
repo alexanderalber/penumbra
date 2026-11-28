@@ -150,7 +150,15 @@ fn lines_through_instances_reach_the_shader() {
     let Some(gpu) = crate::testing::gpu() else { return };
     let (_, m) = wgsl_struct(RENDER, "Draw");
     let position = crate::Tex::new_float(&gpu, 1, 1, "position").unwrap();
-    let lines = crate::geo::Lines { len: 7, stride: 3, closed: true, pairs: false, limit: 21, live: true };
+    let lines = crate::geo::Lines {
+        len: 7,
+        stride: 3,
+        closed: true,
+        pairs: false,
+        runs: false,
+        limit: 21,
+        live: true,
+    };
     let inst = crate::geo::Instances { size: 0.5, lines: Some(lines), ..crate::geo::Instances::of(position) };
     let normals = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
     let b = draw_slot(&mat(1.0), &normals, [1.0; 4], &Material::constant(), false, 0, Some(&inst));
@@ -159,6 +167,10 @@ fn lines_through_instances_reach_the_shader() {
     assert_eq!(f32::from_bits(u("inst", 8)), 0.5);
     assert_eq!(u("inst", 12), 1, "the most copies: one per texel of a 1 x 1 position");
     assert_eq!([u("lines", 0), u("lines", 4), u("lines", 8), u("lines", 12)], [7, 3, 3, 21]);
+    let runs = crate::geo::Lines { runs: true, closed: false, live: false, ..lines };
+    let inst = crate::geo::Instances { lines: Some(runs), ..inst };
+    let b = draw_slot(&mat(1.0), &normals, [1.0; 4], &Material::constant(), false, 0, Some(&inst));
+    assert_eq!(u32_at(&b, member(&m, "lines").offset + 8), 8, "lines of any length are bit 3");
 }
 
 #[test]

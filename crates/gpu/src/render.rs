@@ -1711,10 +1711,12 @@ fn draw_slot(
         b.extend_from_slice(&v.to_le_bytes());
     }
     // Lines through the instances: points per line, their distance in the list, whether the
-    // lines close, the count is on the GPU and every two points are a line, the most points.
+    // lines close, the count is on the GPU, every two points are a line and the lines are of any
+    // length, the most points.
     let lines = instances.and_then(|i| i.lines);
     let words = lines.map_or([0; 4], |l| {
-        let flags = u32::from(l.closed) | u32::from(l.live) << 1 | u32::from(l.pairs) << 2;
+        let flags =
+            u32::from(l.closed) | u32::from(l.live) << 1 | u32::from(l.pairs) << 2 | u32::from(l.runs) << 3;
         [l.len, l.stride.max(1), flags, l.limit]
     });
     for v in words {

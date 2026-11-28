@@ -642,6 +642,14 @@ pub fn most_elements(gpu: &Gpu, ty: AttrType) -> u32 {
     u32::try_from(Buffer::max_bytes(gpu) / ty.stride()).unwrap_or(u32::MAX)
 }
 
+/// The attribute of lines of any length ([`Strips::Runs`]): a `vec2f` per point, its place along
+/// its line and the number of points on its line. Exact up to [`MOST_ON_LINE`] points a line.
+pub const LINE: &str = "pts_line";
+
+/// The most points one line of [`Strips::Runs`] holds: the floats of [`LINE`] count them exactly
+/// up to here.
+pub const MOST_ON_LINE: u32 = 1 << 24;
+
 /// How points join into lines (line strips): which point follows which along a line.
 /// `geo.from_pts` draws a segment from each point to the next one on its line.
 ///
@@ -666,6 +674,11 @@ pub enum Strips {
     /// holds the number of lines, so a drawing reads it there; only a node that writes that
     /// word gives these strips.
     Pairs,
+    /// Lines of any length, one after another in the list. Each point's [`LINE`] attribute holds
+    /// its place along its line (0 at the line's first point) and the number of points on its
+    /// line, both as floats. `closed`: each line's last point joins its first again. Only a node
+    /// that writes [`LINE`] gives these strips (`pts.resample` by length).
+    Runs { closed: bool },
 }
 
 impl Strips {
@@ -1223,6 +1236,7 @@ fn copy_rows(gpu: &Gpu, src: &Buffer, count: u32, tex: &Tex) -> Result<(), Error
 
 pub mod append;
 pub mod compact;
+pub mod lines;
 pub mod merge;
 pub mod near;
 pub mod pairs;
