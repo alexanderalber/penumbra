@@ -710,6 +710,9 @@ fn main() {
             // Its trace input gets the black feed: the whole picture is one dark region, on a
             // surface of the feed's size.
             "tex.shapes" => params.extend(size().into_iter().chain([("trace_invert", true.into())])),
+            // The 64 points of the feed lie about 0.19 m apart at the nearest, beyond the
+            // default `distance`: with none in reach the node rightly warns of no lines.
+            crate::pts::proximity::KIND => params.push(("distance", Value::Float(0.3))),
             "out.spout" => params.push(("name", spout.as_str().into())),
             "tex.spout_in" => params.push(("sender", spout.as_str().into())),
             _ => {}
@@ -819,7 +822,12 @@ fn main() {
             }
             let s = rig.cooker.status(rig.id(&path)).unwrap();
             if s.has_output && !((dmx_in || data_in) && s.warning.is_some()) {
-                // One more pass at a new time, where an undeclared time read would show.
+                // One more pass at a new time, where an undeclared time read would show. The
+                // readbacks of the first pass arrive before it, so a warning a node takes from
+                // them (pts.proximity's, say) shows every time instead of when a poll happens
+                // to come between the two passes.
+                rig.gpu.settle(Duration::from_secs(5));
+                rig.gpu.poll();
                 rig.clock.advance(1);
                 rig.cook(&path);
                 let s = rig.cooker.status(rig.id(&path)).unwrap();
