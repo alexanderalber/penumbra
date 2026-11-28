@@ -242,8 +242,9 @@ impl Buffer {
     }
 
     /// Starts reading the whole buffer back without waiting, after the dispatches recorded
-    /// before this ([`BufferRead`]). The copy is submitted at once; the bytes arrive once the GPU
-    /// got there and [`Gpu::poll`] ran (the engine polls every frame). For a few counters a
+    /// before this ([`BufferRead`]). The copy is submitted with them: at once, or when a
+    /// deferring thread sends its passes ([`Gpu::defer`]). The bytes arrive once the GPU got
+    /// there and [`Gpu::poll`] ran (the engine polls every frame). For a few counters a
     /// simulation reports every frame. `spare`, a finished earlier readback of the same size,
     /// gives its staging buffer back, so a readback per frame allocates nothing.
     pub fn read_async(&self, gpu: &Gpu, spare: Option<BufferRead>) -> Result<BufferRead, Error> {
@@ -264,31 +265,40 @@ impl Buffer {
             s.staging
         });
         let (staging, error) = gpu.scoped(|| {
-            let staging = reuse.unwrap_or_else(|| {
+            reuse.unwrap_or_else(|| {
                 device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("buffer read_async"),
                     size: self.0.bytes,
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 })
-            });
-            let mut encoder = device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("buffer read_async") });
-            encoder.copy_buffer_to_buffer(&self.0.buffer, 0, &staging, 0, self.0.bytes);
-            gpu.submit([encoder.finish()]);
-            staging
+            })
         });
         if let Some(e) = error {
             return Err(Error::new(format!("buffer readback failed: {e}")));
         }
         let state = Arc::new(AtomicU8::new(WAITING));
         let set = state.clone();
-        staging.map_async(wgpu::MapMode::Read, .., move |r| {
-            set.store(if r.is_ok() { READY } else { FAILED }, Ordering::Release);
-            if let Some(ready) = &ready {
-                ready();
-            }
+        let to_map = staging.clone();
+        // A buffer may be mapped only after the copy into it was submitted. The copy waits
+        // with the passes of a deferring thread (a submission costs more than the copy), so
+        // the mapping starts once they go out.
+        let map: crate::deferred::After = Box::new(move || {
+            to_map.map_async(wgpu::MapMode::Read, .., move |r| {
+                set.store(if r.is_ok() { READY } else { FAILED }, Ordering::Release);
+                if let Some(ready) = &ready {
+                    ready();
+                }
+            });
         });
+        let error = gpu.record_commands(
+            "buffer read_async",
+            |encoder| encoder.copy_buffer_to_buffer(&self.0.buffer, 0, &staging, 0, self.0.bytes),
+            Some(map),
+        );
+        if let Some(e) = error {
+            return Err(Error::new(format!("buffer readback failed: {e}")));
+        }
         Ok(BufferRead { staging, bytes: self.0.bytes, state, age: ReadAge::new(gpu) })
     }
 }
@@ -329,6 +339,8 @@ impl BufferRead {
     /// Waits at most `timeout` for the copy, then says where the readback stands. Blocks the
     /// calling thread: for tests, and for a result wanted in the same frame.
     pub fn wait(&self, gpu: &Gpu, timeout: Duration) -> ReadState {
+        // The copy may still wait to be submitted.
+        gpu.flush();
         // Running out of time is no error here: the caller looks again later.
         let _ = gpu.poll_until(timeout, || self.state() != ReadState::Waiting);
         self.state()
