@@ -44,6 +44,7 @@ use std::sync::{Arc, Weak};
 
 use penumbra_core::{Error, ParamSpec, Value, lock};
 
+use crate::buffer::BufferKey;
 use crate::pass::{self, Field, SHARED};
 use crate::{Batch, Buffer, FORMAT, Gpu, Tex};
 
@@ -426,6 +427,35 @@ pub struct Compute {
     /// Per function and entry point: the globals it reads or writes, also through the
     /// functions it calls.
     uses: HashMap<String, Vec<String>>,
+    /// Bind groups of `@group(2)` made lately, by the buffers they bind.
+    groups: Arc<BufferGroups>,
+}
+
+/// The buffer bind groups of one [`Compute`]. [`Gpu::poll`] sweeps out the dead ones now and
+/// then ([`Gpu::sweep_bind_groups`]), also of programs no node runs any more.
+pub(crate) type BufferGroups = std::sync::Mutex<Vec<BufferGroup>>;
+
+/// Buffer bind groups a [`Compute`] keeps. A node's buffers usually circulate through two or
+/// three of a ring, and a built-in program is shared by every node of its kind.
+const BUFFER_GROUPS: usize = 32;
+
+/// The bind group of one list of buffers. A buffer never changes its size or memory once
+/// made (a resize makes a new one), so the same buffers in the same order always bind the
+/// same way. The keys do not hold the buffers.
+pub(crate) struct BufferGroup {
+    keys: Vec<BufferKey>,
+    group: wgpu::BindGroup,
+}
+
+impl BufferGroup {
+    fn matches(&self, buffers: &[&Buffer]) -> bool {
+        self.keys.len() == buffers.len() && self.keys.iter().zip(buffers).all(|(k, b)| k.is(b))
+    }
+
+    /// Whether every buffer it binds is still held by someone besides the bind group.
+    pub(crate) fn alive(&self) -> bool {
+        self.keys.iter().all(BufferKey::alive)
+    }
 }
 
 impl Compute {
@@ -506,6 +536,7 @@ impl Compute {
             buffers,
             buffer_layout,
             uses,
+            groups: gpu.buffer_groups(),
         })
     }
 
@@ -694,8 +725,9 @@ impl Compute {
         }
     }
 
-    /// The bind group of `buffers` over the program's `@group(2)`; `None` for a program without
-    /// buffers.
+    /// The bind group of `buffers` over the program's `@group(2)`, made or kept; `None` for a
+    /// program without buffers. Groups whose buffers are gone otherwise are let go, so the
+    /// cache keeps no buffer's memory alive for long.
     fn buffer_group(&self, gpu: &Gpu, buffers: &[&Buffer]) -> Result<Option<wgpu::BindGroup>, Error> {
         if buffers.len() != self.buffers.len() {
             return Err(Error::new(format!(
@@ -715,6 +747,13 @@ impl Compute {
                     b.bytes()
                 )));
             }
+        }
+        let mut kept = lock(&self.groups);
+        if let Some(i) = kept.iter().position(|g| g.matches(buffers)) {
+            let g = kept.remove(i);
+            let group = g.group.clone();
+            kept.push(g);
+            return Ok(Some(group));
         }
         // Bound with their size, not whole: a backend may pad a buffer that can be a uniform,
         // and `arrayLength` would count the padding.
@@ -737,10 +776,15 @@ impl Compute {
                 entries: &entries,
             })
         });
-        match error {
-            Some(e) => Err(Error::new(format!("{}: cannot bind the buffers: {e}", self.label))),
-            None => Ok(Some(group)),
+        if let Some(e) = error {
+            return Err(Error::new(format!("{}: cannot bind the buffers: {e}", self.label)));
         }
+        kept.retain(BufferGroup::alive);
+        if kept.len() >= BUFFER_GROUPS {
+            kept.remove(0);
+        }
+        kept.push(BufferGroup { keys: buffers.iter().map(|b| b.key()).collect(), group: group.clone() });
+        Ok(Some(group))
     }
 }
 

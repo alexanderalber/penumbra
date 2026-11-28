@@ -189,8 +189,10 @@ struct Inner {
     attachments: render::Attachments,
     /// Passes recorded and not yet submitted (see [`deferred`]).
     deferred: Mutex<deferred::Deferred>,
-    /// The input bind groups of every pass (see [`Gpu::sweep_input_groups`]).
+    /// The input bind groups of every pass (see [`Gpu::sweep_bind_groups`]).
     input_groups: Mutex<Vec<std::sync::Weak<pass::InputGroups>>>,
+    /// The buffer bind groups of every compute program (see [`Gpu::sweep_bind_groups`]).
+    buffer_groups: Mutex<Vec<std::sync::Weak<compute::BufferGroups>>>,
     /// Calls of [`Gpu::poll`] so far.
     polls: AtomicU64,
     /// Polls of the device that panicked inside wgpu (see [`poll_device`]).
@@ -403,6 +405,7 @@ impl Gpu {
                 attachments: render::Attachments::default(),
                 deferred: Mutex::new(deferred::Deferred::default()),
                 input_groups: Mutex::new(Vec::new()),
+                buffer_groups: Mutex::new(Vec::new()),
                 polls: AtomicU64::new(0),
                 poll_panics: AtomicU64::new(0),
                 poll_clock: Arc::new(PollClock::new()),
@@ -575,7 +578,7 @@ impl Gpu {
             log::warn!("{e}");
         }
         if self.inner.polls.fetch_add(1, Ordering::Relaxed).is_multiple_of(SWEEP_POLLS) {
-            self.sweep_input_groups();
+            self.sweep_bind_groups();
         }
     }
 
@@ -586,12 +589,27 @@ impl Gpu {
         groups
     }
 
-    /// Lets go of the input bind groups whose textures are gone. A bind group holds its
-    /// textures' memory, and a pass that no node renders with any more would hold it forever.
-    pub fn sweep_input_groups(&self) {
+    /// A new, empty set of buffer bind groups for a compute program, swept with the others.
+    pub(crate) fn buffer_groups(&self) -> std::sync::Arc<compute::BufferGroups> {
+        let groups = std::sync::Arc::new(compute::BufferGroups::default());
+        lock(&self.inner.buffer_groups).push(std::sync::Arc::downgrade(&groups));
+        groups
+    }
+
+    /// Lets go of the bind groups whose textures or buffers are gone. A bind group holds the
+    /// memory of what it binds, and a pass or program that no node runs any more would hold it
+    /// forever.
+    pub fn sweep_bind_groups(&self) {
         lock(&self.inner.input_groups).retain(|weak| match weak.upgrade() {
             Some(groups) => {
                 lock(&groups).retain(pass::InputGroup::alive);
+                true
+            }
+            None => false,
+        });
+        lock(&self.inner.buffer_groups).retain(|weak| match weak.upgrade() {
+            Some(groups) => {
+                lock(&groups).retain(compute::BufferGroup::alive);
                 true
             }
             None => false,

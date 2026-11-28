@@ -393,3 +393,75 @@ struct C {{ a: vec4f, b: vec4f }}
         }
     }
 }
+
+#[test]
+fn a_kept_bind_group_never_binds_a_buffer_that_was_replaced() {
+    let Some(gpu) = gpu() else { return };
+    let source = "@group(2) @binding(0) var<storage, read> inp: array<u32>;
+@group(2) @binding(1) var<storage, read_write> out: array<u32>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) id: vec3u) {
+    if id.x < arrayLength(&out) { out[id.x] = inp[id.x] * 2u + 1u; }
+}";
+    let program = Compute::compile(&gpu, "kept", source, &[]).unwrap();
+    let d = plain(&none);
+    let run = |inp: &Buffer, out: &Buffer, n: u32| {
+        program
+            .run_with(&gpu, &[inp, out], &[Step { entry: "main", out: Out::range(n), input: &d }])
+            .unwrap();
+        out.read::<u32>(&gpu).unwrap()
+    };
+    let filled = |n: u32, k: u32| {
+        let b = Buffer::of::<u32>(&gpu, u64::from(n), "inp").unwrap();
+        b.write(&gpu, 0, &(0..n).map(|i| i + k).collect::<Vec<u32>>()).unwrap();
+        b
+    };
+    let kept = || program.groups.lock().map(|g| g.len()).unwrap_or(usize::MAX);
+    let mut inp = filled(4, 0);
+    let out = Buffer::of::<u32>(&gpu, 4, "out").unwrap();
+    assert_eq!(run(&inp, &out, 4), [1, 3, 5, 7]);
+    // The same buffers again: the bind group is kept, and it reads what they hold now.
+    inp.write(&gpu, 0, &[10u32, 20, 30, 40]).unwrap();
+    assert_eq!(run(&inp, &out, 4), [21, 41, 61, 81]);
+    assert_eq!(kept(), 1);
+    // A count that grows, cook after cook: new buffers each time, never the old bind group.
+    for (n, k) in [(1000, 5), (4, 9), (3000, 2)] {
+        let (inp, out) = (filled(n, k), Buffer::of::<u32>(&gpu, u64::from(n), "out").unwrap());
+        let got = run(&inp, &out, n);
+        assert!(got.iter().zip(0..).all(|(v, i)| *v == (i + k) * 2 + 1), "{n} points");
+    }
+    // A resize makes a new buffer, which binds anew.
+    inp.resize(&gpu, 8 * 4, "inp").unwrap();
+    inp.write(&gpu, 4, &[1u32, 2, 3, 4]).unwrap();
+    let out8 = Buffer::of::<u32>(&gpu, 8, "out").unwrap();
+    assert_eq!(run(&inp, &out8, 8), [21, 41, 61, 81, 3, 5, 7, 9]);
+    // Swapped buffers are another list: the old bind group does not match it.
+    let other = filled(8, 100);
+    assert_eq!(run(&other, &out8, 8)[0], 201);
+    assert_eq!(run(&out8, &other, 8)[0], 403);
+    // The groups of buffers that are gone go at the next sweep; the live ones stay.
+    gpu.sweep_bind_groups();
+    assert_eq!(kept(), 3, "inp and out8, other and out8, out8 and other");
+    drop(other);
+    gpu.sweep_bind_groups();
+    assert_eq!(kept(), 1);
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}
+
+#[test]
+fn a_program_keeps_a_bounded_number_of_bind_groups() {
+    let Some(gpu) = gpu() else { return };
+    let source = "@group(2) @binding(0) var<storage, read_write> out: array<u32>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) id: vec3u) {
+    if id.x < arrayLength(&out) { out[id.x] = id.x; }
+}";
+    let program = Compute::compile(&gpu, "bounded", source, &[]).unwrap();
+    let d = plain(&none);
+    let held: Vec<Buffer> =
+        (0..super::BUFFER_GROUPS + 8).map(|_| Buffer::of::<u32>(&gpu, 4, "out").unwrap()).collect();
+    for b in &held {
+        program.run_with(&gpu, &[b], &[Step { entry: "main", out: Out::range(4), input: &d }]).unwrap();
+    }
+    assert_eq!(program.groups.lock().map(|g| g.len()).unwrap_or(0), super::BUFFER_GROUPS);
+    assert_eq!(held[0].read::<u32>(&gpu).unwrap(), [0, 1, 2, 3]);
+    assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
+}

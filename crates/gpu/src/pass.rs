@@ -549,7 +549,7 @@ pub struct Pass {
 }
 
 /// The input bind groups of one [`Pass`]. [`Gpu::poll`] sweeps out the dead ones now and then
-/// ([`Gpu::sweep_input_groups`]), also of passes no node uses any more.
+/// ([`Gpu::sweep_bind_groups`]), also of passes no node uses any more.
 pub(crate) type InputGroups = Mutex<Vec<InputGroup>>;
 
 /// Input bind groups a [`Pass`] keeps. Built-in passes are shared by every node of their kind,

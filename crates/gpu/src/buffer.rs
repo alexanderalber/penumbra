@@ -38,6 +38,11 @@ impl BufferKey {
     pub fn is(&self, buffer: &Buffer) -> bool {
         std::ptr::eq(self.0.as_ptr(), Arc::as_ptr(&buffer.0))
     }
+
+    /// Whether someone still holds the buffer.
+    pub(crate) fn alive(&self) -> bool {
+        self.0.strong_count() > 0
+    }
 }
 
 impl PartialEq for BufferKey {
