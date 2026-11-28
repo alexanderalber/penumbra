@@ -1050,10 +1050,9 @@ fn picture_params() -> [ParamSpec; 5] {
 /// Copies the whole of `tex` from `src`, rows `row_bytes` apart.
 fn copy_picture(gpu: &Gpu, src: &Buffer, row_bytes: u32, tex: &Tex) -> Result<(), Error> {
     let (w, h) = tex.size();
-    let ((), error) = gpu.scoped(|| {
-        let mut encoder = gpu
-            .device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pts picture") });
+    // The copy waits with the pass that filled `src` while the thread defers: a submission of
+    // its own costs the CPU more than the copy.
+    let record = |encoder: &mut wgpu::CommandEncoder| {
         encoder.copy_buffer_to_texture(
             wgpu::TexelCopyBufferInfo {
                 buffer: src.buffer(),
@@ -1066,9 +1065,8 @@ fn copy_picture(gpu: &Gpu, src: &Buffer, row_bytes: u32, tex: &Tex) -> Result<()
             tex.texture().as_image_copy(),
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
-        gpu.submit([encoder.finish()]);
-    });
-    match error {
+    };
+    match gpu.record_commands("pts picture", record, None) {
         Some(e) => Err(Error::new(format!("cannot copy the points into a picture: {e}"))),
         None => Ok(()),
     }

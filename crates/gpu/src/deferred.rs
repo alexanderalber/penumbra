@@ -72,7 +72,13 @@ struct List {
     blocks: Vec<Block>,
     used: usize,
     buffers: Vec<wgpu::CommandBuffer>,
+    /// What runs once the waiting buffers are submitted: a readback maps its staging buffer
+    /// only after the copy into it went out.
+    after: Vec<After>,
 }
+
+/// Work for after a submission.
+pub(crate) type After = Box<dyn FnOnce() + Send>;
 
 /// What waits to be submitted, by thread.
 #[derive(Default)]
@@ -89,7 +95,14 @@ impl Deferred {
     /// The list of `thread`, made when it has none; `None` only if that failed.
     fn list(&mut self, thread: ThreadId) -> Option<&mut List> {
         if !self.lists.iter().any(|l| l.thread == thread) {
-            self.lists.push(List { thread, depth: 0, blocks: Vec::new(), used: 0, buffers: Vec::new() });
+            self.lists.push(List {
+                thread,
+                depth: 0,
+                blocks: Vec::new(),
+                used: 0,
+                buffers: Vec::new(),
+                after: Vec::new(),
+            });
         }
         self.lists.iter_mut().find(|l| l.thread == thread)
     }
@@ -206,6 +219,29 @@ impl Gpu {
         parts: &[[&[u8]; 3]],
         record: impl FnOnce(&mut wgpu::CommandEncoder, &[Slots]),
     ) -> Option<String> {
+        self.record_then(label, parts, record, None)
+    }
+
+    /// Records commands without uniforms (a copy) into a command encoder of their own, which
+    /// waits in the thread's list like a pass. `after` runs once they are submitted; it does
+    /// not run when the recording failed. Returns the first error the recording raised.
+    /// Submits at once unless this thread defers.
+    pub(crate) fn record_commands(
+        &self,
+        label: &str,
+        record: impl FnOnce(&mut wgpu::CommandEncoder),
+        after: Option<After>,
+    ) -> Option<String> {
+        self.record_then(label, &[], |encoder, _| record(encoder), after)
+    }
+
+    fn record_then(
+        &self,
+        label: &str,
+        parts: &[[&[u8]; 3]],
+        record: impl FnOnce(&mut wgpu::CommandEncoder, &[Slots]),
+        after: Option<After>,
+    ) -> Option<String> {
         let thread = std::thread::current().id();
         let mut d = lock(&self.inner.deferred);
         let (buffer, error) = self.scoped(|| {
@@ -221,7 +257,10 @@ impl Gpu {
         match (buffer, error) {
             (_, Some(e)) => return Some(e),
             (None, None) => return Some("the pass's uniforms do not fit a block".into()),
-            (Some(b), None) => list.buffers.push(b),
+            (Some(b), None) => {
+                list.buffers.push(b);
+                list.after.extend(after);
+            }
         }
         let defers = list.depth > 0 && list.buffers.len() < FLUSH_AT;
         drop(d);
@@ -322,7 +361,9 @@ impl Gpu {
     ) -> wgpu::SubmissionIndex {
         let mut d = lock(&self.inner.deferred);
         let mut buffers = Vec::new();
+        let mut after = Vec::new();
         for list in &mut d.lists {
+            after.append(&mut list.after);
             let used = std::mem::take(&mut list.used);
             for b in list.blocks.iter_mut().take(used) {
                 if !b.staged.is_empty() {
@@ -334,7 +375,12 @@ impl Gpu {
         }
         d.prune();
         buffers.extend(more);
-        self.inner.queue.submit(buffers)
+        let index = self.inner.queue.submit(buffers);
+        drop(d);
+        for f in after {
+            f();
+        }
+        index
     }
 }
 
@@ -440,6 +486,56 @@ mod tests {
             assert_eq!(r, half::f16::from_f32(i as f32 / 8.0).to_f32(), "pass {i}");
         }
         assert_eq!(gpu.errors().count, 0);
+    }
+
+    #[test]
+    fn a_readback_waits_with_the_passes_and_maps_once_they_went_out() {
+        let Some(gpu) = gpu() else { return };
+        let source = "@group(2) @binding(0) var<storage, read_write> out: array<u32>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) id: vec3u) {
+    if id.x < arrayLength(&out) { out[id.x] = id.x + u32(params.k); }
+}";
+        let program =
+            crate::Compute::compile(&gpu, "fill", source, &[penumbra_core::ParamSpec::int("k", 0)]).unwrap();
+        let b = crate::Buffer::of::<u32>(&gpu, 4, "b").unwrap();
+        let fill = |k: i64| {
+            let param = move |n: &str| (n == "k").then_some(Value::Int(k));
+            let d = crate::Dispatch {
+                volumes: &[],
+                pictures: &[],
+                data: None,
+                seconds: 0.0,
+                frame: 0,
+                param: &param,
+            };
+            let step = crate::Step { entry: "main", out: crate::Out::range(4), input: &d };
+            program.run_with(&gpu, &[&b], &[step]).unwrap();
+        };
+        let deferral = gpu.defer();
+        fill(10);
+        let read = b.read_async(&gpu, None).unwrap();
+        assert!(!lock(&gpu.inner.deferred).is_empty(), "the copy waits with the pass");
+        gpu.poll();
+        assert_eq!(read.state(), crate::ReadState::Waiting, "nothing maps before the copy went out");
+        // Waiting for it sends what waits, inside the deferral too.
+        assert_eq!(read.wait(&gpu, std::time::Duration::from_secs(10)), crate::ReadState::Ready);
+        assert_eq!(read.get::<u32>().unwrap(), [10, 11, 12, 13]);
+        // The next one reuses the staging buffer and sees the pass recorded before it.
+        fill(20);
+        let again = b.read_async(&gpu, Some(read)).unwrap();
+        fill(30);
+        drop(deferral);
+        assert!(lock(&gpu.inner.deferred).is_empty());
+        for _ in 0..500 {
+            if again.state() != crate::ReadState::Waiting {
+                break;
+            }
+            gpu.settle(std::time::Duration::from_millis(10));
+            gpu.poll();
+        }
+        assert_eq!(again.get::<u32>().unwrap(), [20, 21, 22, 23]);
+        assert_eq!(b.read::<u32>(&gpu).unwrap(), [30, 31, 32, 33]);
+        assert_eq!(gpu.errors().count, 0, "{:?}", gpu.errors().last);
     }
 
     #[test]
