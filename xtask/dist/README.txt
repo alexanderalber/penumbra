@@ -39,7 +39,7 @@ Files
 - pyhost.dll                runs Python for script nodes; keep it next to penumbra.exe
 - dxcompiler.dll            Microsoft's shader compiler (DXC); keep it next to penumbra.exe.
                             Without it shaders compile several times slower.
-                            Its licences: dxcompiler-LICENSE-*.txt
+                            Its licence: dxcompiler-LICENSE-LLVM.txt
 - penumbra-cli.exe          command line tool (control channel client, soak test), for use
                             from a terminal; not needed to use the app
 - docs\                     the documentation of this version: docs\penumbra.html in a

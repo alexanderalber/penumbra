@@ -13,13 +13,12 @@ const URL: &str =
 const SHA256: &str = "ad31b1fc8443175d204f77a611fdb3ef2ec42759bdc2f1167368de24a4a7e7f1";
 
 /// What a package takes from the release: (path in the archive, name beside the executable).
-/// `dxil.dll` stays out: wgpu needs only `dxcompiler.dll` from DXC 1.8.2502 on.
-pub const FILES: &[(&str, &str)] = &[
-    ("bin/x64/dxcompiler.dll", "dxcompiler.dll"),
-    ("LICENSE-LLVM.txt", "dxcompiler-LICENSE-LLVM.txt"),
-    ("LICENCE-MIT.txt", "dxcompiler-LICENSE-MIT.txt"),
-    ("LICENSE-MS.txt", "dxcompiler-LICENSE-MS.txt"),
-];
+/// `dxil.dll` stays out: wgpu needs only `dxcompiler.dll` from DXC 1.8.2502 on. So does the
+/// release's `LICENSE-MS.txt`, which covers `dxil.dll` alone, and its `LICENCE-MIT.txt`, which
+/// covers the header `d3d12shader.h`. `dxcompiler.dll` is under `LICENSE-LLVM.txt`, as
+/// Microsoft's NuGet package of DXC states.
+pub const FILES: &[(&str, &str)] =
+    &[("bin/x64/dxcompiler.dll", "dxcompiler.dll"), ("LICENSE-LLVM.txt", "dxcompiler-LICENSE-LLVM.txt")];
 
 /// The folder holding the release's [`FILES`] under their archive paths, downloaded and
 /// checked when they are not there yet.
